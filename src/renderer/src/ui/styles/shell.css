@@ -853,6 +853,11 @@ textarea {
   font-size: var(--ds-size-caption);
 }
 
+.ds-usage-cache {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+}
+
 .ds-usage-status {
   color: var(--ds-text-faint);
   font-size: var(--ds-size-caption);

@@ -75,6 +75,18 @@ const GOAL_MODE_INSTRUCTION = [
 const INTERNAL_TOOL_NAMES = new Set(["echo"]);
 const READ_ONLY_TOOL_NAMES = new Set(["list_files", "read_file", "search_files"]);
 const MAX_TOOL_ROUNDS = 6;
+const CONTEXT_BUDGET_SAFETY_RATIO = 0.95;
+const TOOL_RESULT_MAX_LINES = 320;
+const TOOL_RESULT_MAX_BYTES = 32 * 1024;
+const TIGHT_TOOL_RESULT_MAX_LINES = 120;
+const TIGHT_TOOL_RESULT_MAX_BYTES = 8 * 1024;
+const TOOL_ARGUMENT_STRING_MAX_BYTES = 8 * 1024;
+const TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES = 2 * 1024;
+const TOOL_ARGUMENT_ARRAY_MAX_ITEMS = 80;
+const TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS = 24;
+const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
+const MIN_TEXT_COMPACTION_BYTES = 512;
+const MAX_PROGRESSIVE_COMPACTION_PASSES = 24;
 
 /**
  * Multi-turn runtime. Holds per-turn state, orchestrates worker pool,
@@ -244,6 +256,7 @@ export class AgentRuntime {
       const history = await this.collectHistory(thread, turn.id);
       const messages: AgentMessage[] = [
         ...history,
+        ...this.buildRuntimeContextMessages(turn, thread),
         { role: "user", content: await this.buildUserContent(userText, attachmentIds) },
       ];
 
@@ -337,15 +350,21 @@ export class AgentRuntime {
     messages: AgentMessage[],
     modelConfig: ModelConfig,
   ): LlmRequest {
+    const systemPrompt = this.buildSystemPrompt();
+    const tools = this.listToolDefinitionsForTurn(turn, thread);
     return {
       protocol: "openai-compatible",
       provider: modelConfig.model_provide,
       model: turn.model,
       apiKey: this.resolveApiKey(modelConfig),
       baseUrl: modelConfig.base_url,
-      systemPrompt: this.buildSystemPrompt(turn, thread),
-      messages,
-      tools: this.listToolDefinitionsForTurn(turn, thread),
+      systemPrompt,
+      messages: prepareMessagesForRequest(messages, {
+        systemPrompt,
+        tools,
+        tokenLimit: modelConfig.model_auto_compact_token_limit,
+      }),
+      tools,
       maxTokens: modelConfig.max_tokens,
       temperature: 1,
       thinking: modelConfig.thinking,
@@ -775,7 +794,7 @@ export class AgentRuntime {
           content:
             typeof item.result === "object" && item.result && "content" in item.result
               ? String((item.result as { content: unknown }).content)
-              : JSON.stringify(item.result ?? null),
+              : stableStringify(item.result ?? null),
           toolCallId: item.toolCallId,
         });
       }
@@ -870,8 +889,12 @@ export class AgentRuntime {
     return blocks;
   }
 
-  private buildSystemPrompt(turn: TurnRecord, thread: ThreadRecord): string {
-    const parts = [SYSTEM_PROMPT];
+  private buildSystemPrompt(): string {
+    return SYSTEM_PROMPT;
+  }
+
+  private buildRuntimeContextMessages(turn: TurnRecord, thread: ThreadRecord): AgentMessage[] {
+    const parts: string[] = [];
     if (turn.mode === "plan") {
       parts.push(PLAN_MODE_INSTRUCTION);
     }
@@ -881,7 +904,8 @@ export class AgentRuntime {
         parts.push(`Current thread goal: ${thread.goal.text}`);
       }
     }
-    return parts.join("\n\n");
+    if (parts.length === 0) return [];
+    return [{ role: "system", content: parts.join("\n\n") }];
   }
 
   private async appendPlanItem(turn: TurnRecord, rawContent: string): Promise<void> {
@@ -982,4 +1006,293 @@ function parsePlanStep(value: unknown, index: number): PlanStep {
     title: raw.title.trim(),
     status,
   };
+}
+
+function prepareMessagesForRequest(
+  messages: AgentMessage[],
+  options: {
+    systemPrompt: string;
+    tools: AgentToolDefinition[];
+    tokenLimit: number;
+  },
+): AgentMessage[] {
+  const hygienic = applyRequestHistoryHygiene(messages);
+  if (estimateRequestTokens(options.systemPrompt, hygienic, options.tools) <= options.tokenLimit) {
+    return hygienic;
+  }
+  return trimOldestDynamicMessages(hygienic, options);
+}
+
+function applyRequestHistoryHygiene(messages: AgentMessage[]): AgentMessage[] {
+  let changed = false;
+  const completedToolCallIds = new Set(
+    messages
+      .filter((message) => message.role === "tool" && message.toolCallId)
+      .map((message) => message.toolCallId as string),
+  );
+  const next = messages.map((message) => {
+    if (message.role === "tool") {
+      const content = compactToolResultContent(message.content);
+      if (content === message.content) return message;
+      changed = true;
+      return { ...message, content };
+    }
+
+    if (message.role === "assistant" && message.toolCalls?.length) {
+      let toolCallsChanged = false;
+      const toolCalls = message.toolCalls.map((call) => {
+        if (!completedToolCallIds.has(call.id)) return call;
+        const compactedArguments = compactToolArguments(call.arguments);
+        if (compactedArguments === call.arguments) return call;
+        changed = true;
+        toolCallsChanged = true;
+        return { ...call, arguments: compactedArguments };
+      });
+      return toolCallsChanged ? { ...message, toolCalls } : message;
+    }
+
+    return message;
+  });
+  return changed ? next : messages;
+}
+
+function trimOldestDynamicMessages(
+  messages: AgentMessage[],
+  options: {
+    systemPrompt: string;
+    tools: AgentToolDefinition[];
+    tokenLimit: number;
+  },
+): AgentMessage[] {
+  const segments = segmentMessagesForTrimming(messages);
+  const lastUserSegmentIndex = findLastSegmentIndex(
+    segments,
+    (segment) => segment.some((message) => message.role === "user"),
+  );
+  const mandatoryStartIndex =
+    lastUserSegmentIndex >= 0 ? lastUserSegmentIndex : Math.max(0, segments.length - 1);
+  const keep = flattenSegments(segments.slice(mandatoryStartIndex));
+
+  for (let index = mandatoryStartIndex - 1; index >= 0; index -= 1) {
+    const candidate = [...segments[index], ...keep];
+    if (estimateRequestTokens(options.systemPrompt, candidate, options.tools) > options.tokenLimit) {
+      break;
+    }
+    keep.unshift(...segments[index]);
+  }
+  return keep.length > 0 ? keep : messages.slice(-1);
+}
+
+function segmentMessagesForTrimming(messages: AgentMessage[]): AgentMessage[][] {
+  const segments: AgentMessage[][] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message.role === "system") {
+      const segment = [message];
+      let cursor = index + 1;
+      while (cursor < messages.length && messages[cursor].role === "system") {
+        segment.push(messages[cursor]);
+        cursor += 1;
+      }
+      if (cursor < messages.length && messages[cursor].role === "user") {
+        segment.push(messages[cursor]);
+        segments.push(segment);
+        index = cursor;
+        continue;
+      }
+      segments.push(segment);
+      index = cursor - 1;
+      continue;
+    }
+
+    if (message.role !== "assistant" || !message.toolCalls?.length) {
+      segments.push([message]);
+      continue;
+    }
+
+    const expectedToolCallIds = new Set(message.toolCalls.map((call) => call.id));
+    const segment = [message];
+    let cursor = index + 1;
+    while (cursor < messages.length) {
+      const candidate = messages[cursor];
+      if (candidate.role !== "tool" || !candidate.toolCallId || !expectedToolCallIds.has(candidate.toolCallId)) {
+        break;
+      }
+      segment.push(candidate);
+      cursor += 1;
+    }
+    segments.push(segment);
+    index = cursor - 1;
+  }
+  return segments;
+}
+
+function findLastSegmentIndex(
+  segments: AgentMessage[][],
+  predicate: (segment: AgentMessage[]) => boolean,
+): number {
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    if (predicate(segments[index])) return index;
+  }
+  return -1;
+}
+
+function flattenSegments(segments: AgentMessage[][]): AgentMessage[] {
+  return segments.flatMap((segment) => segment);
+}
+
+function compactToolResultContent(content: AgentMessage["content"]): AgentMessage["content"] {
+  if (typeof content === "string") {
+    return compactToolResultText(content);
+  }
+  let changed = false;
+  const blocks = content.map((block) => {
+    if (block.type === "text") {
+      const text = compactToolResultText(block.text);
+      if (text !== block.text) changed = true;
+      return { ...block, text };
+    }
+    changed = true;
+    return {
+      type: "text" as const,
+      text: `[cache hygiene: omitted ${block.mimeType} attachment from historical tool result]`,
+    };
+  });
+  return changed ? blocks : content;
+}
+
+function compactToolResultText(text: string): string {
+  const originalBytes = Buffer.byteLength(text, "utf8");
+  const lines = text.split("\n");
+  if (originalBytes <= TOOL_RESULT_MAX_BYTES && lines.length <= TOOL_RESULT_MAX_LINES) {
+    return text;
+  }
+
+  const headCount = Math.min(80, Math.max(1, Math.floor(TOOL_RESULT_MAX_LINES * 0.25)));
+  const tailCount = Math.min(120, Math.max(1, Math.floor(TOOL_RESULT_MAX_LINES * 0.35)));
+  const signalLines = lines
+    .slice(headCount, Math.max(headCount, lines.length - tailCount))
+    .filter((line) => /\b(error|failed?|fatal|exception|warning|denied|timeout|not found|invalid)\b/i.test(line))
+    .slice(0, Math.max(0, TOOL_RESULT_MAX_LINES - headCount - tailCount));
+  const selected = [
+    ...lines.slice(0, headCount),
+    ...signalLines,
+    ...lines.slice(Math.max(headCount, lines.length - tailCount)),
+  ];
+  const fitted = fitLinesToBytes(selected, TOOL_RESULT_MAX_BYTES);
+  const omittedLines = Math.max(0, lines.length - fitted.length);
+  const marker = `[cache hygiene: omitted ${omittedLines} historical tool result line(s); narrow the next read/search for details]`;
+  return [...fitted, marker].join("\n");
+}
+
+function compactToolArguments(args: Record<string, unknown>): Record<string, unknown> {
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    const compacted = compactArgumentValue(key, value);
+    out[key] = compacted.value;
+    changed ||= compacted.changed;
+  }
+  return changed ? out : args;
+}
+
+function compactArgumentValue(key: string, value: unknown): { value: unknown; changed: boolean } {
+  if (typeof value === "string") {
+    if (isBase64Like(key, value)) {
+      return {
+        value: `[cache hygiene: omitted base64 argument, ${Buffer.byteLength(value, "utf8")} bytes]`,
+        changed: true,
+      };
+    }
+    if (Buffer.byteLength(value, "utf8") > TOOL_ARGUMENT_STRING_MAX_BYTES) {
+      return {
+        value: `${value.slice(0, 800)}\n[cache hygiene: omitted long argument tail]`,
+        changed: true,
+      };
+    }
+    return { value, changed: false };
+  }
+
+  if (Array.isArray(value)) {
+    let changed = false;
+    const selected =
+      value.length > TOOL_ARGUMENT_ARRAY_MAX_ITEMS
+        ? [
+            ...value.slice(0, Math.floor(TOOL_ARGUMENT_ARRAY_MAX_ITEMS * 0.75)),
+            { cache_hygiene_omitted_items: value.length - TOOL_ARGUMENT_ARRAY_MAX_ITEMS },
+            ...value.slice(-(TOOL_ARGUMENT_ARRAY_MAX_ITEMS - Math.floor(TOOL_ARGUMENT_ARRAY_MAX_ITEMS * 0.75))),
+          ]
+        : value;
+    changed ||= selected !== value;
+    const compacted = selected.map((item) => {
+      const child = compactArgumentValue(key, item);
+      changed ||= child.changed;
+      return child.value;
+    });
+    return changed ? { value: compacted, changed: true } : { value, changed: false };
+  }
+
+  if (!value || typeof value !== "object") {
+    return { value, changed: false };
+  }
+
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+    const child = compactArgumentValue(childKey, childValue);
+    out[childKey] = child.value;
+    changed ||= child.changed;
+  }
+  return changed ? { value: out, changed: true } : { value, changed: false };
+}
+
+function fitLinesToBytes(lines: string[], maxBytes: number): string[] {
+  const out: string[] = [];
+  let bytes = 0;
+  for (const line of lines) {
+    const nextBytes = Buffer.byteLength(line, "utf8") + 1;
+    if (bytes + nextBytes > maxBytes) break;
+    out.push(line);
+    bytes += nextBytes;
+  }
+  return out;
+}
+
+function estimateRequestTokens(
+  systemPrompt: string,
+  messages: AgentMessage[],
+  tools: AgentToolDefinition[],
+): number {
+  return estimateTokens(
+    JSON.stringify({
+      systemPrompt,
+      messages,
+      tools,
+    }),
+  );
+}
+
+function estimateTokens(value: string): number {
+  return Math.ceil(value.length / TOKEN_ESTIMATE_CHARS_PER_TOKEN);
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(canonicalizeJson(value));
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    out[key] = canonicalizeJson((value as Record<string, unknown>)[key]);
+  }
+  return out;
+}
+
+function isBase64Like(key: string, value: string): boolean {
+  return (
+    /(?:^|_)(?:data_)?base64$/i.test(key) ||
+    /^data:[^;,]+;base64,/i.test(value)
+  );
 }

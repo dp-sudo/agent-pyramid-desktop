@@ -59,6 +59,13 @@ export interface OpenAiChatResponse {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+    };
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
   };
 }
 
@@ -121,7 +128,7 @@ export function toOpenAiTool(tool: AgentToolDefinition): OpenAiTool {
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.inputSchema
+      parameters: canonicalizeSchema(tool.inputSchema)
     }
   };
 }
@@ -130,8 +137,18 @@ export function toAnthropicTool(tool: AgentToolDefinition): AnthropicTool {
   return {
     name: tool.name,
     description: tool.description,
-    input_schema: tool.inputSchema
+    input_schema: canonicalizeSchema(tool.inputSchema)
   };
+}
+
+export function normalizeToolDefinitions(tools: readonly AgentToolDefinition[]): AgentToolDefinition[] {
+  return [...tools]
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: canonicalizeSchema(tool.inputSchema),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function normalizeOpenAiUsage(response: OpenAiChatResponse): AgentUsage | undefined {
@@ -139,11 +156,7 @@ export function normalizeOpenAiUsage(response: OpenAiChatResponse): AgentUsage |
     return undefined;
   }
 
-  return {
-    inputTokens: response.usage.prompt_tokens,
-    outputTokens: response.usage.completion_tokens,
-    totalTokens: response.usage.total_tokens
-  };
+  return mapOpenAiUsageFields(response.usage);
 }
 
 export function normalizeAnthropicUsage(response: AnthropicMessageResponse): AgentUsage | undefined {
@@ -204,4 +217,86 @@ function parseToolArguments(raw: string, toolName: string): Record<string, unkno
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse arguments for tool "${toolName}": ${reason}`);
   }
+}
+
+type OpenAiUsageFields = NonNullable<OpenAiChatResponse["usage"]>;
+
+export function mapOpenAiUsageFields(usage: OpenAiUsageFields): AgentUsage {
+  const inputTokens = usage.prompt_tokens;
+  const outputTokens = usage.completion_tokens;
+  const fallbackTotal =
+    typeof inputTokens === "number" && typeof outputTokens === "number"
+      ? inputTokens + outputTokens
+      : undefined;
+  const cacheHitTokens = resolveCacheHitTokens(usage);
+  const cacheMissTokens = resolveCacheMissTokens(usage, cacheHitTokens);
+  const cacheTotal = (cacheHitTokens ?? 0) + (cacheMissTokens ?? 0);
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: usage.total_tokens ?? fallbackTotal,
+    ...(cacheHitTokens !== undefined ? { cacheHitTokens } : {}),
+    ...(cacheMissTokens !== undefined ? { cacheMissTokens } : {}),
+    ...(cacheHitTokens !== undefined
+      ? { cacheHitRate: cacheTotal > 0 ? cacheHitTokens / cacheTotal : null }
+      : {}),
+  };
+}
+
+function resolveCacheHitTokens(usage: OpenAiUsageFields): number | undefined {
+  const nativeHit = nonNegativeIntegerOrUndefined(usage.prompt_cache_hit_tokens);
+  const nativeMiss = nonNegativeIntegerOrUndefined(usage.prompt_cache_miss_tokens);
+  if (nativeHit !== undefined || nativeMiss !== undefined) {
+    return nativeHit ?? 0;
+  }
+
+  return (
+    nonNegativeIntegerOrUndefined(usage.prompt_tokens_details?.cached_tokens) ??
+    nonNegativeIntegerOrUndefined(usage.cache_read_input_tokens)
+  );
+}
+
+function resolveCacheMissTokens(
+  usage: OpenAiUsageFields,
+  cacheHitTokens: number | undefined,
+): number | undefined {
+  const nativeHit = nonNegativeIntegerOrUndefined(usage.prompt_cache_hit_tokens);
+  const nativeMiss = nonNegativeIntegerOrUndefined(usage.prompt_cache_miss_tokens);
+  if (nativeHit !== undefined || nativeMiss !== undefined) {
+    return nativeMiss ?? 0;
+  }
+
+  if (cacheHitTokens === undefined || typeof usage.prompt_tokens !== "number") {
+    return undefined;
+  }
+  return Math.max(0, Math.floor(usage.prompt_tokens) - cacheHitTokens);
+}
+
+function nonNegativeIntegerOrUndefined(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
+function canonicalizeSchema(value: unknown): Record<string, unknown> {
+  const canonical = canonicalize(value);
+  return canonical && typeof canonical === "object" && !Array.isArray(canonical)
+    ? (canonical as Record<string, unknown>)
+    : {};
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    out[key] = canonicalize((value as Record<string, unknown>)[key]);
+  }
+  return out;
+}
+
+export function stableJsonStringify(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
 }

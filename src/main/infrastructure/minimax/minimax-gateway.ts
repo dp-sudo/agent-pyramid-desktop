@@ -13,16 +13,19 @@ import type {
 import {
   normalizeAnthropicUsage,
   normalizeOpenAiUsage,
+  normalizeToolDefinitions,
+  mapOpenAiUsageFields,
   parseAnthropicToolCalls,
   parseOpenAiToolCalls,
+  stableJsonStringify,
   toAnthropicTool,
   toOpenAiTool,
   type AnthropicContentBlock,
   type AnthropicMessage,
   type AnthropicMessageResponse,
   type OpenAiChatMessage,
-  type OpenAiContentBlock,
   type OpenAiChatResponse,
+  type OpenAiContentBlock,
   type OpenAiToolCallMessage
 } from "./minimax-types";
 
@@ -81,11 +84,12 @@ export class MiniMaxGateway implements LlmGateway {
   }
 
   private async completeAnthropicCompatible(request: LlmRequest): Promise<LlmResponse> {
+    const anthropicRequest = toAnthropicRequestParts(request);
     const body = {
       model: request.model,
-      system: request.systemPrompt,
-      messages: toAnthropicMessages(request.messages),
-      tools: request.tools.map(toAnthropicTool),
+      system: anthropicRequest.system,
+      messages: anthropicRequest.messages,
+      tools: normalizeToolDefinitions(request.tools).map(toAnthropicTool),
       tool_choice: {
         type: "auto"
       },
@@ -177,11 +181,12 @@ export class MiniMaxGateway implements LlmGateway {
     request: LlmRequest,
     options: LlmStreamOptions
   ): AsyncIterable<LlmStreamChunk> {
+    const anthropicRequest = toAnthropicRequestParts(request);
     const body = {
       model: request.model,
-      system: request.systemPrompt,
-      messages: toAnthropicMessages(request.messages),
-      tools: request.tools.map(toAnthropicTool),
+      system: anthropicRequest.system,
+      messages: anthropicRequest.messages,
+      tools: normalizeToolDefinitions(request.tools).map(toAnthropicTool),
       tool_choice: {
         type: "auto"
       },
@@ -242,11 +247,7 @@ interface OpenAiStreamPayload {
       }>;
     };
   }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
+  usage?: OpenAiChatResponse["usage"];
 }
 
 interface AnthropicStreamPayload {
@@ -437,7 +438,7 @@ function consumeOpenAiStreamPayload(
     text,
     reasoning,
     finishReason,
-    usage: payload.usage ? mapOpenAiUsage(payload.usage) : undefined
+    usage: payload.usage ? mapOpenAiUsageFields(payload.usage) : undefined
   };
 }
 
@@ -532,7 +533,7 @@ function buildOpenAiCompatibleBody(
   stream: boolean,
   dialect: ProviderDialect
 ): Record<string, unknown> {
-  const tools = request.tools.map(toOpenAiTool);
+  const tools = normalizeToolDefinitions(request.tools).map(toOpenAiTool);
   const common = {
     model: request.model,
     messages,
@@ -624,6 +625,23 @@ function toOpenAiMessages(request: LlmRequest): OpenAiChatMessage[] {
   return messages;
 }
 
+function toAnthropicRequestParts(request: LlmRequest): {
+  system?: string;
+  messages: AnthropicMessage[];
+} {
+  const systemParts = [
+    request.systemPrompt,
+    ...request.messages
+      .filter((message) => message.role === "system")
+      .map((message) => contentAsText(message.content)),
+  ].filter((part): part is string => Boolean(part?.trim()));
+  const messages = request.messages.filter((message) => message.role !== "system");
+  return {
+    ...(systemParts.length > 0 ? { system: systemParts.join("\n\n") } : {}),
+    messages: toAnthropicMessages(messages),
+  };
+}
+
 function toAnthropicMessages(messages: AgentMessage[]): AnthropicMessage[] {
   return messages.map((message) => {
     if (message.role === "tool") {
@@ -652,15 +670,15 @@ function toAnthropicMessages(messages: AgentMessage[]): AnthropicMessage[] {
       return {
         role: "assistant",
         content: [
-          ...(text ? [{ type: "text" as const, text }] : []),
-          ...message.toolCalls.map((call) => ({
-            type: "tool_use" as const,
-            id: call.id,
-            name: call.name,
-            input: call.arguments
-          }))
-        ]
-      };
+              ...(text ? [{ type: "text" as const, text }] : []),
+              ...message.toolCalls.map((call) => ({
+                type: "tool_use" as const,
+                id: call.id,
+                name: call.name,
+                input: canonicalizeJsonRecord(call.arguments)
+              }))
+            ]
+          };
     }
 
     return {
@@ -676,9 +694,26 @@ function toOpenAiToolCallMessage(call: AgentToolCall): OpenAiToolCallMessage {
     type: "function",
     function: {
       name: call.name,
-      arguments: JSON.stringify(call.arguments)
+      arguments: stableJsonStringify(call.arguments)
     }
   };
+}
+
+function canonicalizeJsonRecord(value: Record<string, unknown>): Record<string, unknown> {
+  const canonical = canonicalizeJson(value);
+  return canonical && typeof canonical === "object" && !Array.isArray(canonical)
+    ? (canonical as Record<string, unknown>)
+    : {};
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    out[key] = canonicalizeJson((value as Record<string, unknown>)[key]);
+  }
+  return out;
 }
 
 function toOpenAiContent(content: AgentMessage["content"]): string | OpenAiContentBlock[] {
@@ -874,14 +909,6 @@ function normalizeMaybeCumulativeDelta(value: string | undefined, previous: stri
     return value.slice(previous.length);
   }
   return value;
-}
-
-function mapOpenAiUsage(usage: NonNullable<OpenAiStreamPayload["usage"]>): AgentUsage {
-  return {
-    inputTokens: usage.prompt_tokens,
-    outputTokens: usage.completion_tokens,
-    totalTokens: usage.total_tokens
-  };
 }
 
 function mapAnthropicUsage(usage: NonNullable<AnthropicStreamPayload["usage"]>): AgentUsage {

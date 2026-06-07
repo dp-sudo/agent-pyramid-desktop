@@ -164,6 +164,15 @@ export interface ThreadListFilter {
 export type TurnStatus = "in-flight" | "completed" | "failed" | "interrupted";
 export type TurnMode = "agent" | "plan";
 
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cacheHitTokens?: number;
+  cacheMissTokens?: number;
+  cacheHitRate?: number | null;
+}
+
 export interface TurnRecord {
   id: string;
   threadId: string;
@@ -175,7 +184,7 @@ export interface TurnRecord {
   modelProfileId?: string;
   mode: TurnMode;
   goalMode?: boolean;
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  usage?: TokenUsage;
 }
 
 // ============================================================================
@@ -481,6 +490,9 @@ export interface UsageDailyBucket {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  cacheHitRate: number | null;
   turns: number;
 }
 

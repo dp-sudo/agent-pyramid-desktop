@@ -10,6 +10,9 @@
     "heatmap": "每日 Token 用量",
     "loading": "加载 Token 用量中",
     "unavailable": "Token 用量暂不可用",
+    "cacheHitRate": "缓存命中率 {{rate}}",
+    "cacheUnavailable": "暂无缓存命中数据",
+    "cacheTooltip": "{{date}}：{{total}} tokens，缓存命中 {{rate}}（{{hit}}/{{cacheTotal}}）",
     "less": "较少",
     "more": "较多"
   },

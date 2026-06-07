@@ -37,11 +37,28 @@ export function InitialSessionUsageHeatmap(): ReactElement {
   }, []);
 
   const maxTotal = Math.max(1, ...buckets.map((bucket) => bucket.totalTokens));
+  const cacheHitTokens = buckets.reduce((sum, bucket) => sum + bucket.cacheHitTokens, 0);
+  const cacheMissTokens = buckets.reduce((sum, bucket) => sum + bucket.cacheMissTokens, 0);
+  const cacheTotal = cacheHitTokens + cacheMissTokens;
+  const cacheHitRate = cacheTotal > 0 ? cacheHitTokens / cacheTotal : null;
+  const cacheSummary =
+    cacheHitRate === null
+      ? t("usage.cacheUnavailable")
+      : t("usage.cacheHitRate", { rate: formatPercent(cacheHitRate) });
   const cells =
     buckets.length > 0
       ? buckets.map((bucket) => ({
           key: bucket.date,
-          title: `${bucket.date}: ${bucket.totalTokens} tokens`,
+          title:
+            bucket.cacheHitRate === null
+              ? `${bucket.date}: ${bucket.totalTokens} tokens`
+              : t("usage.cacheTooltip", {
+                  date: bucket.date,
+                  total: bucket.totalTokens,
+                  rate: formatPercent(bucket.cacheHitRate),
+                  hit: bucket.cacheHitTokens,
+                  cacheTotal: bucket.cacheHitTokens + bucket.cacheMissTokens,
+                }),
           opacity: 0.18 + 0.82 * (bucket.totalTokens / maxTotal),
         }))
       : Array.from({ length: HEATMAP_DAYS }, (_, index) => ({
@@ -64,6 +81,7 @@ export function InitialSessionUsageHeatmap(): ReactElement {
           />
         ))}
       </div>
+      {status === "ready" ? <div className="ds-usage-cache">{cacheSummary}</div> : null}
       {status === "error" ? (
         <div className="ds-usage-status" role="status">
           {t("usage.unavailable")}
@@ -75,4 +93,8 @@ export function InitialSessionUsageHeatmap(): ReactElement {
       </div>
     </div>
   );
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 1000) / 10}%`;
 }

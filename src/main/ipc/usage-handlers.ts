@@ -73,6 +73,9 @@ async function collectDailyUsageForDays(
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
+      cacheHitTokens: 0,
+      cacheMissTokens: 0,
+      cacheHitRate: null,
       turns: 0,
     });
   }
@@ -97,6 +100,10 @@ function addUsageEvent(buckets: Map<string, UsageDailyBucket>, event: RuntimeEve
   bucket.inputTokens += event.usage.inputTokens ?? 0;
   bucket.outputTokens += event.usage.outputTokens ?? 0;
   bucket.totalTokens += event.usage.totalTokens ?? 0;
+  bucket.cacheHitTokens += event.usage.cacheHitTokens ?? 0;
+  bucket.cacheMissTokens += event.usage.cacheMissTokens ?? 0;
+  const cacheTotal = bucket.cacheHitTokens + bucket.cacheMissTokens;
+  bucket.cacheHitRate = cacheTotal > 0 ? bucket.cacheHitTokens / cacheTotal : null;
   bucket.turns += 1;
 }
 

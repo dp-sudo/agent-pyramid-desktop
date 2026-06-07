@@ -44,6 +44,9 @@ describe("usage handlers", () => {
         inputTokens: 11,
         outputTokens: 13,
         totalTokens: 24,
+        cacheHitTokens: 8,
+        cacheMissTokens: 2,
+        cacheHitRate: 0.8,
       },
     };
     await store.appendEvent(thread.id, event);
@@ -55,6 +58,9 @@ describe("usage handlers", () => {
       inputTokens: 11,
       outputTokens: 13,
       totalTokens: 24,
+      cacheHitTokens: 8,
+      cacheMissTokens: 2,
+      cacheHitRate: 0.8,
       turns: 1,
     });
   });

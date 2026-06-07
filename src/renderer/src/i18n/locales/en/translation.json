@@ -10,6 +10,9 @@
     "heatmap": "Daily token usage",
     "loading": "Loading token usage",
     "unavailable": "Token usage is unavailable",
+    "cacheHitRate": "Cache hit rate {{rate}}",
+    "cacheUnavailable": "No cache hit data yet",
+    "cacheTooltip": "{{date}}: {{total}} tokens, {{rate}} cache hit ({{hit}}/{{cacheTotal}})",
     "less": "Less",
     "more": "More"
   },

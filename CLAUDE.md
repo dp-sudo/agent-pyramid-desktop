@@ -39,10 +39,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm install` — first time only. On Windows, if Electron download fails, use `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npx install-electron`.
 - `npm run dev` — start Electron + Vite renderer dev server (HMR).
 - `npm run build` — bundle main, preload, renderer to `out/`.
-- `npm run typecheck` — `tsc --noEmit` for renderer + node tsconfigs.
+- `npm run typecheck` — `tsc --noEmit` for renderer, node, **and** test tsconfigs (`tsconfig.json` + `tsconfig.node.json` + `tsconfig.test.json`); test sources are type-checked alongside source.
+- `npm run test` — `vitest run` over `tests/**/*.test.ts(x)`. To run a single file: `npx vitest run tests/main/application/agent-runtime.test.ts`. To watch: `npx vitest`. `DeepSeek/`, `node_modules/`, `out/` are excluded by `vitest.config.ts`.
 - `npm run preview` — run the production build.
 
-There is no test runner, no linter, and no formatter configured. After any non-trivial change, treat `npm run typecheck && npm run build` as the de facto validation gate.
+No linter or formatter is configured. After any non-trivial change, treat `npm run typecheck && npm run test && npm run build` as the de facto validation gate.
+
+## Test layout
+
+Tests mirror `src/` shape under `tests/`:
+
+- `tests/shared/` — IPC channel allowlist, contracts type guards.
+- `tests/main/persistence/` — `JsonlThreadStore`, `AttachmentStore`, `ModelConfigStore` (single-flight init + serialized writes are the invariants being protected; do not regress).
+- `tests/main/infrastructure/` — `minimax-gateway` request bodies and SSE parsing for both protocols.
+- `tests/main/application/` — `AgentRuntime` end-to-end (incl. tool-result re-feeding), workspace tool boundaries.
+- `tests/main/ipc/` — handler-level tests (e.g. `usage-handlers`).
+- `tests/renderer/` — pure reducer test (`WorkbenchContext` exports `INITIAL_STATE` / `Action` / `reducer` *only* for tests; do not consume them in app code) and `timeline-model` grouping logic.
+- `tests/helpers/temp-dir.ts` — shared throwaway-directory helper for store tests.
 
 ## Three process layers
 
@@ -57,7 +70,7 @@ There is no test runner, no linter, and no formatter configured. After any non-t
 
 - **Main process** wires `JsonlThreadStore` + `AttachmentStore` + `ModelConfigStore` + `RuntimeEventBus` + `LlmWorkerPool` + `AgentRuntime` + `InMemoryToolRegistry` in `src/main/index.ts` (single composition root, no DI framework). The same file also calls `installContentSecurityPolicy()`, which serves a relaxed CSP in dev (allows Vite's inline preamble + `ws:` for HMR) and a strict CSP (`script-src 'self'`, `connect-src 'self'`) in production — do not loosen the prod policy.
 - **Worker threads** (one per pool slot, default `1`) instantiate `MiniMaxGateway` and stream SSE deltas back via a typed `WorkerInbound`/`WorkerOutbound` protocol (`src/main/infrastructure/llm-worker/protocol.ts`). The pool pins `threadId → worker` so per-thread turns execute serially. The worker entrypoint is a separate Vite rollup input (`src/main/infrastructure/llm-worker/worker.ts` → `out/main/llm-worker.js`); when adding worker-side code keep it reachable from that entry.
-- **Preload** (`src/preload/index.ts`) exposes a single `window.agentApi` object via `contextBridge.exposeInMainWorld`. It is built as **CommonJS** (`out/preload/index.js`) per `electron.vite.config.ts`; do not switch its output format. Keep `contextIsolation: true` and `nodeIntegration: false`; never widen the surface. Current API groups: `threads`, `turns`, `sse`, `approvals`, `goals`, `attachments`, `usage`, `workspace`, `write`, `modelConfig`.
+- **Preload** (`src/preload/index.ts`) exposes a single `window.agentApi` object via `contextBridge.exposeInMainWorld`. It is built as **CommonJS** (`out/preload/index.js`) per `electron.vite.config.ts`; do not switch its output format. Keep `contextIsolation: true` and `nodeIntegration: false`; never widen the surface. Current API groups: `threads`, `turns`, `sse`, `approvals`, `goals`, `attachments`, `usage`, `workspace`, `write`, `modelConfig`. The corresponding main-side handlers are one file per family under `src/main/ipc/`: `threads`, `turns`, `sse`, `approvals`, `attachments`, `goals`, `usage`, `workspace`, `write`, `model-config`.
 - **Renderer** is a pure React 19 app with a hand-rolled `useReducer` store (`WorkbenchContext.tsx`); it subscribes to runtime events via `agentApi.sse.subscribe` + `onEvent`. `AppShell.tsx` lazy-loads two route trees by `state.route`: `code | write` → `Workbench`, `settings` → `SettingsView` (the older `SettingsPlaceholder` has been removed).
 
 ## Runtime Path
@@ -66,11 +79,13 @@ The app has one Agent runtime surface:
 
 **Multi-turn runtime** — `AgentRuntime` (`src/main/application/agent-runtime.ts`) drives `ThreadRecord` + `TurnRecord` + `Item` streams, persistence, the approval gate, and interrupt. This is the path the UI uses (`turn:start`, `turn:interrupt`, `sse:*`).
 
+Within a single turn, when the model returns tool calls, the runtime executes them, appends `assistant`-with-toolCalls + each `tool` result back into `LlmRequest.messages`, and re-asks the model — up to `MAX_TOOL_ROUNDS = 6` rounds (`agent-runtime.ts:77`) before stopping. Tool failures emit `runtime_error` with `code: "tool_failed"`; **errors must not be swallowed to "let the flow continue"** (AGENTS.md §1.5).
+
 The old single-run IPC/API surface has been removed. If you add an agent capability, wire it through `AgentRuntime` and the existing turn/SSE contracts.
 
 ## Source of truth contracts (`src/shared/`)
 
-`agent-contracts.ts` is the **only** file that defines cross-process types: `ThreadRecord`, `TurnRecord`, the 9-kind `Item` union (user / assistant / reasoning / tool / compaction / approval / userInput / plan / system), `RuntimeEvent` (8 kinds, including `goal_updated` and `runtime_error`), `ModelConfig`/`ModelConfigUpdate`, attachment / goal / usage / approval / write request shapes, the `IpcResult<T>` envelope, and the `isItem`/`isRuntimeEvent`/`isThreadRecord` type guards that replace zod. `ipc.ts` lists every channel name; `RENDERER_TO_MAIN_CHANNELS` is the renderer-allowlist — any new IPC channel must be added there and registered in `src/main/ipc/` (handlers are organised one file per family: `threads`, `turns`, `sse`, `approvals`, `goals`, `attachments`, `usage`, `write`, `model-config`).
+`agent-contracts.ts` is the **only** file that defines cross-process types: `ThreadRecord`, `TurnRecord`, the 9-kind `Item` union (user / assistant / reasoning / tool / compaction / approval / userInput / plan / system), `RuntimeEvent` (8 kinds, including `goal_updated` and `runtime_error`), `ModelConfig`/`ModelConfigUpdate`, attachment / goal / usage / approval / write request shapes, the `IpcResult<T>` envelope, and the `isItem`/`isRuntimeEvent`/`isThreadRecord` type guards that replace zod. `ipc.ts` lists every channel name; `RENDERER_TO_MAIN_CHANNELS` is the renderer-allowlist — any new IPC channel must be added there and registered in `src/main/ipc/`.
 
 If a field moves (rename, type change, new required field), search the codebase for that field name before editing — it is consumed in main, preload, and renderer simultaneously.
 
@@ -102,6 +117,7 @@ index.json                          # ThreadSummary[], atomic write
 - Tokens live in `src/renderer/src/ui/styles/tokens.css` as `--ds-*` variables; the design frontmatter in `docs/ui-design.md` mirrors them. Use tokens, not literal hex.
 - i18n keys live in `src/renderer/src/i18n/locales/{zh-CN,en}/translation.json`. When adding a new locale, update `src/shared/locale.ts` (`SUPPORTED_LOCALES` + `isSupportedLocale`).
 - Components are grouped by area (`chat/`, `composer/`, `sidebar/`, `topbar/`, `inspector/`, `write/`, `primitives/`, `settings/`, `icons/`); the new UI lives in the current `Workbench.tsx` + `AppShell.tsx`.
+- Final assistant text is rendered as Markdown via `AssistantMarkdown` (`react-markdown` + `remark-gfm`); intermediate reasoning / tool calls / process-style assistant text are grouped by `turnId` into a collapsible "工作过程" block by `MessageTimeline` — see `tests/renderer/timeline-model.test.ts` for the grouping contract before editing.
 - The renderer never imports from `src/main/` directly — only via the `agentApi` bridge or through `src/shared/`.
 
 ## Commit / PR conventions
@@ -112,4 +128,10 @@ Conventional Commits (`feat:`, `fix:`, `chore:`). When changing the agent framew
 
 - Thread + turn + item state machines: start at `src/main/application/agent-runtime.ts`, then trace items into `JsonlThreadStore` and back via `replayItems`.
 - IPC plumbing: `src/shared/ipc.ts` (channel names) → `src/main/ipc/*-handlers.ts` (main side) → `src/preload/index.ts` (bridge) → `src/renderer/src/ui/Workbench.tsx` (consumer).
-- New tool: implement `AgentTool` (`src/main/domain/agent/types.ts`), register via `InMemoryToolRegistry` in `src/main/index.ts`. Existing built-ins to mirror: `echoTool` (smoke test), `createPlanTool` (returns a plan JSON for plan mode), and the `createGoalTools(deps)` factory which receives a `GoalToolDeps` callback so the tool can call back into `AgentRuntime.updateThreadGoal` without importing the runtime — use this pattern when a tool needs to mutate thread state. `create_plan` is exposed and approval-free only in plan mode; `update_goal` is exposed and approval-free only in goal mode or an active-goal thread. Other tools still go through `AgentRuntime.requiresApproval`, and disallowed tool calls must fail visibly instead of executing.
+- New tool: implement `AgentTool` (`src/main/domain/agent/types.ts`), register via `InMemoryToolRegistry` in `src/main/index.ts`. `ToolRegistry.execute()` is called with an `AgentToolContext` — current fields include `workspace` (current thread workspace path). Existing built-ins to mirror:
+  - `echoTool` — smoke test for the tool call chain.
+  - `createPlanTool` — returns a plan JSON; exposed and **approval-free only in plan mode**.
+  - `createGoalTools(deps)` — factory returning `update_goal`; receives a `GoalToolDeps` callback so the tool can call back into `AgentRuntime.updateThreadGoal` **without importing the runtime**. Use this pattern when a tool needs to mutate thread state. `update_goal` is exposed and approval-free only in goal mode or an active-goal thread.
+  - `createWorkspaceTools()` — read-only `list_files` / `read_file` / `search_files`. All paths resolve against `context.workspace` and refuse to escape it. `.git`, `.idea`, `.vscode`, `DeepSeek`, `dist`, `node_modules`, `out` are skipped by default. These are the canonical example of a tool that reads `AgentToolContext`.
+
+  Other tool calls still go through `AgentRuntime.requiresApproval`, and **disallowed tool calls must fail visibly instead of executing** (AGENTS.md §1.5 + §6.3).

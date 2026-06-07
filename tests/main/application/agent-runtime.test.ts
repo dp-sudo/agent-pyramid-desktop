@@ -279,6 +279,26 @@ describe("AgentRuntime", () => {
     await waitFor(() => events.some((event) => event.kind === "turn_completed"));
 
     expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual(["create_plan"]);
+    expect(fakePool.requests[0].systemPrompt).not.toContain("Plan mode is active.");
+    expect(fakePool.requests[0].messages[0]).toMatchObject({
+      role: "system",
+      content: expect.stringContaining("Plan mode is active."),
+    });
+    const firstContextIndex = fakePool.requests[0].messages.findIndex(
+      (message) => message.role === "system" && String(message.content).includes("Plan mode is active."),
+    );
+    const secondContextIndexes = fakePool.requests[1].messages
+      .map((message, index) => ({ message, index }))
+      .filter(({ message }) => message.role === "system" && String(message.content).includes("Plan mode is active."))
+      .map(({ index }) => index);
+    expect(secondContextIndexes).toEqual([firstContextIndex]);
+    expect(fakePool.requests[1].messages.at(firstContextIndex)).toMatchObject({
+      role: "system",
+      content: expect.stringContaining("Plan mode is active."),
+    });
+    expect(fakePool.requests[1].messages.slice(0, fakePool.requests[0].messages.length)).toEqual(
+      fakePool.requests[0].messages,
+    );
     expect(fakePool.requests[1].messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -300,6 +320,51 @@ describe("AgentRuntime", () => {
       title: "Test plan",
       steps: [expect.objectContaining({ title: "Write tests", status: "completed" })],
     });
+  });
+
+  it("keeps plan instructions next to the current user message when trimming history", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const runtime = createRuntime(new InMemoryToolRegistry([createPlanTool]));
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "x".repeat(4000),
+    });
+    await waitFor(() => fakePool.requests.length === 1 && !runtime.isThreadInFlight(thread.id));
+
+    await modelConfigStore.update({
+      model_provide: DEFAULT_MODEL_CONFIG.model_provide,
+      model: DEFAULT_MODEL_CONFIG.model,
+      base_url: DEFAULT_MODEL_CONFIG.base_url,
+      OPENAI_API_KEY: DEFAULT_MODEL_CONFIG.OPENAI_API_KEY,
+      model_context_window: 12000,
+      model_auto_compact_token_limit: 300,
+      max_tokens: DEFAULT_MODEL_CONFIG.max_tokens,
+      thinking: DEFAULT_MODEL_CONFIG.thinking,
+      model_reasoning_effort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
+    });
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Plan",
+      mode: "plan",
+    });
+    await waitFor(() => fakePool.requests.length === 2);
+
+    const messages = fakePool.requests[1].messages;
+    const currentUserIndex = messages.findIndex(
+      (message) => message.role === "user" && message.content === "Plan",
+    );
+    expect(currentUserIndex).toBeGreaterThan(0);
+    expect(messages[currentUserIndex - 1]).toMatchObject({
+      role: "system",
+      content: expect.stringContaining("Plan mode is active."),
+    });
+    expect(messages.some((message) => message.role === "user" && message.content === "x".repeat(4000))).toBe(false);
   });
 
   it("executes read-only tools without approval and sends tool results into the follow-up request", async () => {
@@ -429,9 +494,224 @@ describe("AgentRuntime", () => {
 
     expect(events.some((event) => event.kind === "goal_updated")).toBe(true);
     expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual(["update_goal"]);
+    expect(fakePool.requests[0].systemPrompt).not.toContain("Current thread goal");
     expect(await store.getThread(thread.id)).toMatchObject({
       goal: { text: "Finish testing", status: "active" },
     });
+  });
+
+  it("compresses oversized historical tool results only in model requests", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const longToolResult = Array.from({ length: 700 }, (_, index) => `line ${index}`).join("\n");
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_file",
+          description: "Read file",
+          inputSchema: { type: "object" },
+        },
+        async execute() {
+          return longToolResult;
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read", name: "read_file", arguments: { path: "large.txt" } }],
+        raw: {},
+      },
+      {
+        text: "Done",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Read a large file",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[1].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "call-read",
+          content: expect.stringContaining("[cache hygiene: omitted"),
+        }),
+      ]),
+    );
+
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(
+      finalItems(replayed).find((item) => item.kind === "tool" && item.toolCallId === "call-read"),
+    ).toMatchObject({
+      result: { content: longToolResult },
+    });
+  });
+
+  it("keeps large historical tool call rounds while the request is within budget", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_file",
+          description: "Read file",
+          inputSchema: { type: "object" },
+        },
+        async execute() {
+          return "short result";
+        },
+      },
+    ]);
+    const runtime = createRuntime(registry);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-large",
+            name: "read_file",
+            arguments: { path: "large.txt", query: "x".repeat(7000) },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Read complete.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+      {
+        text: "Continue complete.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Read a large file",
+    });
+    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(thread.id));
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Continue",
+    });
+    await waitFor(() => fakePool.requests.length === 3);
+
+    expect(fakePool.requests[2].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          toolCalls: [expect.objectContaining({ id: "call-large" })],
+        }),
+        expect.objectContaining({ role: "tool", toolCallId: "call-large" }),
+      ]),
+    );
+  });
+
+  it("trims historical tool call rounds without leaving orphan tool results", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_file",
+          description: "Read file",
+          inputSchema: { type: "object" },
+        },
+        async execute() {
+          return "short result";
+        },
+      },
+    ]);
+    const runtime = createRuntime(registry);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-large",
+            name: "read_file",
+            arguments: { path: "large.txt", query: "x".repeat(7000) },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Read complete.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Read a large file",
+    });
+    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(thread.id));
+
+    await modelConfigStore.update({
+      model_provide: DEFAULT_MODEL_CONFIG.model_provide,
+      model: DEFAULT_MODEL_CONFIG.model,
+      base_url: DEFAULT_MODEL_CONFIG.base_url,
+      OPENAI_API_KEY: DEFAULT_MODEL_CONFIG.OPENAI_API_KEY,
+      model_context_window: 12000,
+      model_auto_compact_token_limit: 300,
+      max_tokens: DEFAULT_MODEL_CONFIG.max_tokens,
+      thinking: DEFAULT_MODEL_CONFIG.thinking,
+      model_reasoning_effort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
+    });
+    fakePool.response = {
+      text: "Continue complete.",
+      reasoning: "",
+      toolCalls: [],
+      raw: {},
+    };
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Continue",
+    });
+    await waitFor(() => fakePool.requests.length === 3);
+
+    const messages = fakePool.requests[2].messages;
+    const completedToolCallIds = new Set(
+      messages
+        .filter((message) => message.role === "assistant" && message.toolCalls)
+        .flatMap((message) => message.toolCalls?.map((call) => call.id) ?? []),
+    );
+    for (const message of messages) {
+      if (message.role === "tool") {
+        expect(completedToolCallIds.has(message.toolCallId ?? "")).toBe(true);
+      }
+    }
+    expect(messages.some((message) => message.role === "tool" && message.toolCallId === "call-large")).toBe(false);
   });
 
   it("blocks unavailable internal tools and reports runtime errors", async () => {

@@ -1,6 +1,7 @@
 import type {
   LlmProtocol,
   ModelReasoningEffort,
+  TokenUsage,
 } from "../../../shared/agent-contracts";
 
 export type AgentRole = "system" | "user" | "assistant" | "tool";
@@ -40,11 +41,7 @@ export interface AgentToolContext {
   workspace?: string;
 }
 
-export interface AgentUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-}
+export type AgentUsage = TokenUsage;
 
 export interface LlmRequest {
   protocol: LlmProtocol;

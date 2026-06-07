@@ -159,6 +159,23 @@
 - 扩展 `src/renderer/src/ui/Workbench.tsx` 与 `src/renderer/src/ui/store/WorkbenchContext.tsx`：renderer 订阅 `item_updated` 并按 item id upsert，`item_appended` 同样 upsert，避免流式最终落盘事件造成重复气泡。
 - 验证方式：`npm run typecheck`、`npm run build`。
 
+## 2026-06-07 - DeepSeek tokens cache telemetry 与前缀稳定
+
+- 扩展 `TokenUsage` / `AgentUsage` / `TurnRecord.usage` / `UsageDailyBucket`：usage 现在支持 `cacheHitTokens`、`cacheMissTokens`、`cacheHitRate`，`usage.daily` 按日累计 hit/miss 后用 `hit / (hit + miss)` 计算命中率。
+- 扩展 OpenAI-compatible usage 解析：优先读取供应商原生 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`；原生字段缺失时，才 fallback 到 `prompt_tokens_details.cached_tokens` 或 `cache_read_input_tokens` 并用 prompt tokens 估算 miss。
+- 稳定 LLM 请求前缀：`AgentRuntime` 的基础 `systemPrompt` 固定不再拼入 plan/goal/current goal 等运行态内容；这些动态指令改为插入到当前用户消息之前的后置 system message，降低首段 prefix 漂移。
+- 稳定工具 catalog：`MiniMaxGateway` 在发送 OpenAI-compatible 与 Anthropic-compatible tools 前，按工具名排序并递归排序 `inputSchema` key，避免同一工具集合因注册顺序或 schema key 顺序不同破坏 provider prefix cache。
+- 增加发送前 history hygiene：`AgentRuntime` 会在构造模型请求时压缩历史中的超大工具结果、长字符串参数、base64 参数和超长数组；该处理只影响发给模型的 `LlmRequest.messages`，不改写 JSONL 持久化历史。
+- `model_auto_compact_token_limit` 现在参与发送前消息预算：当估算请求 token 超过阈值时，运行时会保留最近动态消息和当前用户输入，丢弃更早动态消息；这是轻量级保护，不替代后续可由模型生成摘要的完整上下文压缩器。
+- 验证方式：`npm test -- tests/main/infrastructure/minimax-types.test.ts tests/main/infrastructure/minimax-gateway.test.ts tests/main/application/agent-runtime.test.ts tests/main/ipc/usage-handlers.test.ts`、`npm run typecheck`、`npm run build`。
+
+### 2026-06-07 二次优化
+
+- `AgentRuntime` 现在在 turn 消息初始化时插入 plan/goal 运行态上下文，并把它放在历史消息之前；工具多轮请求会复用同一个消息数组，确保上一轮请求消息序列是下一轮请求的前缀。
+- 历史 tool result fallback、OpenAI-compatible assistant tool call `function.arguments`、Anthropic-compatible `tool_use.input` 都采用 canonical JSON key 顺序，减少对象 key 插入顺序对请求字节的影响。
+- 空态用量热力图现在会显示最近窗口的 cache hit rate，并在每日 tooltip 中显示 hit/miss 口径，方便观察 DeepSeek tokens cache 优化是否生效。
+- 验证方式：`npm test -- tests/main/application/agent-runtime.test.ts tests/main/infrastructure/minimax-gateway.test.ts tests/main/infrastructure/minimax-types.test.ts tests/main/ipc/usage-handlers.test.ts`、`npm run typecheck`、`npm run build`。
+
 ## 2026-06-07 - 输入框、计划、目标、附件与用量
 
 - 扩展 `src/shared/agent-contracts.ts`：新增 `TurnMode`、`ThreadGoal`、`GoalUpdateRequest`、`AttachmentRecord`、`AttachmentCreateRequest`、`PlanItem`、`UsageDailyBucket`，并让 `TurnStartRequest` 支持 `modelProfileId`、`mode`、`goalMode` 与 `attachmentIds`。

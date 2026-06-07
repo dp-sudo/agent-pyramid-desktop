@@ -99,6 +99,41 @@ describe("MiniMaxGateway", () => {
     });
   });
 
+  it("serializes historical OpenAI tool call arguments with stable key order", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new MiniMaxGateway().complete({
+      ...baseRequest,
+      messages: [
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "call-1",
+              name: "read_file",
+              arguments: { z: 1, a: { y: 2, b: 3 } },
+            },
+          ],
+        },
+        { role: "tool", toolCallId: "call-1", content: "result" },
+      ],
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(init?.body)) as {
+      messages: Array<{ tool_calls?: Array<{ function?: { arguments?: string } }> }>;
+    };
+    expect(body.messages[1].tool_calls?.[0]?.function?.arguments).toBe(
+      "{\"a\":{\"b\":3,\"y\":2},\"z\":1}",
+    );
+  });
+
   it("streams OpenAI-compatible deltas, usage, and completed tool calls", async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -110,7 +145,7 @@ describe("MiniMaxGateway", () => {
               "",
               'data: {"choices":[{"delta":{"content":"Hello","tool_calls":[{"index":0,"id":"call-1","function":{"name":"create_plan","arguments":"{\\"steps\\":"}}]}}]}',
               "",
-              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"[]}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4,"completion_tokens":5,"total_tokens":9}}',
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"[]}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4,"completion_tokens":5,"total_tokens":9,"prompt_cache_hit_tokens":3,"prompt_cache_miss_tokens":1}}',
               "",
               "data: [DONE]",
               "",
@@ -140,7 +175,17 @@ describe("MiniMaxGateway", () => {
         name: "create_plan",
         argumentsDelta: "{\"steps\":",
       },
-      { kind: "usage", usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } },
+      {
+        kind: "usage",
+        usage: {
+          inputTokens: 4,
+          outputTokens: 5,
+          totalTokens: 9,
+          cacheHitTokens: 3,
+          cacheMissTokens: 1,
+          cacheHitRate: 0.75,
+        },
+      },
       {
         kind: "tool_call_delta",
         toolCallId: "call-1",
