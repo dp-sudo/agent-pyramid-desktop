@@ -38,9 +38,10 @@ describe("JsonlThreadStore", () => {
 
     const archived = await store.updateThread(primary.id, {
       status: "archived",
-      title: "Archived review",
+      title: "  Archived review  ",
     });
     expect(archived.status).toBe("archived");
+    expect(archived.title).toBe("Archived review");
     expect(await store.listThreads()).toHaveLength(0);
     expect(await store.listThreads({ includeArchived: true })).toHaveLength(1);
     expect(await store.listThreads({ archivedOnly: true })).toHaveLength(1);
@@ -120,5 +121,89 @@ describe("JsonlThreadStore", () => {
     }
     expect(replayed).toHaveLength(items.length);
     expect(new Set(replayed.map((item) => item.id)).size).toBe(items.length);
+  });
+
+  it("rejects non-UUID thread ids before resolving persistence paths", async () => {
+    await expect(store.getThread("../outside")).rejects.toThrow("Thread id must be a UUID.");
+    await expect(store.deleteThread("../outside")).rejects.toThrow("Thread id must be a UUID.");
+
+    const item: Item = {
+      kind: "system",
+      id: "item-1",
+      threadId: "../outside",
+      turnId: "turn-1",
+      text: "nope",
+      level: "warn",
+      createdAt: "2026-06-07T00:00:00.000Z",
+    };
+    await expect(store.appendItem("../outside", item)).rejects.toThrow(
+      "Thread id must be a UUID.",
+    );
+
+    const outsidePath = path.join(userDataDir, "outside");
+    await fs.writeFile(outsidePath, "do not delete", "utf8");
+    await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("do not delete");
+  });
+
+  it("validates thread create, list, and update inputs at runtime", async () => {
+    await expect(
+      store.createThread({
+        workspace: "",
+        mode: "code",
+      }),
+    ).rejects.toThrow("workspace is required.");
+
+    await expect(
+      store.createThread({
+        workspace: "/workspace",
+        mode: "invalid" as "code",
+      }),
+    ).rejects.toThrow("mode is invalid.");
+
+    await expect(store.listThreads({ include: ["primary", "invalid" as "side"] }))
+      .rejects.toThrow("include is invalid.");
+
+    const thread = await store.createThread({
+      workspace: "/workspace",
+      mode: "code",
+    });
+
+    await expect(
+      store.updateThread(thread.id, {
+        approvalPolicy: "sometimes" as "auto",
+      }),
+    ).rejects.toThrow("approvalPolicy is invalid.");
+
+    await expect(
+      store.updateThread(thread.id, {
+        goal: {
+          text: "Goal",
+          status: "waiting" as "active",
+          createdAt: "2026-06-07T00:00:00.000Z",
+          updatedAt: "2026-06-07T00:00:00.000Z",
+        },
+      }),
+    ).rejects.toThrow("goal.status is invalid.");
+  });
+
+  it("removes the new thread directory if indexing the created thread fails", async () => {
+    await store.init();
+    const indexPath = path.join(userDataDir, "threads", "index.json");
+    await fs.rm(indexPath);
+    await fs.mkdir(indexPath);
+
+    await expect(
+      store.createThread({
+        title: "Will fail",
+        workspace: "/workspace",
+        mode: "code",
+      }),
+    ).rejects.toThrow();
+
+    const entries = await fs.readdir(path.join(userDataDir, "threads"), {
+      withFileTypes: true,
+    });
+    expect(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+      .toEqual(["index.json"]);
   });
 });

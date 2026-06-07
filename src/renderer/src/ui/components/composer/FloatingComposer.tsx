@@ -31,6 +31,10 @@ export function FloatingComposer({
   const sendDisabled = disabled || sendPending || draftText.trim().length === 0;
 
   useEffect(() => {
+    setDraftText(state.composer.text);
+  }, [state.composer.text]);
+
+  useEffect(() => {
     if (state.composer.attachmentIds.length === 0 && attachments.length > 0) {
       setAttachments([]);
     }

@@ -9,6 +9,7 @@ import type {
   RuntimeEvent,
   ThreadCreateInput,
   ThreadListFilter,
+  ThreadRelation,
   ThreadRecord,
   ThreadSummary,
   ThreadUpdatePatch,
@@ -20,6 +21,27 @@ const THREAD_FILENAME = "thread.json";
 const MESSAGES_FILENAME = "messages.jsonl";
 const EVENTS_FILENAME = "events.jsonl";
 const TMP_SUFFIX = ".tmp";
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const THREAD_RELATIONS: ReadonlySet<ThreadRelation> = new Set(["primary", "fork", "side"]);
+const THREAD_MODES: ReadonlySet<ThreadRecord["mode"]> = new Set(["code", "write"]);
+const THREAD_STATUSES: ReadonlySet<ThreadRecord["status"]> = new Set(["active", "archived"]);
+const APPROVAL_POLICIES: ReadonlySet<ThreadRecord["approvalPolicy"]> = new Set([
+  "auto",
+  "on-request",
+  "untrusted",
+  "never",
+]);
+const SANDBOX_MODES: ReadonlySet<ThreadRecord["sandboxMode"]> = new Set([
+  "read-only",
+  "workspace-write",
+  "danger-full-access",
+]);
+const GOAL_STATUSES: ReadonlySet<NonNullable<ThreadRecord["goal"]>["status"]> = new Set([
+  "active",
+  "complete",
+  "blocked",
+]);
 
 export class JsonlThreadStore {
   private readonly threadsDir: string;
@@ -59,35 +81,52 @@ export class JsonlThreadStore {
   /** 2.3 createThread */
   async createThread(input: ThreadCreateInput): Promise<ThreadRecord> {
     await this.init();
+    const title = optionalTrimmedString(input.title, "title") || "New thread";
+    const workspace = requiredTrimmedString(input.workspace, "workspace");
+    const mode = assertEnum(input.mode, THREAD_MODES, "mode");
+    const relation =
+      input.relation === undefined
+        ? "primary"
+        : assertEnum(input.relation, THREAD_RELATIONS, "relation");
+    const parentThreadId =
+      input.parentThreadId === undefined
+        ? undefined
+        : assertSafeId(input.parentThreadId, "parentThreadId");
     const now = new Date().toISOString();
     const record: ThreadRecord = {
       id: randomUUID(),
-      title: input.title?.trim() || "New thread",
-      workspace: input.workspace,
-      mode: input.mode,
+      title,
+      workspace,
+      mode,
       status: "active",
-      relation: input.relation ?? "primary",
-      ...(input.parentThreadId ? { parentThreadId: input.parentThreadId } : {}),
+      relation,
+      ...(parentThreadId ? { parentThreadId } : {}),
       createdAt: now,
       updatedAt: now,
       approvalPolicy: "on-request",
       sandboxMode: "workspace-write",
     };
-    if (input.relation === "fork" && input.parentThreadId) {
+    if (relation === "fork" && parentThreadId) {
       record.forkedAt = now;
     }
     const threadDir = this.threadDir(record.id);
-    await fs.mkdir(threadDir, { recursive: true });
-    await this.atomicWriteJson(this.threadPath(record.id), record);
-    await fs.writeFile(this.messagesPath(record.id), "", { flag: "a" });
-    await fs.writeFile(this.eventsPath(record.id), "", { flag: "a" });
-    await this.appendToIndex(this.toSummary(record));
+    try {
+      await fs.mkdir(threadDir, { recursive: true });
+      await this.atomicWriteJson(this.threadPath(record.id), record);
+      await fs.writeFile(this.messagesPath(record.id), "", { flag: "a" });
+      await fs.writeFile(this.eventsPath(record.id), "", { flag: "a" });
+      await this.appendToIndex(this.toSummary(record));
+    } catch (error) {
+      await fs.rm(threadDir, { recursive: true, force: true });
+      throw error;
+    }
     return record;
   }
 
   /** 2.4 getThread / listThreads */
   async getThread(id: string): Promise<ThreadRecord | null> {
     await this.init();
+    assertSafeId(id, "Thread id");
     try {
       const raw = await fs.readFile(this.threadPath(id), "utf8");
       return this.normalizeThreadRecord(JSON.parse(raw) as ThreadRecord);
@@ -103,11 +142,13 @@ export class JsonlThreadStore {
     const all = (JSON.parse(indexRaw) as ThreadSummary[]).map((row) =>
       this.normalizeThreadSummary(row),
     );
-    const include = filter.include ?? ["primary", "fork"];
-    const search = filter.search?.trim().toLowerCase() ?? "";
+    const include = normalizeRelationFilter(filter.include);
+    const mode =
+      filter.mode === undefined ? undefined : assertEnum(filter.mode, THREAD_MODES, "mode");
+    const search = optionalTrimmedString(filter.search, "search").toLowerCase();
     return all
       .filter((row) => include.includes(row.relation))
-      .filter((row) => (filter.mode ? row.mode === filter.mode : true))
+      .filter((row) => (mode ? row.mode === mode : true))
       .filter((row) => {
         const status = row.status ?? "active";
         if (filter.archivedOnly) return status === "archived";
@@ -122,12 +163,14 @@ export class JsonlThreadStore {
 
   /** 2.5 appendItem / appendEvent with per-thread mutex + fsync. */
   async appendItem(threadId: string, item: Item): Promise<void> {
+    assertSafeId(threadId, "Thread id");
     return this.serialized(threadId, async () => {
       await this.appendJsonl(this.messagesPath(threadId), item);
     });
   }
 
   async appendEvent(threadId: string, event: RuntimeEvent): Promise<void> {
+    assertSafeId(threadId, "Thread id");
     return this.serialized(threadId, async () => {
       await this.appendJsonl(this.eventsPath(threadId), event);
     });
@@ -135,15 +178,19 @@ export class JsonlThreadStore {
 
   /** 2.6 replay: readline-based, skips malformed lines. */
   async *replayItems(threadId: string): AsyncIterable<Item> {
+    assertSafeId(threadId, "Thread id");
     yield* this.replayJsonl<Item>(this.messagesPath(threadId), "messages");
   }
 
   async *replayEvents(threadId: string): AsyncIterable<RuntimeEvent> {
+    assertSafeId(threadId, "Thread id");
     yield* this.replayJsonl<RuntimeEvent>(this.eventsPath(threadId), "events");
   }
 
   /** 2.7 updateThread: atomic write + index update. */
   async updateThread(id: string, patch: ThreadUpdatePatch): Promise<ThreadRecord> {
+    assertSafeId(id, "Thread id");
+    const normalizedPatch = normalizeThreadPatch(patch);
     return this.serialized(id, async () => {
       const current = await this.getThread(id);
       if (!current) {
@@ -151,14 +198,16 @@ export class JsonlThreadStore {
       }
       const next: ThreadRecord = {
         ...current,
-        ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.approvalPolicy ? { approvalPolicy: patch.approvalPolicy } : {}),
-        ...(patch.sandboxMode ? { sandboxMode: patch.sandboxMode } : {}),
-        ...(patch.status ? { status: patch.status } : {}),
-        ...(patch.goal === null
+        ...(normalizedPatch.title !== undefined ? { title: normalizedPatch.title } : {}),
+        ...(normalizedPatch.approvalPolicy
+          ? { approvalPolicy: normalizedPatch.approvalPolicy }
+          : {}),
+        ...(normalizedPatch.sandboxMode ? { sandboxMode: normalizedPatch.sandboxMode } : {}),
+        ...(normalizedPatch.status ? { status: normalizedPatch.status } : {}),
+        ...(normalizedPatch.goal === null
           ? { goal: undefined }
-          : patch.goal
-            ? { goal: patch.goal }
+          : normalizedPatch.goal
+            ? { goal: normalizedPatch.goal }
             : {}),
         updatedAt: new Date().toISOString(),
       };
@@ -170,6 +219,7 @@ export class JsonlThreadStore {
 
   /** 2.8 forkThread */
   async forkThread(parentId: string): Promise<ThreadRecord> {
+    assertSafeId(parentId, "Thread id");
     const parent = await this.getThread(parentId);
     if (!parent) throw new Error(`Parent thread ${parentId} not found`);
     return this.createThread({
@@ -184,6 +234,7 @@ export class JsonlThreadStore {
   /** 2.9 deleteThread */
   async deleteThread(id: string): Promise<void> {
     await this.init();
+    assertSafeId(id, "Thread id");
     await this.serializedIndex(async () => {
       const indexRaw = await fs.readFile(this.indexPath, "utf8");
       const all = JSON.parse(indexRaw) as ThreadSummary[];
@@ -222,7 +273,7 @@ export class JsonlThreadStore {
   }
 
   private threadDir(id: string): string {
-    return path.join(this.threadsDir, id);
+    return path.join(this.threadsDir, assertSafeId(id, "Thread id"));
   }
 
   private threadPath(id: string): string {
@@ -311,33 +362,13 @@ export class JsonlThreadStore {
   /** 2.10 Per-thread serial mutex. */
   private async serialized<T>(threadId: string, work: () => Promise<T>): Promise<T> {
     const previous = this.mutexes.get(threadId) ?? Promise.resolve();
-    let release: () => void = () => {};
-    const next = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.mutexes.set(
-      threadId,
-      previous.then(() => next),
-    );
-    try {
-      await previous;
-      return await work();
-    } finally {
-      release();
-      // Garbage-collect the slot once the chain drains.
-      if (this.mutexes.get(threadId) === previous.then(() => next)) {
-        // No-op; the next call will replace it.
+    const tail = previous.then(work, work);
+    this.mutexes.set(threadId, tail);
+    return tail.finally(() => {
+      if (this.mutexes.get(threadId) === tail) {
+        this.mutexes.delete(threadId);
       }
-      // Best-effort cleanup after a microtask.
-      queueMicrotask(() => {
-        const current = this.mutexes.get(threadId);
-        if (current && (current as Promise<unknown>).then) {
-          // We can't reliably compare, so leave it. Map will not grow unbounded
-          // for any realistic app — at most one entry per active threadId.
-          void current;
-        }
-      });
-    }
+    });
   }
 
   private serializedIndex<T>(work: () => Promise<T>): Promise<T> {
@@ -345,4 +376,98 @@ export class JsonlThreadStore {
     this.indexQueue = next.catch(() => undefined);
     return next;
   }
+}
+
+function assertSafeId(value: string, label: string): string {
+  if (!UUID_PATTERN.test(value)) {
+    throw new Error(`${label} must be a UUID.`);
+  }
+  return value;
+}
+
+function assertEnum<T extends string>(
+  value: unknown,
+  allowed: ReadonlySet<T>,
+  field: string,
+): T {
+  if (typeof value !== "string" || !allowed.has(value as T)) {
+    throw new Error(`${field} is invalid.`);
+  }
+  return value as T;
+}
+
+function requiredTrimmedString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${field} is required.`);
+  }
+  return value.trim();
+}
+
+function optionalTrimmedString(value: unknown, field: string): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value !== "string") {
+    throw new Error(`${field} must be a string.`);
+  }
+  return value.trim();
+}
+
+function normalizeRelationFilter(value: unknown): ThreadRelation[] {
+  if (value === undefined) return ["primary", "fork"];
+  if (!Array.isArray(value)) {
+    throw new Error("include must be an array.");
+  }
+  return value.map((relation) => assertEnum(relation, THREAD_RELATIONS, "include"));
+}
+
+function normalizeThreadPatch(patch: ThreadUpdatePatch): ThreadUpdatePatch {
+  if (!patch || typeof patch !== "object") {
+    throw new Error("patch is required.");
+  }
+  return {
+    ...(patch.title !== undefined
+      ? { title: optionalTrimmedString(patch.title, "title") || "New thread" }
+      : {}),
+    ...(patch.approvalPolicy !== undefined
+      ? {
+          approvalPolicy: assertEnum(
+            patch.approvalPolicy,
+            APPROVAL_POLICIES,
+            "approvalPolicy",
+          ),
+        }
+      : {}),
+    ...(patch.sandboxMode !== undefined
+      ? { sandboxMode: assertEnum(patch.sandboxMode, SANDBOX_MODES, "sandboxMode") }
+      : {}),
+    ...(patch.status !== undefined
+      ? { status: assertEnum(patch.status, THREAD_STATUSES, "status") }
+      : {}),
+    ...(patch.goal !== undefined ? { goal: normalizeGoal(patch.goal) } : {}),
+  };
+}
+
+function normalizeGoal(value: ThreadUpdatePatch["goal"]): ThreadUpdatePatch["goal"] {
+  if (value === null) return null;
+  if (!value || typeof value !== "object") {
+    throw new Error("goal must be an object or null.");
+  }
+  const text = requiredTrimmedString(value.text, "goal.text");
+  const status = assertEnum(value.status, GOAL_STATUSES, "goal.status");
+  const createdAt = requiredTrimmedString(value.createdAt, "goal.createdAt");
+  const updatedAt = requiredTrimmedString(value.updatedAt, "goal.updatedAt");
+  return {
+    text,
+    status,
+    createdAt,
+    updatedAt,
+    ...(value.completedAt !== undefined
+      ? { completedAt: requiredTrimmedString(value.completedAt, "goal.completedAt") }
+      : {}),
+    ...(value.blockedAt !== undefined
+      ? { blockedAt: requiredTrimmedString(value.blockedAt, "goal.blockedAt") }
+      : {}),
+    ...(value.summary !== undefined
+      ? { summary: optionalTrimmedString(value.summary, "goal.summary") }
+      : {}),
+  };
 }

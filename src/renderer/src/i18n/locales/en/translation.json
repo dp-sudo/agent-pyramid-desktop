@@ -51,7 +51,8 @@
     "error": "Error",
     "activeFile": "Editing: {{path}}",
     "save": "Save",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "searchPlaceholder": "Filter Markdown files"
   },
   "threads": {
     "newChat": "New thread",

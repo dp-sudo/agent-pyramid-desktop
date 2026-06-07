@@ -7,7 +7,7 @@ import { FloatingComposer } from "./components/composer/FloatingComposer";
 import { MessageTimeline } from "./components/chat/MessageTimeline";
 import { RightInspector } from "./components/inspector/RightInspector";
 import { WriteWorkspaceView } from "./components/write/WriteWorkspaceView";
-import type { ThreadRecord } from "../../../shared/agent-contracts";
+import type { IpcResult, ThreadRecord } from "../../../shared/agent-contracts";
 
 export function Workbench(): ReactElement {
   const { t } = useTranslation();
@@ -45,6 +45,14 @@ export function Workbench(): ReactElement {
       if (threadsResult.ok) actions.setThreads(threadsResult.value);
       if (configResult.ok) actions.setModelConfig(configResult.value);
       if (profilesResult.ok) actions.setModelProfiles(profilesResult.value);
+      const initialLoadError = formatInitialLoadErrors([
+        threadsResult,
+        configResult,
+        profilesResult,
+      ]);
+      if (initialLoadError) {
+        actions.setError(initialLoadError);
+      }
     })();
     return () => {
       cancelled = true;
@@ -87,16 +95,6 @@ export function Workbench(): ReactElement {
     return window.agentApi.sse.onEvent(handleRuntimeEvent);
   }, [handleRuntimeEvent]);
 
-  // Subscribe the main process event bus to the active thread.
-  useEffect(() => {
-    if (!state.activeThreadId) return;
-    const threadId = state.activeThreadId;
-    void window.agentApi.sse.subscribe({ threadId });
-    return () => {
-      void window.agentApi.sse.unsubscribe({ threadId });
-    };
-  }, [state.activeThreadId]);
-
   const refreshThreads = useCallback(async () => {
     const result = await window.agentApi.threads.list({
       includeArchived: state.showArchivedThreads,
@@ -107,6 +105,36 @@ export function Workbench(): ReactElement {
       actions.setError(result.message);
     }
   }, [actions, state.showArchivedThreads]);
+
+  const subscribeThreadEvents = useCallback(
+    async (threadId: string): Promise<boolean> => {
+      const result = await window.agentApi.sse.subscribe({ threadId });
+      if (result.ok) return true;
+      actions.setError(result.message);
+      return false;
+    },
+    [actions],
+  );
+
+  const unsubscribeThreadEvents = useCallback(
+    async (threadId: string): Promise<void> => {
+      const result = await window.agentApi.sse.unsubscribe({ threadId });
+      if (!result.ok && result.code !== "SSE_NOT_SUBSCRIBED") {
+        actions.setError(result.message);
+      }
+    },
+    [actions],
+  );
+
+  // Subscribe the main process event bus to the active thread.
+  useEffect(() => {
+    if (!state.activeThreadId) return;
+    const threadId = state.activeThreadId;
+    void subscribeThreadEvents(threadId);
+    return () => {
+      void unsubscribeThreadEvents(threadId);
+    };
+  }, [state.activeThreadId, subscribeThreadEvents, unsubscribeThreadEvents]);
 
   const ensureWorkspaceRoot = useCallback(async (): Promise<string | null> => {
     const current = workspaceRootRef.current.trim();
@@ -199,10 +227,10 @@ export function Workbench(): ReactElement {
       return;
     }
     activeThreadIdRef.current = created.value.id;
-    await window.agentApi.sse.subscribe({ threadId: created.value.id });
+    if (!await subscribeThreadEvents(created.value.id)) return;
     actions.selectThread(created.value as ThreadRecord, []);
     void refreshThreads();
-  }, [actions, refreshThreads, selectThreadById, state.showArchivedThreads]);
+  }, [actions, refreshThreads, selectThreadById, state.showArchivedThreads, subscribeThreadEvents]);
 
   const onNewChat = useCallback(async () => {
     const workspace = await ensureWorkspaceRoot();
@@ -217,11 +245,11 @@ export function Workbench(): ReactElement {
       return;
     }
     activeThreadIdRef.current = result.value.id;
-    await window.agentApi.sse.subscribe({ threadId: result.value.id });
+    if (!await subscribeThreadEvents(result.value.id)) return;
     actions.selectThread(result.value as ThreadRecord, []);
     actions.setError(null);
     void refreshThreads();
-  }, [actions, ensureWorkspaceRoot, refreshThreads]);
+  }, [actions, ensureWorkspaceRoot, refreshThreads, subscribeThreadEvents]);
 
   const onDeleteThread = useCallback(
     async (id: string) => {
@@ -245,13 +273,13 @@ export function Workbench(): ReactElement {
 
       if (state.activeThreadId === id) {
         activeThreadIdRef.current = null;
-        await window.agentApi.sse.unsubscribe({ threadId: id });
+        await unsubscribeThreadEvents(id);
       }
       actions.removeThread(id);
       actions.setError(null);
       await refreshThreads();
     },
-    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, state.threads, t],
+    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, state.threads, t, unsubscribeThreadEvents],
   );
 
   const onArchiveThread = useCallback(
@@ -273,13 +301,13 @@ export function Workbench(): ReactElement {
 
       if (state.activeThreadId === id) {
         activeThreadIdRef.current = null;
-        await window.agentApi.sse.unsubscribe({ threadId: id });
+        await unsubscribeThreadEvents(id);
         actions.deselectThread();
       }
       actions.setError(null);
       await refreshThreads();
     },
-    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, t],
+    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, t, unsubscribeThreadEvents],
   );
 
   const onRestoreThread = useCallback(
@@ -326,7 +354,7 @@ export function Workbench(): ReactElement {
         threadId = threadResult.value.id;
         activeThreadIdRef.current = threadId;
         actions.selectThread(threadResult.value as ThreadRecord, []);
-        await window.agentApi.sse.subscribe({ threadId });
+        if (!await subscribeThreadEvents(threadId)) return false;
         void refreshThreads();
       }
 
@@ -376,19 +404,30 @@ export function Workbench(): ReactElement {
     actions,
     ensureWorkspaceRoot,
     refreshThreads,
+    subscribeThreadEvents,
     t,
   ]);
 
   const onInterrupt = useCallback(async () => {
     if (!state.inFlightTurn) return;
-    await window.agentApi.turns.interrupt(state.inFlightTurn.id, { force: true });
-  }, [state.inFlightTurn]);
+    const result = await window.agentApi.turns.interrupt(state.inFlightTurn.id, { force: true });
+    if (result.ok) {
+      actions.setError(null);
+    } else {
+      actions.setError(result.message);
+    }
+  }, [actions, state.inFlightTurn]);
 
   const onApprove = useCallback(
     async (approvalId: string, decision: "allow" | "deny") => {
-      await window.agentApi.approvals.respond({ approvalId, decision });
+      const result = await window.agentApi.approvals.respond({ approvalId, decision });
+      if (result.ok) {
+        actions.setError(null);
+      } else {
+        actions.setError(result.message);
+      }
     },
-    [],
+    [actions],
   );
 
   const onOpenSettings = useCallback(() => {
@@ -489,4 +528,11 @@ export function Workbench(): ReactElement {
       </main>
     </>
   );
+}
+
+export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): string | null {
+  const messages = results
+    .filter((result) => !result.ok)
+    .map((result) => result.message);
+  return messages.length > 0 ? messages.join("\n") : null;
 }

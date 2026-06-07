@@ -6,7 +6,6 @@ import { ModelConfigStore } from "./persistence/model-config-store.js";
 import { RuntimeEventBus } from "./event-bus.js";
 import { LlmWorkerPool } from "./infrastructure/llm-worker/worker-pool.js";
 import { AgentRuntime } from "./application/agent-runtime.js";
-import { MiniMaxGateway } from "./infrastructure/minimax/minimax-gateway.js";
 import { echoTool } from "./application/tools/echo-tool.js";
 import { createPlanTool } from "./application/tools/create-plan-tool.js";
 import { createGoalTools } from "./application/tools/goal-tools.js";
@@ -57,7 +56,6 @@ for (const tool of createGoalTools({
 }
 
 let mainWindow: BrowserWindow | null = null;
-const debugErrors: unknown[] = [];
 
 // ---------------------------------------------------------------------------
 // Window
@@ -166,20 +164,14 @@ app.on("before-quit", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3.16 Dev-only: surface uncaught errors into the index file for postmortem.
+// Dev-only: surface uncaught errors in the main process log for postmortem.
 // ---------------------------------------------------------------------------
 
 setImmediate(() => {
   process.on("uncaughtException", (error) => {
     console.error("[main] uncaughtException:", error);
-    debugErrors.push({ kind: "uncaughtException", message: error.message, stack: error.stack });
   });
   process.on("unhandledRejection", (reason) => {
     console.error("[main] unhandledRejection:", reason);
-    debugErrors.push({ kind: "unhandledRejection", message: String(reason) });
   });
 });
-
-// Re-export the MiniMaxGateway only to keep tree-shaking honest when
-// tools start importing MiniMax types via gateway constructors.
-export { MiniMaxGateway };

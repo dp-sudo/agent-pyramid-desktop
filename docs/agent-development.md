@@ -104,7 +104,7 @@
 - 新建 `src/main/infrastructure/llm-worker/`：`protocol.ts`（WorkerInbound/Outbound 类型）+ `worker.ts`（调用 MiniMax 网关、流式 delta、cancel via AbortController）+ `worker-pool.ts`（按 threadId 路由到固定 worker）。
 - 新建 `src/main/application/agent-runtime.ts`：多 turn 编排器，`startTurn / interruptTurn / resumeThread / respondApproval`，含 approval gate。
 - 新建 `src/main/ipc/{threads,turns,sse,approvals,write}-handlers.ts`：5 个 IPC 注册文件。
-- 重写 `src/main/index.ts`：组装 store + runtime + pool + bus + 全部 handler；`window-all-closed` 优雅关 worker；`uncaughtException` 收集到 `debugErrors[]`（开发期）。
+- 重写 `src/main/index.ts`：组装 store + runtime + pool + bus + 全部 handler；`window-all-closed` 优雅关 worker；`uncaughtException` / `unhandledRejection` 写入主进程日志（开发期）。
 - 旧单次运行编排器与 trace 机制已无主路径入口，当前已移除。
 
 ### 预加载
@@ -137,7 +137,7 @@
 - **R2（design.md 风险）**：未引入 zod，改用 TypeScript 原生类型守卫（行为等价，可后续迁移）。
 - **R3**：已在 2026-06-07 的测试补充中引入 Vitest，并补充 `JsonlThreadStore` 自动化测试。
 - **手动冒烟（task 5.12）**：未做交互式验证。`npm run dev` 启动后可见三段式空骨架；点击“New thread”后会通过 IPC 写 JSONL。
-- 老的空目录 `src/renderer/src/ui/components/{composer,topbar,sidebar,main,settings,icons}` 在新代码落地后仍有同名子目录，新旧共存；新代码全部位于 `src/renderer/src/ui/components/{primitives,sidebar,topbar,composer,chat,inspector,write}` 下。
+- 老的空目录 `src/renderer/src/ui/components/{main,icons}` 已清理；当前 UI 组件集中在 `src/renderer/src/ui/components/{primitives,sidebar,topbar,composer,chat,inspector,write,settings}` 下。
 
 ### 下一阶段候选
 
@@ -166,7 +166,7 @@
 - 稳定 LLM 请求前缀：`AgentRuntime` 的基础 `systemPrompt` 固定不再拼入 plan/goal/current goal 等运行态内容；这些动态指令改为插入到当前用户消息之前的后置 system message，降低首段 prefix 漂移。
 - 稳定工具 catalog：`MiniMaxGateway` 在发送 OpenAI-compatible 与 Anthropic-compatible tools 前，按工具名排序并递归排序 `inputSchema` key，避免同一工具集合因注册顺序或 schema key 顺序不同破坏 provider prefix cache。
 - 增加发送前 history hygiene：`AgentRuntime` 会在构造模型请求时压缩历史中的超大工具结果、长字符串参数、base64 参数和超长数组；该处理只影响发给模型的 `LlmRequest.messages`，不改写 JSONL 持久化历史。
-- `model_auto_compact_token_limit` 现在参与发送前消息预算：当估算请求 token 超过阈值时，运行时会保留最近动态消息和当前用户输入，丢弃更早动态消息；这是轻量级保护，不替代后续可由模型生成摘要的完整上下文压缩器。
+- `model_auto_compact_token_limit` 现在参与发送前消息预算：运行时会从 `model_auto_compact_token_limit`、`model_context_window - max_tokens` 和 0.95 safety ratio 解析有效输入预算；当 `max_tokens >= model_context_window` 时会保守夹到最小输入预算而不是放大为完整上下文窗口。超预算时先做历史 tool result / 参数 hygiene，再按消息段裁剪旧动态历史，最后对必须保留的当前上下文做渐进式 UTF-8 安全压缩，并用 `[context budget: ...]` 标记被省略内容。该处理只影响发给模型的请求，不改写 JSONL 持久化历史，也不替代后续可由模型生成摘要的完整上下文压缩器。
 - 验证方式：`npm test -- tests/main/infrastructure/minimax-types.test.ts tests/main/infrastructure/minimax-gateway.test.ts tests/main/application/agent-runtime.test.ts tests/main/ipc/usage-handlers.test.ts`、`npm run typecheck`、`npm run build`。
 
 ### 2026-06-07 二次优化
@@ -235,6 +235,42 @@
 - 新增渲染端 Markdown 支持：`AssistantMarkdown` 使用 `react-markdown` + `remark-gfm` 渲染段落、列表、代码块和表格；新增中英文 `chat` 文案与 `shell.css` 中的 Markdown / 工作过程样式。
 - 新增测试覆盖：`tests/renderer/timeline-model.test.ts` 覆盖 turn 分组与工具摘要，`tests/main/application/tools.test.ts` 覆盖工作区只读工具边界，`tests/main/application/agent-runtime.test.ts` 覆盖工具结果回灌后的二次模型请求。
 - 验证方式：`npm run typecheck`、`npm run test`；`npm run build`。
+
+## 2026-06-08 - 写作文件服务边界与死代码清理
+
+- 修复 `write` IPC 文件服务：`write.list/get/put` 现在统一拒绝 `.git`、`.idea`、`.vscode`、`DeepSeek`、`dist`、`node_modules`、`out` 等非项目源码或构建目录，避免 Write 模式列出或写入第三方参考资料与构建产物。
+- 加固 `write.get/put` 路径边界：读写前会校验目标或最近存在父目录的 realpath 仍位于 workspace 内，防止工作区内符号链接指向外部文件后被读取或覆盖。
+- 修复 `write.list` 目录遍历错误处理：无法读取工作区或子目录时不再静默返回空结果，而是通过 `WRITE_LIST_FAILED` envelope 暴露可追踪错误。
+- 完善 Write 模式基础交互：文件列表支持搜索过滤，编辑器按 800ms debounce 自动保存，`write.complete` 提供本地 Markdown 列表/引用续写建议，渲染端支持 650ms completion debounce、Tab 接受与 Escape 取消。
+- 修复 Write 模式自动保存竞态：同一文件保存请求串行化，保存中继续编辑会在前一轮完成后再写入最新内容，避免旧请求晚返回覆盖新内容。
+- 修复 Write 模式文件搜索竞态：`write.list` 搜索/刷新请求现在按渲染端请求序号只应用最新响应，避免慢返回的旧搜索结果覆盖新文件列表。
+- 修复 approval IPC 边界：`approval:respond` 现在统一返回 `IpcResult` envelope，非法 decision 和不存在的 approvalId 会返回可追踪错误，渲染端会把失败显示到现有错误区域，不再静默当作成功。
+- 修复 usage 统计缓存边界：`usage:daily` 的短 TTL 缓存现在按 `JsonlThreadStore` 实例隔离，避免测试、多实例或未来多数据目录场景中按 days 复用导致统计串数据。
+- 修复 `JsonlThreadStore` per-thread mutex 清理 no-op：串行队列完成后会按 tail Promise 引用删除对应 threadId 槽，避免长期操作大量线程后保留已完成队列。
+- 修复 SSE 订阅生命周期：同一 `webContents` 反复切换 thread subscription 时会清理上一条 destroyed listener，避免窗口销毁监听器累积。
+- 修复 LLM worker 退出路径：`LlmWorkerPool.chat()` 现在监听当前请求的 worker `exit`，worker 异常退出但未发送错误消息时会 reject 并释放请求状态，避免 turn 永久悬挂。
+- 补充 AgentRuntime 同线程并发门禁测试：同一 thread 已有 in-flight turn 时，第二个 `startTurn()` 会在追加用户消息前以 `RUNTIME_TURN_BUSY` 失败。
+- 修复 AgentRuntime 启动失败清理：`startTurn()` 在追加初始用户消息失败时会清理 in-flight 状态并发出 `persistence_error` / `turn_failed`，避免线程永久 busy。
+- 修复 AgentRuntime 中断竞态：`interruptTurn()` 现在先将内存 turn 状态标记为 interrupted，再取消 worker；如果 cancel 让 worker 请求立即 abort，后台循环会按用户中断收尾而不是误报 failed。中断提示项写入失败会发出 `persistence_error`，但仍继续完成 interrupted 状态清理。
+- 修复 approval 决策持久化错误可见性：resolved approval item 写入失败不再 fire-and-forget 静默丢失，会发出 `persistence_error`，同时继续 resolve 决策避免 turn 卡住。
+- 修复 renderer IPC 结果处理：Workbench 现在检查 `sse.subscribe`、`sse.unsubscribe` 和 `turns.interrupt` 的 `IpcResult`，订阅或中断失败会显示到现有错误区域。
+- 修复 Workbench 初始加载错误可见性：启动时 `threads.list`、`modelConfig.get`、`modelConfig.listProfiles` 的失败不再被静默忽略，会合并显示到现有错误区域。
+- 修复 FloatingComposer 草稿同步：Code composer 会跟随全局 `composer.text` 更新，避免 Write 模式写入草稿后切回 Code 仍显示旧本地 draft。
+- 修复模型选择器高亮：当多个 profile 使用同一 model 字符串时，Composer 优先按 `modelProfileId` 高亮唯一档案，避免多 profile 同时显示为选中。
+- 修复模型 profile 状态同步：`WorkbenchContext` 会在 active profile 真实切换或当前 profile 被删除时同步 composer 到新 active profile；普通 profile 列表刷新会保留用户当前有效选择，并刷新该 profile 的最新模型和 reasoning 配置，避免 `model` 文本与 `modelProfileId` 错位。
+- 修复附件存储输入校验：`AttachmentStore` 现在严格校验 `dataBase64`，非法 base64 不会被 `Buffer.from(..., "base64")` 宽松解码后保存为损坏附件。
+- 修复附件创建失败副产物：`AttachmentStore.create()` 在附件二进制写入后如果索引更新失败，会删除刚创建的 `.bin` 文件并原样抛出错误，避免留下孤儿附件。
+- 加固本地持久化 ID 边界：`JsonlThreadStore` 和 `AttachmentStore` 在解析 thread / attachment 本地路径前校验 UUID，阻止 renderer 或损坏数据传入 `../` 之类路径片段访问、写入或删除持久化目录外文件。
+- 加固线程持久化输入校验：`JsonlThreadStore.createThread/listThreads/updateThread` 现在会在写入或过滤前校验 workspace、mode、relation、status、approvalPolicy、sandboxMode、goal 等运行时输入，避免坏 IPC 数据写入 index/thread JSON。
+- 修复线程创建失败副产物：`JsonlThreadStore.createThread()` 在新线程目录和 JSONL 文件创建后，如果索引写入失败，会删除本次新建线程目录并原样抛出错误，避免留下未索引线程数据。
+- 加固 workspace 工具符号链接边界：`list_files` 和 `search_files` 会跳过符号链接条目，避免通过工作区内 symlink 暴露或遍历工作区外内容；`read_file` 继续使用 realpath 校验阻止 symlink 文件读取越界。
+- 修复 OpenAI-compatible 流式工具调用收尾：provider 以 `stop` 或 `[DONE]` 结束但已发送完整 tool call delta 时，`MiniMaxGateway` 会 flush pending tool call，避免 runtime 静默丢失工具调用。
+- 修复 Anthropic-compatible 流式工具调用收尾：兼容服务缺少 `content_block_stop` 但以 `message_delta` / `[DONE]` 结束时，`MiniMaxGateway` 会 flush 已累积的 pending tool call。
+- 修复 LLM SSE reader 清理可追踪性：释放 SSE reader lock 失败时会记录带上下文的 warning，不再使用静默空 catch 分支。
+- 修复工具注册边界：`InMemoryToolRegistry.register()` 现在拒绝重复工具名，避免组合根或测试接线错误被后注册工具静默覆盖。
+- 清理未使用的 worker protocol helper、worker-pool 类型守卫和 main 入口的无消费者 gateway re-export。
+- 新增 `tests/main/ipc/write-handlers.test.ts` 覆盖 Markdown 列表过滤、path escape、跳过目录策略和不可读工作区错误。
+- 验证方式：`npm test`、`npm run typecheck`、`npm run build`。
 
 ## 2026-06-07 - 旧单次运行入口下线
 

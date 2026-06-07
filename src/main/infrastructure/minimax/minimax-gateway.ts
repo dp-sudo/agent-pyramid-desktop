@@ -173,6 +173,9 @@ export class MiniMaxGateway implements LlmGateway {
       }
     }
 
+    for (const toolCall of toolAccumulator.completeAll()) {
+      yield { kind: "tool_call_completed", toolCall };
+    }
     const stopReason = mapOpenAiStopReason(finishReason);
     yield { kind: "completed", stopReason };
   }
@@ -225,6 +228,9 @@ export class MiniMaxGateway implements LlmGateway {
       }
     }
 
+    for (const toolCall of toolAccumulator.completeAll()) {
+      yield { kind: "tool_call_completed", toolCall };
+    }
     yield { kind: "completed", stopReason };
   }
 }
@@ -376,6 +382,17 @@ class AnthropicToolCallAccumulator {
       name: pending.name,
       arguments: parseToolArguments(pending.argumentsText || "{}", pending.name)
     };
+  }
+
+  completeAll(): AgentToolCall[] {
+    const calls: AgentToolCall[] = [];
+    for (const index of this.pendingByIndex.keys()) {
+      const toolCall = this.complete(index);
+      if (toolCall) {
+        calls.push(toolCall);
+      }
+    }
+    return calls;
   }
 }
 
@@ -861,8 +878,8 @@ async function* readSseJson(
   } finally {
     try {
       reader.releaseLock();
-    } catch {
-      // The stream may already be closed.
+    } catch (error) {
+      console.warn("[minimax] failed to release SSE reader lock:", error);
     }
   }
 }

@@ -11,6 +11,8 @@ const ATTACHMENTS_DIRNAME = "attachments";
 const INDEX_FILENAME = "index.json";
 const TMP_SUFFIX = ".tmp";
 const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -72,15 +74,22 @@ export class AttachmentStore {
       createdAt: now,
     };
     return this.serialized(async () => {
-      await fs.writeFile(this.attachmentPath(record.id), data);
-      const all = await this.readIndex();
-      await this.atomicWriteJson([...all, record]);
+      const filePath = this.attachmentPath(record.id);
+      await fs.writeFile(filePath, data);
+      try {
+        const all = await this.readIndex();
+        await this.atomicWriteJson([...all, record]);
+      } catch (error) {
+        await fs.rm(filePath, { force: true });
+        throw error;
+      }
       return record;
     });
   }
 
   async get(id: string): Promise<AttachmentContent | null> {
     await this.init();
+    assertSafeId(id, "Attachment id");
     const record = (await this.list()).find((item) => item.id === id);
     if (!record) return null;
     try {
@@ -97,6 +106,7 @@ export class AttachmentStore {
 
   async delete(id: string): Promise<void> {
     await this.init();
+    assertSafeId(id, "Attachment id");
     await this.serialized(async () => {
       const all = await this.readIndex();
       const next = all.filter((item) => item.id !== id);
@@ -121,7 +131,7 @@ export class AttachmentStore {
   }
 
   private attachmentPath(id: string): string {
-    return path.join(this.attachmentsDir, `${id}.bin`);
+    return path.join(this.attachmentsDir, `${assertSafeId(id, "Attachment id")}.bin`);
   }
 
   private async atomicWriteJson(value: AttachmentRecord[]): Promise<void> {
@@ -143,6 +153,13 @@ export class AttachmentStore {
   }
 }
 
+function assertSafeId(value: string, label: string): string {
+  if (!UUID_PATTERN.test(value)) {
+    throw new Error(`${label} must be a UUID.`);
+  }
+  return value;
+}
+
 function assertSafeName(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error("Attachment name is required.");
@@ -161,7 +178,15 @@ function decodeBase64(value: unknown): Buffer {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error("Attachment dataBase64 is required.");
   }
-  return Buffer.from(value, "base64");
+  const normalized = value.replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
+    throw new Error("Attachment dataBase64 must be valid base64.");
+  }
+  const data = Buffer.from(normalized, "base64");
+  if (data.byteLength === 0 || data.toString("base64") !== normalized) {
+    throw new Error("Attachment dataBase64 must be valid base64.");
+  }
+  return data;
 }
 
 function isAttachmentRecord(value: unknown): value is AttachmentRecord {

@@ -1,11 +1,8 @@
 /* ============================================================================
  * Design Tokens — Agent Workbench
  *
- * Mirrors DeepSeek-GUI's `--ds-*` naming convention (see
- * DeepSeek-GUI-master/src/renderer/src/styles/base-shell.css:1-200) so the
- * two codebases can be diffed easily. Values come from
- * DeepSeek-GUI-master/DESIGN.md frontmatter, adjusted for our two-surface
- * shell + workbench grammar.
+ * Uses this project's `--ds-*` token namespace for the two-surface shell +
+ * workbench grammar. Keep these values synchronized with docs/ui-design.md.
  *
  * Theme switching: data-theme="light" | "dark" on <html>. A JS shim writes
  * the attribute synchronously from localStorage on app boot.
@@ -144,7 +141,7 @@
     0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
-/* Platform safe-area insets. Mirrors DeepSeek base-shell.css:94-104. */
+/* Platform safe-area insets for native window controls. */
 :root[data-platform="darwin"] {
   --ds-window-controls-safe-block: 42px;
   --ds-window-controls-safe-inset: 56px;

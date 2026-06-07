@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AttachmentStore } from "../../../src/main/persistence/attachment-store";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
@@ -63,6 +65,51 @@ describe("AttachmentStore", () => {
       }),
     ).rejects.toThrow("Only PNG, JPEG, WebP, and GIF images are supported.");
 
-    await expect(store.delete("missing")).rejects.toThrow("Attachment missing not found.");
+    await expect(store.delete("00000000-0000-4000-8000-000000000000"))
+      .rejects.toThrow("Attachment 00000000-0000-4000-8000-000000000000 not found.");
+  });
+
+  it("rejects invalid base64 payloads instead of storing decoded garbage", async () => {
+    await expect(
+      store.create({
+        name: "broken.png",
+        mimeType: "image/png",
+        dataBase64: "not-base64",
+      }),
+    ).rejects.toThrow("Attachment dataBase64 must be valid base64.");
+
+    await expect(
+      store.create({
+        name: "empty.png",
+        mimeType: "image/png",
+        dataBase64: "!!!!",
+      }),
+    ).rejects.toThrow("Attachment dataBase64 must be valid base64.");
+  });
+
+  it("removes the attachment blob if indexing the new record fails", async () => {
+    await store.init();
+    await fs.rm(path.join(userDataDir, "attachments", "index.json"));
+    await fs.mkdir(path.join(userDataDir, "attachments", "index.json"));
+
+    await expect(
+      store.create({
+        name: "avatar.png",
+        mimeType: "image/png",
+        dataBase64: ONE_PIXEL_PNG_BASE64,
+      }),
+    ).rejects.toThrow();
+
+    const entries = await fs.readdir(path.join(userDataDir, "attachments"));
+    expect(entries.filter((entry) => entry.endsWith(".bin"))).toEqual([]);
+  });
+
+  it("rejects non-UUID attachment ids before resolving blob paths", async () => {
+    await expect(store.get("../outside")).rejects.toThrow("Attachment id must be a UUID.");
+    await expect(store.delete("../outside")).rejects.toThrow("Attachment id must be a UUID.");
+
+    const outsidePath = path.join(userDataDir, "outside.bin");
+    await fs.writeFile(outsidePath, "do not delete", "utf8");
+    await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("do not delete");
   });
 });

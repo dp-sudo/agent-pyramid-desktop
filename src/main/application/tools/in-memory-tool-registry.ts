@@ -16,6 +16,9 @@ export class InMemoryToolRegistry implements ToolRegistry {
   }
 
   register(tool: AgentTool): void {
+    if (this.tools.has(tool.definition.name)) {
+      throw new Error(`Tool "${tool.definition.name}" is already registered.`);
+    }
     this.tools.set(tool.definition.name, tool);
   }
 

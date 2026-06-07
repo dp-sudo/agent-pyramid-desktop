@@ -17,7 +17,7 @@ interface UsageCacheEntry {
   promise: Promise<UsageDailyBucket[]>;
 }
 
-const usageCache = new Map<number, UsageCacheEntry>();
+const usageCache = new WeakMap<JsonlThreadStore, Map<number, UsageCacheEntry>>();
 
 export function registerUsageHandlers(store: JsonlThreadStore): void {
   ipcMain.handle(USAGE_DAILY_CHANNEL, async (_event, request?: UsageDailyRequest) => {
@@ -35,22 +35,31 @@ export async function collectCachedDailyUsage(
 ): Promise<UsageDailyBucket[]> {
   const days = clampDays(daysInput);
   const now = Date.now();
-  const cached = usageCache.get(days);
+  const storeCache = getUsageCacheForStore(store);
+  const cached = storeCache.get(days);
   if (cached && cached.expiresAt > now) {
     return cached.promise;
   }
 
   const promise = collectDailyUsageForDays(store, days).catch((error: unknown) => {
-    if (usageCache.get(days)?.promise === promise) {
-      usageCache.delete(days);
+    if (storeCache.get(days)?.promise === promise) {
+      storeCache.delete(days);
     }
     throw error;
   });
-  usageCache.set(days, {
+  storeCache.set(days, {
     expiresAt: now + USAGE_CACHE_TTL_MS,
     promise,
   });
   return promise;
+}
+
+function getUsageCacheForStore(store: JsonlThreadStore): Map<number, UsageCacheEntry> {
+  const existing = usageCache.get(store);
+  if (existing) return existing;
+  const next = new Map<number, UsageCacheEntry>();
+  usageCache.set(store, next);
+  return next;
 }
 
 export async function collectDailyUsage(

@@ -1,5 +1,4 @@
 import type { LlmRequest, LlmResponse, LlmStreamChunk } from "../../domain/agent/types.js";
-import type { LlmProtocol } from "../../../shared/agent-contracts.js";
 
 /** A chunk emitted while the model is streaming a chat completion. */
 export interface StreamChunk {
@@ -38,8 +37,3 @@ export interface WorkerCancelMessage {
 }
 
 export type WorkerInbound = WorkerChatRequest | WorkerCancelMessage;
-
-/** Minimal echo of an inbound request — useful for trace logs. */
-export function describeProtocol(protocol: LlmProtocol): string {
-  return protocol === "openai-compatible" ? "openai" : "anthropic";
-}

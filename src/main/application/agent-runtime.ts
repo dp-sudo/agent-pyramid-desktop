@@ -50,7 +50,7 @@ interface PendingApproval {
   turnId: string;
   toolName: string;
   args: Record<string, unknown>;
-  resolve: (decision: "allow" | "deny") => void;
+  resolve: (decision: "allow" | "deny") => void | Promise<void>;
 }
 
 const SYSTEM_PROMPT = [
@@ -84,7 +84,11 @@ const TOOL_ARGUMENT_STRING_MAX_BYTES = 8 * 1024;
 const TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES = 2 * 1024;
 const TOOL_ARGUMENT_ARRAY_MAX_ITEMS = 80;
 const TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS = 24;
-const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
+const TIGHT_SYSTEM_MESSAGE_MAX_BYTES = 4 * 1024;
+const TIGHT_ASSISTANT_MESSAGE_MAX_BYTES = 8 * 1024;
+const TIGHT_USER_MESSAGE_MAX_BYTES = 16 * 1024;
+const MIN_PROGRESSIVE_COMPACTION_BYTES = 128;
+const TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4;
 const MIN_TEXT_COMPACTION_BYTES = 512;
 const MAX_PROGRESSIVE_COMPACTION_PASSES = 24;
 
@@ -145,19 +149,39 @@ export class AgentRuntime {
       ...(attachments.length > 0 ? { attachments } : {}),
       createdAt: new Date().toISOString(),
     };
-    await this.deps.store.appendItem(turn.threadId, userItem);
-    this.deps.bus.emit("item_appended", {
-      kind: "item_appended",
-      threadId: turn.threadId,
-      turnId: turn.id,
-      item: userItem,
-    });
-    this.deps.bus.emit("turn_started", {
-      kind: "turn_started",
-      threadId: turn.threadId,
-      turnId: turn.id,
-      startedAt: turn.startedAt,
-    });
+    try {
+      await this.deps.store.appendItem(turn.threadId, userItem);
+      this.deps.bus.emit("item_appended", {
+        kind: "item_appended",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: userItem,
+      });
+      this.deps.bus.emit("turn_started", {
+        kind: "turn_started",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        startedAt: turn.startedAt,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.inFlight.delete(turn.id);
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "persistence_error",
+        message,
+      });
+      this.deps.bus.emit("turn_failed", {
+        kind: "turn_failed",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        message,
+        failedAt: new Date().toISOString(),
+      });
+      throw error;
+    }
 
     // Run the loop in the background; return the turn record immediately.
     void this.runTurn(turn, thread, request.text, attachmentIds, modelConfig);
@@ -167,6 +191,7 @@ export class AgentRuntime {
   async interruptTurn(turnId: string): Promise<void> {
     const turn = this.inFlight.get(turnId);
     if (!turn) return;
+    turn.status = "interrupted";
     this.resolvePendingApprovalsForTurn(turnId, "deny");
     this.deps.pool.cancel(turn.threadId);
     const item: SystemItem = {
@@ -178,13 +203,23 @@ export class AgentRuntime {
       level: "warn",
       createdAt: new Date().toISOString(),
     };
-    await this.deps.store.appendItem(turn.threadId, item);
-    this.deps.bus.emit("item_appended", {
-      kind: "item_appended",
-      threadId: turn.threadId,
-      turnId: turn.id,
-      item,
-    });
+    try {
+      await this.deps.store.appendItem(turn.threadId, item);
+      this.deps.bus.emit("item_appended", {
+        kind: "item_appended",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item,
+      });
+    } catch (error) {
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "persistence_error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
     await this.markTurnStatus(turn, "interrupted");
   }
 
@@ -193,8 +228,13 @@ export class AgentRuntime {
   }
 
   respondApproval(approval: ApprovalRespondRequest): void {
+    if (approval.decision !== "allow" && approval.decision !== "deny") {
+      throw new Error("Approval decision must be allow or deny.");
+    }
     const pending = this.pendingApprovals.get(approval.approvalId);
-    if (!pending) return;
+    if (!pending) {
+      throw new Error(`Approval ${approval.approvalId} is not pending.`);
+    }
     pending.resolve(approval.decision);
     this.pendingApprovals.delete(approval.approvalId);
   }
@@ -362,7 +402,9 @@ export class AgentRuntime {
       messages: prepareMessagesForRequest(messages, {
         systemPrompt,
         tools,
-        tokenLimit: modelConfig.model_auto_compact_token_limit,
+        compactTokenLimit: modelConfig.model_auto_compact_token_limit,
+        contextWindow: modelConfig.model_context_window,
+        maxTokens: modelConfig.max_tokens,
       }),
       tools,
       maxTokens: modelConfig.max_tokens,
@@ -714,14 +756,26 @@ export class AgentRuntime {
             decision,
             resolvedAt: new Date().toISOString(),
           };
-          void this.deps.store.appendItem(turn.threadId, item);
-          this.deps.bus.emit("item_updated", {
-            kind: "item_updated",
-            threadId: turn.threadId,
-            turnId: turn.id,
-            item,
-          });
-          resolve(decision);
+          void (async () => {
+            try {
+              await this.deps.store.appendItem(turn.threadId, item);
+            } catch (error) {
+              this.deps.bus.emit("runtime_error", {
+                kind: "runtime_error",
+                threadId: turn.threadId,
+                turnId: turn.id,
+                code: "persistence_error",
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
+            this.deps.bus.emit("item_updated", {
+              kind: "item_updated",
+              threadId: turn.threadId,
+              turnId: turn.id,
+              item,
+            });
+            resolve(decision);
+          })();
         },
       });
       this.deps.bus.emit("approval_requested", {
@@ -1013,17 +1067,96 @@ function prepareMessagesForRequest(
   options: {
     systemPrompt: string;
     tools: AgentToolDefinition[];
-    tokenLimit: number;
+    compactTokenLimit: number;
+    contextWindow: number;
+    maxTokens: number;
   },
 ): AgentMessage[] {
-  const hygienic = applyRequestHistoryHygiene(messages);
-  if (estimateRequestTokens(options.systemPrompt, hygienic, options.tools) <= options.tokenLimit) {
-    return hygienic;
+  const budget = resolveContextBudget(options);
+  let prepared = applyRequestHistoryHygiene(messages, DEFAULT_REQUEST_HYGIENE_PROFILE);
+  if (isWithinRequestBudget(prepared, budget)) {
+    return prepared;
   }
-  return trimOldestDynamicMessages(hygienic, options);
+
+  prepared = trimOldestDynamicMessages(prepared, budget);
+  if (isWithinRequestBudget(prepared, budget)) {
+    return prepared;
+  }
+
+  prepared = applyRequestHistoryHygiene(prepared, TIGHT_REQUEST_HYGIENE_PROFILE);
+  if (isWithinRequestBudget(prepared, budget)) {
+    return prepared;
+  }
+
+  prepared = trimOldestDynamicMessages(prepared, budget);
+  if (isWithinRequestBudget(prepared, budget)) {
+    return prepared;
+  }
+
+  return compactMandatoryMessagesToFit(prepared, budget);
 }
 
-function applyRequestHistoryHygiene(messages: AgentMessage[]): AgentMessage[] {
+interface ContextBudgetOptions {
+  systemPrompt: string;
+  tools: AgentToolDefinition[];
+  compactTokenLimit: number;
+  contextWindow: number;
+  maxTokens: number;
+}
+
+interface ResolvedContextBudget {
+  systemPrompt: string;
+  tools: AgentToolDefinition[];
+  tokenLimit: number;
+}
+
+interface RequestHygieneProfile {
+  toolResultMaxLines: number;
+  toolResultMaxBytes: number;
+  toolArgumentStringMaxBytes: number;
+  toolArgumentArrayMaxItems: number;
+}
+
+const DEFAULT_REQUEST_HYGIENE_PROFILE: RequestHygieneProfile = {
+  toolResultMaxLines: TOOL_RESULT_MAX_LINES,
+  toolResultMaxBytes: TOOL_RESULT_MAX_BYTES,
+  toolArgumentStringMaxBytes: TOOL_ARGUMENT_STRING_MAX_BYTES,
+  toolArgumentArrayMaxItems: TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
+};
+
+const TIGHT_REQUEST_HYGIENE_PROFILE: RequestHygieneProfile = {
+  toolResultMaxLines: TIGHT_TOOL_RESULT_MAX_LINES,
+  toolResultMaxBytes: TIGHT_TOOL_RESULT_MAX_BYTES,
+  toolArgumentStringMaxBytes: TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES,
+  toolArgumentArrayMaxItems: TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
+};
+
+function resolveContextBudget(options: ContextBudgetOptions): ResolvedContextBudget {
+  const configuredLimit = Math.max(1, options.compactTokenLimit);
+  const contextWindow = Math.max(1, options.contextWindow);
+  const maxOutputTokens = Math.max(0, options.maxTokens);
+  const availableInputTokens = Math.max(1, contextWindow - maxOutputTokens);
+  return {
+    systemPrompt: options.systemPrompt,
+    tools: options.tools,
+    tokenLimit: Math.max(
+      1,
+      Math.floor(Math.min(configuredLimit, availableInputTokens) * CONTEXT_BUDGET_SAFETY_RATIO),
+    ),
+  };
+}
+
+function isWithinRequestBudget(
+  messages: AgentMessage[],
+  budget: ResolvedContextBudget,
+): boolean {
+  return estimateRequestTokens(budget.systemPrompt, messages, budget.tools) <= budget.tokenLimit;
+}
+
+function applyRequestHistoryHygiene(
+  messages: AgentMessage[],
+  profile: RequestHygieneProfile,
+): AgentMessage[] {
   let changed = false;
   const completedToolCallIds = new Set(
     messages
@@ -1032,7 +1165,7 @@ function applyRequestHistoryHygiene(messages: AgentMessage[]): AgentMessage[] {
   );
   const next = messages.map((message) => {
     if (message.role === "tool") {
-      const content = compactToolResultContent(message.content);
+      const content = compactToolResultContent(message.content, profile);
       if (content === message.content) return message;
       changed = true;
       return { ...message, content };
@@ -1042,7 +1175,7 @@ function applyRequestHistoryHygiene(messages: AgentMessage[]): AgentMessage[] {
       let toolCallsChanged = false;
       const toolCalls = message.toolCalls.map((call) => {
         if (!completedToolCallIds.has(call.id)) return call;
-        const compactedArguments = compactToolArguments(call.arguments);
+        const compactedArguments = compactToolArguments(call.arguments, profile);
         if (compactedArguments === call.arguments) return call;
         changed = true;
         toolCallsChanged = true;
@@ -1058,11 +1191,7 @@ function applyRequestHistoryHygiene(messages: AgentMessage[]): AgentMessage[] {
 
 function trimOldestDynamicMessages(
   messages: AgentMessage[],
-  options: {
-    systemPrompt: string;
-    tools: AgentToolDefinition[];
-    tokenLimit: number;
-  },
+  budget: ResolvedContextBudget,
 ): AgentMessage[] {
   const segments = segmentMessagesForTrimming(messages);
   const lastUserSegmentIndex = findLastSegmentIndex(
@@ -1075,12 +1204,145 @@ function trimOldestDynamicMessages(
 
   for (let index = mandatoryStartIndex - 1; index >= 0; index -= 1) {
     const candidate = [...segments[index], ...keep];
-    if (estimateRequestTokens(options.systemPrompt, candidate, options.tools) > options.tokenLimit) {
+    if (!isWithinRequestBudget(candidate, budget)) {
       break;
     }
     keep.unshift(...segments[index]);
   }
   return keep.length > 0 ? keep : messages.slice(-1);
+}
+
+function compactMandatoryMessagesToFit(
+  messages: AgentMessage[],
+  budget: ResolvedContextBudget,
+): AgentMessage[] {
+  let prepared = compactMessages(messages, DEFAULT_MANDATORY_COMPACTION_PROFILE);
+  for (let pass = 0; pass < MAX_PROGRESSIVE_COMPACTION_PASSES; pass += 1) {
+    if (isWithinRequestBudget(prepared, budget)) {
+      return prepared;
+    }
+    prepared = compactMessages(prepared, createProgressiveCompactionProfile(pass));
+  }
+  return prepared;
+}
+
+interface MandatoryCompactionProfile extends RequestHygieneProfile {
+  systemMessageMaxBytes: number;
+  assistantMessageMaxBytes: number;
+  userMessageMaxBytes: number;
+}
+
+const DEFAULT_MANDATORY_COMPACTION_PROFILE: MandatoryCompactionProfile = {
+  ...TIGHT_REQUEST_HYGIENE_PROFILE,
+  systemMessageMaxBytes: TIGHT_SYSTEM_MESSAGE_MAX_BYTES,
+  assistantMessageMaxBytes: TIGHT_ASSISTANT_MESSAGE_MAX_BYTES,
+  userMessageMaxBytes: TIGHT_USER_MESSAGE_MAX_BYTES,
+};
+
+function createProgressiveCompactionProfile(pass: number): MandatoryCompactionProfile {
+  const divisor = 2 ** (pass + 1);
+  return {
+    toolResultMaxLines: Math.max(1, Math.floor(TIGHT_TOOL_RESULT_MAX_LINES / divisor)),
+    toolResultMaxBytes: Math.max(
+      MIN_PROGRESSIVE_COMPACTION_BYTES,
+      Math.floor(TIGHT_TOOL_RESULT_MAX_BYTES / divisor),
+    ),
+    toolArgumentStringMaxBytes: Math.max(
+      MIN_PROGRESSIVE_COMPACTION_BYTES,
+      Math.floor(TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES / divisor),
+    ),
+    toolArgumentArrayMaxItems: Math.max(1, Math.floor(TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS / divisor)),
+    systemMessageMaxBytes: Math.max(
+      MIN_PROGRESSIVE_COMPACTION_BYTES,
+      Math.floor(TIGHT_SYSTEM_MESSAGE_MAX_BYTES / divisor),
+    ),
+    assistantMessageMaxBytes: Math.max(
+      MIN_PROGRESSIVE_COMPACTION_BYTES,
+      Math.floor(TIGHT_ASSISTANT_MESSAGE_MAX_BYTES / divisor),
+    ),
+    userMessageMaxBytes: Math.max(
+      MIN_PROGRESSIVE_COMPACTION_BYTES,
+      Math.floor(TIGHT_USER_MESSAGE_MAX_BYTES / divisor),
+    ),
+  };
+}
+
+function compactMessages(
+  messages: AgentMessage[],
+  profile: MandatoryCompactionProfile,
+): AgentMessage[] {
+  return messages.map((message) => {
+    let nextMessage = message;
+    if (message.role === "tool") {
+      nextMessage = {
+        ...message,
+        content: compactContentToBytes(message.content, profile.toolResultMaxBytes),
+      };
+    } else {
+      const maxBytes =
+        message.role === "system"
+          ? profile.systemMessageMaxBytes
+          : message.role === "assistant"
+            ? profile.assistantMessageMaxBytes
+            : profile.userMessageMaxBytes;
+      nextMessage = {
+        ...message,
+        content: compactContentToBytes(message.content, maxBytes),
+      };
+    }
+
+    if (message.role !== "assistant" || !message.toolCalls?.length) {
+      return nextMessage;
+    }
+
+    let toolCallsChanged = false;
+    const toolCalls = message.toolCalls.map((call) => {
+      const compactedArguments = compactToolArguments(call.arguments, profile);
+      if (compactedArguments === call.arguments) return call;
+      toolCallsChanged = true;
+      return { ...call, arguments: compactedArguments };
+    });
+    return toolCallsChanged ? { ...nextMessage, toolCalls } : nextMessage;
+  });
+}
+
+function compactContentToBytes(
+  content: AgentMessage["content"],
+  maxBytes: number,
+): AgentMessage["content"] {
+  if (typeof content === "string") {
+    return compactTextToBytes(content, maxBytes);
+  }
+
+  let changed = false;
+  const blocks = content.map((block) => {
+    if (block.type === "text") {
+      const text = compactTextToBytes(block.text, maxBytes);
+      if (text !== block.text) changed = true;
+      return { ...block, text };
+    }
+    changed = true;
+    return {
+      type: "text" as const,
+      text: `[context budget: omitted ${block.mimeType} attachment from oversized request message]`,
+    };
+  });
+  return changed ? blocks : content;
+}
+
+function compactTextToBytes(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
+    return text;
+  }
+  if (maxBytes < MIN_TEXT_COMPACTION_BYTES) {
+    return "[context budget: omitted oversized text]";
+  }
+  const marker = "\n[context budget: omitted oversized text middle]\n";
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  const available = Math.max(0, maxBytes - markerBytes);
+  const headBytes = Math.floor(available * 0.6);
+  const tailBytes = available - headBytes;
+  return `${sliceUtf8(text, headBytes)}${marker}${sliceUtf8FromEnd(text, tailBytes)}`;
 }
 
 function segmentMessagesForTrimming(messages: AgentMessage[]): AgentMessage[][] {
@@ -1141,72 +1403,82 @@ function flattenSegments(segments: AgentMessage[][]): AgentMessage[] {
   return segments.flatMap((segment) => segment);
 }
 
-function compactToolResultContent(content: AgentMessage["content"]): AgentMessage["content"] {
+function compactToolResultContent(
+  content: AgentMessage["content"],
+  profile: RequestHygieneProfile,
+): AgentMessage["content"] {
   if (typeof content === "string") {
-    return compactToolResultText(content);
+    return compactToolResultText(content, profile);
   }
   let changed = false;
   const blocks = content.map((block) => {
     if (block.type === "text") {
-      const text = compactToolResultText(block.text);
+      const text = compactToolResultText(block.text, profile);
       if (text !== block.text) changed = true;
       return { ...block, text };
     }
     changed = true;
     return {
       type: "text" as const,
-      text: `[cache hygiene: omitted ${block.mimeType} attachment from historical tool result]`,
+      text: `[context budget: omitted ${block.mimeType} attachment from historical tool result]`,
     };
   });
   return changed ? blocks : content;
 }
 
-function compactToolResultText(text: string): string {
+function compactToolResultText(text: string, profile: RequestHygieneProfile): string {
   const originalBytes = Buffer.byteLength(text, "utf8");
   const lines = text.split("\n");
-  if (originalBytes <= TOOL_RESULT_MAX_BYTES && lines.length <= TOOL_RESULT_MAX_LINES) {
+  if (originalBytes <= profile.toolResultMaxBytes && lines.length <= profile.toolResultMaxLines) {
     return text;
   }
 
-  const headCount = Math.min(80, Math.max(1, Math.floor(TOOL_RESULT_MAX_LINES * 0.25)));
-  const tailCount = Math.min(120, Math.max(1, Math.floor(TOOL_RESULT_MAX_LINES * 0.35)));
+  const headCount = Math.min(80, Math.max(1, Math.floor(profile.toolResultMaxLines * 0.25)));
+  const tailCount = Math.min(120, Math.max(1, Math.floor(profile.toolResultMaxLines * 0.35)));
   const signalLines = lines
     .slice(headCount, Math.max(headCount, lines.length - tailCount))
     .filter((line) => /\b(error|failed?|fatal|exception|warning|denied|timeout|not found|invalid)\b/i.test(line))
-    .slice(0, Math.max(0, TOOL_RESULT_MAX_LINES - headCount - tailCount));
+    .slice(0, Math.max(0, profile.toolResultMaxLines - headCount - tailCount));
   const selected = [
     ...lines.slice(0, headCount),
     ...signalLines,
     ...lines.slice(Math.max(headCount, lines.length - tailCount)),
   ];
-  const fitted = fitLinesToBytes(selected, TOOL_RESULT_MAX_BYTES);
+  const fitted = fitLinesToBytes(selected, profile.toolResultMaxBytes);
   const omittedLines = Math.max(0, lines.length - fitted.length);
-  const marker = `[cache hygiene: omitted ${omittedLines} historical tool result line(s); narrow the next read/search for details]`;
+  const marker = `[context budget: omitted ${omittedLines} historical tool result line(s); narrow the next read/search for details]`;
   return [...fitted, marker].join("\n");
 }
 
-function compactToolArguments(args: Record<string, unknown>): Record<string, unknown> {
+function compactToolArguments(
+  args: Record<string, unknown>,
+  profile: RequestHygieneProfile,
+): Record<string, unknown> {
   let changed = false;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args)) {
-    const compacted = compactArgumentValue(key, value);
+    const compacted = compactArgumentValue(key, value, profile);
     out[key] = compacted.value;
     changed ||= compacted.changed;
   }
   return changed ? out : args;
 }
 
-function compactArgumentValue(key: string, value: unknown): { value: unknown; changed: boolean } {
+function compactArgumentValue(
+  key: string,
+  value: unknown,
+  profile: RequestHygieneProfile,
+): { value: unknown; changed: boolean } {
   if (typeof value === "string") {
     if (isBase64Like(key, value)) {
       return {
-        value: `[cache hygiene: omitted base64 argument, ${Buffer.byteLength(value, "utf8")} bytes]`,
+        value: `[context budget: omitted base64 argument, ${Buffer.byteLength(value, "utf8")} bytes]`,
         changed: true,
       };
     }
-    if (Buffer.byteLength(value, "utf8") > TOOL_ARGUMENT_STRING_MAX_BYTES) {
+    if (Buffer.byteLength(value, "utf8") > profile.toolArgumentStringMaxBytes) {
       return {
-        value: `${value.slice(0, 800)}\n[cache hygiene: omitted long argument tail]`,
+        value: compactArgumentString(value, profile.toolArgumentStringMaxBytes),
         changed: true,
       };
     }
@@ -1216,16 +1488,18 @@ function compactArgumentValue(key: string, value: unknown): { value: unknown; ch
   if (Array.isArray(value)) {
     let changed = false;
     const selected =
-      value.length > TOOL_ARGUMENT_ARRAY_MAX_ITEMS
+      value.length > profile.toolArgumentArrayMaxItems
         ? [
-            ...value.slice(0, Math.floor(TOOL_ARGUMENT_ARRAY_MAX_ITEMS * 0.75)),
-            { cache_hygiene_omitted_items: value.length - TOOL_ARGUMENT_ARRAY_MAX_ITEMS },
-            ...value.slice(-(TOOL_ARGUMENT_ARRAY_MAX_ITEMS - Math.floor(TOOL_ARGUMENT_ARRAY_MAX_ITEMS * 0.75))),
+            ...value.slice(0, Math.floor(profile.toolArgumentArrayMaxItems * 0.75)),
+            { context_budget_omitted_items: value.length - profile.toolArgumentArrayMaxItems },
+            ...value.slice(
+              -(profile.toolArgumentArrayMaxItems - Math.floor(profile.toolArgumentArrayMaxItems * 0.75)),
+            ),
           ]
         : value;
     changed ||= selected !== value;
     const compacted = selected.map((item) => {
-      const child = compactArgumentValue(key, item);
+      const child = compactArgumentValue(key, item, profile);
       changed ||= child.changed;
       return child.value;
     });
@@ -1239,11 +1513,21 @@ function compactArgumentValue(key: string, value: unknown): { value: unknown; ch
   let changed = false;
   const out: Record<string, unknown> = {};
   for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
-    const child = compactArgumentValue(childKey, childValue);
+    const child = compactArgumentValue(childKey, childValue, profile);
     out[childKey] = child.value;
     changed ||= child.changed;
   }
   return changed ? { value: out, changed: true } : { value, changed: false };
+}
+
+function compactArgumentString(value: string, maxBytes: number): string {
+  if (maxBytes < MIN_TEXT_COMPACTION_BYTES) {
+    return `[context budget: omitted long argument, ${Buffer.byteLength(value, "utf8")} bytes]`;
+  }
+  const marker = "\n[context budget: omitted long argument tail]";
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  const headBytes = Math.max(0, maxBytes - markerBytes);
+  return `${sliceUtf8(value, headBytes)}${marker}`;
 }
 
 function fitLinesToBytes(lines: string[], maxBytes: number): string[] {
@@ -1258,13 +1542,39 @@ function fitLinesToBytes(lines: string[], maxBytes: number): string[] {
   return out;
 }
 
+function sliceUtf8(value: string, maxBytes: number): string {
+  let bytes = 0;
+  let out = "";
+  for (const char of value) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (bytes + charBytes > maxBytes) break;
+    out += char;
+    bytes += charBytes;
+  }
+  return out;
+}
+
+function sliceUtf8FromEnd(value: string, maxBytes: number): string {
+  let bytes = 0;
+  let out = "";
+  const chars = Array.from(value);
+  for (let index = chars.length - 1; index >= 0; index -= 1) {
+    const char = chars[index];
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (bytes + charBytes > maxBytes) break;
+    out = `${char}${out}`;
+    bytes += charBytes;
+  }
+  return out;
+}
+
 function estimateRequestTokens(
   systemPrompt: string,
   messages: AgentMessage[],
   tools: AgentToolDefinition[],
 ): number {
   return estimateTokens(
-    JSON.stringify({
+    stableStringify({
       systemPrompt,
       messages,
       tools,
@@ -1273,7 +1583,7 @@ function estimateRequestTokens(
 }
 
 function estimateTokens(value: string): number {
-  return Math.ceil(value.length / TOKEN_ESTIMATE_CHARS_PER_TOKEN);
+  return Math.ceil(Buffer.byteLength(value, "utf8") / TOKEN_ESTIMATE_BYTES_PER_TOKEN);
 }
 
 function stableStringify(value: unknown): string {

@@ -128,8 +128,37 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
           reasoningEffort: action.config.model_reasoning_effort,
         },
       };
-    case "setModelProfiles":
-      return { ...state, modelProfiles: action.profiles };
+    case "setModelProfiles": {
+      const activeProfileChanged =
+        state.modelProfiles?.activeProfileId !== undefined &&
+        state.modelProfiles.activeProfileId !== action.profiles.activeProfileId;
+      const currentProfile = state.composer.modelProfileId
+        ? action.profiles.profiles.find(
+            (profile) => profile.id === state.composer.modelProfileId,
+          )
+        : undefined;
+      const activeProfile =
+        action.profiles.profiles.find(
+          (profile) => profile.id === action.profiles.activeProfileId,
+        ) ?? action.profiles.profiles[0];
+      const selectedProfile = activeProfileChanged
+        ? activeProfile
+        : currentProfile ?? activeProfile;
+      return {
+        ...state,
+        modelProfiles: action.profiles,
+        ...(selectedProfile
+          ? {
+              composer: {
+                ...state.composer,
+                model: selectedProfile.config.model,
+                modelProfileId: selectedProfile.id,
+                reasoningEffort: selectedProfile.config.model_reasoning_effort,
+              },
+            }
+          : {}),
+      };
+    }
     case "setWorkspaceRoot":
       return { ...state, workspaceRoot: action.workspaceRoot };
     case "setShowArchivedThreads":

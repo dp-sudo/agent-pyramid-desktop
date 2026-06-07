@@ -7,6 +7,7 @@ import {
 import type {
   AssistantItem,
   ModelConfig,
+  ModelConfigProfilesState,
   ThreadRecord,
   ThreadSummary,
   TurnRecord,
@@ -101,6 +102,126 @@ describe("WorkbenchContext reducer", () => {
     expect(selectedProfile.composer).toMatchObject({
       model: "deepseek-v4-flash",
       modelProfileId: "profile-2",
+    });
+  });
+
+  it("falls back to the active profile when the selected profile is removed", () => {
+    const profiles: ModelConfigProfilesState = {
+      activeProfileId: "profile-2",
+      profiles: [
+        {
+          id: "profile-2",
+          name: "Active",
+          config: {
+            ...INITIAL_STATE.modelConfig,
+            model: "active-model",
+            model_reasoning_effort: "xhigh",
+          },
+          createdAt: "2026-06-07T00:00:00.000Z",
+          updatedAt: "2026-06-07T00:00:00.000Z",
+        },
+      ],
+    };
+    const selectedOld = reducer(INITIAL_STATE, {
+      type: "setComposerModel",
+      model: "old-model",
+      modelProfileId: "profile-1",
+    });
+    const synced = reducer(selectedOld, { type: "setModelProfiles", profiles });
+
+    expect(synced.composer).toMatchObject({
+      model: "active-model",
+      modelProfileId: "profile-2",
+      reasoningEffort: "xhigh",
+    });
+  });
+
+  it("keeps the selected composer profile when refreshed profiles still contain it", () => {
+    const selected = reducer(INITIAL_STATE, {
+      type: "setComposerModel",
+      model: "selected-model",
+      modelProfileId: "profile-1",
+    });
+    const profiles: ModelConfigProfilesState = {
+      activeProfileId: "profile-2",
+      profiles: [
+        {
+          id: "profile-1",
+          name: "Selected",
+          config: {
+            ...INITIAL_STATE.modelConfig,
+            model: "selected-model-updated",
+            model_reasoning_effort: "medium",
+          },
+          createdAt: "2026-06-07T00:00:00.000Z",
+          updatedAt: "2026-06-07T00:00:00.000Z",
+        },
+        {
+          id: "profile-2",
+          name: "Active",
+          config: {
+            ...INITIAL_STATE.modelConfig,
+            model: "active-model",
+            model_reasoning_effort: "xhigh",
+          },
+          createdAt: "2026-06-07T00:00:00.000Z",
+          updatedAt: "2026-06-07T00:00:00.000Z",
+        },
+      ],
+    };
+
+    const refreshed = reducer(selected, { type: "setModelProfiles", profiles });
+
+    expect(refreshed.composer).toMatchObject({
+      model: "selected-model-updated",
+      modelProfileId: "profile-1",
+      reasoningEffort: "medium",
+    });
+  });
+
+  it("syncs to the active profile when the active profile id changes", () => {
+    const initialProfiles: ModelConfigProfilesState = {
+      activeProfileId: "profile-1",
+      profiles: [
+        {
+          id: "profile-1",
+          name: "Selected",
+          config: {
+            ...INITIAL_STATE.modelConfig,
+            model: "selected-model",
+            model_reasoning_effort: "medium",
+          },
+          createdAt: "2026-06-07T00:00:00.000Z",
+          updatedAt: "2026-06-07T00:00:00.000Z",
+        },
+        {
+          id: "profile-2",
+          name: "Active",
+          config: {
+            ...INITIAL_STATE.modelConfig,
+            model: "active-model",
+            model_reasoning_effort: "xhigh",
+          },
+          createdAt: "2026-06-07T00:00:00.000Z",
+          updatedAt: "2026-06-07T00:00:00.000Z",
+        },
+      ],
+    };
+    const withInitialProfiles = reducer(INITIAL_STATE, {
+      type: "setModelProfiles",
+      profiles: initialProfiles,
+    });
+    const nextProfiles = { ...initialProfiles, activeProfileId: "profile-2" };
+
+    const switched = reducer(withInitialProfiles, {
+      type: "setModelProfiles",
+      profiles: nextProfiles,
+    });
+
+    expect(switched.composer).toMatchObject({
+      model: "active-model",
+      modelProfileId: "profile-2",
+      reasoningEffort: "xhigh",
     });
   });
 

@@ -18,6 +18,15 @@ import type {
 import { err, ok } from "../../shared/agent-contracts.js";
 
 const MARKDOWN_EXT = [".md", ".mdx", ".markdown"];
+const SKIPPED_DIRECTORIES = new Set([
+  ".git",
+  ".idea",
+  ".vscode",
+  "DeepSeek",
+  "dist",
+  "node_modules",
+  "out",
+]);
 
 export function registerWriteHandlers(): void {
   ipcMain.handle(WRITE_LIST_CHANNEL, async (_event, request: WriteListRequest) => {
@@ -31,7 +40,7 @@ export function registerWriteHandlers(): void {
 
   ipcMain.handle(WRITE_GET_CHANNEL, async (_event, request: WriteGetRequest) => {
     try {
-      const fullPath = resolveSafe(request.workspace, request.path);
+      const fullPath = await resolveWritePathForAccess(request.workspace, request.path, "read");
       const content = await fs.readFile(fullPath, "utf8");
       return ok({ path: request.path, content });
     } catch (error) {
@@ -41,7 +50,7 @@ export function registerWriteHandlers(): void {
 
   ipcMain.handle(WRITE_PUT_CHANNEL, async (_event, request: WritePutRequest) => {
     try {
-      const fullPath = resolveSafe(request.workspace, request.path);
+      const fullPath = await resolveWritePathForAccess(request.workspace, request.path, "write");
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
       await fs.writeFile(fullPath, request.content, "utf8");
       return ok({ path: request.path, bytes: Buffer.byteLength(request.content, "utf8") });
@@ -53,25 +62,85 @@ export function registerWriteHandlers(): void {
   ipcMain.handle(
     WRITE_COMPLETE_CHANNEL,
     async (_event, request: WriteCompleteRequest): Promise<{ ok: true; value: WriteCompleteResponse } | { ok: false; code: string; message: string }> => {
-      // The local inline-completion service is intentionally a stub for
-      // the initial implementation. The renderer falls back to a
-      // client-side heuristic (next-sentence suggestion) when this
-      // returns a 0.0 score, see chat store `completeInline` action.
-      const trimmedPrefix = request.prefix.trim();
-      if (trimmedPrefix.length < 12) {
-        return ok({ completion: "", score: 0, truncated: false });
+      try {
+        resolveWritePath(request.workspace, request.path);
+        return ok(completeMarkdownInline(request));
+      } catch (error) {
+        return err("WRITE_COMPLETE_FAILED", messageOf(error));
       }
-      return ok({ completion: "", score: 0, truncated: false });
     },
   );
 }
 
-async function listMarkdownFiles(workspace: string, search: string): Promise<WriteFileEntry[]> {
+export async function resolveWritePathForAccess(
+  workspace: string,
+  relative: string,
+  access: "read" | "write",
+): Promise<string> {
+  const root = resolveWorkspaceRoot(workspace);
+  const resolved = resolveWritePath(workspace, relative);
+  const realRoot = await fs.realpath(root);
+  assertWithinWorkspace(realRoot, realRoot, relative);
+  assertAllowedWorkspacePath(realRoot, realRoot, relative);
+
+  try {
+    const realResolved = await fs.realpath(resolved);
+    assertWithinWorkspace(realRoot, realResolved, relative);
+    assertAllowedWorkspacePath(realRoot, realResolved, relative);
+    return resolved;
+  } catch (error) {
+    if (getErrorCode(error) !== "ENOENT" || access === "read") {
+      throw error;
+    }
+    await assertTargetIsNotSymlink(resolved, relative);
+  }
+
+  const realParent = await resolveExistingParentRealpath(root, realRoot, resolved, relative);
+  assertWithinWorkspace(realRoot, realParent, relative);
+  assertAllowedWorkspacePath(realRoot, realParent, relative);
+  return resolved;
+}
+
+export function completeMarkdownInline(request: WriteCompleteRequest): WriteCompleteResponse {
+  if (request.prefix.trim().length < 10 || request.suffix.trimStart()) {
+    return emptyCompletion();
+  }
+
+  const currentLine = request.prefix.split(/\r?\n/).at(-1) ?? "";
+  const task = currentLine.match(/^(\s*)- \[[ xX]\]\s+\S/);
+  if (task) {
+    return { completion: `\n${task[1]}- [ ] `, score: 0.58, truncated: false };
+  }
+
+  const bullet = currentLine.match(/^(\s*)([-*+])\s+\S/);
+  if (bullet) {
+    return { completion: `\n${bullet[1]}${bullet[2]} `, score: 0.56, truncated: false };
+  }
+
+  const numbered = currentLine.match(/^(\s*)(\d+)\.\s+\S/);
+  if (numbered) {
+    return {
+      completion: `\n${numbered[1]}${Number(numbered[2]) + 1}. `,
+      score: 0.56,
+      truncated: false,
+    };
+  }
+
+  const quote = currentLine.match(/^(\s*)>\s+\S/);
+  if (quote) {
+    return { completion: `\n${quote[1]}> `, score: 0.52, truncated: false };
+  }
+
+  return emptyCompletion();
+}
+
+export async function listMarkdownFiles(workspace: string, search: string): Promise<WriteFileEntry[]> {
+  const root = resolveWorkspaceRoot(workspace);
   const out: WriteFileEntry[] = [];
   const needle = search.trim().toLowerCase();
-  await walk(workspace, async (file) => {
+  await walk(root, async (file) => {
     if (!MARKDOWN_EXT.includes(path.extname(file).toLowerCase())) return;
-    const relative = path.relative(workspace, file).replaceAll("\\", "/");
+    const relative = toWorkspaceRelative(root, file);
     if (needle && !relative.toLowerCase().includes(needle)) return;
     const stat = await fs.stat(file);
     out.push({ path: relative, size: stat.size, modifiedAt: stat.mtime.toISOString() });
@@ -81,15 +150,9 @@ async function listMarkdownFiles(workspace: string, search: string): Promise<Wri
 }
 
 async function walk(dir: string, onFile: (file: string) => Promise<void>): Promise<void> {
-  let entries;
-  try {
-    entries = await fs.readdir(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
+  const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    if (entry.name === "node_modules") continue;
+    if (shouldSkipEntry(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       await walk(full, onFile);
@@ -99,15 +162,91 @@ async function walk(dir: string, onFile: (file: string) => Promise<void>): Promi
   }
 }
 
-function resolveSafe(workspace: string, relative: string): string {
-  const normalized = path
-    .resolve(workspace, relative)
-    .replaceAll("\\", "/");
-  const workspaceNormalized = path.resolve(workspace).replaceAll("\\", "/") + "/";
-  if (!normalized.startsWith(workspaceNormalized) && normalized !== workspaceNormalized.slice(0, -1)) {
-    throw new Error("Path escapes workspace");
+export function resolveWritePath(workspace: string, relative: string): string {
+  const root = resolveWorkspaceRoot(workspace);
+  const resolved = path.resolve(root, relative);
+  assertWithinWorkspace(root, resolved, relative);
+  assertAllowedWorkspacePath(root, resolved, relative);
+  return resolved;
+}
+
+function resolveWorkspaceRoot(workspace: string): string {
+  if (!workspace.trim()) {
+    throw new Error("Workspace path is required.");
   }
-  return normalized;
+  return path.resolve(workspace);
+}
+
+function assertWithinWorkspace(root: string, resolved: string, relativePath: string): void {
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error(`Path escapes workspace: ${relativePath}`);
+  }
+}
+
+function assertAllowedWorkspacePath(root: string, resolved: string, relativePath: string): void {
+  const relative = path.relative(root, resolved);
+  if (!relative) return;
+  const segments = relative.split(path.sep).filter(Boolean);
+  if (segments.some(isSkippedSegment)) {
+    throw new Error(`Path is skipped by write service policy: ${relativePath}`);
+  }
+}
+
+function toWorkspaceRelative(workspace: string, fullPath: string): string {
+  return path.relative(workspace, fullPath).replaceAll(path.sep, "/");
+}
+
+function shouldSkipEntry(name: string): boolean {
+  return isSkippedSegment(name);
+}
+
+function isSkippedSegment(name: string): boolean {
+  return name.startsWith(".") || SKIPPED_DIRECTORIES.has(name);
+}
+
+function emptyCompletion(): WriteCompleteResponse {
+  return { completion: "", score: 0, truncated: false };
+}
+
+async function resolveExistingParentRealpath(
+  lexicalRoot: string,
+  realRoot: string,
+  targetPath: string,
+  relativePath: string,
+): Promise<string> {
+  let current = path.dirname(targetPath);
+  while (current !== path.dirname(current)) {
+    assertWithinWorkspace(lexicalRoot, current, relativePath);
+    try {
+      return await fs.realpath(current);
+    } catch (error) {
+      if (getErrorCode(error) !== "ENOENT") {
+        throw error;
+      }
+      current = path.dirname(current);
+    }
+  }
+  throw new Error(`Path escapes workspace: ${relativePath}`);
+}
+
+async function assertTargetIsNotSymlink(targetPath: string, relativePath: string): Promise<void> {
+  try {
+    const stat = await fs.lstat(targetPath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Path escapes workspace: ${relativePath}`);
+    }
+  } catch (error) {
+    if (getErrorCode(error) === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
 }
 
 function messageOf(error: unknown): string {

@@ -51,7 +51,8 @@
     "error": "错误",
     "activeFile": "正在编辑：{{path}}",
     "save": "保存",
-    "refresh": "刷新"
+    "refresh": "刷新",
+    "searchPlaceholder": "筛选 Markdown 文件"
   },
   "threads": {
     "newChat": "新建会话",

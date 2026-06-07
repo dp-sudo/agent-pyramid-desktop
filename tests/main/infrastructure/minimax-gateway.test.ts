@@ -200,6 +200,92 @@ describe("MiniMaxGateway", () => {
     ]);
   });
 
+  it("flushes pending OpenAI-compatible tool calls when providers finish with stop", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"create_plan","arguments":"{\\"steps\\":[]}"}}]}}]}',
+              "",
+              'data: {"choices":[{"finish_reason":"stop"}]}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    const chunks: LlmStreamChunk[] = [];
+    for await (const chunk of new MiniMaxGateway().stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      {
+        kind: "tool_call_delta",
+        toolCallId: "call-1",
+        name: "create_plan",
+        argumentsDelta: "{\"steps\":[]}",
+      },
+      {
+        kind: "tool_call_completed",
+        toolCall: { id: "call-1", name: "create_plan", arguments: { steps: [] } },
+      },
+      { kind: "completed", stopReason: "stop" },
+    ]);
+  });
+
+  it("flushes pending OpenAI-compatible tool calls when streams end with DONE only", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"update_goal","arguments":"{\\"status\\":\\"complete\\"}"}}]}}]}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    const chunks: LlmStreamChunk[] = [];
+    for await (const chunk of new MiniMaxGateway().stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      {
+        kind: "tool_call_delta",
+        toolCallId: "call-1",
+        name: "update_goal",
+        argumentsDelta: "{\"status\":\"complete\"}",
+      },
+      {
+        kind: "tool_call_completed",
+        toolCall: { id: "call-1", name: "update_goal", arguments: { status: "complete" } },
+      },
+      { kind: "completed", stopReason: "stop" },
+    ]);
+  });
+
   it("converts Anthropic-compatible tool messages and streams tool calls", async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -266,6 +352,54 @@ describe("MiniMaxGateway", () => {
         },
       },
       { kind: "usage", usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 } },
+      { kind: "completed", stopReason: "tool_calls" },
+    ]);
+  });
+
+  it("flushes pending Anthropic-compatible tool calls when content_block_stop is missing", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool-1","name":"update_goal"}}',
+              "",
+              'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"status\\":\\"blocked\\"}"}}',
+              "",
+              'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    const chunks: LlmStreamChunk[] = [];
+    for await (const chunk of new MiniMaxGateway().stream({
+      ...baseRequest,
+      protocol: "anthropic-compatible",
+      baseUrl: "https://provider.example.test/anthropic",
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      {
+        kind: "tool_call_completed",
+        toolCall: {
+          id: "tool-1",
+          name: "update_goal",
+          arguments: { status: "blocked" },
+        },
+      },
       { kind: "completed", stopReason: "tool_calls" },
     ]);
   });

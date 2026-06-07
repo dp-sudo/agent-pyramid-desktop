@@ -48,7 +48,7 @@ export const listFilesTool: AgentTool = {
 
     const entries = await fs.readdir(directory, { withFileTypes: true });
     const visibleEntries = entries
-      .filter((entry) => !shouldSkipEntry(entry.name))
+      .filter((entry) => !entry.isSymbolicLink() && !shouldSkipEntry(entry.name))
       .sort((a, b) => {
         if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
         return a.name.localeCompare(b.name);
@@ -57,7 +57,7 @@ export const listFilesTool: AgentTool = {
     const result = await Promise.all(
       visible.map(async (entry) => {
         const fullPath = path.join(directory, entry.name);
-        const childStat = await fs.stat(fullPath);
+        const childStat = await fs.lstat(fullPath);
         return {
           name: entry.name,
           path: toWorkspaceRelative(workspace, fullPath),
@@ -139,7 +139,7 @@ export const searchFilesTool: AgentTool = {
         },
         path: {
           type: "string",
-          description: "Optional workspace-relative directory to search.",
+          description: "Optional workspace-relative directory or file to search.",
         },
         max_results: {
           type: "number",
@@ -156,17 +156,20 @@ export const searchFilesTool: AgentTool = {
     const limit = numberInRange(input.max_results, 1, 300, DEFAULT_SEARCH_LIMIT);
     const root = await resolveReadablePath(workspace, relativePath);
     const stat = await fs.stat(root);
-    if (!stat.isDirectory()) {
-      throw new Error(`search_files path is not a directory: ${relativePath}`);
+    if (!stat.isDirectory() && !stat.isFile()) {
+      throw new Error(`search_files path is not a file or directory: ${relativePath}`);
     }
 
     const results: Array<{ path: string; line: number; text: string }> = [];
     let skippedLargeFiles = 0;
-    await walkTextFiles(root, async (filePath) => {
+    const searchFile = async (filePath: string): Promise<void> => {
       if (results.length >= limit) return;
       const fileStat = await fs.stat(filePath);
       if (fileStat.size > MAX_SEARCH_FILE_BYTES) {
         skippedLargeFiles += 1;
+        return;
+      }
+      if (!looksTextFile(filePath)) {
         return;
       }
       const content = await fs.readFile(filePath, "utf8");
@@ -181,7 +184,12 @@ export const searchFilesTool: AgentTool = {
           if (results.length >= limit) break;
         }
       }
-    });
+    };
+    if (stat.isFile()) {
+      await searchFile(root);
+    } else {
+      await walkTextFiles(root, searchFile);
+    }
 
     return JSON.stringify({
       query,
@@ -242,7 +250,7 @@ async function walkTextFiles(
 ): Promise<void> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
-    if (shouldSkipEntry(entry.name)) continue;
+    if (entry.isSymbolicLink() || shouldSkipEntry(entry.name)) continue;
     const fullPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       await walkTextFiles(fullPath, onFile);

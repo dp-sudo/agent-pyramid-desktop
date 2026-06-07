@@ -10,7 +10,7 @@ import { AttachmentStore } from "../../../src/main/persistence/attachment-store"
 import { JsonlThreadStore } from "../../../src/main/persistence/index";
 import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
 import type { LlmWorkerPool } from "../../../src/main/infrastructure/llm-worker/worker-pool";
-import type { RuntimeEvent } from "../../../src/shared/agent-contracts";
+import type { ApprovalRespondRequest, RuntimeEvent } from "../../../src/shared/agent-contracts";
 import { DEFAULT_MODEL_CONFIG } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
@@ -31,21 +31,30 @@ class FakePool {
   responses: LlmResponse[] = [];
   chunks: LlmStreamChunk[] = [];
   delayMs = 0;
+  rejectCanceledThreads = false;
+  activeChats = 0;
 
   async chat(
     thread: { id: string },
     request: LlmRequest,
     onChunk: (chunk: LlmStreamChunk) => void,
   ): Promise<LlmResponse> {
-    void thread;
-    this.requests.push(request);
-    for (const chunk of this.chunks) {
-      onChunk(chunk);
+    this.activeChats += 1;
+    try {
+      this.requests.push(request);
+      for (const chunk of this.chunks) {
+        onChunk(chunk);
+      }
+      if (this.delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+      }
+      if (this.rejectCanceledThreads && this.canceledThreads.includes(thread.id)) {
+        throw new Error("aborted by cancel");
+      }
+      return this.responses.shift() ?? this.response;
+    } finally {
+      this.activeChats -= 1;
     }
-    if (this.delayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, this.delayMs));
-    }
-    return this.responses.shift() ?? this.response;
   }
 
   cancel(threadId: string): void {
@@ -219,6 +228,76 @@ describe("AgentRuntime", () => {
     ]);
   });
 
+  it("rejects concurrent turns for the same thread before appending another user item", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.delayMs = 50;
+    const runtime = createRuntime();
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "First",
+    });
+
+    await expect(
+      runtime.startTurn({
+        threadId: thread.id,
+        text: "Second",
+      }),
+    ).rejects.toThrow("RUNTIME_TURN_BUSY");
+
+    await waitFor(() => !runtime.isThreadInFlight(thread.id));
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(replayed.filter((item) => item.kind === "user").map((item) => item.text))
+      .toEqual(["First"]);
+  });
+
+  it("clears in-flight state when appending the initial user item fails", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const runtime = createRuntime();
+    const appendItem = vi.spyOn(store, "appendItem");
+    appendItem.mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(
+      runtime.startTurn({
+        threadId: thread.id,
+        text: "First",
+      }),
+    ).rejects.toThrow("disk full");
+
+    expect(runtime.isThreadInFlight(thread.id)).toBe(false);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          code: "persistence_error",
+          message: "disk full",
+        }),
+        expect.objectContaining({
+          kind: "turn_failed",
+          message: "disk full",
+        }),
+      ]),
+    );
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Second",
+    });
+    await waitFor(() => !runtime.isThreadInFlight(thread.id));
+    appendItem.mockRestore();
+  });
+
   it("fails fast for missing model profiles before appending user items", async () => {
     const thread = await store.createThread({
       title: "Runtime",
@@ -353,7 +432,7 @@ describe("AgentRuntime", () => {
       text: "Plan",
       mode: "plan",
     });
-    await waitFor(() => fakePool.requests.length === 2);
+    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(thread.id));
 
     const messages = fakePool.requests[1].messages;
     const currentUserIndex = messages.findIndex(
@@ -365,6 +444,126 @@ describe("AgentRuntime", () => {
       content: expect.stringContaining("Plan mode is active."),
     });
     expect(messages.some((message) => message.role === "user" && message.content === "x".repeat(4000))).toBe(false);
+  });
+
+  it("keeps the current user message when an extremely small budget requires fallback compaction", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    await modelConfigStore.update({
+      model_provide: DEFAULT_MODEL_CONFIG.model_provide,
+      model: DEFAULT_MODEL_CONFIG.model,
+      base_url: DEFAULT_MODEL_CONFIG.base_url,
+      OPENAI_API_KEY: DEFAULT_MODEL_CONFIG.OPENAI_API_KEY,
+      model_context_window: 1000,
+      model_auto_compact_token_limit: 80,
+      max_tokens: 200,
+      thinking: DEFAULT_MODEL_CONFIG.thinking,
+      model_reasoning_effort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
+    });
+
+    const oversizedCurrentInput = `CURRENT-${"x".repeat(10000)}`;
+    const runtime = createRuntime();
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: oversizedCurrentInput,
+    });
+    await waitFor(() => fakePool.requests.length === 1 && !runtime.isThreadInFlight(thread.id));
+
+    const currentUserMessage = fakePool.requests[0].messages.find(
+      (message) => message.role === "user",
+    );
+    expect(currentUserMessage).toMatchObject({
+      role: "user",
+      content: expect.stringContaining("[context budget: omitted oversized text]"),
+    });
+    expect(currentUserMessage?.content).not.toBe(oversizedCurrentInput);
+  });
+
+  it("uses reserved output tokens to limit the effective context budget", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const runtime = createRuntime();
+    const historicalInput = `HISTORY-${"x".repeat(1200)}`;
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: historicalInput,
+    });
+    await waitFor(() => fakePool.requests.length === 1 && !runtime.isThreadInFlight(thread.id));
+
+    await modelConfigStore.update({
+      model_provide: DEFAULT_MODEL_CONFIG.model_provide,
+      model: DEFAULT_MODEL_CONFIG.model,
+      base_url: DEFAULT_MODEL_CONFIG.base_url,
+      OPENAI_API_KEY: DEFAULT_MODEL_CONFIG.OPENAI_API_KEY,
+      model_context_window: 1200,
+      model_auto_compact_token_limit: 1000,
+      max_tokens: 900,
+      thinking: DEFAULT_MODEL_CONFIG.thinking,
+      model_reasoning_effort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
+    });
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Continue",
+    });
+    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(thread.id));
+
+    const messages = fakePool.requests[1].messages;
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "Continue" }),
+      ]),
+    );
+    expect(messages.some((message) => message.content === historicalInput)).toBe(false);
+  });
+
+  it("does not expand input budget when max tokens meet or exceed the context window", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const runtime = createRuntime();
+    const historicalInput = `HISTORY-${"x".repeat(1200)}`;
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: historicalInput,
+    });
+    await waitFor(() => fakePool.requests.length === 1 && !runtime.isThreadInFlight(thread.id));
+
+    await modelConfigStore.update({
+      model_provide: DEFAULT_MODEL_CONFIG.model_provide,
+      model: DEFAULT_MODEL_CONFIG.model,
+      base_url: DEFAULT_MODEL_CONFIG.base_url,
+      OPENAI_API_KEY: DEFAULT_MODEL_CONFIG.OPENAI_API_KEY,
+      model_context_window: 300,
+      model_auto_compact_token_limit: 300,
+      max_tokens: 300,
+      thinking: DEFAULT_MODEL_CONFIG.thinking,
+      model_reasoning_effort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
+    });
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Continue",
+    });
+    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(thread.id));
+
+    const messages = fakePool.requests[1].messages;
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "Continue" }),
+      ]),
+    );
+    expect(messages.some((message) => message.content === historicalInput)).toBe(false);
   });
 
   it("executes read-only tools without approval and sends tool results into the follow-up request", async () => {
@@ -545,7 +744,7 @@ describe("AgentRuntime", () => {
         expect.objectContaining({
           role: "tool",
           toolCallId: "call-read",
-          content: expect.stringContaining("[cache hygiene: omitted"),
+          content: expect.stringContaining("[context budget: omitted"),
         }),
       ]),
     );
@@ -793,6 +992,152 @@ describe("AgentRuntime", () => {
     });
     expect(await fs.readdir(userDataDir)).toEqual(
       expect.arrayContaining(["threads", "config"]),
+    );
+  });
+
+  it("keeps user interrupts from being reported as failed when cancel aborts chat", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.delayMs = 30;
+    fakePool.rejectCanceledThreads = true;
+    const runtime = createRuntime();
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Long run",
+    });
+
+    await runtime.interruptTurn(turn.id);
+    await waitFor(() => !runtime.isThreadInFlight(thread.id) && fakePool.activeChats === 0);
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "turn_completed",
+          status: "interrupted",
+        }),
+      ]),
+    );
+    expect(events.some((event) => event.kind === "turn_failed")).toBe(false);
+    expect(
+      events.some(
+        (event) => event.kind === "runtime_error" && event.message === "aborted by cancel",
+      ),
+    ).toBe(false);
+  });
+
+  it("finishes interrupt cleanup when the interrupt notice cannot be persisted", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.delayMs = 30;
+    const originalAppendItem = store.appendItem.bind(store);
+    const appendItem = vi.spyOn(store, "appendItem");
+    appendItem.mockImplementation(async (threadId, item) => {
+      if (item.kind === "system" && item.text === "Interrupted by user") {
+        throw new Error("interrupt notice write failed");
+      }
+      return originalAppendItem(threadId, item);
+    });
+    const runtime = createRuntime();
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Long run",
+    });
+
+    await runtime.interruptTurn(turn.id);
+    await waitFor(() => !runtime.isThreadInFlight(thread.id) && fakePool.activeChats === 0);
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          code: "persistence_error",
+          message: "interrupt notice write failed",
+        }),
+        expect.objectContaining({
+          kind: "turn_completed",
+          status: "interrupted",
+        }),
+      ]),
+    );
+    appendItem.mockRestore();
+  });
+
+  it("reports approval decision persistence failures without leaving the turn waiting", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "shell_command",
+          description: "Run command",
+          inputSchema: { type: "object" },
+        },
+        async execute() {
+          return "executed";
+        },
+      },
+    ]);
+    fakePool.response = {
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call-1", name: "shell_command", arguments: {} }],
+      raw: {},
+    };
+    const originalAppendItem = store.appendItem.bind(store);
+    const appendItem = vi.spyOn(store, "appendItem");
+    appendItem.mockImplementation(async (threadId, item) => {
+      if (item.kind === "approval" && item.decision) {
+        throw new Error("approval write failed");
+      }
+      return originalAppendItem(threadId, item);
+    });
+    const runtime = createRuntime(registry);
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Needs approval",
+    });
+    await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+
+    await runtime.interruptTurn(turn.id);
+    await waitFor(() =>
+      events.some(
+        (event) =>
+          event.kind === "runtime_error" &&
+          event.code === "persistence_error" &&
+          event.message === "approval write failed",
+      ),
+    );
+    await waitFor(() => !runtime.isThreadInFlight(thread.id));
+
+    expect(events.find((event) => event.kind === "item_updated")).toMatchObject({
+      kind: "item_updated",
+      item: expect.objectContaining({ kind: "approval", decision: "deny" }),
+    });
+    appendItem.mockRestore();
+  });
+
+  it("rejects invalid or stale approval responses instead of treating them as success", () => {
+    const runtime = createRuntime();
+
+    expect(() =>
+      runtime.respondApproval({ approvalId: "missing", decision: "allow" }),
+    ).toThrow("Approval missing is not pending.");
+
+    const invalidDecision = {
+      approvalId: "missing",
+      decision: "approve",
+    } as unknown as ApprovalRespondRequest;
+    expect(() => runtime.respondApproval(invalidDecision)).toThrow(
+      "Approval decision must be allow or deny.",
     );
   });
 });

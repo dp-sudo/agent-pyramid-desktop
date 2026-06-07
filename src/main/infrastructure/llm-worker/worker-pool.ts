@@ -8,20 +8,34 @@ import type {
   WorkerOutbound,
 } from "./protocol.js";
 import type { LlmRequest, LlmResponse, LlmStreamChunk } from "../../domain/agent/types.js";
-import { isThreadRecord, type ThreadRecord } from "../../../shared/agent-contracts.js";
+import type { ThreadRecord } from "../../../shared/agent-contracts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const WORKER_FILE = path.join(__dirname, "llm-worker.js");
 
 interface PoolEntry {
-  worker: Worker;
+  worker: WorkerLike;
   activeRequests: number;
 }
 
+interface WorkerLike {
+  on(event: "message", listener: (message: WorkerOutbound) => void): WorkerLike;
+  on(event: "error", listener: (error: Error) => void): WorkerLike;
+  on(event: "exit", listener: (code: number) => void): WorkerLike;
+  off(event: "message", listener: (message: WorkerOutbound) => void): WorkerLike;
+  off(event: "error", listener: (error: Error) => void): WorkerLike;
+  off(event: "exit", listener: (code: number) => void): WorkerLike;
+  postMessage(message: WorkerInbound): void;
+  terminate(): Promise<number>;
+}
+
+type WorkerFactory = (filename: string) => WorkerLike;
+
 /**
  * Routes chat requests to N workers. Same `threadId` always lands on the
- * same worker, guaranteeing turn-level serial execution per thread.
+ * same worker so cancellation and provider-side caches remain thread-affine.
+ * AgentRuntime owns same-thread in-flight gating.
  */
 export class LlmWorkerPool {
   private readonly workers: PoolEntry[] = [];
@@ -29,13 +43,16 @@ export class LlmWorkerPool {
   private readonly threadToCancel = new Map<string, WorkerInbound>();
   private destroyed = false;
 
-  constructor(private readonly size = 1) {
+  constructor(
+    private readonly size = 1,
+    private readonly workerFactory: WorkerFactory = (filename) => new Worker(filename),
+  ) {
     if (size < 1) throw new Error("Worker pool size must be >= 1");
   }
 
   async start(): Promise<void> {
     for (let i = 0; i < this.size; i += 1) {
-      const worker = new Worker(WORKER_FILE);
+      const worker = this.workerFactory(WORKER_FILE);
       const entry: PoolEntry = { worker, activeRequests: 0 };
       this.workers.push(entry);
       worker.on("error", (error) => {
@@ -89,15 +106,22 @@ export class LlmWorkerPool {
         reject(error);
       };
 
+      const exitHandler = (code: number): void => {
+        cleanup();
+        reject(new Error(`LLM worker exited before completing request ${requestId} with code ${code}.`));
+      };
+
       const cleanup = (): void => {
         entry.worker.off("message", messageHandler);
         entry.worker.off("error", errorHandler);
+        entry.worker.off("exit", exitHandler);
         entry.activeRequests = Math.max(0, entry.activeRequests - 1);
         this.threadToCancel.delete(thread.id);
       };
 
       entry.worker.on("message", messageHandler);
       entry.worker.on("error", errorHandler);
+      entry.worker.on("exit", exitHandler);
       entry.worker.postMessage(chatMsg);
       this.threadToCancel.set(thread.id, cancelMsg);
     });
@@ -136,12 +160,5 @@ export class LlmWorkerPool {
     if (!entry) throw new Error("No worker available");
     this.threadToWorker.set(threadId, entry);
     return entry;
-  }
-}
-
-/** Type guard kept for symmetry with other validation helpers. */
-export function assertThread(thread: unknown): asserts thread is ThreadRecord {
-  if (!isThreadRecord(thread)) {
-    throw new Error("Invalid thread record");
   }
 }

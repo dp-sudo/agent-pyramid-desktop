@@ -122,8 +122,8 @@ export function SettingsView(): ReactElement {
     if (active) {
       setProfileName(active.name);
       setForm(toFormState(active.config));
-      actions.setModelProfiles(state);
       actions.setModelConfig(active.config);
+      actions.setModelProfiles(state);
     }
   }
 

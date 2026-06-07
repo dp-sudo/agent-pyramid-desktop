@@ -26,6 +26,17 @@ describe("application tools", () => {
     });
   });
 
+  it("rejects duplicate tool names during construction and registration", () => {
+    expect(() => new InMemoryToolRegistry([echoTool, echoTool]))
+      .toThrow('Tool "echo" is already registered.');
+
+    const registry = new InMemoryToolRegistry([]);
+    registry.register(echoTool);
+
+    expect(() => registry.register(echoTool))
+      .toThrow('Tool "echo" is already registered.');
+  });
+
   it("keeps missing and invalid tool failures observable", async () => {
     const registry = new InMemoryToolRegistry([echoTool]);
 
@@ -97,6 +108,7 @@ describe("application tools", () => {
 
   it("reads, lists, and searches workspace files without escaping the workspace", async () => {
     const workspace = await makeTempDir("workspace-tools-");
+    const outside = await makeTempDir("workspace-tools-outside-");
     try {
       await fs.mkdir(path.join(workspace, "src"), { recursive: true });
       await fs.mkdir(path.join(workspace, "DeepSeek"), { recursive: true });
@@ -105,6 +117,8 @@ describe("application tools", () => {
       await fs.writeFile(path.join(workspace, "DeepSeek", "reference.ts"), "reference\n", "utf8");
       await fs.writeFile(path.join(workspace, "src", "large.txt"), "abcdef", "utf8");
       await fs.writeFile(path.join(workspace, "src", "huge.txt"), `${"x".repeat(1_000_001)}marker\n`, "utf8");
+      await fs.writeFile(path.join(outside, "outside.ts"), "external marker\n", "utf8");
+      await fs.symlink(outside, path.join(workspace, "linked-outside"));
       const registry = new InMemoryToolRegistry(createWorkspaceTools());
 
       const listed = JSON.parse(
@@ -118,6 +132,7 @@ describe("application tools", () => {
       expect(listed.entries).toEqual([
         expect.objectContaining({ path: "src", type: "directory" }),
       ]);
+      expect(listed.entries.some((entry) => entry.path === "linked-outside")).toBe(false);
 
       const read = JSON.parse(
         (
@@ -160,6 +175,9 @@ describe("application tools", () => {
       expect(searched.results).toEqual([
         { path: "src/index.ts", line: 1, text: "export const marker = 1;" },
       ]);
+      expect(
+        searched.results.some((result) => result.path.includes("linked-outside")),
+      ).toBe(false);
       expect(searched.skippedLargeFiles).toBe(1);
 
       await expect(
@@ -182,6 +200,7 @@ describe("application tools", () => {
       ).rejects.toThrow("Path is skipped by workspace tool policy: DeepSeek/reference.ts");
     } finally {
       await removeTempDir(workspace);
+      await removeTempDir(outside);
     }
   });
 });

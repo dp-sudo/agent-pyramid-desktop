@@ -29,8 +29,9 @@ export function FloatingComposerModelPicker({
       <div className="ds-composer-popover-section">
         <div className="ds-composer-popover-label">{t("composer.model")}</div>
         {profiles.map((profile) => {
-          const active =
-            profile.id === selectedProfileId || profile.config.model === selectedModel;
+          const active = selectedProfileId
+            ? profile.id === selectedProfileId
+            : profile.config.model === selectedModel;
           return (
             <button
               key={profile.id}
