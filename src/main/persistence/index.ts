@@ -52,6 +52,7 @@ export class JsonlThreadStore {
       title: input.title?.trim() || "New thread",
       workspace: input.workspace,
       mode: input.mode,
+      status: "active",
       relation: input.relation ?? "primary",
       ...(input.parentThreadId ? { parentThreadId: input.parentThreadId } : {}),
       createdAt: now,
@@ -76,7 +77,7 @@ export class JsonlThreadStore {
     await this.init();
     try {
       const raw = await fs.readFile(this.threadPath(id), "utf8");
-      return JSON.parse(raw) as ThreadRecord;
+      return this.normalizeThreadRecord(JSON.parse(raw) as ThreadRecord);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
@@ -86,12 +87,20 @@ export class JsonlThreadStore {
   async listThreads(filter: ThreadListFilter = {}): Promise<ThreadSummary[]> {
     await this.init();
     const indexRaw = await fs.readFile(this.indexPath, "utf8");
-    const all = JSON.parse(indexRaw) as ThreadSummary[];
+    const all = (JSON.parse(indexRaw) as ThreadSummary[]).map((row) =>
+      this.normalizeThreadSummary(row),
+    );
     const include = filter.include ?? ["primary", "fork"];
     const search = filter.search?.trim().toLowerCase() ?? "";
     return all
       .filter((row) => include.includes(row.relation))
       .filter((row) => (filter.mode ? row.mode === filter.mode : true))
+      .filter((row) => {
+        const status = row.status ?? "active";
+        if (filter.archivedOnly) return status === "archived";
+        if (filter.includeArchived) return true;
+        return status !== "archived";
+      })
       .filter((row) =>
         search.length > 0 ? row.title.toLowerCase().includes(search) : true,
       )
@@ -132,6 +141,7 @@ export class JsonlThreadStore {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.approvalPolicy ? { approvalPolicy: patch.approvalPolicy } : {}),
         ...(patch.sandboxMode ? { sandboxMode: patch.sandboxMode } : {}),
+        ...(patch.status ? { status: patch.status } : {}),
         ...(patch.goal === null
           ? { goal: undefined }
           : patch.goal
@@ -175,9 +185,24 @@ export class JsonlThreadStore {
       id: record.id,
       title: record.title,
       workspace: record.workspace,
+      status: record.status ?? "active",
       relation: record.relation,
       mode: record.mode,
       updatedAt: record.updatedAt,
+    };
+  }
+
+  private normalizeThreadRecord(record: ThreadRecord): ThreadRecord {
+    return {
+      ...record,
+      status: record.status ?? "active",
+    };
+  }
+
+  private normalizeThreadSummary(summary: ThreadSummary): ThreadSummary {
+    return {
+      ...summary,
+      status: summary.status ?? "active",
     };
   }
 

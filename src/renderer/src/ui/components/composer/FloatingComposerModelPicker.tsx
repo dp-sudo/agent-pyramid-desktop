@@ -25,7 +25,7 @@ export function FloatingComposerModelPicker({
 }: FloatingComposerModelPickerProps): ReactElement {
   const { t } = useTranslation();
   return (
-    <div className="ds-composer-popover">
+    <div className="ds-composer-popover is-model-picker">
       <div className="ds-composer-popover-section">
         <div className="ds-composer-popover-label">{t("composer.model")}</div>
         {profiles.map((profile) => {

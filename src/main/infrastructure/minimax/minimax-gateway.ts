@@ -531,12 +531,12 @@ function buildOpenAiCompatibleBody(
   stream: boolean,
   dialect: ProviderDialect
 ): Record<string, unknown> {
+  const tools = request.tools.map(toOpenAiTool);
   const common = {
     model: request.model,
     messages,
-    tools: request.tools.map(toOpenAiTool),
-    tool_choice: "auto",
-    temperature: request.temperature
+    temperature: request.temperature,
+    ...(tools.length > 0 ? { tools, tool_choice: "auto" } : {})
   };
 
   if (dialect === "minimax") {
@@ -582,10 +582,7 @@ function buildOpenAiCompatibleBody(
     max_tokens: request.maxTokens,
     ...(stream
       ? {
-          stream: true,
-          stream_options: {
-            include_usage: true
-          }
+          stream: true
         }
       : {})
   };

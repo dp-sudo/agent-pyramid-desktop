@@ -83,11 +83,26 @@
     "saved": "Saved",
     "error": "Error",
     "activeFile": "Editing: {{path}}",
-    "save": "Save"
+    "save": "Save",
+    "refresh": "Refresh"
   },
   "threads": {
     "newChat": "New thread",
-    "empty": "No threads yet."
+    "empty": "No threads yet.",
+    "delete": "Delete thread",
+    "deleteConfirm": "Delete \"{{title}}\"? This cannot be undone.",
+    "deleteBlockedRunning": "Stop the running turn before deleting this thread.",
+    "changeWorkspace": "Change workspace",
+    "noWorkspace": "No workspace selected",
+    "showArchived": "Show archived",
+    "hideArchived": "Hide archived",
+    "archive": "Archive thread",
+    "archiveShort": "Arc",
+    "restore": "Restore thread",
+    "restoreShort": "Res",
+    "deleteShort": "Del",
+    "archiveBlockedRunning": "Stop the running turn before archiving this thread.",
+    "sendBlockedArchived": "Restore this archived thread before sending a new message."
   },
   "inspector": {
     "changes": "Changes",

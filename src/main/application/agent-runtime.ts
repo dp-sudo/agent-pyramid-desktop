@@ -69,6 +69,8 @@ const GOAL_MODE_INSTRUCTION = [
   "Use update_goal when the goal text, completion state, or blocked state changes.",
 ].join(" ");
 
+const INTERNAL_TOOL_NAMES = new Set(["echo"]);
+
 /**
  * Multi-turn runtime. Holds per-turn state, orchestrates worker pool,
  * enforces tool policy, persists items + events, and emits bus events.
@@ -79,14 +81,20 @@ export class AgentRuntime {
 
   constructor(private readonly deps: RuntimeDeps) {}
 
+  isThreadInFlight(threadId: string): boolean {
+    return Array.from(this.inFlight.values()).some(
+      (turn) => turn.threadId === threadId && turn.status === "in-flight",
+    );
+  }
+
   async startTurn(request: TurnStartRequest): Promise<TurnRecord> {
     const thread = await this.deps.store.getThread(request.threadId);
     if (!thread) throw new Error(`Thread ${request.threadId} not found`);
+    if (thread.status === "archived") {
+      throw new Error("RUNTIME_THREAD_ARCHIVED");
+    }
 
-    const busy = Array.from(this.inFlight.values()).some(
-      (t) => t.threadId === request.threadId && t.status === "in-flight",
-    );
-    if (busy) {
+    if (this.isThreadInFlight(request.threadId)) {
       throw new Error("RUNTIME_TURN_BUSY");
     }
     const modelProfiles = await this.deps.modelConfigStore.listProfiles();
@@ -142,6 +150,7 @@ export class AgentRuntime {
   async interruptTurn(turnId: string): Promise<void> {
     const turn = this.inFlight.get(turnId);
     if (!turn) return;
+    this.resolvePendingApprovalsForTurn(turnId, "deny");
     this.deps.pool.cancel(turn.threadId);
     const item: SystemItem = {
       kind: "system",
@@ -363,6 +372,9 @@ export class AgentRuntime {
       // Execute tool calls. Each policy is consulted.
       for (const call of response.toolCalls) {
         await this.executeToolCall(turn, thread, call);
+        if (turn.status !== "in-flight") {
+          return;
+        }
       }
 
       turn.usage = response.usage;
@@ -524,6 +536,9 @@ export class AgentRuntime {
     turn: TurnRecord,
     thread: ThreadRecord,
   ): boolean {
+    if (INTERNAL_TOOL_NAMES.has(name)) {
+      return false;
+    }
     if (name === "create_plan") {
       return turn.mode === "plan";
     }
@@ -553,11 +568,29 @@ export class AgentRuntime {
     });
   }
 
-  private requestApproval(
+  private async requestApproval(
     turn: TurnRecord,
     call: AgentToolCall,
   ): Promise<"allow" | "deny"> {
     const approvalId = randomUUID();
+    const pendingItem: ApprovalItem = {
+      kind: "approval",
+      id: randomUUID(),
+      threadId: turn.threadId,
+      turnId: turn.id,
+      approvalId,
+      toolName: call.name,
+      args: call.arguments,
+      createdAt: new Date().toISOString(),
+    };
+    await this.deps.store.appendItem(turn.threadId, pendingItem);
+    this.deps.bus.emit("item_appended", {
+      kind: "item_appended",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      item: pendingItem,
+    });
+
     return new Promise<"allow" | "deny">((resolve) => {
       this.pendingApprovals.set(approvalId, {
         approvalId,
@@ -567,20 +600,14 @@ export class AgentRuntime {
         args: call.arguments,
         resolve: (decision) => {
           const item: ApprovalItem = {
+            ...pendingItem,
             kind: "approval",
-            id: randomUUID(),
-            threadId: turn.threadId,
-            turnId: turn.id,
-            approvalId,
-            toolName: call.name,
-            args: call.arguments,
             decision,
             resolvedAt: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
           };
           void this.deps.store.appendItem(turn.threadId, item);
-          this.deps.bus.emit("item_appended", {
-            kind: "item_appended",
+          this.deps.bus.emit("item_updated", {
+            kind: "item_updated",
             threadId: turn.threadId,
             turnId: turn.id,
             item,
@@ -597,6 +624,17 @@ export class AgentRuntime {
         args: call.arguments,
       });
     });
+  }
+
+  private resolvePendingApprovalsForTurn(
+    turnId: string,
+    decision: "allow" | "deny",
+  ): void {
+    for (const [approvalId, pending] of this.pendingApprovals) {
+      if (pending.turnId !== turnId) continue;
+      pending.resolve(decision);
+      this.pendingApprovals.delete(approvalId);
+    }
   }
 
   private async collectHistory(thread: ThreadRecord): Promise<AgentMessage[]> {

@@ -14,9 +14,10 @@ import type {
   IpcResult,
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
+import type { AgentRuntime } from "../application/agent-runtime.js";
 import type { JsonlThreadStore } from "../persistence/index.js";
 
-export function registerThreadHandlers(store: JsonlThreadStore): void {
+export function registerThreadHandlers(store: JsonlThreadStore, runtime?: AgentRuntime): void {
   ipcMain.handle(THREAD_LIST_CHANNEL, async (_event, filter?: ThreadListFilter) => {
     try {
       return ok(await store.listThreads(filter ?? {}));
@@ -46,6 +47,20 @@ export function registerThreadHandlers(store: JsonlThreadStore): void {
     THREAD_UPDATE_CHANNEL,
     async (_event, id: string, patch: ThreadUpdatePatch) => {
       try {
+        const thread = await store.getThread(id);
+        if (!thread) {
+          return err("THREAD_NOT_FOUND", `No thread with id ${id}`);
+        }
+        if (
+          patch.status !== undefined &&
+          patch.status !== "active" &&
+          patch.status !== "archived"
+        ) {
+          return err("THREAD_STATUS_INVALID", "Thread status must be active or archived.");
+        }
+        if (patch.status === "archived" && runtime?.isThreadInFlight(id)) {
+          return err("THREAD_ARCHIVE_BUSY", "Cannot archive a thread while a turn is running.");
+        }
         return ok(await store.updateThread(id, patch));
       } catch (error) {
         return err("THREAD_UPDATE_FAILED", messageOf(error));
@@ -55,6 +70,13 @@ export function registerThreadHandlers(store: JsonlThreadStore): void {
 
   ipcMain.handle(THREAD_DELETE_CHANNEL, async (_event, id: string) => {
     try {
+      const thread = await store.getThread(id);
+      if (!thread) {
+        return err("THREAD_NOT_FOUND", `No thread with id ${id}`);
+      }
+      if (runtime?.isThreadInFlight(id)) {
+        return err("THREAD_DELETE_BUSY", "Cannot delete a thread while a turn is running.");
+      }
       await store.deleteThread(id);
       return ok({ id });
     } catch (error) {

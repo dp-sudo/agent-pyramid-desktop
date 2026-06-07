@@ -18,6 +18,21 @@ export function WorkbenchTopBar(): ReactElement {
             {t("chat.threadId", { id: state.activeThreadId.slice(0, 8) })}
           </span>
         ) : null}
+        {state.workspaceRoot ? (
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontSize: "var(--ds-size-caption)",
+              color: "var(--ds-text-faint)",
+            }}
+            title={state.workspaceRoot}
+          >
+            {state.workspaceRoot}
+          </span>
+        ) : null}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         {isBusy ? (

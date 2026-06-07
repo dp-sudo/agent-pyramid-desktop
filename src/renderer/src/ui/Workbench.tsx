@@ -13,10 +13,16 @@ export function Workbench(): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
   const activeThreadIdRef = useRef<string | null>(state.activeThreadId);
+  const workspaceRootRef = useRef<string>(state.workspaceRoot);
+  const activeThreadArchived = state.activeThread?.status === "archived";
 
   useEffect(() => {
     activeThreadIdRef.current = state.activeThreadId;
   }, [state.activeThreadId]);
+
+  useEffect(() => {
+    workspaceRootRef.current = state.workspaceRoot;
+  }, [state.workspaceRoot]);
 
   // Load thread list on mount.
   useEffect(() => {
@@ -27,7 +33,9 @@ export function Workbench(): ReactElement {
     let cancelled = false;
     void (async () => {
       const [threadsResult, configResult, profilesResult] = await Promise.all([
-        window.agentApi.threads.list({}),
+        window.agentApi.threads.list({
+          includeArchived: state.showArchivedThreads,
+        }),
         window.agentApi.modelConfig.get(),
         window.agentApi.modelConfig.listProfiles(),
       ]);
@@ -39,7 +47,7 @@ export function Workbench(): ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [actions]);
+  }, [actions, state.showArchivedThreads]);
 
   const handleRuntimeEvent = useCallback(
     (event: Parameters<typeof window.agentApi.sse.onEvent>[0] extends (
@@ -88,8 +96,28 @@ export function Workbench(): ReactElement {
   }, [state.activeThreadId]);
 
   const refreshThreads = useCallback(async () => {
-    const result = await window.agentApi.threads.list({});
+    const result = await window.agentApi.threads.list({
+      includeArchived: state.showArchivedThreads,
+    });
     if (result.ok) actions.setThreads(result.value);
+  }, [actions, state.showArchivedThreads]);
+
+  const ensureWorkspaceRoot = useCallback(async (): Promise<string | null> => {
+    const current = workspaceRootRef.current.trim();
+    if (current) return current;
+
+    const result = await window.agentApi.workspace.pickDirectory();
+    if (!result.ok) {
+      actions.setError(result.message);
+      return null;
+    }
+    if (result.value.canceled || !result.value.path) {
+      return null;
+    }
+    workspaceRootRef.current = result.value.path;
+    actions.setWorkspaceRoot(result.value.path);
+    actions.setError(null);
+    return result.value.path;
   }, [actions]);
 
   const onSelectThread = useCallback(
@@ -103,10 +131,67 @@ export function Workbench(): ReactElement {
     [actions],
   );
 
+  const selectThreadById = useCallback(
+    async (id: string): Promise<void> => {
+      await onSelectThread(id);
+    },
+    [onSelectThread],
+  );
+
+  const onPickWorkspace = useCallback(async () => {
+    const result = await window.agentApi.workspace.pickDirectory();
+    if (!result.ok) {
+      actions.setError(result.message);
+      return;
+    }
+    if (result.value.canceled || !result.value.path) return;
+
+    const workspace = result.value.path;
+    workspaceRootRef.current = workspace;
+    actions.setWorkspaceRoot(workspace);
+    actions.setError(null);
+
+    const threadsResult = await window.agentApi.threads.list({
+      includeArchived: state.showArchivedThreads,
+    });
+    if (!threadsResult.ok) {
+      actions.setError(threadsResult.message);
+      return;
+    }
+
+    actions.setThreads(threadsResult.value);
+    const latestForWorkspace = threadsResult.value.find(
+      (thread) =>
+        thread.mode === "code" &&
+        thread.workspace === workspace &&
+        thread.status !== "archived",
+    );
+    if (latestForWorkspace) {
+      await selectThreadById(latestForWorkspace.id);
+      return;
+    }
+
+    const created = await window.agentApi.threads.create({
+      title: "New thread",
+      workspace,
+      mode: "code",
+    });
+    if (!created.ok) {
+      actions.setError(created.message);
+      return;
+    }
+    activeThreadIdRef.current = created.value.id;
+    await window.agentApi.sse.subscribe({ threadId: created.value.id });
+    actions.selectThread(created.value as ThreadRecord, []);
+    await refreshThreads();
+  }, [actions, refreshThreads, selectThreadById, state.showArchivedThreads]);
+
   const onNewChat = useCallback(async () => {
+    const workspace = await ensureWorkspaceRoot();
+    if (!workspace) return;
     const result = await window.agentApi.threads.create({
       title: "New thread",
-      workspace: "",
+      workspace,
       mode: "code",
     });
     if (!result.ok) {
@@ -117,18 +202,96 @@ export function Workbench(): ReactElement {
     await window.agentApi.sse.subscribe({ threadId: result.value.id });
     await refreshThreads();
     actions.selectThread(result.value as ThreadRecord, []);
-  }, [actions, refreshThreads]);
+  }, [actions, ensureWorkspaceRoot, refreshThreads]);
+
+  const onDeleteThread = useCallback(
+    async (id: string) => {
+      const thread = state.threads.find((candidate) => candidate.id === id);
+      const title = thread?.title ?? id;
+      if (!window.confirm(t("threads.deleteConfirm", { title }))) return;
+      if (state.inFlightTurn?.threadId === id) {
+        actions.setError(t("threads.deleteBlockedRunning"));
+        return;
+      }
+
+      const result = await window.agentApi.threads.delete(id);
+      if (!result.ok) {
+        actions.setError(
+          result.code === "THREAD_DELETE_BUSY"
+            ? t("threads.deleteBlockedRunning")
+            : result.message,
+        );
+        return;
+      }
+
+      if (state.activeThreadId === id) {
+        activeThreadIdRef.current = null;
+        await window.agentApi.sse.unsubscribe({ threadId: id });
+      }
+      actions.removeThread(id);
+      actions.setError(null);
+      await refreshThreads();
+    },
+    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, state.threads, t],
+  );
+
+  const onArchiveThread = useCallback(
+    async (id: string) => {
+      if (state.inFlightTurn?.threadId === id) {
+        actions.setError(t("threads.archiveBlockedRunning"));
+        return;
+      }
+
+      const result = await window.agentApi.threads.update(id, { status: "archived" });
+      if (!result.ok) {
+        actions.setError(
+          result.code === "THREAD_ARCHIVE_BUSY"
+            ? t("threads.archiveBlockedRunning")
+            : result.message,
+        );
+        return;
+      }
+
+      if (state.activeThreadId === id) {
+        activeThreadIdRef.current = null;
+        await window.agentApi.sse.unsubscribe({ threadId: id });
+        actions.deselectThread();
+      }
+      actions.setError(null);
+      await refreshThreads();
+    },
+    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, t],
+  );
+
+  const onRestoreThread = useCallback(
+    async (id: string) => {
+      const result = await window.agentApi.threads.update(id, { status: "active" });
+      if (!result.ok) {
+        actions.setError(result.message);
+        return;
+      }
+      actions.setError(null);
+      await refreshThreads();
+    },
+    [actions, refreshThreads],
+  );
 
   const onSend = useCallback(async () => {
     const text = state.composer.text.trim();
     if (!text) return;
+    if (activeThreadArchived) {
+      actions.setError(t("threads.sendBlockedArchived"));
+      return;
+    }
 
     let threadId = state.activeThreadId;
     if (!threadId) {
+      const workspace = await ensureWorkspaceRoot();
+      if (!workspace) return;
       const title = text.length > 60 ? `${text.slice(0, 57)}...` : text;
       const threadResult = await window.agentApi.threads.create({
         title,
-        workspace: "",
+        workspace,
         mode: "code",
       });
       if (!threadResult.ok) {
@@ -180,8 +343,11 @@ export function Workbench(): ReactElement {
     state.composer,
     state.modelConfig,
     state.modelProfiles,
+    activeThreadArchived,
     actions,
+    ensureWorkspaceRoot,
     refreshThreads,
+    t,
   ]);
 
   const onInterrupt = useCallback(async () => {
@@ -215,7 +381,16 @@ export function Workbench(): ReactElement {
             activeView="code"
             onSelectThread={(id) => void onSelectThread(id)}
             onNewChat={() => void onNewChat()}
+            onPickWorkspace={() => void onPickWorkspace()}
+            onDeleteThread={(id) => void onDeleteThread(id)}
+            onArchiveThread={(id) => void onArchiveThread(id)}
+            onRestoreThread={(id) => void onRestoreThread(id)}
             onOpenSettings={onOpenSettings}
+            workspaceRoot={state.workspaceRoot}
+            showArchivedThreads={state.showArchivedThreads}
+            onToggleArchivedThreads={() =>
+              actions.setShowArchivedThreads(!state.showArchivedThreads)
+            }
           />
         </div>
       ) : null}
@@ -259,6 +434,7 @@ export function Workbench(): ReactElement {
                     <FloatingComposer
                       onSend={() => void onSend()}
                       onInterrupt={() => void onInterrupt()}
+                      disabled={activeThreadArchived}
                     />
                     {state.errorMessage ? (
                       <div

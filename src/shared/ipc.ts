@@ -34,6 +34,9 @@ export const ATTACHMENT_DELETE_CHANNEL = "attachment:delete";
 // Usage
 export const USAGE_DAILY_CHANNEL = "usage:daily";
 
+// Workspace services
+export const WORKSPACE_PICK_DIRECTORY_CHANNEL = "workspace:pick-directory";
+
 // Write-mode file services
 export const WRITE_LIST_CHANNEL = "write:list";
 export const WRITE_GET_CHANNEL = "write:get";
@@ -69,6 +72,7 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   ATTACHMENT_GET_CHANNEL,
   ATTACHMENT_DELETE_CHANNEL,
   USAGE_DAILY_CHANNEL,
+  WORKSPACE_PICK_DIRECTORY_CHANNEL,
   WRITE_LIST_CHANNEL,
   WRITE_GET_CHANNEL,
   WRITE_PUT_CHANNEL,

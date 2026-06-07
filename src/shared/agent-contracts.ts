@@ -157,12 +157,15 @@ export interface ThreadGoal {
   summary?: string;
 }
 
+export type ThreadStatus = "active" | "archived";
+
 /** A persisted conversation. */
 export interface ThreadRecord {
   id: string;
   title: string;
   workspace: string; // absolute path; empty for write-mode
   mode: "code" | "write";
+  status: ThreadStatus;
   relation: ThreadRelation;
   parentThreadId?: string;
   forkedAt?: string; // ISO timestamp
@@ -178,6 +181,7 @@ export interface ThreadSummary {
   id: string;
   title: string;
   workspace: string;
+  status: ThreadStatus;
   relation: ThreadRelation;
   mode: "code" | "write";
   updatedAt: string;
@@ -195,6 +199,7 @@ export interface ThreadUpdatePatch {
   title?: string;
   approvalPolicy?: ThreadRecord["approvalPolicy"];
   sandboxMode?: ThreadRecord["sandboxMode"];
+  status?: ThreadStatus;
   goal?: ThreadGoal | null;
 }
 
@@ -202,6 +207,8 @@ export interface ThreadListFilter {
   include?: ThreadRelation[]; // default excludes 'side'
   search?: string; // case-insensitive title match
   mode?: "code" | "write";
+  includeArchived?: boolean;
+  archivedOnly?: boolean;
 }
 
 // ----------------------------------------------------------------------------
@@ -529,6 +536,15 @@ export interface UsageDailyBucket {
 }
 
 // ============================================================================
+// Workspace picker
+// ============================================================================
+
+export interface WorkspacePickDirectoryResponse {
+  canceled: boolean;
+  path: string | null;
+}
+
+// ============================================================================
 // Write-mode file services
 // ============================================================================
 
@@ -650,6 +666,7 @@ export function isThreadRecord(value: unknown): value is ThreadRecord {
     typeof v.title === "string" &&
     typeof v.workspace === "string" &&
     (v.mode === "code" || v.mode === "write") &&
+    (v.status === undefined || v.status === "active" || v.status === "archived") &&
     (v.relation === "primary" || v.relation === "fork" || v.relation === "side") &&
     typeof v.createdAt === "string" &&
     typeof v.updatedAt === "string"

@@ -39,7 +39,10 @@ async function collectDailyUsage(
     });
   }
 
-  const threads = await store.listThreads({ include: ["primary", "fork", "side"] });
+  const threads = await store.listThreads({
+    include: ["primary", "fork", "side"],
+    includeArchived: true,
+  });
   for (const thread of threads) {
     for await (const event of store.replayEvents(thread.id)) {
       addUsageEvent(buckets, event);

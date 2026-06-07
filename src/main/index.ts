@@ -19,6 +19,7 @@ import { registerApprovalHandlers } from "./ipc/approvals-handlers.js";
 import { registerAttachmentHandlers } from "./ipc/attachments-handlers.js";
 import { registerGoalHandlers } from "./ipc/goals-handlers.js";
 import { registerUsageHandlers } from "./ipc/usage-handlers.js";
+import { registerWorkspaceHandlers } from "./ipc/workspace-handlers.js";
 import { registerWriteHandlers } from "./ipc/write-handlers.js";
 import { registerModelConfigHandlers } from "./ipc/model-config-handlers.js";
 import { AGENT_RUN_CHANNEL } from "../shared/ipc.js";
@@ -111,13 +112,14 @@ app.whenReady().then(async () => {
     console.error("[main] worker pool start failed:", error);
   }
 
-  registerThreadHandlers(store);
+  registerThreadHandlers(store, runtime);
   registerTurnHandlers(runtime, store);
   registerSseHandlers(bus);
   registerApprovalHandlers(runtime);
   registerAttachmentHandlers(attachmentStore);
   registerGoalHandlers(runtime);
   registerUsageHandlers(store);
+  registerWorkspaceHandlers();
   registerWriteHandlers();
   registerModelConfigHandlers(modelConfigStore);
 

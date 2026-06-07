@@ -134,6 +134,41 @@ textarea {
   border-right: 1px solid var(--ds-border-muted);
 }
 
+.ds-sidebar-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 8px;
+}
+
+.ds-sidebar-workspace {
+  overflow: hidden;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  padding: 6px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-sidebar-archive-toggle {
+  min-height: 28px;
+  border: 0;
+  border-radius: var(--ds-radius-md);
+  background: transparent;
+  color: var(--ds-text-muted);
+  cursor: pointer;
+  font-size: var(--ds-size-caption);
+  text-align: left;
+}
+
+.ds-sidebar-archive-toggle:hover {
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+}
+
 .ds-sidebar-list {
   display: flex;
   flex-direction: column;
@@ -142,6 +177,28 @@ textarea {
   overflow-y: auto;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.ds-sidebar-empty {
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  padding: 12px 8px;
+}
+
+.ds-sidebar-project-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ds-sidebar-project-title {
+  overflow: hidden;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  font-weight: 650;
+  padding: 8px 10px 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ds-sidebar-row {
@@ -156,6 +213,10 @@ textarea {
   font-size: var(--ds-size-body);
 }
 
+.ds-sidebar-row.is-archived {
+  color: var(--ds-text-faint);
+}
+
 .ds-sidebar-row:hover {
   background: var(--ds-surface-hover);
 }
@@ -163,6 +224,62 @@ textarea {
 .ds-sidebar-row.is-active {
   background: var(--ds-accent-soft);
   color: var(--ds-accent);
+}
+
+.ds-sidebar-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-sidebar-row-time {
+  flex: 0 0 auto;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-sidebar-row-action,
+.ds-sidebar-delete-button {
+  min-width: 24px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-sm);
+  background: transparent;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.ds-sidebar-row-action:hover {
+  border-color: var(--ds-border);
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+}
+
+.ds-sidebar-delete-button:hover {
+  border-color: var(--ds-danger-soft);
+  background: var(--ds-danger-soft);
+  color: var(--ds-danger);
+}
+
+.ds-sidebar-delete-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ds-sidebar-footer {
+  display: flex;
+  gap: 6px;
+  border-top: 1px solid var(--ds-border-muted);
+  padding: 12px;
 }
 
 /* ---------- Chat stage ---------- */
@@ -177,7 +294,7 @@ textarea {
 /* ---------- Composer ---------- */
 .ds-composer-shell {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   background: var(--ds-surface-elevated);
   border: 1px solid var(--ds-border-strong);
   border-radius: var(--ds-radius-composer);
@@ -235,24 +352,40 @@ textarea {
   font-size: var(--ds-size-caption);
 }
 
+.ds-composer-toolbar-left {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
 .ds-composer-popover {
   position: absolute;
-  bottom: calc(100% + 8px);
+  bottom: calc(100% + 12px);
   left: 0;
   z-index: 40;
   display: flex;
-  width: min(420px, calc(100vw - 48px));
+  width: min(360px, calc(100vw - 48px));
+  max-height: min(360px, calc(100vh - 220px));
   flex-direction: column;
   gap: 10px;
+  overflow: auto;
   border: 1px solid var(--ds-border);
-  border-radius: var(--ds-radius-lg);
+  border-radius: var(--ds-radius-md);
   background: var(--ds-surface-elevated);
   box-shadow: var(--ds-shadow-panel);
-  padding: 10px;
+  padding: 8px;
 }
 
 .ds-composer-popover.is-menu {
-  width: min(280px, calc(100vw - 48px));
+  width: min(220px, calc(100vw - 48px));
+  gap: 4px;
+  padding: 6px;
+}
+
+.ds-composer-popover.is-model-picker {
+  width: min(360px, calc(100vw - 48px));
 }
 
 .ds-composer-popover-section {
@@ -268,18 +401,24 @@ textarea {
 
 .ds-composer-menu-row {
   display: flex;
-  min-height: 34px;
+  min-height: 32px;
   width: 100%;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   border: 0;
-  border-radius: var(--ds-radius-md);
+  border-radius: var(--ds-radius-sm);
   background: transparent;
   color: var(--ds-text);
   cursor: pointer;
-  padding: 7px 8px;
+  padding: 6px 8px;
   text-align: left;
+}
+
+.ds-composer-menu-row span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ds-composer-menu-row:hover,

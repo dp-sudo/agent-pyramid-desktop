@@ -12,14 +12,32 @@ export function WriteWorkspaceView(): ReactElement {
   const [status, setStatus] = useState<"idle" | "loading" | "saving" | "saved" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  async function loadList(): Promise<void> {
-    const workspace = window.prompt("Workspace path?", "") ?? "";
+  async function pickWorkspace(): Promise<string | null> {
+    const result = await window.agentApi.workspace.pickDirectory();
+    if (!result.ok) {
+      setErrorMessage(result.message);
+      setStatus("error");
+      return null;
+    }
+    if (result.value.canceled || !result.value.path) return null;
+    actions.setWorkspaceRoot(result.value.path);
+    return result.value.path;
+  }
+
+  async function loadList(workspaceInput?: string): Promise<void> {
+    const workspace = workspaceInput ?? await pickWorkspace();
     if (!workspace) return;
+    const switchingWorkspace = workspace !== state.workspaceRoot;
     setStatus("loading");
     const result = await window.agentApi.write.list({ workspace, search: "" });
     if (result.ok) {
       setFiles(result.value);
+      if (switchingWorkspace) {
+        setActivePath(null);
+        setContent("");
+      }
       setStatus("idle");
+      setErrorMessage(null);
     } else {
       setErrorMessage(result.message);
       setStatus("error");
@@ -27,14 +45,14 @@ export function WriteWorkspaceView(): ReactElement {
   }
 
   async function openFile(path: string): Promise<void> {
-    const workspace = window.prompt("Workspace path?", "") ?? "";
-    if (!workspace) return;
+    if (!state.workspaceRoot) return;
     setActivePath(path);
     setStatus("loading");
-    const result = await window.agentApi.write.get({ workspace, path });
+    const result = await window.agentApi.write.get({ workspace: state.workspaceRoot, path });
     if (result.ok) {
       setContent(result.value.content);
       setStatus("idle");
+      setErrorMessage(null);
     } else {
       setErrorMessage(result.message);
       setStatus("error");
@@ -48,17 +66,17 @@ export function WriteWorkspaceView(): ReactElement {
   }, [status]);
 
   async function save(): Promise<void> {
-    if (!activePath) return;
-    const workspace = window.prompt("Workspace path?", "") ?? "";
-    if (!workspace) return;
+    if (!activePath || !state.workspaceRoot) return;
     setStatus("saving");
     const result = await window.agentApi.write.put({
-      workspace,
+      workspace: state.workspaceRoot,
       path: activePath,
       content,
     });
-    if (result.ok) setStatus("saved");
-    else {
+    if (result.ok) {
+      setStatus("saved");
+      setErrorMessage(null);
+    } else {
       setErrorMessage(result.message);
       setStatus("error");
     }
@@ -80,7 +98,24 @@ export function WriteWorkspaceView(): ReactElement {
           <button className="ds-pill" onClick={() => void loadList()}>
             {t("write.openWorkspace")}
           </button>
+          {state.workspaceRoot ? (
+            <button
+              className="ds-pill"
+              onClick={() => void loadList(state.workspaceRoot)}
+            >
+              {t("write.refresh")}
+            </button>
+          ) : null}
         </div>
+        {state.workspaceRoot ? (
+          <div
+            className="ds-sidebar-workspace"
+            style={{ margin: "0 12px 8px" }}
+            title={state.workspaceRoot}
+          >
+            {state.workspaceRoot}
+          </div>
+        ) : null}
         <div className="ds-sidebar-list">
           {files.map((file) => (
             <div
@@ -111,7 +146,7 @@ export function WriteWorkspaceView(): ReactElement {
             className="ds-pill is-accent"
             style={{ float: "right" }}
             onClick={() => void save()}
-            disabled={!activePath}
+            disabled={!activePath || !state.workspaceRoot}
           >
             {t("write.save")}
           </button>

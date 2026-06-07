@@ -28,6 +28,7 @@ import type {
   Item,
   UsageDailyBucket,
   UsageDailyRequest,
+  WorkspacePickDirectoryResponse,
   ModelConfig,
   ModelConfigProfile,
   ModelConfigProfileActivateRequest,
@@ -57,6 +58,7 @@ import {
   TURN_INTERRUPT_CHANNEL,
   TURN_START_CHANNEL,
   USAGE_DAILY_CHANNEL,
+  WORKSPACE_PICK_DIRECTORY_CHANNEL,
   WRITE_COMPLETE_CHANNEL,
   WRITE_GET_CHANNEL,
   WRITE_LIST_CHANNEL,
@@ -206,6 +208,14 @@ const usage = {
   },
 };
 
+const workspace = {
+  pickDirectory(): Promise<IpcResult<WorkspacePickDirectoryResponse>> {
+    return ipcRenderer.invoke(WORKSPACE_PICK_DIRECTORY_CHANNEL) as Promise<
+      IpcResult<WorkspacePickDirectoryResponse>
+    >;
+  },
+};
+
 const write = {
   list(request: WriteListRequest): Promise<IpcResult<WriteFileEntry[]>> {
     return ipcRenderer.invoke(WRITE_LIST_CHANNEL, request) as Promise<
@@ -290,6 +300,7 @@ export const agentApi = {
   goals,
   attachments,
   usage,
+  workspace,
   write,
   modelConfig,
 };

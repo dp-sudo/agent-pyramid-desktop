@@ -35,6 +35,8 @@ export interface WorkbenchState {
   route: WorkbenchRoute;
   modelConfig: ModelConfig;
   modelProfiles: ModelConfigProfilesState | null;
+  workspaceRoot: string;
+  showArchivedThreads: boolean;
   threads: ThreadSummary[];
   activeThread: ThreadRecord | null;
   activeThreadId: string | null;
@@ -52,6 +54,8 @@ const INITIAL_STATE: WorkbenchState = {
   route: "code",
   modelConfig: DEFAULT_MODEL_CONFIG,
   modelProfiles: null,
+  workspaceRoot: "",
+  showArchivedThreads: false,
   threads: [],
   activeThread: null,
   activeThreadId: null,
@@ -84,7 +88,10 @@ type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
   | { type: "setModelConfig"; config: ModelConfig }
   | { type: "setModelProfiles"; profiles: ModelConfigProfilesState }
+  | { type: "setWorkspaceRoot"; workspaceRoot: string }
+  | { type: "setShowArchivedThreads"; show: boolean }
   | { type: "setThreads"; threads: ThreadSummary[] }
+  | { type: "removeThread"; id: string }
   | { type: "selectThread"; thread: ThreadRecord; items: Item[] }
   | { type: "updateActiveThread"; thread: ThreadRecord }
   | { type: "deselectThread" }
@@ -123,13 +130,35 @@ function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       };
     case "setModelProfiles":
       return { ...state, modelProfiles: action.profiles };
+    case "setWorkspaceRoot":
+      return { ...state, workspaceRoot: action.workspaceRoot };
+    case "setShowArchivedThreads":
+      return { ...state, showArchivedThreads: action.show };
     case "setThreads":
       return { ...state, threads: action.threads };
+    case "removeThread": {
+      const removingActive = state.activeThreadId === action.id;
+      return {
+        ...state,
+        threads: state.threads.filter((thread) => thread.id !== action.id),
+        ...(removingActive
+          ? {
+              activeThread: null,
+              activeThreadId: null,
+              activeTurnId: null,
+              items: [],
+              inFlightTurn: null,
+              rightPanelMode: null,
+            }
+          : {}),
+      };
+    }
     case "selectThread":
       return {
         ...state,
         activeThread: action.thread,
         activeThreadId: action.thread.id,
+        workspaceRoot: action.thread.workspace || state.workspaceRoot,
         items: action.items,
         inFlightTurn: null,
         activeTurnId: null,
@@ -229,7 +258,10 @@ export interface WorkbenchActions {
   setRoute(route: WorkbenchRoute): void;
   setModelConfig(config: ModelConfig): void;
   setModelProfiles(profiles: ModelConfigProfilesState): void;
+  setWorkspaceRoot(workspaceRoot: string): void;
+  setShowArchivedThreads(show: boolean): void;
   setThreads(threads: ThreadSummary[]): void;
+  removeThread(id: string): void;
   selectThread(thread: ThreadRecord, items: Item[]): void;
   updateActiveThread(thread: ThreadRecord): void;
   deselectThread(): void;
@@ -267,7 +299,12 @@ export function WorkbenchProvider({ children }: { children: ReactNode }): ReactE
       setRoute: (route) => dispatch({ type: "setRoute", route }),
       setModelConfig: (config) => dispatch({ type: "setModelConfig", config }),
       setModelProfiles: (profiles) => dispatch({ type: "setModelProfiles", profiles }),
+      setWorkspaceRoot: (workspaceRoot) =>
+        dispatch({ type: "setWorkspaceRoot", workspaceRoot }),
+      setShowArchivedThreads: (show) =>
+        dispatch({ type: "setShowArchivedThreads", show }),
       setThreads: (threads) => dispatch({ type: "setThreads", threads }),
+      removeThread: (id) => dispatch({ type: "removeThread", id }),
       selectThread: (thread, items) => dispatch({ type: "selectThread", thread, items }),
       updateActiveThread: (thread) => dispatch({ type: "updateActiveThread", thread }),
       deselectThread: () => dispatch({ type: "deselectThread" }),

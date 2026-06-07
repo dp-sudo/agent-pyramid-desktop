@@ -122,11 +122,14 @@ export function FloatingComposer({
           borderTop: "1px solid var(--ds-border-muted)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
+        <div className="ds-composer-toolbar-left">
           <button
             type="button"
             className="ds-composer-tool-button"
-            onClick={() => setMenuOpen((value) => !value)}
+            onClick={() => {
+              setMenuOpen((value) => !value);
+              setPickerOpen(false);
+            }}
             disabled={disabled || busy}
             title={t("composer.more")}
             aria-label={t("composer.more")}
@@ -170,7 +173,10 @@ export function FloatingComposer({
           <button
             type="button"
             className="ds-composer-model-button"
-            onClick={() => setPickerOpen((value) => !value)}
+            onClick={() => {
+              setPickerOpen((value) => !value);
+              setMenuOpen(false);
+            }}
           >
             <span>{state.composer.model}</span>
             <span>{state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort}</span>
