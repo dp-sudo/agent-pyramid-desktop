@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, session } from "electron";
 import { JsonlThreadStore } from "./persistence/index.js";
 import { ModelConfigStore } from "./persistence/model-config-store.js";
 import { RuntimeEventBus } from "./event-bus.js";
@@ -53,7 +53,7 @@ function createWindow(): void {
     backgroundColor: "#f5f7fa",
     title: "Agent Workbench",
     webPreferences: {
-      preload: join(__dirname, "../preload/index.mjs"),
+      preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -73,6 +73,8 @@ function createWindow(): void {
 // ---------------------------------------------------------------------------
 
 app.whenReady().then(async () => {
+  installContentSecurityPolicy();
+
   try {
     await store.init();
     await modelConfigStore.init();
@@ -109,6 +111,36 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+function installContentSecurityPolicy(): void {
+  const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
+  const policy = isDev
+    ? [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*",
+      ].join("; ")
+    : [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+      ].join("; ");
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [policy],
+      },
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   void pool.destroy().finally(() => {

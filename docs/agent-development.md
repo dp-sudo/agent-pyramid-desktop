@@ -56,6 +56,21 @@
 - 验证方式：文档检查；代码侧此前已通过 `npm run typecheck` 和 `npm run build`。
 - 落地渲染层中英文界面语言切换：新增 `src/shared/locale.ts`、`src/renderer/src/i18n/` 资源与初始化，并将 React 控制台静态文案迁移到 `react-i18next`。
 - 验证方式：`npm run typecheck`、`npm run build`。
+
+## 2026-06-07 — Startup Error Fixes
+
+- 修复 preload 启动错误：`electron.vite.config.ts` 将 preload bundle 输出为 CommonJS `out/preload/index.js`，`src/main/index.ts` 的 BrowserWindow preload 路径同步改为 `../preload/index.js`，保留 `contextIsolation: true` 与 `nodeIntegration: false`。
+- 修复开发期 CSP 与 Vite React Refresh 冲突：主进程按 dev/prod 注入 CSP，开发期允许 Vite 所需 inline preamble，生产期保持 `script-src 'self'`。
+- 修复 renderer Context 重复实例风险：统一 `src/renderer/src/ui/Workbench.tsx` 对 `WorkbenchContext` 的本地导入，不再使用 `.js` 后缀混用。
+- 修复 LLM worker 启动错误：把 `src/main/infrastructure/llm-worker/worker.ts` 加为 main 构建入口，输出 `out/main/llm-worker.js`；`worker-pool.ts` 使用该稳定入口。
+- 验证方式：`npm run typecheck`、`npm run build`、`npm run dev` 短时启动；启动日志 stderr 为空。
+
+## 2026-06-07 — Chat Send Flow Fixes
+
+- 修复 `window.prompt()` 在 Electron renderer 中不可用导致的新建会话崩溃：`src/renderer/src/ui/Workbench.tsx` 新建会话直接使用空 workspace。
+- 修复无活动会话时发送消息静默失败：发送前自动创建 thread、订阅该 thread 的 SSE，再调用 `turns.start`。
+- 修复自动创建首个 thread 时早期 runtime event 可能丢失：renderer 维护 active thread ref，SSE listener 常驻，thread 切换时只更新主进程订阅。
+- 验证方式：`npm run typecheck`、`npm run build`、`npm run dev` 短时启动；启动日志 stderr 为空。
 - 落地大模型配置设置：新增 `ModelConfig` 契约、`config:model:get/update` IPC、`ModelConfigStore` 持久化到 `userData/config`、设置页表单和运行时配置读取；MiniMax 网关改为使用配置的 `base_url/max_tokens/thinking`。
 - 验证方式：`npm run typecheck`、`npm run build`。
 - 扩展大模型多配置档案：`config` 文件由单个 `ModelConfig` 自动迁移为 `ModelConfigProfilesState`；新增 profile list/create/update/delete/activate IPC 和 preload API；设置页新增档案卡片区，表单继续编辑当前激活配置。

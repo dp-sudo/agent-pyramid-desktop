@@ -1,6 +1,6 @@
-import { useCallback, useEffect, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "./store/WorkbenchContext.js";
+import { useWorkbench } from "./store/WorkbenchContext";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { WorkbenchTopBar } from "./components/topbar/WorkbenchTopBar";
 import { FloatingComposer } from "./components/composer/FloatingComposer";
@@ -12,6 +12,11 @@ import type { ThreadRecord } from "../../../shared/agent-contracts";
 export function Workbench(): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
+  const activeThreadIdRef = useRef<string | null>(state.activeThreadId);
+
+  useEffect(() => {
+    activeThreadIdRef.current = state.activeThreadId;
+  }, [state.activeThreadId]);
 
   // Load thread list on mount.
   useEffect(() => {
@@ -34,13 +39,14 @@ export function Workbench(): ReactElement {
     };
   }, [actions]);
 
-  // Subscribe to SSE for the active thread.
-  useEffect(() => {
-    if (!state.activeThreadId) return;
-    const threadId = state.activeThreadId;
-    void window.agentApi.sse.subscribe({ threadId });
-    const off = window.agentApi.sse.onEvent((event) => {
-      if (!("threadId" in event) || event.threadId !== threadId) return;
+  const handleRuntimeEvent = useCallback(
+    (event: Parameters<typeof window.agentApi.sse.onEvent>[0] extends (
+      event: infer E,
+    ) => void
+      ? E
+      : never): void => {
+      const threadId = activeThreadIdRef.current;
+      if (!threadId || !("threadId" in event) || event.threadId !== threadId) return;
       if (event.kind === "item_appended") {
         actions.appendItem(event.item);
       } else if (event.kind === "item_updated") {
@@ -54,17 +60,25 @@ export function Workbench(): ReactElement {
         actions.setError(event.message);
       } else if (event.kind === "runtime_error") {
         actions.setError(event.message);
-      } else if (event.kind === "turn_started") {
-        // No-op; we already have the turn record from startTurn.
-      } else if (event.kind === "approval_requested") {
-        // The ApprovalBlock in the timeline will handle the user interaction.
       }
-    });
+    },
+    [actions],
+  );
+
+  useEffect(() => {
+    if (!window.agentApi) return;
+    return window.agentApi.sse.onEvent(handleRuntimeEvent);
+  }, [handleRuntimeEvent]);
+
+  // Subscribe the main process event bus to the active thread.
+  useEffect(() => {
+    if (!state.activeThreadId) return;
+    const threadId = state.activeThreadId;
+    void window.agentApi.sse.subscribe({ threadId });
     return () => {
-      off();
       void window.agentApi.sse.unsubscribe({ threadId });
     };
-  }, [state.activeThreadId, actions]);
+  }, [state.activeThreadId]);
 
   const refreshThreads = useCallback(async () => {
     const result = await window.agentApi.threads.list({});
@@ -83,26 +97,47 @@ export function Workbench(): ReactElement {
   );
 
   const onNewChat = useCallback(async () => {
-    const workspace = window.prompt("Workspace path? (empty for now)", "") ?? "";
     const result = await window.agentApi.threads.create({
       title: "New thread",
-      workspace,
+      workspace: "",
       mode: "code",
     });
     if (!result.ok) {
       actions.setError(result.message);
       return;
     }
+    activeThreadIdRef.current = result.value.id;
+    await window.agentApi.sse.subscribe({ threadId: result.value.id });
     await refreshThreads();
     actions.selectThread(result.value as ThreadRecord, []);
   }, [actions, refreshThreads]);
 
   const onSend = useCallback(async () => {
-    if (!state.activeThreadId) return;
-    const text = state.composer.text;
+    const text = state.composer.text.trim();
+    if (!text) return;
+
+    let threadId = state.activeThreadId;
+    if (!threadId) {
+      const title = text.length > 60 ? `${text.slice(0, 57)}...` : text;
+      const threadResult = await window.agentApi.threads.create({
+        title,
+        workspace: "",
+        mode: "code",
+      });
+      if (!threadResult.ok) {
+        actions.setError(threadResult.message);
+        return;
+      }
+      threadId = threadResult.value.id;
+      activeThreadIdRef.current = threadId;
+      await window.agentApi.sse.subscribe({ threadId });
+      await refreshThreads();
+      actions.selectThread(threadResult.value as ThreadRecord, []);
+    }
+
     actions.setComposerText("");
     const result = await window.agentApi.turns.start({
-      threadId: state.activeThreadId,
+      threadId,
       text,
       model: state.modelConfig.model,
       reasoningEffort: state.modelConfig.model_reasoning_effort,
@@ -112,7 +147,7 @@ export function Workbench(): ReactElement {
       return;
     }
     actions.turnStarted(result.value);
-  }, [state.activeThreadId, state.composer.text, state.modelConfig, actions]);
+  }, [state.activeThreadId, state.composer.text, state.modelConfig, actions, refreshThreads]);
 
   const onInterrupt = useCallback(async () => {
     if (!state.inFlightTurn) return;

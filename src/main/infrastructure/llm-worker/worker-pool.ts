@@ -12,7 +12,7 @@ import { isThreadRecord, type ThreadRecord } from "../../../shared/agent-contrac
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const WORKER_FILE = path.join(__dirname, "worker.js");
+const WORKER_FILE = path.join(__dirname, "llm-worker.js");
 
 interface PoolEntry {
   worker: Worker;
