@@ -130,7 +130,8 @@
       "compactLimit": "model_auto_compact_token_limit",
       "maxTokens": "max_tokens",
       "thinking": "thinking",
-      "reasoningEffort": "model_reasoning_effort"
+      "reasoningEffort": "model_reasoning_effort",
+      "profileName": "档案名称"
     },
     "placeholders": {
       "compactLimit": "model_context_window 的 90%"
@@ -140,7 +141,23 @@
       "medium": "中 / medium",
       "high": "高 / high",
       "xhigh": "超高 / xhigh"
-    }
+    },
+    "profiles": {
+      "title": "模型配置档案",
+      "subtitle": "切换运行时激活模型，不改 Agent 循环。",
+      "active": "当前",
+      "addMiniMax": "MiniMax",
+      "addDeepSeek": "DeepSeek",
+      "addCustom": "自定义",
+      "duplicate": "复制",
+      "delete": "删除",
+      "minimaxName": "MiniMax",
+      "deepseekName": "DeepSeek",
+      "customName": "自定义 OpenAI",
+      "copyName": "{{name}} 副本",
+      "noActive": "没有当前模型配置档案。"
+    },
+    "preloadMissing": "预加载脚本未加载。请通过 Electron 应用打开此页面。"
   },
   "routes": {
     "code": "编码",

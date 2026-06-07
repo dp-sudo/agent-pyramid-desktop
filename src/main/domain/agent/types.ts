@@ -1,4 +1,7 @@
-import type { LlmProtocol } from "../../../shared/agent-contracts";
+import type {
+  LlmProtocol,
+  ModelReasoningEffort,
+} from "../../../shared/agent-contracts";
 
 export type AgentRole = "system" | "user" | "assistant" | "tool";
 
@@ -34,6 +37,7 @@ export interface AgentUsage {
 
 export interface LlmRequest {
   protocol: LlmProtocol;
+  provider: string;
   model: string;
   apiKey: string;
   baseUrl: string;
@@ -43,6 +47,7 @@ export interface LlmRequest {
   maxTokens: number;
   temperature: number;
   thinking: boolean;
+  reasoningEffort: ModelReasoningEffort;
 }
 
 export interface LlmResponse {
@@ -53,8 +58,24 @@ export interface LlmResponse {
   raw: unknown;
 }
 
+export type LlmStopReason = "stop" | "tool_calls" | "length" | "error";
+
+export type LlmStreamChunk =
+  | { kind: "text_delta"; text: string }
+  | { kind: "reasoning_delta"; text: string }
+  | { kind: "tool_call_delta"; toolCallId: string; name?: string; argumentsDelta?: string }
+  | { kind: "tool_call_completed"; toolCall: AgentToolCall }
+  | { kind: "usage"; usage: AgentUsage }
+  | { kind: "completed"; stopReason: LlmStopReason }
+  | { kind: "error"; message: string; code?: string };
+
+export interface LlmStreamOptions {
+  signal?: AbortSignal;
+}
+
 export interface LlmGateway {
   complete(request: LlmRequest): Promise<LlmResponse>;
+  stream(request: LlmRequest, options?: LlmStreamOptions): AsyncIterable<LlmStreamChunk>;
 }
 
 export interface AgentTool {

@@ -121,7 +121,9 @@
     "save": "Save",
     "saving": "Saving",
     "saved": "Saved",
+    "preloadMissing": "Preload script not loaded. Open this page through the Electron app.",
     "fields": {
+      "profileName": "Profile name",
       "modelProvide": "model_provide",
       "model": "model",
       "baseUrl": "base_url",
@@ -140,6 +142,21 @@
       "medium": "Medium / medium",
       "high": "High / high",
       "xhigh": "Extra high / xhigh"
+    },
+    "profiles": {
+      "title": "Model profiles",
+      "subtitle": "Switch the active runtime model without changing the Agent loop.",
+      "active": "Active",
+      "addMiniMax": "MiniMax",
+      "addDeepSeek": "DeepSeek",
+      "addCustom": "Custom",
+      "duplicate": "Duplicate",
+      "delete": "Delete",
+      "minimaxName": "MiniMax",
+      "deepseekName": "DeepSeek",
+      "customName": "Custom OpenAI",
+      "copyName": "{{name}} copy",
+      "noActive": "No active model profile."
     }
   },
   "routes": {

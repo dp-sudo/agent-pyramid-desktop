@@ -5,7 +5,7 @@ import type {
   WorkerInbound,
   WorkerOutbound,
 } from "./protocol.js";
-import type { LlmRequest, LlmResponse } from "../../domain/agent/types.js";
+import type { AgentToolCall, AgentUsage, LlmRequest, LlmResponse } from "../../domain/agent/types.js";
 
 if (!parentPort) {
   throw new Error("llm-worker must be launched as a worker_thread.");
@@ -23,15 +23,47 @@ async function handleChat(request: WorkerChatRequest): Promise<void> {
   const controller = new AbortController();
   inflight.set(requestId, controller);
   try {
-    // The current MiniMax gateway does not yet accept an AbortSignal.
-    // The controller is plumbed here so the cancellation path is exercised
-    // end-to-end; the gateway can adopt it in a follow-up.
-    void controller.signal;
-    const response: LlmResponse = await gateway.complete(payload as LlmRequest);
-    send({ kind: "done", response });
+    let text = "";
+    let reasoning = "";
+    let usage: AgentUsage | undefined;
+    const toolCalls: AgentToolCall[] = [];
+    const rawChunks: unknown[] = [];
+
+    for await (const chunk of gateway.stream(payload as LlmRequest, { signal: controller.signal })) {
+      rawChunks.push(chunk);
+      if (chunk.kind === "text_delta") {
+        text += chunk.text;
+        send({ kind: "delta", requestId, chunk });
+      } else if (chunk.kind === "reasoning_delta") {
+        reasoning += chunk.text;
+        send({ kind: "delta", requestId, chunk });
+      } else if (chunk.kind === "tool_call_delta") {
+        send({ kind: "delta", requestId, chunk });
+      } else if (chunk.kind === "tool_call_completed") {
+        toolCalls.push(chunk.toolCall);
+        send({ kind: "delta", requestId, chunk });
+      } else if (chunk.kind === "usage") {
+        usage = chunk.usage;
+        send({ kind: "delta", requestId, chunk });
+      } else if (chunk.kind === "completed") {
+        send({ kind: "delta", requestId, chunk });
+      } else if (chunk.kind === "error") {
+        send({ kind: "error", requestId, message: chunk.message, code: "internal" });
+        return;
+      }
+    }
+
+    const response: LlmResponse = {
+      text,
+      reasoning,
+      toolCalls,
+      usage,
+      raw: rawChunks
+    };
+    send({ kind: "done", requestId, response });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    send({ kind: "error", message, code: "internal" });
+    send({ kind: "error", requestId, message, code: "internal" });
   } finally {
     inflight.delete(requestId);
   }

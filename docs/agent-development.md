@@ -21,8 +21,8 @@
 - 建立三角循环追踪机制：`src/main/core/triangle-loop.ts`。
 - 建立 Agent 编排器：`src/main/application/agent-runner.ts`。
 - 建立工具注册机制和 `echo` 验证工具：`src/main/application/tools/`。
-- 建立 MiniMax OpenAI/Anthropic 兼容协议适配：`src/main/infrastructure/minimax/`。
-- 建立大模型运行配置：`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/renderer/src/ui/SettingsPlaceholder.tsx`，配置保存到 Electron `userData/config` 文件。
+- 建立 MiniMax、DeepSeek、Custom OpenAI-compatible 的 provider-aware 协议适配：`src/main/infrastructure/minimax/`。
+- 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsPlaceholder.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
 
@@ -34,7 +34,8 @@
 4. 工具能力通过 `ToolRegistry` 接口注册和执行，后续工具不得绕过注册机制。
 5. 渲染层只通过 preload 暴露的安全 API 调用主进程，不直接访问 Node 能力。
 6. 界面语言切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义。
-7. 大模型配置由 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为唯一契约来源，主进程负责读写 `config` 文件，运行时从该配置读取 `model/base_url/OPENAI_API_KEY/max_tokens/thinking/model_reasoning_effort`。
+7. 大模型运行时仍以 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为当前激活配置契约；持久层在外层维护 `ModelConfigProfilesState`（`activeProfileId + profiles[]`），`ModelConfigStore.get()` 只返回当前激活档案的 `ModelConfig`，避免 Agent 运行循环感知多档案 UI。
+8. LLM 网关按 `ModelConfig.model_provide` 做 provider-aware 请求体分流：`MiniMax` 使用 `max_completion_tokens/reasoning_split/thinking.type=adaptive|disabled`，`DeepSeek` 使用 `/chat/completions`、`max_tokens/thinking.type=enabled|disabled/reasoning_effort=high|max`，其他供应商走通用 OpenAI-compatible 请求体。
 
 
 ## 维护要求
@@ -57,6 +58,9 @@
 - 验证方式：`npm run typecheck`、`npm run build`。
 - 落地大模型配置设置：新增 `ModelConfig` 契约、`config:model:get/update` IPC、`ModelConfigStore` 持久化到 `userData/config`、设置页表单和运行时配置读取；MiniMax 网关改为使用配置的 `base_url/max_tokens/thinking`。
 - 验证方式：`npm run typecheck`、`npm run build`。
+- 扩展大模型多配置档案：`config` 文件由单个 `ModelConfig` 自动迁移为 `ModelConfigProfilesState`；新增 profile list/create/update/delete/activate IPC 和 preload API；设置页新增档案卡片区，表单继续编辑当前激活配置。
+- 扩展 provider-aware LLM 请求：运行时传递 `model_provide/model_reasoning_effort`；API key fallback 改为 DeepSeek 读取 `DEEPSEEK_API_KEY`、MiniMax 读取 `MINIMAX_API_KEY`，最后回退 `OPENAI_API_KEY`；网关按 MiniMax、DeepSeek、Custom 方言构造请求体。
+- 验证方式：`npm run typecheck`、`npm run build`。
 
 # 变更记录
 
@@ -66,7 +70,7 @@
 
 ### 协议层
 
-- 扩展 `src/shared/agent-contracts.ts`：新增 `ThreadRecord / ThreadSummary / ThreadRelation / TurnRecord / TurnStatus`、8 种 `Item`（`user | assistant | reasoning | tool | compaction | approval | user_input | system`）、6 种 `RuntimeEvent`、IPC `Request / Response` 类型、`IpcResult<T>` 通用包壳 + `isItem / isRuntimeEvent / isThreadRecord` 类型守卫（替代 zod）。
+- 扩展 `src/shared/agent-contracts.ts`：新增 `ThreadRecord / ThreadSummary / ThreadRelation / TurnRecord / TurnStatus`、8 种 `Item`（`user | assistant | reasoning | tool | compaction | approval | user_input | system`）、7 种 `RuntimeEvent`、IPC `Request / Response` 类型、`IpcResult<T>` 通用包壳 + `isItem / isRuntimeEvent / isThreadRecord` 类型守卫（替代 zod）。
 - 扩展 `src/shared/ipc.ts`：新增 16 个 channel（`THREAD_LIST/CREATE/GET/UPDATE/DELETE/FORK`、`TURN_START/INTERRUPT/GET`、`SSE_SUBSCRIBE/UNSUBSCRIBE/PUSH`、`APPROVAL_RESPOND`、`WRITE_LIST/GET/PUT/COMPLETE`）。
 
 ### 主进程
@@ -86,7 +90,7 @@
 
 ### 渲染端
 
-- 新建 `src/renderer/src/ui/styles/tokens.css`：`--ds-*` 变量全表（light + dark），仿 DeepSeek `base-shell.css` 命名空间。
+- 新建 `src/renderer/src/ui/styles/tokens.css`：`--ds-*` 变量全表（light + dark），作为本项目统一设计 token 命名空间。
 - 新建 `src/renderer/src/ui/styles/shell.css`：三段式布局 + divider + composer + chat blocks + inspector + write editor 容器类。
 - 新建 `src/renderer/src/ui/store/WorkbenchContext.tsx`：`useReducer` 模拟 store，state 包含 `route / activeThreadId / threads / items / inFlightTurn / rightPanelMode / composer / leftSidebarWidth / rightSidebarWidth`。
 - 新建 4 个 primitives：`Pill / IconButton / Chip / KbdHint`。
@@ -98,7 +102,7 @@
 
 ### 文档
 
-- 新建 `docs/ui-design.md`：本项目设计权威文档，YAML frontmatter 风格对齐 DeepSeek `DESIGN.md`。
+- 新建 `docs/ui-design.md`：本项目设计权威文档，记录 UI token、布局语法与后续维护约束。
 
 ### 验证
 
@@ -122,3 +126,13 @@
 ### 验证方式
 
 `npm run typecheck && npm run build` 绿灯；`openspec validate rewrite-as-code-write-workbench` 通过。
+
+## 2026-06-07 — LLM Streaming Output
+
+- 扩展 `src/main/domain/agent/types.ts`：`LlmGateway` 新增 `stream(request, options)`，以 `LlmStreamChunk` 表达 `text_delta`、`reasoning_delta`、`tool_call_delta`、`tool_call_completed`、`usage`、`completed` 与 `error`。
+- 扩展 `src/main/infrastructure/minimax/minimax-gateway.ts`：OpenAI-compatible 请求使用 `stream: true`、`stream_options.include_usage` 与 `text/event-stream`，解析 SSE `data:` 帧和 `[DONE]`；Anthropic-compatible 请求解析 `content_block_delta`、`message_delta` 与工具 JSON 增量。
+- 扩展 `src/main/infrastructure/llm-worker/`：worker 通过 `gateway.stream(..., { signal })` 逐块发送结构化 delta，`cancel` 通过 `AbortController` 终止 HTTP 流；`worker-pool` 的 `onChunk` 传递 `LlmStreamChunk` 而不是裸字符串。
+- 扩展 `src/shared/agent-contracts.ts` 与 `src/main/event-bus.ts`：`RuntimeEvent` 新增 `item_updated`，用于把流式中的 assistant/reasoning item 推给订阅 renderer。
+- 扩展 `src/main/application/agent-runtime.ts`：运行时收到 `text_delta` / `reasoning_delta` 后懒创建同一 turn 的 live item，持续 emit `item_updated`；流结束或中断时把最终/截断 item 写入 JSONL 并 emit `item_appended`，保证 UI 当前态、持久化重放和旧 `runOnce` 兼容壳一致。
+- 扩展 `src/renderer/src/ui/Workbench.tsx` 与 `src/renderer/src/ui/store/WorkbenchContext.tsx`：renderer 订阅 `item_updated` 并按 item id upsert，`item_appended` 同样 upsert，避免流式最终落盘事件造成重复气泡。
+- 验证方式：`npm run typecheck`、`npm run build`。

@@ -36,6 +36,39 @@ export interface ModelConfigUpdate {
   model_reasoning_effort?: ModelReasoningEffort;
 }
 
+export interface ModelConfigProfile {
+  id: string;
+  name: string;
+  config: ModelConfig;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelConfigProfilesState {
+  activeProfileId: string;
+  profiles: ModelConfigProfile[];
+}
+
+export interface ModelConfigProfileCreateRequest {
+  name: string;
+  config: ModelConfigUpdate;
+  activate?: boolean;
+}
+
+export interface ModelConfigProfileUpdateRequest {
+  id: string;
+  name?: string;
+  config?: ModelConfigUpdate;
+}
+
+export interface ModelConfigProfileDeleteRequest {
+  id: string;
+}
+
+export interface ModelConfigProfileActivateRequest {
+  id: string;
+}
+
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   model_provide: "MiniMax",
   model: "MiniMax-M3",
@@ -46,6 +79,13 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   max_tokens: 65536,
   thinking: true,
   model_reasoning_effort: "medium",
+};
+
+export const DEFAULT_DEEPSEEK_MODEL_CONFIG: ModelConfig = {
+  ...DEFAULT_MODEL_CONFIG,
+  model_provide: "DeepSeek",
+  model: "deepseek-v4-flash",
+  base_url: "https://api.deepseek.com",
 };
 
 export function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
@@ -301,6 +341,13 @@ export interface ItemAppendedEvent {
   item: Item;
 }
 
+export interface ItemUpdatedEvent {
+  kind: "item_updated";
+  threadId: string;
+  turnId: string;
+  item: Item;
+}
+
 export interface ApprovalRequestedEvent {
   kind: "approval_requested";
   threadId: string;
@@ -330,6 +377,7 @@ export type RuntimeEvent =
   | TurnCompletedEvent
   | TurnFailedEvent
   | ItemAppendedEvent
+  | ItemUpdatedEvent
   | ApprovalRequestedEvent
   | RuntimeErrorEvent;
 
@@ -474,6 +522,7 @@ const RUNTIME_EVENT_KINDS: RuntimeEventKind[] = [
   "turn_completed",
   "turn_failed",
   "item_appended",
+  "item_updated",
   "approval_requested",
   "runtime_error",
 ];

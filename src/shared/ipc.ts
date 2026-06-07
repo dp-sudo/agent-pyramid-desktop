@@ -32,6 +32,11 @@ export const WRITE_COMPLETE_CHANNEL = "write:complete";
 // Model configuration
 export const MODEL_CONFIG_GET_CHANNEL = "config:model:get";
 export const MODEL_CONFIG_UPDATE_CHANNEL = "config:model:update";
+export const MODEL_CONFIG_PROFILES_LIST_CHANNEL = "config:model:profiles:list";
+export const MODEL_CONFIG_PROFILES_CREATE_CHANNEL = "config:model:profiles:create";
+export const MODEL_CONFIG_PROFILES_UPDATE_CHANNEL = "config:model:profiles:update";
+export const MODEL_CONFIG_PROFILES_DELETE_CHANNEL = "config:model:profiles:delete";
+export const MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL = "config:model:profiles:activate";
 
 /** All channels a renderer may invoke on the main process. */
 export const RENDERER_TO_MAIN_CHANNELS = [
@@ -54,6 +59,11 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   WRITE_COMPLETE_CHANNEL,
   MODEL_CONFIG_GET_CHANNEL,
   MODEL_CONFIG_UPDATE_CHANNEL,
+  MODEL_CONFIG_PROFILES_LIST_CHANNEL,
+  MODEL_CONFIG_PROFILES_CREATE_CHANNEL,
+  MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
+  MODEL_CONFIG_PROFILES_DELETE_CHANNEL,
+  MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
 ] as const;
 
 export type RendererToMainChannel = (typeof RENDERER_TO_MAIN_CHANNELS)[number];

@@ -43,6 +43,8 @@ export function Workbench(): ReactElement {
       if (!("threadId" in event) || event.threadId !== threadId) return;
       if (event.kind === "item_appended") {
         actions.appendItem(event.item);
+      } else if (event.kind === "item_updated") {
+        actions.updateItem(event.item);
       } else if (event.kind === "turn_completed") {
         if (event.status !== "in-flight") {
           actions.turnEnded(event.status);

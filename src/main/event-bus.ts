@@ -29,6 +29,7 @@ export class RuntimeEventBus extends EventEmitter {
       "turn_completed",
       "turn_failed",
       "item_appended",
+      "item_updated",
       "approval_requested",
       "runtime_error",
     ] as RuntimeEventKind[]) {
@@ -40,6 +41,7 @@ export class RuntimeEventBus extends EventEmitter {
         "turn_completed",
         "turn_failed",
         "item_appended",
+        "item_updated",
         "approval_requested",
         "runtime_error",
       ] as RuntimeEventKind[]) {

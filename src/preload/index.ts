@@ -23,6 +23,12 @@ import type {
   WritePutRequest,
   Item,
   ModelConfig,
+  ModelConfigProfile,
+  ModelConfigProfileActivateRequest,
+  ModelConfigProfileCreateRequest,
+  ModelConfigProfileDeleteRequest,
+  ModelConfigProfilesState,
+  ModelConfigProfileUpdateRequest,
   ModelConfigUpdate,
 } from "../shared/agent-contracts";
 import {
@@ -45,6 +51,11 @@ import {
   WRITE_LIST_CHANNEL,
   WRITE_PUT_CHANNEL,
   MODEL_CONFIG_GET_CHANNEL,
+  MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
+  MODEL_CONFIG_PROFILES_CREATE_CHANNEL,
+  MODEL_CONFIG_PROFILES_DELETE_CHANNEL,
+  MODEL_CONFIG_PROFILES_LIST_CHANNEL,
+  MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
   MODEL_CONFIG_UPDATE_CHANNEL,
 } from "../shared/ipc";
 
@@ -186,6 +197,39 @@ const modelConfig = {
   update(update: ModelConfigUpdate): Promise<IpcResult<ModelConfig>> {
     return ipcRenderer.invoke(MODEL_CONFIG_UPDATE_CHANNEL, update) as Promise<
       IpcResult<ModelConfig>
+    >;
+  },
+  listProfiles(): Promise<IpcResult<ModelConfigProfilesState>> {
+    return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_LIST_CHANNEL) as Promise<
+      IpcResult<ModelConfigProfilesState>
+    >;
+  },
+  createProfile(
+    request: ModelConfigProfileCreateRequest,
+  ): Promise<IpcResult<ModelConfigProfilesState>> {
+    return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_CREATE_CHANNEL, request) as Promise<
+      IpcResult<ModelConfigProfilesState>
+    >;
+  },
+  updateProfile(
+    request: ModelConfigProfileUpdateRequest,
+  ): Promise<IpcResult<ModelConfigProfile>> {
+    return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_UPDATE_CHANNEL, request) as Promise<
+      IpcResult<ModelConfigProfile>
+    >;
+  },
+  deleteProfile(
+    request: ModelConfigProfileDeleteRequest,
+  ): Promise<IpcResult<ModelConfigProfilesState>> {
+    return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_DELETE_CHANNEL, request) as Promise<
+      IpcResult<ModelConfigProfilesState>
+    >;
+  },
+  activateProfile(
+    request: ModelConfigProfileActivateRequest,
+  ): Promise<IpcResult<ModelConfigProfilesState>> {
+    return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL, request) as Promise<
+      IpcResult<ModelConfigProfilesState>
     >;
   },
 };

@@ -1,8 +1,13 @@
 import type {
   AgentMessage,
+  AgentToolCall,
+  AgentUsage,
   LlmGateway,
   LlmRequest,
-  LlmResponse
+  LlmResponse,
+  LlmStreamChunk,
+  LlmStreamOptions,
+  LlmStopReason
 } from "../../domain/agent/types";
 import {
   normalizeAnthropicUsage,
@@ -19,6 +24,8 @@ import {
 
 const OPENAI_CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 const ANTHROPIC_MESSAGES_PATH = "/anthropic/v1/messages";
+const DEEPSEEK_CHAT_COMPLETIONS_PATH = "/chat/completions";
+type ProviderDialect = "minimax" | "deepseek" | "custom";
 
 export class MiniMaxGateway implements LlmGateway {
   async complete(request: LlmRequest): Promise<LlmResponse> {
@@ -29,23 +36,25 @@ export class MiniMaxGateway implements LlmGateway {
     return this.completeAnthropicCompatible(request);
   }
 
+  async *stream(
+    request: LlmRequest,
+    options: LlmStreamOptions = {}
+  ): AsyncIterable<LlmStreamChunk> {
+    if (request.protocol === "openai-compatible") {
+      yield* this.streamOpenAiCompatible(request, options);
+      return;
+    }
+
+    yield* this.streamAnthropicCompatible(request, options);
+  }
+
   private async completeOpenAiCompatible(request: LlmRequest): Promise<LlmResponse> {
     const messages = toOpenAiMessages(request);
-    const body = {
-      model: request.model,
-      messages,
-      tools: request.tools.map(toOpenAiTool),
-      tool_choice: "auto",
-      temperature: request.temperature,
-      max_completion_tokens: request.maxTokens,
-      reasoning_split: true,
-      thinking: {
-        type: request.thinking ? "adaptive" : "disabled"
-      }
-    };
+    const dialect = resolveProviderDialect(request.provider);
+    const body = buildOpenAiCompatibleBody(request, messages, false, dialect);
 
     const response = await postJson<OpenAiChatResponse>(
-      resolveEndpoint(request.baseUrl, OPENAI_CHAT_COMPLETIONS_PATH),
+      resolveOpenAiEndpoint(request.baseUrl, dialect),
       request.apiKey,
       body,
       "openai-compatible"
@@ -109,6 +118,374 @@ export class MiniMaxGateway implements LlmGateway {
       raw: response
     };
   }
+
+  private async *streamOpenAiCompatible(
+    request: LlmRequest,
+    options: LlmStreamOptions
+  ): AsyncIterable<LlmStreamChunk> {
+    const messages = toOpenAiMessages(request);
+    const dialect = resolveProviderDialect(request.provider);
+    const body = buildOpenAiCompatibleBody(request, messages, true, dialect);
+
+    const response = await postStream(
+      resolveOpenAiEndpoint(request.baseUrl, dialect),
+      request.apiKey,
+      body,
+      "openai-compatible",
+      options.signal
+    );
+
+    let text = "";
+    let reasoning = "";
+    let usage: AgentUsage | undefined;
+    let finishReason: string | undefined;
+    const toolAccumulator = new OpenAiToolCallAccumulator();
+
+    for await (const payload of readSseJson(response.body, options.signal)) {
+      const result = consumeOpenAiStreamPayload(
+        payload,
+        toolAccumulator,
+        text,
+        reasoning
+      );
+      text = result.text;
+      reasoning = result.reasoning;
+      if (result.usage) {
+        usage = result.usage;
+        yield { kind: "usage", usage };
+      }
+      if (result.finishReason) {
+        finishReason = result.finishReason;
+      }
+      for (const chunk of result.chunks) {
+        yield chunk;
+      }
+      if (isTerminalFinishReason(finishReason)) {
+        break;
+      }
+    }
+
+    const stopReason = mapOpenAiStopReason(finishReason);
+    yield { kind: "completed", stopReason };
+  }
+
+  private async *streamAnthropicCompatible(
+    request: LlmRequest,
+    options: LlmStreamOptions
+  ): AsyncIterable<LlmStreamChunk> {
+    const body = {
+      model: request.model,
+      system: request.systemPrompt,
+      messages: toAnthropicMessages(request.messages),
+      tools: request.tools.map(toAnthropicTool),
+      tool_choice: {
+        type: "auto"
+      },
+      temperature: request.temperature,
+      max_tokens: request.maxTokens,
+      stream: true,
+      thinking: {
+        type: request.thinking ? "adaptive" : "disabled"
+      }
+    };
+
+    const response = await postStream(
+      resolveEndpoint(request.baseUrl, ANTHROPIC_MESSAGES_PATH),
+      request.apiKey,
+      body,
+      "anthropic-compatible",
+      options.signal
+    );
+
+    let stopReason: LlmStopReason = "stop";
+    const toolAccumulator = new AnthropicToolCallAccumulator();
+
+    for await (const payload of readSseJson(response.body, options.signal)) {
+      const result = consumeAnthropicStreamPayload(payload, toolAccumulator);
+      if (result.usage) {
+        yield { kind: "usage", usage: result.usage };
+      }
+      if (result.stopReason) {
+        stopReason = result.stopReason;
+      }
+      for (const chunk of result.chunks) {
+        yield chunk;
+      }
+      if (result.stopReason) {
+        break;
+      }
+    }
+
+    yield { kind: "completed", stopReason };
+  }
+}
+
+interface OpenAiStreamPayload {
+  choices?: Array<{
+    finish_reason?: string | null;
+    delta?: {
+      content?: string | null;
+      reasoning_content?: string | null;
+      reasoning?: string | null;
+      reasoning_details?: Array<{ text?: string | null }>;
+      tool_calls?: Array<{
+        index?: number;
+        id?: string;
+        function?: {
+          name?: string;
+          arguments?: string;
+        };
+      }>;
+    };
+  }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+}
+
+interface AnthropicStreamPayload {
+  type?: string;
+  index?: number;
+  content_block?: {
+    type?: string;
+    id?: string;
+    name?: string;
+    input?: Record<string, unknown>;
+  };
+  delta?: {
+    type?: string;
+    text?: string;
+    thinking?: string;
+    partial_json?: string;
+    stop_reason?: string;
+  };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+}
+
+interface PendingOpenAiToolCall {
+  index?: number;
+  id: string;
+  name?: string;
+  argumentsText: string;
+}
+
+class OpenAiToolCallAccumulator {
+  private readonly pending = new Map<string, PendingOpenAiToolCall>();
+
+  append(call: {
+    index?: number;
+    id?: string;
+    function?: { name?: string; arguments?: string };
+  }): LlmStreamChunk[] {
+    const id = this.resolveId(call);
+    const pending = this.pending.get(id) ?? {
+      id,
+      index: numberOrUndefined(call.index),
+      argumentsText: ""
+    };
+    const nextIndex = numberOrUndefined(call.index);
+    if (nextIndex !== undefined) pending.index = nextIndex;
+    if (call.function?.name) pending.name = call.function.name;
+    const chunks: LlmStreamChunk[] = [];
+    if (typeof call.function?.arguments === "string" && call.function.arguments.length > 0) {
+      pending.argumentsText += call.function.arguments;
+      chunks.push({
+        kind: "tool_call_delta",
+        toolCallId: id,
+        name: pending.name,
+        argumentsDelta: call.function.arguments
+      });
+    }
+    this.pending.set(id, pending);
+    return chunks;
+  }
+
+  completeAll(): AgentToolCall[] {
+    const calls: AgentToolCall[] = [];
+    for (const pending of this.pending.values()) {
+      if (!pending.name) continue;
+      calls.push({
+        id: pending.id,
+        name: pending.name,
+        arguments: parseToolArguments(pending.argumentsText || "{}", pending.name)
+      });
+    }
+    this.pending.clear();
+    return calls;
+  }
+
+  private resolveId(call: { index?: number; id?: string }): string {
+    const nextIndex = numberOrUndefined(call.index);
+    const existingByIndex = findOpenAiToolCallByIndex(this.pending, nextIndex);
+    if (call.id) {
+      if (existingByIndex && existingByIndex !== call.id) {
+        const existing = this.pending.get(existingByIndex);
+        if (existing) {
+          this.pending.delete(existingByIndex);
+          existing.id = call.id;
+          this.pending.set(call.id, existing);
+        }
+      }
+      return call.id;
+    }
+    return existingByIndex ?? `tool_call_${this.pending.size}`;
+  }
+}
+
+interface PendingAnthropicToolCall {
+  id: string;
+  name?: string;
+  argumentsText: string;
+}
+
+class AnthropicToolCallAccumulator {
+  private readonly pendingByIndex = new Map<number, PendingAnthropicToolCall>();
+
+  start(index: number, block: NonNullable<AnthropicStreamPayload["content_block"]>): void {
+    if (block.type !== "tool_use") return;
+    this.pendingByIndex.set(index, {
+      id: block.id ?? `tool_call_${index}`,
+      name: block.name,
+      argumentsText:
+        block.input && Object.keys(block.input).length > 0 ? JSON.stringify(block.input) : ""
+    });
+  }
+
+  appendJson(index: number, value: string): void {
+    const pending = this.pendingByIndex.get(index);
+    if (!pending) return;
+    pending.argumentsText += value;
+  }
+
+  complete(index: number): AgentToolCall | null {
+    const pending = this.pendingByIndex.get(index);
+    if (!pending || !pending.name) return null;
+    this.pendingByIndex.delete(index);
+    return {
+      id: pending.id,
+      name: pending.name,
+      arguments: parseToolArguments(pending.argumentsText || "{}", pending.name)
+    };
+  }
+}
+
+function consumeOpenAiStreamPayload(
+  raw: unknown,
+  toolAccumulator: OpenAiToolCallAccumulator,
+  previousText: string,
+  previousReasoning: string
+): {
+  chunks: LlmStreamChunk[];
+  text: string;
+  reasoning: string;
+  finishReason?: string;
+  usage?: AgentUsage;
+} {
+  const payload = raw as OpenAiStreamPayload;
+  const chunks: LlmStreamChunk[] = [];
+  let text = previousText;
+  let reasoning = previousReasoning;
+  let finishReason: string | undefined;
+  const choice = payload.choices?.[0];
+  const delta = choice?.delta;
+
+  if (delta) {
+    const textDelta = normalizeMaybeCumulativeDelta(delta.content ?? undefined, text);
+    if (textDelta) {
+      text += textDelta;
+      chunks.push({ kind: "text_delta", text: textDelta });
+    }
+
+    const reasoningText =
+      delta.reasoning_content ??
+      delta.reasoning ??
+      delta.reasoning_details
+        ?.map((detail) => detail.text)
+        .filter((value): value is string => typeof value === "string")
+        .join("");
+    const reasoningDelta = normalizeMaybeCumulativeDelta(reasoningText ?? undefined, reasoning);
+    if (reasoningDelta) {
+      reasoning += reasoningDelta;
+      chunks.push({ kind: "reasoning_delta", text: reasoningDelta });
+    }
+
+    for (const call of delta.tool_calls ?? []) {
+      chunks.push(...toolAccumulator.append(call));
+    }
+  }
+
+  if (typeof choice?.finish_reason === "string") {
+    finishReason = choice.finish_reason;
+    if (finishReason === "tool_calls") {
+      for (const toolCall of toolAccumulator.completeAll()) {
+        chunks.push({ kind: "tool_call_completed", toolCall });
+      }
+    }
+  }
+
+  return {
+    chunks,
+    text,
+    reasoning,
+    finishReason,
+    usage: payload.usage ? mapOpenAiUsage(payload.usage) : undefined
+  };
+}
+
+function consumeAnthropicStreamPayload(
+  raw: unknown,
+  toolAccumulator: AnthropicToolCallAccumulator
+): {
+  chunks: LlmStreamChunk[];
+  stopReason?: LlmStopReason;
+  usage?: AgentUsage;
+} {
+  const payload = raw as AnthropicStreamPayload;
+  const chunks: LlmStreamChunk[] = [];
+  const index = numberOrUndefined(payload.index);
+
+  if (payload.type === "content_block_start" && index !== undefined && payload.content_block) {
+    toolAccumulator.start(index, payload.content_block);
+  }
+
+  if (payload.type === "content_block_delta" && payload.delta) {
+    if (payload.delta.type === "text_delta" && payload.delta.text) {
+      chunks.push({ kind: "text_delta", text: payload.delta.text });
+    } else if (payload.delta.type === "thinking_delta" && payload.delta.thinking) {
+      chunks.push({ kind: "reasoning_delta", text: payload.delta.thinking });
+    } else if (
+      payload.delta.type === "input_json_delta" &&
+      index !== undefined &&
+      typeof payload.delta.partial_json === "string"
+    ) {
+      toolAccumulator.appendJson(index, payload.delta.partial_json);
+    }
+  }
+
+  if (payload.type === "content_block_stop" && index !== undefined) {
+    const toolCall = toolAccumulator.complete(index);
+    if (toolCall) {
+      chunks.push({ kind: "tool_call_completed", toolCall });
+    }
+  }
+
+  if (payload.type === "message_delta") {
+    return {
+      chunks,
+      stopReason: mapAnthropicStopReason(payload.delta?.stop_reason),
+      usage: payload.usage ? mapAnthropicUsage(payload.usage) : undefined
+    };
+  }
+
+  return {
+    chunks,
+    usage: payload.usage ? mapAnthropicUsage(payload.usage) : undefined
+  };
 }
 
 function resolveEndpoint(baseUrl: string, path: string): string {
@@ -137,6 +514,89 @@ function resolveEndpoint(baseUrl: string, path: string): string {
   }
 
   return `${trimmed}${path}`;
+}
+
+function resolveOpenAiEndpoint(baseUrl: string, dialect: ProviderDialect): string {
+  return dialect === "deepseek"
+    ? resolveEndpoint(baseUrl, DEEPSEEK_CHAT_COMPLETIONS_PATH)
+    : resolveEndpoint(baseUrl, OPENAI_CHAT_COMPLETIONS_PATH);
+}
+
+function buildOpenAiCompatibleBody(
+  request: LlmRequest,
+  messages: OpenAiChatMessage[],
+  stream: boolean,
+  dialect: ProviderDialect
+): Record<string, unknown> {
+  const common = {
+    model: request.model,
+    messages,
+    tools: request.tools.map(toOpenAiTool),
+    tool_choice: "auto",
+    temperature: request.temperature
+  };
+
+  if (dialect === "minimax") {
+    return {
+      ...common,
+      max_completion_tokens: request.maxTokens,
+      reasoning_split: true,
+      ...(stream
+        ? {
+            stream: true,
+            stream_options: {
+              include_usage: true
+            }
+          }
+        : {}),
+      thinking: {
+        type: request.thinking ? "adaptive" : "disabled"
+      }
+    };
+  }
+
+  if (dialect === "deepseek") {
+    return {
+      ...common,
+      max_tokens: request.maxTokens,
+      ...(stream
+        ? {
+            stream: true,
+            stream_options: {
+              include_usage: true
+            }
+          }
+        : {}),
+      thinking: {
+        type: request.thinking ? "enabled" : "disabled"
+      },
+      reasoning_effort: mapDeepSeekReasoningEffort(request.reasoningEffort)
+    };
+  }
+
+  return {
+    ...common,
+    max_tokens: request.maxTokens,
+    ...(stream
+      ? {
+          stream: true,
+          stream_options: {
+            include_usage: true
+          }
+        }
+      : {})
+  };
+}
+
+function resolveProviderDialect(provider: string): ProviderDialect {
+  const normalized = provider.trim().toLowerCase();
+  if (normalized === "minimax") return "minimax";
+  if (normalized === "deepseek") return "deepseek";
+  return "custom";
+}
+
+function mapDeepSeekReasoningEffort(effort: LlmRequest["reasoningEffort"]): "high" | "max" {
+  return effort === "xhigh" ? "max" : "high";
 }
 
 function toOpenAiMessages(request: LlmRequest): OpenAiChatMessage[] {
@@ -208,7 +668,7 @@ async function postJson<T>(
 
   if (!response.ok) {
     throw new Error(
-      `MiniMax ${protocol} request failed with HTTP ${response.status}: ${responseText.slice(0, 800)}`
+      `LLM ${protocol} request failed with HTTP ${response.status}: ${responseText.slice(0, 800)}`
     );
   }
 
@@ -216,6 +676,209 @@ async function postJson<T>(
     return JSON.parse(responseText) as T;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`MiniMax ${protocol} response was not valid JSON: ${reason}`);
+    throw new Error(`LLM ${protocol} response was not valid JSON: ${reason}`);
+  }
+}
+
+async function postStream(
+  url: string,
+  apiKey: string,
+  body: unknown,
+  protocol: LlmRequest["protocol"],
+  signal?: AbortSignal
+): Promise<Response> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(body),
+    signal
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw new Error(
+      `LLM ${protocol} stream failed with HTTP ${response.status}: ${responseText.slice(0, 800)}`
+    );
+  }
+
+  if (!response.body) {
+    throw new Error(`LLM ${protocol} stream response had no body.`);
+  }
+
+  return response;
+}
+
+async function* readSseJson(
+  body: ReadableStream<Uint8Array> | null,
+  signal?: AbortSignal
+): AsyncIterable<unknown> {
+  if (!body) {
+    throw new Error("SSE response body is missing.");
+  }
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (!signal?.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let frame: { block: string; rest: string } | null;
+      while ((frame = takeSseFrame(buffer)) !== null) {
+        buffer = frame.rest;
+        const payload = parseSseFrame(frame.block);
+        if (payload === null) continue;
+        if (payload === "[DONE]") return;
+        yield payload;
+      }
+    }
+
+    buffer += decoder.decode();
+    const trailing = buffer.trim();
+    if (trailing && !signal?.aborted) {
+      const payload = parseSseFrame(trailing);
+      if (payload !== null && payload !== "[DONE]") {
+        yield payload;
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // The stream may already be closed.
+    }
+  }
+}
+
+function takeSseFrame(buffer: string): { block: string; rest: string } | null {
+  const lf = buffer.indexOf("\n\n");
+  const crlf = buffer.indexOf("\r\n\r\n");
+  if (lf === -1 && crlf === -1) return null;
+  if (crlf !== -1 && (lf === -1 || crlf < lf)) {
+    return {
+      block: buffer.slice(0, crlf),
+      rest: buffer.slice(crlf + 4)
+    };
+  }
+  return {
+    block: buffer.slice(0, lf),
+    rest: buffer.slice(lf + 2)
+  };
+}
+
+function parseSseFrame(frame: string): unknown | "[DONE]" | null {
+  const data = frame
+    .split("\n")
+    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line))
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
+
+  if (!data) return null;
+  if (data === "[DONE]") return "[DONE]";
+
+  try {
+    return JSON.parse(data) as unknown;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`LLM stream frame was not valid JSON: ${reason}`);
+  }
+}
+
+function normalizeMaybeCumulativeDelta(value: string | undefined, previous: string): string {
+  if (!value) return "";
+  if (previous && value.startsWith(previous)) {
+    return value.slice(previous.length);
+  }
+  return value;
+}
+
+function mapOpenAiUsage(usage: NonNullable<OpenAiStreamPayload["usage"]>): AgentUsage {
+  return {
+    inputTokens: usage.prompt_tokens,
+    outputTokens: usage.completion_tokens,
+    totalTokens: usage.total_tokens
+  };
+}
+
+function mapAnthropicUsage(usage: NonNullable<AnthropicStreamPayload["usage"]>): AgentUsage {
+  const inputTokens = usage.input_tokens;
+  const outputTokens = usage.output_tokens;
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens:
+      typeof inputTokens === "number" && typeof outputTokens === "number"
+        ? inputTokens + outputTokens
+        : undefined
+  };
+}
+
+function mapOpenAiStopReason(reason: string | undefined | null): LlmStopReason {
+  switch (reason) {
+    case "tool_calls":
+      return "tool_calls";
+    case "length":
+      return "length";
+    case "error":
+      return "error";
+    default:
+      return "stop";
+  }
+}
+
+function mapAnthropicStopReason(reason: string | undefined | null): LlmStopReason {
+  switch (reason) {
+    case "tool_use":
+      return "tool_calls";
+    case "max_tokens":
+      return "length";
+    case "error":
+      return "error";
+    default:
+      return "stop";
+  }
+}
+
+function isTerminalFinishReason(reason: string | undefined): boolean {
+  return reason === "stop" || reason === "tool_calls" || reason === "length" || reason === "error";
+}
+
+function findOpenAiToolCallByIndex(
+  pending: Map<string, PendingOpenAiToolCall>,
+  index: number | undefined
+): string | undefined {
+  if (index === undefined) return undefined;
+  for (const [id, value] of pending) {
+    if (value.index === index) return id;
+  }
+  return undefined;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function parseToolArguments(raw: string, toolName: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Tool arguments must be a JSON object.");
+    }
+
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse arguments for tool "${toolName}": ${reason}`);
   }
 }

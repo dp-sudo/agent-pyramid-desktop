@@ -1,9 +1,12 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  DEFAULT_DEEPSEEK_MODEL_CONFIG,
   DEFAULT_MODEL_CONFIG,
   MODEL_REASONING_EFFORTS,
   type ModelConfig,
+  type ModelConfigProfile,
+  type ModelConfigProfilesState,
   type ModelConfigUpdate,
   type ModelReasoningEffort,
 } from "../../../shared/agent-contracts";
@@ -28,20 +31,34 @@ export function SettingsPlaceholder(): ReactElement {
   const [form, setForm] = useState<SettingsFormState>(() =>
     toFormState(DEFAULT_MODEL_CONFIG),
   );
+  const [profileName, setProfileName] = useState(DEFAULT_MODEL_CONFIG.model_provide);
+  const [profilesState, setProfilesState] = useState<ModelConfigProfilesState | null>(
+    null,
+  );
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [profileBusy, setProfileBusy] = useState<string>("");
+
+  const activeProfile = profilesState
+    ? findActiveProfile(profilesState)
+    : null;
+  const hasAgentApi = Boolean(window.agentApi);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const result = await window.agentApi.modelConfig.get();
+      if (!window.agentApi) {
+        setLoading(false);
+        setError(t("settings.preloadMissing"));
+        return;
+      }
+      const result = await window.agentApi.modelConfig.listProfiles();
       if (cancelled) return;
       setLoading(false);
       if (result.ok) {
-        setForm(toFormState(result.value));
-        actions.setModelConfig(result.value);
+        applyProfilesState(result.value);
       } else {
         setError(result.message);
       }
@@ -49,7 +66,17 @@ export function SettingsPlaceholder(): ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [actions]);
+  }, [actions, t]);
+
+  function applyProfilesState(state: ModelConfigProfilesState): void {
+    const active = findActiveProfile(state);
+    setProfilesState(state);
+    if (active) {
+      setProfileName(active.name);
+      setForm(toFormState(active.config));
+      actions.setModelConfig(active.config);
+    }
+  }
 
   function updateText(
     field: keyof Omit<SettingsFormState, "thinking" | "model_reasoning_effort">,
@@ -68,20 +95,107 @@ export function SettingsPlaceholder(): ReactElement {
     setForm((current) => ({ ...current, model_reasoning_effort: value }));
   }
 
+  async function handleActivateProfile(profile: ModelConfigProfile): Promise<void> {
+    setProfileBusy(profile.id);
+    setStatus("");
+    setError("");
+    try {
+      const result = await window.agentApi.modelConfig.activateProfile({
+        id: profile.id,
+      });
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      applyProfilesState(result.value);
+    } finally {
+      setProfileBusy("");
+    }
+  }
+
+  async function handleCreateProfile(
+    name: string,
+    config: ModelConfig,
+  ): Promise<void> {
+    setProfileBusy("create");
+    setStatus("");
+    setError("");
+    try {
+      const result = await window.agentApi.modelConfig.createProfile({
+        name,
+        config,
+        activate: true,
+      });
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      applyProfilesState(result.value);
+    } finally {
+      setProfileBusy("");
+    }
+  }
+
+  async function handleDuplicateProfile(profile: ModelConfigProfile): Promise<void> {
+    await handleCreateProfile(
+      t("settings.profiles.copyName", { name: profile.name }),
+      profile.config,
+    );
+  }
+
+  async function handleDeleteProfile(profile: ModelConfigProfile): Promise<void> {
+    if (!profilesState || profilesState.profiles.length <= 1) return;
+    setProfileBusy(profile.id);
+    setStatus("");
+    setError("");
+    try {
+      const result = await window.agentApi.modelConfig.deleteProfile({
+        id: profile.id,
+      });
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      applyProfilesState(result.value);
+    } finally {
+      setProfileBusy("");
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (!activeProfile) {
+      setError(t("settings.profiles.noActive"));
+      return;
+    }
     setSaving(true);
     setStatus("");
     setError("");
     try {
       const update = toUpdatePayload(form);
-      const result = await window.agentApi.modelConfig.update(update);
+      const result = await window.agentApi.modelConfig.updateProfile({
+        id: activeProfile.id,
+        name: profileName,
+        config: update,
+      });
       if (!result.ok) {
         setError(result.message);
         return;
       }
-      setForm(toFormState(result.value));
-      actions.setModelConfig(result.value);
+      const updatedProfile = result.value;
+      setProfilesState((current) =>
+        current
+          ? {
+              ...current,
+              profiles: current.profiles.map((profile) =>
+                profile.id === updatedProfile.id ? updatedProfile : profile,
+              ),
+            }
+          : current,
+      );
+      setForm(toFormState(updatedProfile.config));
+      setProfileName(updatedProfile.name);
+      actions.setModelConfig(updatedProfile.config);
       setStatus(t("settings.saved"));
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : String(submitError));
@@ -102,13 +216,130 @@ export function SettingsPlaceholder(): ReactElement {
             <Pill onClick={() => actions.setRoute("code")}>
               {t("settings.backToWorkbench")}
             </Pill>
-            <button className="ds-settings-save" type="submit" disabled={saving || loading}>
+            <button
+              className="ds-settings-save"
+              type="submit"
+              disabled={!hasAgentApi || saving || loading}
+            >
               {saving ? t("settings.saving") : t("settings.save")}
             </button>
           </div>
         </header>
 
+        <section className="ds-profile-section" aria-label={t("settings.profiles.title")}>
+          <div className="ds-profile-section-header">
+            <div>
+              <h2>{t("settings.profiles.title")}</h2>
+              <p>{t("settings.profiles.subtitle")}</p>
+            </div>
+            <div className="ds-profile-actions">
+              <button
+                className="ds-profile-action"
+                type="button"
+                disabled={!hasAgentApi || loading || Boolean(profileBusy)}
+                onClick={() =>
+                  void handleCreateProfile(
+                    t("settings.profiles.minimaxName"),
+                    DEFAULT_MODEL_CONFIG,
+                  )
+                }
+              >
+                {t("settings.profiles.addMiniMax")}
+              </button>
+              <button
+                className="ds-profile-action"
+                type="button"
+                disabled={!hasAgentApi || loading || Boolean(profileBusy)}
+                onClick={() =>
+                  void handleCreateProfile(
+                    t("settings.profiles.deepseekName"),
+                    DEFAULT_DEEPSEEK_MODEL_CONFIG,
+                  )
+                }
+              >
+                {t("settings.profiles.addDeepSeek")}
+              </button>
+              <button
+                className="ds-profile-action"
+                type="button"
+                disabled={!hasAgentApi || loading || Boolean(profileBusy)}
+                onClick={() =>
+                  void handleCreateProfile(
+                    t("settings.profiles.customName"),
+                    createCustomModelConfig(),
+                  )
+                }
+              >
+                {t("settings.profiles.addCustom")}
+              </button>
+            </div>
+          </div>
+
+          <div className="ds-profile-grid">
+            {profilesState?.profiles.map((profile) => {
+              const isActive = profile.id === profilesState.activeProfileId;
+              const isBusy = profileBusy === profile.id;
+              return (
+                <article
+                  className={`ds-profile-card${isActive ? " is-active" : ""}`}
+                  key={profile.id}
+                >
+                  <button
+                    className="ds-profile-card-main"
+                    type="button"
+                    disabled={isBusy || isActive}
+                    onClick={() => void handleActivateProfile(profile)}
+                  >
+                    <span className="ds-profile-card-topline">
+                      <span>{profile.name}</span>
+                      {isActive ? (
+                        <span className="ds-profile-active">
+                          {t("settings.profiles.active")}
+                        </span>
+                      ) : null}
+                    </span>
+                    <strong>{profile.config.model}</strong>
+                    <span className="ds-profile-meta">
+                      {profile.config.model_provide} / {profile.config.base_url}
+                    </span>
+                  </button>
+                  <div className="ds-profile-card-actions">
+                    <button
+                      type="button"
+                      disabled={!hasAgentApi || loading || Boolean(profileBusy)}
+                      onClick={() => void handleDuplicateProfile(profile)}
+                    >
+                      {t("settings.profiles.duplicate")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={
+                        loading ||
+                        !hasAgentApi ||
+                        Boolean(profileBusy) ||
+                        (profilesState?.profiles.length ?? 0) <= 1
+                      }
+                      onClick={() => void handleDeleteProfile(profile)}
+                    >
+                      {t("settings.profiles.delete")}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
         <section className="ds-settings-section">
+          <div className="ds-settings-field">
+            <label htmlFor="profile_name">{t("settings.fields.profileName")}</label>
+            <input
+              id="profile_name"
+              value={profileName}
+              onChange={(event) => setProfileName(event.target.value)}
+              required
+            />
+          </div>
           <div className="ds-settings-field">
             <label htmlFor="model_provide">{t("settings.fields.modelProvide")}</label>
             <input
@@ -262,4 +493,24 @@ function parseOptionalInteger(raw: string, field: string): number | undefined {
     throw new Error(`${field} must be a positive integer.`);
   }
   return parsed;
+}
+
+function findActiveProfile(
+  state: ModelConfigProfilesState,
+): ModelConfigProfile | null {
+  return (
+    state.profiles.find((profile) => profile.id === state.activeProfileId) ??
+    state.profiles[0] ??
+    null
+  );
+}
+
+function createCustomModelConfig(): ModelConfig {
+  return {
+    ...DEFAULT_MODEL_CONFIG,
+    model_provide: "Custom",
+    model: "gpt-4.1",
+    base_url: "https://api.openai.com/v1",
+    thinking: false,
+  };
 }

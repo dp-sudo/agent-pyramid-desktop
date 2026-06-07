@@ -27,6 +27,7 @@ export class AgentRunner {
 
     const firstResponse = await this.llmGateway.complete({
       protocol: request.protocol,
+      provider: DEFAULT_MODEL_CONFIG.model_provide,
       model: request.model,
       apiKey: request.apiKey,
       baseUrl: DEFAULT_MODEL_CONFIG.base_url,
@@ -35,7 +36,8 @@ export class AgentRunner {
       tools: this.toolRegistry.listDefinitions(),
       maxTokens: request.maxTokens,
       temperature: request.temperature,
-      thinking: DEFAULT_MODEL_CONFIG.thinking
+      thinking: DEFAULT_MODEL_CONFIG.thinking,
+      reasoningEffort: DEFAULT_MODEL_CONFIG.model_reasoning_effort
     });
 
     trace.record({
@@ -86,6 +88,7 @@ export class AgentRunner {
 
     const finalResponse = await this.llmGateway.complete({
       protocol: request.protocol,
+      provider: DEFAULT_MODEL_CONFIG.model_provide,
       model: request.model,
       apiKey: request.apiKey,
       baseUrl: DEFAULT_MODEL_CONFIG.base_url,
@@ -94,7 +97,8 @@ export class AgentRunner {
       tools: this.toolRegistry.listDefinitions(),
       maxTokens: request.maxTokens,
       temperature: request.temperature,
-      thinking: DEFAULT_MODEL_CONFIG.thinking
+      thinking: DEFAULT_MODEL_CONFIG.thinking,
+      reasoningEffort: DEFAULT_MODEL_CONFIG.model_reasoning_effort
     });
 
     trace.record({

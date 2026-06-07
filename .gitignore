@@ -57,3 +57,8 @@ coverage/
 # Electron-vite specific
 .vite/
 
+# DeepSeek
+DeepSeek
+.agents
+.codex
+.claude

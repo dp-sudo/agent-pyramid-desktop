@@ -4,6 +4,7 @@ import type {
   LlmRequest,
   LlmResponse,
   AgentToolCall,
+  LlmStreamChunk,
 } from "../domain/agent/types.js";
 import type { ToolRegistry } from "../domain/agent/ports.js";
 import { JsonlThreadStore } from "../persistence/index.js";
@@ -16,6 +17,8 @@ import type {
   AssistantItem,
   Item,
   ModelConfig,
+  ReasoningItem,
+  SystemItem,
   ThreadRecord,
   ToolItem,
   TurnRecord,
@@ -110,6 +113,22 @@ export class AgentRuntime {
     const turn = this.inFlight.get(turnId);
     if (!turn) return;
     this.deps.pool.cancel(turn.threadId);
+    const item: SystemItem = {
+      kind: "system",
+      id: randomUUID(),
+      threadId: turn.threadId,
+      turnId: turn.id,
+      text: "Interrupted by user",
+      level: "warn",
+      createdAt: new Date().toISOString(),
+    };
+    await this.deps.store.appendItem(turn.threadId, item);
+    this.deps.bus.emit("item_appended", {
+      kind: "item_appended",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      item,
+    });
     this.markTurnStatus(turn, "interrupted");
   }
 
@@ -141,6 +160,7 @@ export class AgentRuntime {
 
       const request: LlmRequest = {
         protocol: "openai-compatible",
+        provider: modelConfig.model_provide,
         model: turn.model,
         apiKey: this.resolveApiKey(modelConfig),
         baseUrl: modelConfig.base_url,
@@ -150,16 +170,48 @@ export class AgentRuntime {
         maxTokens: modelConfig.max_tokens,
         temperature: 1,
         thinking: modelConfig.thinking,
+        reasoningEffort: modelConfig.model_reasoning_effort,
       };
 
       let response: LlmResponse;
-      let assistantText = "";
+      const streamState: {
+        assistantItem: AssistantItem | null;
+        reasoningItem: ReasoningItem | null;
+      } = {
+        assistantItem: null,
+        reasoningItem: null,
+      };
       try {
         response = await this.deps.pool.chat({ id: thread.id }, request, (chunk) => {
-          assistantText += chunk;
-          // We persist the full text on completion; no per-delta item.
+          if (turn.status !== "in-flight") return;
+          this.applyStreamChunk(turn, chunk, streamState);
         });
       } catch (error) {
+        if (turn.status === "interrupted") {
+          if (streamState.reasoningItem?.text.trim()) {
+            await this.deps.store.appendItem(turn.threadId, streamState.reasoningItem);
+            this.deps.bus.emit("item_appended", {
+              kind: "item_appended",
+              threadId: turn.threadId,
+              turnId: turn.id,
+              item: streamState.reasoningItem,
+            });
+          }
+          if (streamState.assistantItem?.text.trim()) {
+            const interruptedAssistantItem: AssistantItem = {
+              ...streamState.assistantItem,
+              truncated: true,
+            };
+            await this.deps.store.appendItem(turn.threadId, interruptedAssistantItem);
+            this.deps.bus.emit("item_appended", {
+              kind: "item_appended",
+              threadId: turn.threadId,
+              turnId: turn.id,
+              item: interruptedAssistantItem,
+            });
+          }
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         this.deps.bus.emit("runtime_error", {
           kind: "runtime_error",
@@ -172,8 +224,46 @@ export class AgentRuntime {
         return;
       }
 
-      if (response.text) {
-        const assistantItem: AssistantItem = {
+      if (streamState.reasoningItem?.text.trim()) {
+        await this.deps.store.appendItem(turn.threadId, streamState.reasoningItem);
+        this.deps.bus.emit("item_appended", {
+          kind: "item_appended",
+          threadId: turn.threadId,
+          turnId: turn.id,
+          item: streamState.reasoningItem,
+        });
+      } else if (response.reasoning?.trim()) {
+        const finalReasoningItem: ReasoningItem = {
+          kind: "reasoning",
+          id: randomUUID(),
+          threadId: turn.threadId,
+          turnId: turn.id,
+          text: response.reasoning,
+          createdAt: new Date().toISOString(),
+        };
+        await this.deps.store.appendItem(turn.threadId, finalReasoningItem);
+        this.deps.bus.emit("item_appended", {
+          kind: "item_appended",
+          threadId: turn.threadId,
+          turnId: turn.id,
+          item: finalReasoningItem,
+        });
+      }
+
+      if (streamState.assistantItem?.text.trim()) {
+        const finalAssistantItem: AssistantItem = {
+          ...streamState.assistantItem,
+          ...(turn.status === "interrupted" ? { truncated: true } : {}),
+        };
+        await this.deps.store.appendItem(turn.threadId, finalAssistantItem);
+        this.deps.bus.emit("item_appended", {
+          kind: "item_appended",
+          threadId: turn.threadId,
+          turnId: turn.id,
+          item: finalAssistantItem,
+        });
+      } else if (response.text) {
+        const finalAssistantItem: AssistantItem = {
           kind: "assistant",
           id: randomUUID(),
           threadId: turn.threadId,
@@ -182,13 +272,17 @@ export class AgentRuntime {
           ...(turn.status === "interrupted" ? { truncated: true } : {}),
           createdAt: new Date().toISOString(),
         };
-        await this.deps.store.appendItem(turn.threadId, assistantItem);
+        await this.deps.store.appendItem(turn.threadId, finalAssistantItem);
         this.deps.bus.emit("item_appended", {
           kind: "item_appended",
           threadId: turn.threadId,
           turnId: turn.id,
-          item: assistantItem,
+          item: finalAssistantItem,
         });
+      }
+
+      if (turn.status !== "in-flight") {
+        return;
       }
 
       // Execute tool calls. Each policy is consulted.
@@ -208,6 +302,63 @@ export class AgentRuntime {
         failedAt: new Date().toISOString(),
       });
       this.markTurnStatus(turn, "failed");
+    }
+  }
+
+  private applyStreamChunk(
+    turn: TurnRecord,
+    chunk: LlmStreamChunk,
+    state: {
+      assistantItem: AssistantItem | null;
+      reasoningItem: ReasoningItem | null;
+    },
+  ): void {
+    if (chunk.kind === "text_delta") {
+      const assistantItem =
+        state.assistantItem ??
+        ({
+          kind: "assistant",
+          id: randomUUID(),
+          threadId: turn.threadId,
+          turnId: turn.id,
+          text: "",
+          createdAt: new Date().toISOString(),
+        } satisfies AssistantItem);
+      state.assistantItem = assistantItem;
+      assistantItem.text += chunk.text;
+      this.deps.bus.emit("item_updated", {
+        kind: "item_updated",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: assistantItem,
+      });
+      return;
+    }
+
+    if (chunk.kind === "reasoning_delta") {
+      const reasoningItem =
+        state.reasoningItem ??
+        ({
+          kind: "reasoning",
+          id: randomUUID(),
+          threadId: turn.threadId,
+          turnId: turn.id,
+          text: "",
+          createdAt: new Date().toISOString(),
+        } satisfies ReasoningItem);
+      state.reasoningItem = reasoningItem;
+      reasoningItem.text += chunk.text;
+      this.deps.bus.emit("item_updated", {
+        kind: "item_updated",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: reasoningItem,
+      });
+      return;
+    }
+
+    if (chunk.kind === "usage") {
+      turn.usage = chunk.usage;
     }
   }
 
@@ -330,7 +481,17 @@ export class AgentRuntime {
   }
 
   private resolveApiKey(config: ModelConfig): string {
-    return config.OPENAI_API_KEY || process.env.MINIMAX_API_KEY || "";
+    if (config.OPENAI_API_KEY) {
+      return config.OPENAI_API_KEY;
+    }
+    const provider = config.model_provide.trim().toLowerCase();
+    if (provider === "deepseek") {
+      return process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "";
+    }
+    if (provider === "minimax") {
+      return process.env.MINIMAX_API_KEY || process.env.OPENAI_API_KEY || "";
+    }
+    return process.env.OPENAI_API_KEY || "";
   }
 
   private markTurnStatus(turn: TurnRecord, status: TurnRecord["status"]): void {

@@ -56,6 +56,14 @@ const INITIAL_STATE: WorkbenchState = {
   rightSidebarWidth: 360,
 };
 
+function upsertItem(items: Item[], item: Item): Item[] {
+  const index = items.findIndex((candidate) => candidate.id === item.id);
+  if (index < 0) return [...items, item];
+  const next = [...items];
+  next[index] = item;
+  return next;
+}
+
 type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
   | { type: "setModelConfig"; config: ModelConfig }
@@ -63,6 +71,7 @@ type Action =
   | { type: "selectThread"; thread: ThreadRecord; items: Item[] }
   | { type: "deselectThread" }
   | { type: "appendItem"; item: Item }
+  | { type: "updateItem"; item: Item }
   | { type: "resetItems"; items: Item[] }
   | { type: "turnStarted"; turn: TurnRecord }
   | { type: "turnEnded"; status: "completed" | "failed" | "interrupted" }
@@ -97,7 +106,9 @@ function reducer(state: WorkbenchState, action: Action): WorkbenchState {
     case "deselectThread":
       return { ...state, activeThreadId: null, items: [], activeTurnId: null };
     case "appendItem":
-      return { ...state, items: [...state.items, action.item] };
+      return { ...state, items: upsertItem(state.items, action.item) };
+    case "updateItem":
+      return { ...state, items: upsertItem(state.items, action.item) };
     case "resetItems":
       return { ...state, items: action.items };
     case "turnStarted":
@@ -140,6 +151,7 @@ export interface WorkbenchActions {
   selectThread(thread: ThreadRecord, items: Item[]): void;
   deselectThread(): void;
   appendItem(item: Item): void;
+  updateItem(item: Item): void;
   turnStarted(turn: TurnRecord): void;
   turnEnded(status: "completed" | "failed" | "interrupted"): void;
   setComposerText(text: string): void;
@@ -169,6 +181,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }): ReactE
       selectThread: (thread, items) => dispatch({ type: "selectThread", thread, items }),
       deselectThread: () => dispatch({ type: "deselectThread" }),
       appendItem: (item) => dispatch({ type: "appendItem", item }),
+      updateItem: (item) => dispatch({ type: "updateItem", item }),
       turnStarted: (turn) => dispatch({ type: "turnStarted", turn }),
       turnEnded: (status) => dispatch({ type: "turnEnded", status }),
       setComposerText: (text) => dispatch({ type: "setComposerText", text }),
