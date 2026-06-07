@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { app, BrowserWindow, ipcMain, session } from "electron";
 import { JsonlThreadStore } from "./persistence/index.js";
+import { AttachmentStore } from "./persistence/attachment-store.js";
 import { ModelConfigStore } from "./persistence/model-config-store.js";
 import { RuntimeEventBus } from "./event-bus.js";
 import { LlmWorkerPool } from "./infrastructure/llm-worker/worker-pool.js";
@@ -8,11 +9,16 @@ import { AgentRuntime } from "./application/agent-runtime.js";
 import { LegacyRunAdapter } from "./application/legacy-run-adapter.js";
 import { MiniMaxGateway } from "./infrastructure/minimax/minimax-gateway.js";
 import { echoTool } from "./application/tools/echo-tool.js";
+import { createPlanTool } from "./application/tools/create-plan-tool.js";
+import { createGoalTools } from "./application/tools/goal-tools.js";
 import { InMemoryToolRegistry } from "./application/tools/in-memory-tool-registry.js";
 import { registerThreadHandlers } from "./ipc/threads-handlers.js";
 import { registerTurnHandlers } from "./ipc/turns-handlers.js";
 import { registerSseHandlers } from "./ipc/sse-handlers.js";
 import { registerApprovalHandlers } from "./ipc/approvals-handlers.js";
+import { registerAttachmentHandlers } from "./ipc/attachments-handlers.js";
+import { registerGoalHandlers } from "./ipc/goals-handlers.js";
+import { registerUsageHandlers } from "./ipc/usage-handlers.js";
 import { registerWriteHandlers } from "./ipc/write-handlers.js";
 import { registerModelConfigHandlers } from "./ipc/model-config-handlers.js";
 import { AGENT_RUN_CHANNEL } from "../shared/ipc.js";
@@ -29,12 +35,29 @@ import { ok, err } from "../shared/agent-contracts.js";
 
 const userDataDir = app.getPath("userData");
 const store = new JsonlThreadStore(userDataDir);
+const attachmentStore = new AttachmentStore(userDataDir);
 const modelConfigStore = new ModelConfigStore(userDataDir);
 const bus = new RuntimeEventBus();
 bus.setMaxListeners(50);
 const pool = new LlmWorkerPool(1);
-const registry = new InMemoryToolRegistry([echoTool]);
-const runtime = new AgentRuntime({ store, modelConfigStore, pool, bus, registry });
+const registry = new InMemoryToolRegistry([]);
+const runtime = new AgentRuntime({
+  store,
+  attachmentStore,
+  modelConfigStore,
+  pool,
+  bus,
+  registry,
+});
+registry.register(echoTool);
+registry.register(createPlanTool);
+for (const tool of createGoalTools({
+  updateGoal: async (threadId, update) => {
+    await runtime.updateThreadGoal(threadId, update);
+  },
+})) {
+  registry.register(tool);
+}
 const legacy = new LegacyRunAdapter(runtime, store, bus, pool);
 
 let mainWindow: BrowserWindow | null = null;
@@ -77,6 +100,7 @@ app.whenReady().then(async () => {
 
   try {
     await store.init();
+    await attachmentStore.init();
     await modelConfigStore.init();
   } catch (error) {
     console.error("[main] persistence init failed:", error);
@@ -91,6 +115,9 @@ app.whenReady().then(async () => {
   registerTurnHandlers(runtime, store);
   registerSseHandlers(bus);
   registerApprovalHandlers(runtime);
+  registerAttachmentHandlers(attachmentStore);
+  registerGoalHandlers(runtime);
+  registerUsageHandlers(store);
   registerWriteHandlers();
   registerModelConfigHandlers(modelConfigStore);
 

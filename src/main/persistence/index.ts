@@ -132,6 +132,11 @@ export class JsonlThreadStore {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.approvalPolicy ? { approvalPolicy: patch.approvalPolicy } : {}),
         ...(patch.sandboxMode ? { sandboxMode: patch.sandboxMode } : {}),
+        ...(patch.goal === null
+          ? { goal: undefined }
+          : patch.goal
+            ? { goal: patch.goal }
+            : {}),
         updatedAt: new Date().toISOString(),
       };
       await this.atomicWriteJson(this.threadPath(id), next);

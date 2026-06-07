@@ -26,13 +26,15 @@ export function Workbench(): ReactElement {
     }
     let cancelled = false;
     void (async () => {
-      const [threadsResult, configResult] = await Promise.all([
+      const [threadsResult, configResult, profilesResult] = await Promise.all([
         window.agentApi.threads.list({}),
         window.agentApi.modelConfig.get(),
+        window.agentApi.modelConfig.listProfiles(),
       ]);
       if (cancelled) return;
       if (threadsResult.ok) actions.setThreads(threadsResult.value);
       if (configResult.ok) actions.setModelConfig(configResult.value);
+      if (profilesResult.ok) actions.setModelProfiles(profilesResult.value);
     })();
     return () => {
       cancelled = true;
@@ -60,9 +62,14 @@ export function Workbench(): ReactElement {
         actions.setError(event.message);
       } else if (event.kind === "runtime_error") {
         actions.setError(event.message);
+      } else if (event.kind === "goal_updated" && state.activeThread) {
+        actions.updateActiveThread({
+          ...state.activeThread,
+          ...(event.goal ? { goal: event.goal } : { goal: undefined }),
+        });
       }
     },
-    [actions],
+    [actions, state.activeThread],
   );
 
   useEffect(() => {
@@ -135,19 +142,47 @@ export function Workbench(): ReactElement {
       actions.selectThread(threadResult.value as ThreadRecord, []);
     }
 
-    actions.setComposerText("");
+    if (state.composer.goalMode && threadId && !state.activeThread?.goal) {
+      const goalResult = await window.agentApi.goals.update({
+        threadId,
+        goal: text,
+        status: "active",
+      });
+      if (goalResult.ok) {
+        actions.updateActiveThread(goalResult.value as ThreadRecord);
+      } else {
+        actions.setError(goalResult.message);
+        return;
+      }
+    }
+
     const result = await window.agentApi.turns.start({
       threadId,
       text,
-      model: state.modelConfig.model,
-      reasoningEffort: state.modelConfig.model_reasoning_effort,
+      model: state.composer.model,
+      modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
+      reasoningEffort:
+        state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
+      attachmentIds: state.composer.attachmentIds,
+      mode: state.composer.mode,
+      goalMode: state.composer.goalMode,
     });
     if (!result.ok) {
       actions.setError(result.message);
       return;
     }
+    actions.setComposerText("");
+    actions.clearComposerAttachments();
     actions.turnStarted(result.value);
-  }, [state.activeThreadId, state.composer.text, state.modelConfig, actions, refreshThreads]);
+  }, [
+    state.activeThread,
+    state.activeThreadId,
+    state.composer,
+    state.modelConfig,
+    state.modelProfiles,
+    actions,
+    refreshThreads,
+  ]);
 
   const onInterrupt = useCallback(async () => {
     if (!state.inFlightTurn) return;

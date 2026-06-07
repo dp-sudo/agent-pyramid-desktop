@@ -43,10 +43,11 @@ export function registerTurnHandlers(
 
   ipcMain.handle(TURN_GET_CHANNEL, async (_event, threadId: string) => {
     try {
-      const items: Item[] = [];
+      const byId = new Map<string, Item>();
       for await (const item of store.replayItems(threadId)) {
-        items.push(item);
+        byId.set(item.id, item);
       }
+      const items = [...byId.values()];
       return ok({ threadId, items });
     } catch (error) {
       return err("TURN_GET_FAILED", messageOf(error));

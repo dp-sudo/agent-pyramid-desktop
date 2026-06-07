@@ -23,6 +23,17 @@ export const SSE_PUSH_CHANNEL = "sse:push";
 // Approvals
 export const APPROVAL_RESPOND_CHANNEL = "approval:respond";
 
+// Goals
+export const GOAL_UPDATE_CHANNEL = "goal:update";
+
+// Attachments
+export const ATTACHMENT_CREATE_CHANNEL = "attachment:create";
+export const ATTACHMENT_GET_CHANNEL = "attachment:get";
+export const ATTACHMENT_DELETE_CHANNEL = "attachment:delete";
+
+// Usage
+export const USAGE_DAILY_CHANNEL = "usage:daily";
+
 // Write-mode file services
 export const WRITE_LIST_CHANNEL = "write:list";
 export const WRITE_GET_CHANNEL = "write:get";
@@ -53,6 +64,11 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   SSE_SUBSCRIBE_CHANNEL,
   SSE_UNSUBSCRIBE_CHANNEL,
   APPROVAL_RESPOND_CHANNEL,
+  GOAL_UPDATE_CHANNEL,
+  ATTACHMENT_CREATE_CHANNEL,
+  ATTACHMENT_GET_CHANNEL,
+  ATTACHMENT_DELETE_CHANNEL,
+  USAGE_DAILY_CHANNEL,
   WRITE_LIST_CHANNEL,
   WRITE_GET_CHANNEL,
   WRITE_PUT_CHANNEL,

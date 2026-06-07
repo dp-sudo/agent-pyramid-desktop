@@ -26,6 +26,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `.gitignore` excludes `DeepSeek/`, `.agents/`, `.codex/`, `.claude/`. The full statement is at the top of `AGENTS.md` under "⚠️ 参考资料声明".
 
+## Companion file: `AGENTS.md`
+
+`AGENTS.md` (Chinese) is the **authoritative LLM rulebook** for this repo: hard gates (no hallucinated references, no out-of-scope edits, no swallowed errors), the required **Pre-Flight Manifest** before any code change, IPC change checklist, persistence invariants, and the post-generation self-check. This file (`CLAUDE.md`) is the productivity quick-start — when the two overlap, AGENTS.md wins. Read AGENTS.md sections 1–2 before your first edit in a session, sections 9 / 12 / 17 before changing IPC contracts, persistence, or shipping.
+
 ## What this project is
 
 `agent-pyramid-desktop` — an Electron + Vite + React + TypeScript desktop runtime for an agent framework. The architecture is **pyramid layers + triangle loop**: `domain` (types/ports) → `core` (mechanisms) → `application` (orchestration) → `infrastructure` (LLM/IO) → `preload` (security bridge) → `renderer` (UI). The agent loop is **observe → reason → act**, tracked in `src/main/core/triangle-loop.ts` (`TriangleTrace`).
@@ -51,10 +55,10 @@ There is no test runner, no linter, and no formatter configured. After any non-t
 └──────────────────────┘
 ```
 
-- **Main process** wires `JsonlThreadStore` + `ModelConfigStore` + `RuntimeEventBus` + `LlmWorkerPool` + `AgentRuntime` + `InMemoryToolRegistry` in `src/main/index.ts` (single composition root, no DI framework).
-- **Worker threads** (one per pool slot, default `1`) instantiate `MiniMaxGateway` and stream SSE deltas back via a typed `WorkerInbound`/`WorkerOutbound` protocol (`src/main/infrastructure/llm-worker/protocol.ts`). The pool pins `threadId → worker` so per-thread turns execute serially.
-- **Preload** (`src/preload/index.ts`) exposes a single `window.agentApi` object via `contextBridge.exposeInMainWorld`. Keep `contextIsolation: true` and `nodeIntegration: false`; never widen the surface.
-- **Renderer** is a pure React 19 app with a hand-rolled `useReducer` store (`WorkbenchContext.tsx`); it subscribes to runtime events via `agentApi.sse.subscribe` + `onEvent`.
+- **Main process** wires `JsonlThreadStore` + `AttachmentStore` + `ModelConfigStore` + `RuntimeEventBus` + `LlmWorkerPool` + `AgentRuntime` + `InMemoryToolRegistry` in `src/main/index.ts` (single composition root, no DI framework). The same file also calls `installContentSecurityPolicy()`, which serves a relaxed CSP in dev (allows Vite's inline preamble + `ws:` for HMR) and a strict CSP (`script-src 'self'`, `connect-src 'self'`) in production — do not loosen the prod policy.
+- **Worker threads** (one per pool slot, default `1`) instantiate `MiniMaxGateway` and stream SSE deltas back via a typed `WorkerInbound`/`WorkerOutbound` protocol (`src/main/infrastructure/llm-worker/protocol.ts`). The pool pins `threadId → worker` so per-thread turns execute serially. The worker entrypoint is a separate Vite rollup input (`src/main/infrastructure/llm-worker/worker.ts` → `out/main/llm-worker.js`); when adding worker-side code keep it reachable from that entry.
+- **Preload** (`src/preload/index.ts`) exposes a single `window.agentApi` object via `contextBridge.exposeInMainWorld`. It is built as **CommonJS** (`out/preload/index.js`) per `electron.vite.config.ts`; do not switch its output format. Keep `contextIsolation: true` and `nodeIntegration: false`; never widen the surface. Current API groups: `run` (legacy), `threads`, `turns`, `sse`, `approvals`, `goals`, `attachments`, `usage`, `write`, `modelConfig`.
+- **Renderer** is a pure React 19 app with a hand-rolled `useReducer` store (`WorkbenchContext.tsx`); it subscribes to runtime events via `agentApi.sse.subscribe` + `onEvent`. `AppShell.tsx` lazy-loads two route trees by `state.route`: `code | write` → `Workbench`, `settings` → `SettingsView` (the older `SettingsPlaceholder` has been removed).
 
 ## Two parallel runtimes (intentional, see `docs/agent-development.md`)
 
@@ -67,7 +71,7 @@ If you add an agent capability, decide which runtime owns it, and update both ca
 
 ## Source of truth contracts (`src/shared/`)
 
-`agent-contracts.ts` is the **only** file that defines cross-process types: `ThreadRecord`, `TurnRecord`, the 8-kind `Item` union, `RuntimeEvent` (6 kinds), `ModelConfig`/`ModelConfigUpdate`, `IpcResult<T>` envelope, and the `isItem`/`isRuntimeEvent`/`isThreadRecord` type guards that replace zod. `ipc.ts` lists every channel name; `RENDERER_TO_MAIN_CHANNELS` is the renderer-allowlist — any new IPC channel must be added there and registered in `src/main/ipc/`.
+`agent-contracts.ts` is the **only** file that defines cross-process types: `ThreadRecord`, `TurnRecord`, the 9-kind `Item` union (user / assistant / reasoning / tool / compaction / approval / userInput / plan / system), `RuntimeEvent` (8 kinds, including `goal_updated` and `runtime_error`), `ModelConfig`/`ModelConfigUpdate`, attachment / goal / usage / approval / write request shapes, the `IpcResult<T>` envelope, and the `isItem`/`isRuntimeEvent`/`isThreadRecord` type guards that replace zod. `ipc.ts` lists every channel name; `RENDERER_TO_MAIN_CHANNELS` is the renderer-allowlist — any new IPC channel must be added there and registered in `src/main/ipc/` (handlers are organised one file per family: `threads`, `turns`, `sse`, `approvals`, `goals`, `attachments`, `usage`, `write`, `model-config`).
 
 If a field moves (rename, type change, new required field), search the codebase for that field name before editing — it is consumed in main, preload, and renderer simultaneously.
 
@@ -92,6 +96,8 @@ index.json                          # ThreadSummary[], atomic write
 
 `JsonlThreadStore` serializes writes per `threadId` (mutex chain), replays via `readline` and **skips malformed lines with a console warning** rather than failing. Replay-tolerant formats are intentional; do not tighten them without a migration plan.
 
+`AttachmentStore` (under `userData/attachments/`) and `ModelConfigStore` (under `userData/config`) are separate stores; both are initialised in `src/main/index.ts` before any IPC handlers are registered. Renderer-facing access goes through `agentApi.attachments.*` (base64 round-trip; do not stream large blobs over IPC) and `agentApi.modelConfig.*`. Attachment index writes are serialized; composer-side delete removes only unsent attachments, not attachments already referenced by persisted user messages.
+
 ## Renderer conventions
 
 - Tokens live in `src/renderer/src/ui/styles/tokens.css` as `--ds-*` variables; the design frontmatter in `docs/ui-design.md` mirrors them. Use tokens, not literal hex.
@@ -107,4 +113,4 @@ Conventional Commits (`feat:`, `fix:`, `chore:`). When changing the agent framew
 
 - Thread + turn + item state machines: start at `src/main/application/agent-runtime.ts`, then trace items into `JsonlThreadStore` and back via `replayItems`.
 - IPC plumbing: `src/shared/ipc.ts` (channel names) → `src/main/ipc/*-handlers.ts` (main side) → `src/preload/index.ts` (bridge) → `src/renderer/src/ui/Workbench.tsx` (consumer).
-- New tool: implement `AgentTool` (`src/main/domain/agent/types.ts`), register via `InMemoryToolRegistry` in `src/main/index.ts`. The approval gate currently asks for permission on **every** tool call (`AgentRuntime.requiresApproval`); map tool name → policy before tightening this.
+- New tool: implement `AgentTool` (`src/main/domain/agent/types.ts`), register via `InMemoryToolRegistry` in `src/main/index.ts`. Existing built-ins to mirror: `echoTool` (smoke test), `createPlanTool` (returns a plan JSON for plan mode), and the `createGoalTools(deps)` factory which receives a `GoalToolDeps` callback so the tool can call back into `AgentRuntime.updateThreadGoal` without importing the runtime — use this pattern when a tool needs to mutate thread state. `create_plan` is exposed and approval-free only in plan mode; `update_goal` is exposed and approval-free only in goal mode or an active-goal thread. Other tools still go through `AgentRuntime.requiresApproval`, and disallowed tool calls must fail visibly instead of executing.

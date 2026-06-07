@@ -22,7 +22,7 @@
 - 建立 Agent 编排器：`src/main/application/agent-runner.ts`。
 - 建立工具注册机制和 `echo` 验证工具：`src/main/application/tools/`。
 - 建立 MiniMax、DeepSeek、Custom OpenAI-compatible 的 provider-aware 协议适配：`src/main/infrastructure/minimax/`。
-- 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsPlaceholder.tsx`，配置保存到 Electron `userData/config` 文件。
+- 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
 
@@ -110,7 +110,7 @@
 - 新建 `src/renderer/src/ui/store/WorkbenchContext.tsx`：`useReducer` 模拟 store，state 包含 `route / activeThreadId / threads / items / inFlightTurn / rightPanelMode / composer / leftSidebarWidth / rightSidebarWidth`。
 - 新建 4 个 primitives：`Pill / IconButton / Chip / KbdHint`。
 - 新建 4 个组件子目录：`sidebar/`、`topbar/`、`composer/`、`chat/`、`inspector/`、`write/`。
-- 新建 `AppShell.tsx` + `Workbench.tsx` + `SettingsPlaceholder.tsx`：三段式骨架 + 拖拽 + SSE 订阅 + IPC 调用。
+- 新建 `AppShell.tsx` + `Workbench.tsx` + `SettingsView.tsx`：三段式骨架 + 拖拽 + SSE 订阅 + IPC 调用。
 - 重写 `src/renderer/src/main.tsx`：移除 `import './styles.css'`，改为 `import './ui/styles/{tokens,shell}.css'`，挂载 `WorkbenchProvider + AppShell`。
 - i18n 扩 9 个 namespace（`chat / write / threads / inspector / approvals / common / composer / settings / routes`），en + zh-CN 同步。
 - 主题：`initTheme()` 在 `main.tsx` 渲染前同步从 localStorage 读 `agent.theme` 写到 `<html data-theme>`，避免 FOUC。
@@ -151,3 +151,27 @@
 - 扩展 `src/main/application/agent-runtime.ts`：运行时收到 `text_delta` / `reasoning_delta` 后懒创建同一 turn 的 live item，持续 emit `item_updated`；流结束或中断时把最终/截断 item 写入 JSONL 并 emit `item_appended`，保证 UI 当前态、持久化重放和旧 `runOnce` 兼容壳一致。
 - 扩展 `src/renderer/src/ui/Workbench.tsx` 与 `src/renderer/src/ui/store/WorkbenchContext.tsx`：renderer 订阅 `item_updated` 并按 item id upsert，`item_appended` 同样 upsert，避免流式最终落盘事件造成重复气泡。
 - 验证方式：`npm run typecheck`、`npm run build`。
+
+## 2026-06-07 - Composer, Plan, Goal, Attachments, Usage
+
+- 扩展 `src/shared/agent-contracts.ts`：新增 `TurnMode`、`ThreadGoal`、`GoalUpdateRequest`、`AttachmentRecord`、`AttachmentCreateRequest`、`PlanItem`、`UsageDailyBucket`，并让 `TurnStartRequest` 支持 `modelProfileId`、`mode`、`goalMode` 与 `attachmentIds`。
+- 扩展 `AgentRuntime`：每轮请求使用 turn 上的 `reasoningEffort`；按 `modelProfileId` 解析模型配置，显式 profile 不存在时失败；Plan 模式注入计划系统指令；Goal 模式注入目标系统指令；图片附件读取后以多模态 content blocks 发送给 LLM；`turn_completed` 事件携带 usage。
+- 扩展工具机制：`ToolRegistry.execute()` 增加 `AgentToolContext`；新增 `create_plan` 工具生成持久化 `PlanItem`；新增 `update_goal` 工具更新 `ThreadRecord.goal` 并广播 `goal_updated`；`create_plan` 只在 plan mode 暴露并免 approval，`update_goal` 只在 goal mode 或 active goal thread 暴露并免 approval；工具完成、失败或被拒绝后通过 `item_updated` 推送最终 `ToolItem`。
+- 新增附件存储与 IPC：`AttachmentStore` 写入 Electron `userData/attachments`，附件索引写入串行化；`attachments.create/get/delete` 通过 preload 暴露给 renderer，renderer 不直接访问文件系统；composer 删除附件会同步删除未发送附件文件，发送成功后的历史附件不删除。
+- 新增 Goal 与 Usage IPC：`goals.update` 更新当前 thread 目标；`usage.daily` 从持久化 runtime events replay usage 并按日聚合。
+- 扩展 LLM 网关消息转换：`AgentMessage.content` 支持文本与图片 blocks；OpenAI-compatible 映射为 `text/image_url`，Anthropic-compatible 映射为 `text/image`。
+- 扩展 renderer：`FloatingComposer` 增加 `+` 菜单、图片上传、Plan 模式、Goal 模式、模型 profile picker 与 per-turn reasoning picker；`MessageTimeline` 空态显示最近用量热力图；`RightInspector` 的 Plan 面板显示最新计划。
+- 同步 i18n：新增 composer、empty、usage、common on/off 文案，并修正 zh-CN 占位问号文案。
+- 修复 `turns.get` 持久化 replay：同 id item 保留最后版本，避免流式 item 或工具 item 终态重放时重复显示。
+- 验证方式：`npm run typecheck`；`npm run build` 若本地 Rollup optional dependency 缺失，需要先修复 `node_modules` 后重试。
+## 2026-06-07 - Settings UI Center
+
+- Replaced the settings route implementation with `src/renderer/src/ui/SettingsView.tsx`.
+- Added settings-specific renderer components under `src/renderer/src/ui/components/settings/`:
+  `SettingsSidebar.tsx` and `SettingsControls.tsx`.
+- The settings page now uses a left navigation rail, a constrained right content column,
+  card groups, row-based controls, a secret API-key control, and explicit
+  `Ready / Modified / Saving / Saved / Needs attention` status feedback.
+- Updated settings styling in `src/renderer/src/ui/styles/shell.css` and settings copy
+  in `src/renderer/src/i18n/locales/{en,zh-CN}/translation.json`.
+- Verification: `npm run typecheck`; `npm run build`.

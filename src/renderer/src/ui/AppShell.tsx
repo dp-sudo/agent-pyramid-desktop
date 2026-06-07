@@ -5,8 +5,8 @@ const Workbench = lazy(() =>
   import("./Workbench").then((module) => ({ default: module.Workbench })),
 );
 
-const SettingsPlaceholder = lazy(() =>
-  import("./SettingsPlaceholder").then((module) => ({ default: module.SettingsPlaceholder })),
+const SettingsView = lazy(() =>
+  import("./SettingsView").then((module) => ({ default: module.SettingsView })),
 );
 
 function RouteFallback(): ReactElement {
@@ -33,7 +33,7 @@ export function AppShell(): ReactElement {
     <div className="ds-workbench-shell">
       <Suspense fallback={<RouteFallback />}>
         {state.route === "code" || state.route === "write" ? <Workbench /> : null}
-        {state.route === "settings" ? <SettingsPlaceholder /> : null}
+        {state.route === "settings" ? <SettingsView /> : null}
       </Suspense>
     </div>
   );

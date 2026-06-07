@@ -65,7 +65,10 @@
   "usage": {
     "input": "Input",
     "output": "Output",
-    "total": "Total"
+    "total": "Total",
+    "heatmap": "Daily token usage",
+    "less": "Less",
+    "more": "More"
   },
   "chat": {
     "activeSession": "Active session",
@@ -105,47 +108,99 @@
   "common": {
     "settings": "Settings",
     "send": "Send",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "on": "On",
+    "off": "Off"
   },
   "composer": {
     "placeholder": "Send a message…",
     "model": "Model",
     "send": "Send",
-    "interrupt": "Interrupt"
+    "interrupt": "Interrupt",
+    "more": "More",
+    "addImage": "Add image",
+    "planMode": "Plan mode",
+    "goalMode": "Pursue goal",
+    "reasoningEffort": "Reasoning",
+    "removeAttachment": "Remove attachment"
   },
   "settings": {
     "title": "Settings",
-    "subtitle": "Model configuration is saved in the runtime config file.",
+    "subtitle": "Tune model profiles, provider access, context limits, and reasoning behavior.",
     "comingSoon": "Settings view is coming soon.",
     "backToWorkbench": "Back to workbench",
     "save": "Save",
     "saving": "Saving",
     "saved": "Saved",
     "preloadMissing": "Preload script not loaded. Open this page through the Electron app.",
+    "navLabel": "Settings sections",
+    "sidebarFooterTitle": "Runtime config",
+    "sidebarFooterDescription": "Saved to userData/config",
+    "showSecret": "Show key",
+    "hideSecret": "Hide key",
+    "status": {
+      "idle": "Ready",
+      "dirty": "Modified",
+      "loading": "Loading",
+      "saving": "Saving",
+      "saved": "Saved",
+      "error": "Needs attention"
+    },
+    "nav": {
+      "profiles": "Profiles",
+      "profilesDesc": "Switch active model",
+      "connection": "Connection",
+      "connectionDesc": "Provider and API key",
+      "context": "Context",
+      "contextDesc": "Token windows",
+      "reasoning": "Reasoning",
+      "reasoningDesc": "Thinking controls"
+    },
+    "sections": {
+      "connection": "Connection",
+      "connectionDesc": "These values are sent to the runtime gateway when a turn starts.",
+      "context": "Context and output limits",
+      "contextDesc": "Keep context, compaction, and output limits aligned with the selected model.",
+      "reasoning": "Reasoning behavior",
+      "reasoningDesc": "Control whether the provider receives thinking options and effort hints."
+    },
+    "descriptions": {
+      "profileName": "Friendly name shown in the model profile picker.",
+      "modelProvide": "Provider dialect used by the runtime gateway, for example MiniMax, DeepSeek, or Custom.",
+      "model": "Exact model id passed to the provider API.",
+      "baseUrl": "OpenAI-compatible endpoint root for this provider.",
+      "apiKey": "Stored with this profile. If empty, the runtime falls back to provider-specific environment variables.",
+      "contextWindow": "Maximum context tokens the selected model can receive.",
+      "compactLimit": "Soft threshold for automatic context compaction. It must not exceed the context window.",
+      "maxTokens": "Maximum tokens requested for a single model response.",
+      "thinking": "Enable provider-specific thinking or reasoning parameters when supported.",
+      "reasoningEffort": "Effort hint sent to providers that support reasoning levels."
+    },
     "fields": {
       "profileName": "Profile name",
-      "modelProvide": "model_provide",
-      "model": "model",
-      "baseUrl": "base_url",
-      "apiKey": "OPENAI_API_KEY",
-      "contextWindow": "model_context_window",
-      "compactLimit": "model_auto_compact_token_limit",
-      "maxTokens": "max_tokens",
-      "thinking": "thinking",
-      "reasoningEffort": "model_reasoning_effort"
+      "modelProvide": "Provider",
+      "model": "Model ID",
+      "baseUrl": "Base URL",
+      "apiKey": "API key",
+      "contextWindow": "Context window",
+      "compactLimit": "Auto compact limit",
+      "maxTokens": "Max output tokens",
+      "thinking": "Thinking mode",
+      "reasoningEffort": "Reasoning effort"
     },
     "placeholders": {
-      "compactLimit": "90% of model_context_window"
+      "compactLimit": "90% of context window",
+      "apiKey": "sk-..."
     },
     "efforts": {
-      "low": "Low / low",
-      "medium": "Medium / medium",
-      "high": "High / high",
-      "xhigh": "Extra high / xhigh"
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Extra high"
     },
     "profiles": {
       "title": "Model profiles",
-      "subtitle": "Switch the active runtime model without changing the Agent loop.",
+      "subtitle": "Create, duplicate, delete, and activate runtime model configurations.",
       "active": "Active",
       "addMiniMax": "MiniMax",
       "addDeepSeek": "DeepSeek",
@@ -162,5 +217,9 @@
   "routes": {
     "code": "Code",
     "write": "Write"
+  },
+  "empty": {
+    "title": "Start a new session",
+    "subtitle": "Recent token usage appears below."
   }
 }

@@ -145,6 +145,18 @@ export interface AgentRunResponse {
 /** A conversation lineage marker. See design.md D4. */
 export type ThreadRelation = "primary" | "fork" | "side";
 
+export type ThreadGoalStatus = "active" | "complete" | "blocked";
+
+export interface ThreadGoal {
+  text: string;
+  status: ThreadGoalStatus;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  blockedAt?: string;
+  summary?: string;
+}
+
 /** A persisted conversation. */
 export interface ThreadRecord {
   id: string;
@@ -158,6 +170,7 @@ export interface ThreadRecord {
   updatedAt: string; // ISO timestamp
   approvalPolicy: "auto" | "on-request" | "untrusted" | "never";
   sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
+  goal?: ThreadGoal;
 }
 
 /** A lightweight row in the index.json listing. */
@@ -182,6 +195,7 @@ export interface ThreadUpdatePatch {
   title?: string;
   approvalPolicy?: ThreadRecord["approvalPolicy"];
   sandboxMode?: ThreadRecord["sandboxMode"];
+  goal?: ThreadGoal | null;
 }
 
 export interface ThreadListFilter {
@@ -193,6 +207,7 @@ export interface ThreadListFilter {
 // ----------------------------------------------------------------------------
 
 export type TurnStatus = "in-flight" | "completed" | "failed" | "interrupted";
+export type TurnMode = "agent" | "plan";
 
 export interface TurnRecord {
   id: string;
@@ -202,12 +217,37 @@ export interface TurnRecord {
   completedAt?: string;
   model: string;
   reasoningEffort?: ModelReasoningEffort;
+  modelProfileId?: string;
+  mode: TurnMode;
+  goalMode?: boolean;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
 }
 
 // ============================================================================
 // Items: the in-thread content stream
 // ============================================================================
+
+export interface AttachmentRecord {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+}
+
+export interface AttachmentCreateRequest {
+  name: string;
+  mimeType: string;
+  dataBase64: string;
+}
+
+export interface AttachmentDeleteRequest {
+  id: string;
+}
+
+export interface AttachmentDeleteResponse {
+  id: string;
+}
 
 export interface UserItem {
   kind: "user";
@@ -216,6 +256,8 @@ export interface UserItem {
   turnId: string;
   text: string;
   displayText?: string; // shown in timeline if text contains injected context
+  attachmentIds?: string[];
+  attachments?: AttachmentRecord[];
   createdAt: string;
 }
 
@@ -285,6 +327,24 @@ export interface UserInputItem {
   createdAt: string;
 }
 
+export type PlanStepStatus = "pending" | "in_progress" | "completed";
+
+export interface PlanStep {
+  id: string;
+  title: string;
+  status: PlanStepStatus;
+}
+
+export interface PlanItem {
+  kind: "plan";
+  id: string;
+  threadId: string;
+  turnId: string;
+  title?: string;
+  steps: PlanStep[];
+  createdAt: string;
+}
+
 export interface SystemItem {
   kind: "system";
   id: string;
@@ -303,6 +363,7 @@ export type Item =
   | CompactionItem
   | ApprovalItem
   | UserInputItem
+  | PlanItem
   | SystemItem;
 
 export type ItemKind = Item["kind"];
@@ -324,6 +385,7 @@ export interface TurnCompletedEvent {
   turnId: string;
   status: TurnStatus;
   completedAt: string;
+  usage?: TurnRecord["usage"];
 }
 
 export interface TurnFailedEvent {
@@ -372,6 +434,12 @@ export interface RuntimeErrorEvent {
   message: string;
 }
 
+export interface GoalUpdatedEvent {
+  kind: "goal_updated";
+  threadId: string;
+  goal?: ThreadGoal;
+}
+
 export type RuntimeEvent =
   | TurnStartedEvent
   | TurnCompletedEvent
@@ -379,6 +447,7 @@ export type RuntimeEvent =
   | ItemAppendedEvent
   | ItemUpdatedEvent
   | ApprovalRequestedEvent
+  | GoalUpdatedEvent
   | RuntimeErrorEvent;
 
 export type RuntimeEventKind = RuntimeEvent["kind"];
@@ -392,8 +461,11 @@ export interface TurnStartRequest {
   text: string;
   displayText?: string;
   model?: string;
+  modelProfileId?: string;
   reasoningEffort?: TurnRecord["reasoningEffort"];
   attachmentIds?: string[];
+  mode?: TurnMode;
+  goalMode?: boolean;
 }
 
 export interface TurnInterruptOptions {
@@ -427,6 +499,33 @@ export interface SseSubscribeRequest {
 export interface SseUnsubscribeRequest {
   threadId: string;
   streamId?: string;
+}
+
+// ============================================================================
+// Goal
+// ============================================================================
+
+export interface GoalUpdateRequest {
+  threadId: string;
+  goal?: string | null;
+  status?: ThreadGoalStatus;
+  summary?: string;
+}
+
+// ============================================================================
+// Usage
+// ============================================================================
+
+export interface UsageDailyRequest {
+  days?: number;
+}
+
+export interface UsageDailyBucket {
+  date: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  turns: number;
 }
 
 // ============================================================================
@@ -514,6 +613,7 @@ const ITEM_KINDS: ItemKind[] = [
   "compaction",
   "approval",
   "user_input",
+  "plan",
   "system",
 ];
 
@@ -524,6 +624,7 @@ const RUNTIME_EVENT_KINDS: RuntimeEventKind[] = [
   "item_appended",
   "item_updated",
   "approval_requested",
+  "goal_updated",
   "runtime_error",
 ];
 

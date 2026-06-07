@@ -45,6 +45,12 @@ export function WorkbenchTopBar(): ReactElement {
           {t("inspector.todo")}
         </Pill>
         <Pill
+          onClick={() => actions.openRightPanel("plan")}
+          accent={state.rightPanelMode === "plan"}
+        >
+          {t("inspector.plan")}
+        </Pill>
+        <Pill
           onClick={state.rightPanelMode === null
             ? () => actions.openRightPanel("changes")
             : () => actions.closeRightPanel()}

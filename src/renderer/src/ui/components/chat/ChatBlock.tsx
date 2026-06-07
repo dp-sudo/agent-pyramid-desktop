@@ -13,16 +13,20 @@ export function ChatBlock({ item, isLive, onApprove }: ChatBlockProps): ReactEle
       return (
         <div className="ds-message-block user">
           <div className="ds-user-bubble">{item.displayText ?? item.text}</div>
+          {item.attachments && item.attachments.length > 0 ? (
+            <div className="ds-message-attachments">
+              {item.attachments.map((attachment) => (
+                <span key={attachment.id}>{attachment.name}</span>
+              ))}
+            </div>
+          ) : null}
         </div>
       );
     case "assistant":
       return (
         <div className="ds-message-block assistant">
-          <div
-            className={`ds-assistant-bubble ${isLive ? "ds-shiny-text" : ""}`}
-            style={isLive ? undefined : undefined}
-          >
-            {item.text || (isLive ? "…" : "")}
+          <div className={`ds-assistant-bubble ${isLive ? "ds-shiny-text" : ""}`}>
+            {item.text || (isLive ? "..." : "")}
           </div>
         </div>
       );
@@ -100,6 +104,21 @@ export function ChatBlock({ item, isLive, onApprove }: ChatBlockProps): ReactEle
           <div className="ds-system-bubble">user_input: {item.question}</div>
         </div>
       );
+    case "plan":
+      return (
+        <div className="ds-message-block">
+          <div className="ds-plan-block">
+            {item.title ? <strong>{item.title}</strong> : null}
+            <ol>
+              {item.steps.map((step) => (
+                <li key={step.id} className={`is-${step.status}`}>
+                  {step.title}
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+      );
     case "compaction":
       return (
         <div className="ds-message-block">
@@ -117,7 +136,11 @@ export function ChatBlock({ item, isLive, onApprove }: ChatBlockProps): ReactEle
     default: {
       const exhaustive: never = item;
       void exhaustive;
-      return <div className="ds-message-block system"><div className="ds-system-bubble">unknown</div></div>;
+      return (
+        <div className="ds-message-block system">
+          <div className="ds-system-bubble">unknown</div>
+        </div>
+      );
     }
   }
 }

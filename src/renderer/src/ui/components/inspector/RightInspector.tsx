@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../store/WorkbenchContext";
-import type { Item, ToolItem } from "../../../../../shared/agent-contracts";
+import type { Item, PlanItem, ToolItem } from "../../../../../shared/agent-contracts";
 
 export function RightInspector(): ReactElement | null {
   const { t } = useTranslation();
@@ -78,7 +78,24 @@ function TodoPanel(): ReactElement {
 
 function PlanPanel(): ReactElement {
   const { t } = useTranslation();
-  return <div style={{ color: "var(--ds-text-faint)" }}>{t("inspector.planEmpty")}</div>;
+  const { state } = useWorkbench();
+  const plans = state.items.filter((item): item is PlanItem => item.kind === "plan");
+  const latest = plans.at(-1);
+  if (!latest) {
+    return <div style={{ color: "var(--ds-text-faint)" }}>{t("inspector.planEmpty")}</div>;
+  }
+  return (
+    <div className="ds-plan-block">
+      {latest.title ? <strong>{latest.title}</strong> : null}
+      <ol>
+        {latest.steps.map((step) => (
+          <li key={step.id} className={`is-${step.status}`}>
+            {step.title}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 function FilePanel(): ReactElement {

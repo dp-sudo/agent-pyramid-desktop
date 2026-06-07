@@ -2,9 +2,21 @@ import type { AgentToolCall, AgentToolDefinition, AgentUsage } from "../../domai
 
 export interface OpenAiChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: string | OpenAiContentBlock[];
   tool_call_id?: string;
 }
+
+export type OpenAiContentBlock =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "image_url";
+      image_url: {
+        url: string;
+      };
+    };
 
 export interface OpenAiTool {
   type: "function";
@@ -49,6 +61,14 @@ export type AnthropicContentBlock =
   | {
       type: "text";
       text: string;
+    }
+  | {
+      type: "image";
+      source: {
+        type: "base64";
+        media_type: string;
+        data: string;
+      };
     }
   | {
       type: "tool_result";

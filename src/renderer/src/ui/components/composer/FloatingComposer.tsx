@@ -1,7 +1,12 @@
-import type { ChangeEvent, ReactElement } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../store/WorkbenchContext";
 import { Pill } from "../primitives/Pill";
+import { FloatingComposerModelPicker } from "./FloatingComposerModelPicker";
+import type {
+  AttachmentRecord,
+  ModelConfigProfile,
+} from "../../../../../shared/agent-contracts";
 
 interface FloatingComposerProps {
   onSend: () => void;
@@ -17,6 +22,16 @@ export function FloatingComposer({
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
   const busy = state.inFlightTurn !== null;
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
+
+  useEffect(() => {
+    if (state.composer.attachmentIds.length === 0 && attachments.length > 0) {
+      setAttachments([]);
+    }
+  }, [attachments.length, state.composer.attachmentIds.length]);
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -25,8 +40,56 @@ export function FloatingComposer({
     }
   }
 
+  async function handleImageSelected(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    for (const file of files) {
+      try {
+        const dataBase64 = await readFileAsBase64(file);
+        const result = await window.agentApi.attachments.create({
+          name: file.name,
+          mimeType: file.type,
+          dataBase64,
+        });
+        if (!result.ok) {
+          actions.setError(result.message);
+          continue;
+        }
+        actions.addComposerAttachment(result.value.id);
+        setAttachments((current) => [...current, result.value]);
+      } catch (error) {
+        actions.setError(error instanceof Error ? error.message : String(error));
+      }
+    }
+    setMenuOpen(false);
+  }
+
+  async function removeAttachment(id: string): Promise<void> {
+    const result = await window.agentApi.attachments.delete(id);
+    if (!result.ok) {
+      actions.setError(result.message);
+      return;
+    }
+    actions.removeComposerAttachment(id);
+    setAttachments((current) => current.filter((item) => item.id !== id));
+  }
+
+  function handleSelectModel(profile: ModelConfigProfile): void {
+    actions.setComposerModel(profile.config.model, profile.id);
+    actions.setComposerReasoningEffort(profile.config.model_reasoning_effort);
+    setPickerOpen(false);
+  }
+
   return (
     <div className="ds-composer-shell" style={{ width: "100%" }}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        multiple
+        hidden
+        onChange={(event) => void handleImageSelected(event)}
+      />
       <textarea
         value={state.composer.text}
         onChange={(event: ChangeEvent<HTMLTextAreaElement>) => actions.setComposerText(event.target.value)}
@@ -34,6 +97,22 @@ export function FloatingComposer({
         placeholder={t("composer.placeholder")}
         disabled={disabled}
       />
+      {attachments.length > 0 ? (
+        <div className="ds-composer-attachments">
+          {attachments.map((attachment) => (
+            <button
+              key={attachment.id}
+              type="button"
+              className="ds-composer-attachment"
+              onClick={() => void removeAttachment(attachment.id)}
+              title={t("composer.removeAttachment")}
+            >
+              <span>{attachment.name}</span>
+              <span>{formatBytes(attachment.size)}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div
         style={{
           display: "flex",
@@ -43,10 +122,79 @@ export function FloatingComposer({
           borderTop: "1px solid var(--ds-border-muted)",
         }}
       >
-        <span style={{ fontSize: "var(--ds-size-caption)", color: "var(--ds-text-faint)" }}>
-          {t("composer.model")}: {state.composer.model}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
+          <button
+            type="button"
+            className="ds-composer-tool-button"
+            onClick={() => setMenuOpen((value) => !value)}
+            disabled={disabled || busy}
+            title={t("composer.more")}
+            aria-label={t("composer.more")}
+          >
+            +
+          </button>
+          {menuOpen ? (
+            <div className="ds-composer-popover is-menu">
+              <button
+                type="button"
+                className="ds-composer-menu-row"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <span>{t("composer.addImage")}</span>
+                <span>PNG/JPEG/WebP/GIF</span>
+              </button>
+              <button
+                type="button"
+                className={`ds-composer-menu-row ${state.composer.mode === "plan" ? "is-active" : ""}`}
+                onClick={() => {
+                  actions.setComposerMode(state.composer.mode === "plan" ? "agent" : "plan");
+                  setMenuOpen(false);
+                }}
+              >
+                <span>{t("composer.planMode")}</span>
+                <span>{state.composer.mode === "plan" ? t("common.on") : t("common.off")}</span>
+              </button>
+              <button
+                type="button"
+                className={`ds-composer-menu-row ${state.composer.goalMode ? "is-active" : ""}`}
+                onClick={() => {
+                  actions.setComposerGoalMode(!state.composer.goalMode);
+                  setMenuOpen(false);
+                }}
+              >
+                <span>{t("composer.goalMode")}</span>
+                <span>{state.composer.goalMode ? t("common.on") : t("common.off")}</span>
+              </button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="ds-composer-model-button"
+            onClick={() => setPickerOpen((value) => !value)}
+          >
+            <span>{state.composer.model}</span>
+            <span>{state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort}</span>
+          </button>
+          {pickerOpen ? (
+            <FloatingComposerModelPicker
+              profiles={state.modelProfiles?.profiles ?? []}
+              selectedModel={state.composer.model}
+              selectedProfileId={state.composer.modelProfileId}
+              selectedReasoningEffort={
+                state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort
+              }
+              onSelectModel={handleSelectModel}
+              onSelectReasoningEffort={actions.setComposerReasoningEffort}
+            />
+          ) : null}
+        </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {state.composer.mode === "plan" ? (
+            <span className="ds-composer-mode-chip">{t("composer.planMode")}</span>
+          ) : null}
+          {state.composer.goalMode ? (
+            <span className="ds-composer-mode-chip">{t("composer.goalMode")}</span>
+          ) : null}
           {busy ? (
             <Pill onClick={onInterrupt}>{t("composer.interrupt")}</Pill>
           ) : (
@@ -62,4 +210,28 @@ export function FloatingComposer({
       </div>
     </div>
   );
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read image file."));
+    reader.onload = () => {
+      const value = reader.result;
+      if (typeof value !== "string") {
+        reject(new Error("Failed to read image file."));
+        return;
+      }
+      const marker = "base64,";
+      const index = value.indexOf(marker);
+      resolve(index >= 0 ? value.slice(index + marker.length) : value);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 102.4) / 10} KB`;
+  return `${Math.round(value / 1024 / 102.4) / 10} MB`;
 }

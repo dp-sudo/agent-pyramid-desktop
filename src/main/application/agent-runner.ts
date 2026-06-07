@@ -64,7 +64,10 @@ export class AgentRunner {
 
     const toolResults = [];
     for (const call of firstResponse.toolCalls) {
-      const result = await this.toolRegistry.execute(call);
+      const result = await this.toolRegistry.execute(call, {
+        threadId: "legacy-single-run",
+        turnId: call.id,
+      });
       toolResults.push(result);
       trace.record({
         stage: "act",

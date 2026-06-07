@@ -1,4 +1,5 @@
 import type {
+  AgentContentBlock,
   AgentMessage,
   AgentToolCall,
   AgentUsage,
@@ -16,9 +17,11 @@ import {
   parseOpenAiToolCalls,
   toAnthropicTool,
   toOpenAiTool,
+  type AnthropicContentBlock,
   type AnthropicMessage,
   type AnthropicMessageResponse,
   type OpenAiChatMessage,
+  type OpenAiContentBlock,
   type OpenAiChatResponse
 } from "./minimax-types";
 
@@ -612,7 +615,7 @@ function toOpenAiMessages(request: LlmRequest): OpenAiChatMessage[] {
   for (const message of request.messages) {
     messages.push({
       role: message.role,
-      content: message.content,
+      content: toOpenAiContent(message.content),
       tool_call_id: message.toolCallId
     });
   }
@@ -633,7 +636,7 @@ function toAnthropicMessages(messages: AgentMessage[]): AnthropicMessage[] {
           {
             type: "tool_result",
             tool_use_id: message.toolCallId,
-            content: message.content
+            content: contentAsText(message.content)
           }
         ]
       };
@@ -645,9 +648,54 @@ function toAnthropicMessages(messages: AgentMessage[]): AnthropicMessage[] {
 
     return {
       role: message.role,
-      content: message.content
+      content: toAnthropicContent(message.content)
     };
   });
+}
+
+function toOpenAiContent(content: AgentMessage["content"]): string | OpenAiContentBlock[] {
+  if (typeof content === "string") return content;
+  return content.map((block) => {
+    if (block.type === "text") {
+      return { type: "text", text: block.text };
+    }
+    return {
+      type: "image_url",
+      image_url: {
+        url: `data:${block.mimeType};base64,${block.dataBase64}`
+      }
+    };
+  });
+}
+
+function toAnthropicContent(
+  content: AgentMessage["content"],
+): string | AnthropicContentBlock[] {
+  if (typeof content === "string") return content;
+  return content.map((block) => {
+    if (block.type === "text") {
+      return { type: "text", text: block.text };
+    }
+    return {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: block.mimeType,
+        data: block.dataBase64
+      }
+    };
+  });
+}
+
+function contentAsText(content: AgentMessage["content"]): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter(
+      (block): block is Extract<AgentContentBlock, { type: "text" }> =>
+        block.type === "text",
+    )
+    .map((block) => block.text)
+    .join("\n");
 }
 
 async function postJson<T>(

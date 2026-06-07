@@ -2,7 +2,11 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
   AgentRunRequest,
   AgentRunResponse,
+  AttachmentCreateRequest,
+  AttachmentDeleteResponse,
+  AttachmentRecord,
   ApprovalRespondRequest,
+  GoalUpdateRequest,
   IpcResult,
   RuntimeEvent,
   SseSubscribeRequest,
@@ -22,6 +26,8 @@ import type {
   WriteListRequest,
   WritePutRequest,
   Item,
+  UsageDailyBucket,
+  UsageDailyRequest,
   ModelConfig,
   ModelConfigProfile,
   ModelConfigProfileActivateRequest,
@@ -33,7 +39,11 @@ import type {
 } from "../shared/agent-contracts";
 import {
   AGENT_RUN_CHANNEL,
+  ATTACHMENT_CREATE_CHANNEL,
+  ATTACHMENT_DELETE_CHANNEL,
+  ATTACHMENT_GET_CHANNEL,
   APPROVAL_RESPOND_CHANNEL,
+  GOAL_UPDATE_CHANNEL,
   SSE_PUSH_CHANNEL,
   SSE_SUBSCRIBE_CHANNEL,
   SSE_UNSUBSCRIBE_CHANNEL,
@@ -46,6 +56,7 @@ import {
   TURN_GET_CHANNEL,
   TURN_INTERRUPT_CHANNEL,
   TURN_START_CHANNEL,
+  USAGE_DAILY_CHANNEL,
   WRITE_COMPLETE_CHANNEL,
   WRITE_GET_CHANNEL,
   WRITE_LIST_CHANNEL,
@@ -159,6 +170,42 @@ const approvals = {
   },
 };
 
+const goals = {
+  update(request: GoalUpdateRequest): Promise<IpcResult<ThreadRecord>> {
+    return ipcRenderer.invoke(GOAL_UPDATE_CHANNEL, request) as Promise<
+      IpcResult<ThreadRecord>
+    >;
+  },
+};
+
+const attachments = {
+  create(request: AttachmentCreateRequest): Promise<IpcResult<AttachmentRecord>> {
+    return ipcRenderer.invoke(ATTACHMENT_CREATE_CHANNEL, request) as Promise<
+      IpcResult<AttachmentRecord>
+    >;
+  },
+  get(
+    id: string,
+  ): Promise<IpcResult<AttachmentRecord & { dataBase64: string }>> {
+    return ipcRenderer.invoke(ATTACHMENT_GET_CHANNEL, id) as Promise<
+      IpcResult<AttachmentRecord & { dataBase64: string }>
+    >;
+  },
+  delete(id: string): Promise<IpcResult<AttachmentDeleteResponse>> {
+    return ipcRenderer.invoke(ATTACHMENT_DELETE_CHANNEL, { id }) as Promise<
+      IpcResult<AttachmentDeleteResponse>
+    >;
+  },
+};
+
+const usage = {
+  daily(request?: UsageDailyRequest): Promise<IpcResult<UsageDailyBucket[]>> {
+    return ipcRenderer.invoke(USAGE_DAILY_CHANNEL, request) as Promise<
+      IpcResult<UsageDailyBucket[]>
+    >;
+  },
+};
+
 const write = {
   list(request: WriteListRequest): Promise<IpcResult<WriteFileEntry[]>> {
     return ipcRenderer.invoke(WRITE_LIST_CHANNEL, request) as Promise<
@@ -240,6 +287,9 @@ export const agentApi = {
   turns,
   sse,
   approvals,
+  goals,
+  attachments,
+  usage,
   write,
   modelConfig,
 };

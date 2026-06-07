@@ -65,7 +65,10 @@
   "usage": {
     "input": "输入",
     "output": "输出",
-    "total": "总计"
+    "total": "总计",
+    "heatmap": "每日 Token 用量",
+    "less": "较少",
+    "more": "较多"
   },
   "chat": {
     "activeSession": "当前会话",
@@ -105,46 +108,98 @@
   "common": {
     "settings": "设置",
     "send": "发送",
-    "cancel": "取消"
+    "cancel": "取消",
+    "on": "开",
+    "off": "关"
   },
   "composer": {
     "placeholder": "发送消息…",
     "model": "模型",
     "send": "发送",
-    "interrupt": "中断"
+    "interrupt": "中断",
+    "more": "更多",
+    "addImage": "添加图片",
+    "planMode": "计划模式",
+    "goalMode": "目标模式",
+    "reasoningEffort": "推理",
+    "removeAttachment": "移除附件"
   },
   "settings": {
     "title": "设置",
-    "subtitle": "大模型配置会保存到运行时 config 文件。",
+    "subtitle": "调整模型档案、供应商连接、上下文限制和推理行为。",
     "comingSoon": "设置页即将推出。",
     "backToWorkbench": "返回工作台",
     "save": "保存",
     "saving": "保存中",
     "saved": "已保存",
+    "navLabel": "设置分区",
+    "sidebarFooterTitle": "运行时配置",
+    "sidebarFooterDescription": "保存到 userData/config",
+    "showSecret": "显示密钥",
+    "hideSecret": "隐藏密钥",
+    "status": {
+      "idle": "已就绪",
+      "dirty": "已修改",
+      "loading": "加载中",
+      "saving": "保存中",
+      "saved": "已保存",
+      "error": "需要处理"
+    },
+    "nav": {
+      "profiles": "模型档案",
+      "profilesDesc": "切换当前模型",
+      "connection": "连接信息",
+      "connectionDesc": "供应商与 API Key",
+      "context": "上下文",
+      "contextDesc": "Token 窗口",
+      "reasoning": "推理行为",
+      "reasoningDesc": "思考参数"
+    },
+    "sections": {
+      "connection": "连接信息",
+      "connectionDesc": "这些值会在开始对话回合时传给运行时网关。",
+      "context": "上下文与输出限制",
+      "contextDesc": "让上下文、自动压缩和输出上限与所选模型保持一致。",
+      "reasoning": "推理行为",
+      "reasoningDesc": "控制是否向支持的供应商发送 thinking 和 reasoning effort 参数。"
+    },
+    "descriptions": {
+      "profileName": "显示在模型档案选择器里的友好名称。",
+      "modelProvide": "运行时网关使用的供应商方言，例如 MiniMax、DeepSeek 或 Custom。",
+      "model": "传给供应商 API 的精确模型 ID。",
+      "baseUrl": "该供应商的 OpenAI-compatible 接口根地址。",
+      "apiKey": "随此档案保存。留空时运行时会回退读取对应供应商环境变量。",
+      "contextWindow": "所选模型可接收的最大上下文 token 数。",
+      "compactLimit": "触发自动压缩的软阈值，不能超过上下文窗口。",
+      "maxTokens": "单次模型回复请求的最大输出 token 数。",
+      "thinking": "启用供应商支持的 thinking 或 reasoning 参数。",
+      "reasoningEffort": "发送给支持推理等级供应商的 effort 提示。"
+    },
     "fields": {
-      "modelProvide": "model_provide",
-      "model": "model",
-      "baseUrl": "base_url",
-      "apiKey": "OPENAI_API_KEY",
-      "contextWindow": "model_context_window",
-      "compactLimit": "model_auto_compact_token_limit",
-      "maxTokens": "max_tokens",
-      "thinking": "thinking",
-      "reasoningEffort": "model_reasoning_effort",
+      "modelProvide": "供应商",
+      "model": "模型 ID",
+      "baseUrl": "接口地址",
+      "apiKey": "API Key",
+      "contextWindow": "上下文窗口",
+      "compactLimit": "自动压缩阈值",
+      "maxTokens": "最大输出 token",
+      "thinking": "思考模式",
+      "reasoningEffort": "推理强度",
       "profileName": "档案名称"
     },
     "placeholders": {
-      "compactLimit": "model_context_window 的 90%"
+      "compactLimit": "上下文窗口的 90%",
+      "apiKey": "sk-..."
     },
     "efforts": {
-      "low": "低 / low",
-      "medium": "中 / medium",
-      "high": "高 / high",
-      "xhigh": "超高 / xhigh"
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "超高"
     },
     "profiles": {
       "title": "模型配置档案",
-      "subtitle": "切换运行时激活模型，不改 Agent 循环。",
+      "subtitle": "创建、复制、删除并激活运行时模型配置。",
       "active": "当前",
       "addMiniMax": "MiniMax",
       "addDeepSeek": "DeepSeek",
@@ -162,5 +217,9 @@
   "routes": {
     "code": "编码",
     "write": "写作"
+  },
+  "empty": {
+    "title": "开始新的会话",
+    "subtitle": "最近 Token 用量会显示在下方。"
   }
 }

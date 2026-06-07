@@ -31,6 +31,7 @@ export class RuntimeEventBus extends EventEmitter {
       "item_appended",
       "item_updated",
       "approval_requested",
+      "goal_updated",
       "runtime_error",
     ] as RuntimeEventKind[]) {
       this.on(kind, wrapped);
@@ -43,6 +44,7 @@ export class RuntimeEventBus extends EventEmitter {
         "item_appended",
         "item_updated",
         "approval_requested",
+        "goal_updated",
         "runtime_error",
       ] as RuntimeEventKind[]) {
         this.off(kind, wrapped);

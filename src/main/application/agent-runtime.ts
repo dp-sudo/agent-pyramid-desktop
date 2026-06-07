@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AgentContentBlock,
   AgentMessage,
+  AgentToolDefinition,
   LlmRequest,
   LlmResponse,
   AgentToolCall,
@@ -8,6 +10,7 @@ import type {
 } from "../domain/agent/types.js";
 import type { ToolRegistry } from "../domain/agent/ports.js";
 import { JsonlThreadStore } from "../persistence/index.js";
+import { AttachmentStore } from "../persistence/attachment-store.js";
 import { ModelConfigStore } from "../persistence/model-config-store.js";
 import { LlmWorkerPool } from "../infrastructure/llm-worker/worker-pool.js";
 import { RuntimeEventBus } from "../event-bus.js";
@@ -17,17 +20,23 @@ import type {
   AssistantItem,
   Item,
   ModelConfig,
+  ModelConfigProfile,
+  ModelConfigProfilesState,
   ReasoningItem,
   SystemItem,
   ThreadRecord,
+  ThreadGoal,
   ToolItem,
   TurnRecord,
   TurnStartRequest,
+  PlanItem,
+  PlanStep,
   UserItem,
 } from "../../shared/agent-contracts.js";
 
 interface RuntimeDeps {
   store: JsonlThreadStore;
+  attachmentStore: AttachmentStore;
   modelConfigStore: ModelConfigStore;
   pool: LlmWorkerPool;
   bus: RuntimeEventBus;
@@ -46,6 +55,18 @@ interface PendingApproval {
 const SYSTEM_PROMPT = [
   "You are the runtime assistant in the Agent Pyramid desktop app.",
   "Stay concise, explain actions, and only call tools when needed.",
+].join(" ");
+
+const PLAN_MODE_INSTRUCTION = [
+  "Plan mode is active.",
+  "First create a concise plan with the create_plan tool.",
+  "Do not perform irreversible work while planning.",
+].join(" ");
+
+const GOAL_MODE_INSTRUCTION = [
+  "Goal mode is active for this thread.",
+  "Keep the thread goal in mind across turns.",
+  "Use update_goal when the goal text, completion state, or blocked state changes.",
 ].join(" ");
 
 /**
@@ -68,15 +89,22 @@ export class AgentRuntime {
     if (busy) {
       throw new Error("RUNTIME_TURN_BUSY");
     }
-    const modelConfig = await this.deps.modelConfigStore.get();
+    const modelProfiles = await this.deps.modelConfigStore.listProfiles();
+    const selectedProfile = this.resolveModelProfile(modelProfiles, request);
+    const modelConfig = selectedProfile.config;
+    const attachmentIds = request.attachmentIds ?? [];
+    const attachments = await this.resolveAttachmentRecords(attachmentIds);
 
     const turn: TurnRecord = {
       id: randomUUID(),
       threadId: request.threadId,
       status: "in-flight",
       startedAt: new Date().toISOString(),
-      model: request.model ?? modelConfig.model,
+      model: modelConfig.model,
       reasoningEffort: request.reasoningEffort ?? modelConfig.model_reasoning_effort,
+      modelProfileId: selectedProfile.id,
+      mode: request.mode ?? "agent",
+      goalMode: request.goalMode ?? Boolean(thread.goal && thread.goal.status === "active"),
     };
     this.inFlight.set(turn.id, turn);
 
@@ -88,6 +116,8 @@ export class AgentRuntime {
       turnId: turn.id,
       text: request.text,
       ...(request.displayText ? { displayText: request.displayText } : {}),
+      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
       createdAt: new Date().toISOString(),
     };
     await this.deps.store.appendItem(turn.threadId, userItem);
@@ -105,7 +135,7 @@ export class AgentRuntime {
     });
 
     // Run the loop in the background; return the turn record immediately.
-    void this.runTurn(turn, thread, request.text, modelConfig);
+    void this.runTurn(turn, thread, request.text, attachmentIds, modelConfig);
     return turn;
   }
 
@@ -129,7 +159,7 @@ export class AgentRuntime {
       turnId: turn.id,
       item,
     });
-    this.markTurnStatus(turn, "interrupted");
+    await this.markTurnStatus(turn, "interrupted");
   }
 
   resumeThread(threadId: string): Promise<ThreadRecord | null> {
@@ -143,19 +173,64 @@ export class AgentRuntime {
     this.pendingApprovals.delete(approval.approvalId);
   }
 
+  async updateThreadGoal(
+    threadId: string,
+    update: {
+      goal?: string | null;
+      status?: ThreadGoal["status"];
+      summary?: string;
+    },
+  ): Promise<ThreadRecord> {
+    const thread = await this.deps.store.getThread(threadId);
+    if (!thread) throw new Error(`Thread ${threadId} not found`);
+
+    const now = new Date().toISOString();
+    let nextGoal: ThreadGoal | undefined;
+    if (update.goal === null) {
+      nextGoal = undefined;
+    } else {
+      const current = thread.goal;
+      const status = update.status ?? current?.status ?? "active";
+      const text = update.goal ?? current?.text;
+      if (!text?.trim()) {
+        throw new Error("Goal text is required.");
+      }
+      nextGoal = {
+        text: text.trim(),
+        status,
+        createdAt: current?.createdAt ?? now,
+        updatedAt: now,
+        ...(status === "complete" ? { completedAt: now } : {}),
+        ...(status === "blocked" ? { blockedAt: now } : {}),
+        ...(update.summary ? { summary: update.summary } : current?.summary ? { summary: current.summary } : {}),
+      };
+    }
+
+    const nextThread = await this.deps.store.updateThread(threadId, {
+      goal: nextGoal ?? null,
+    });
+    this.deps.bus.emit("goal_updated", {
+      kind: "goal_updated",
+      threadId,
+      ...(nextGoal ? { goal: nextGoal } : {}),
+    });
+    return nextThread;
+  }
+
   // --------------------------------------------------------------------------
 
   private async runTurn(
     turn: TurnRecord,
     thread: ThreadRecord,
     userText: string,
+    attachmentIds: string[],
     modelConfig: ModelConfig,
   ): Promise<void> {
     try {
       const history = await this.collectHistory(thread);
       const messages: AgentMessage[] = [
         ...history,
-        { role: "user", content: userText },
+        { role: "user", content: await this.buildUserContent(userText, attachmentIds) },
       ];
 
       const request: LlmRequest = {
@@ -164,13 +239,13 @@ export class AgentRuntime {
         model: turn.model,
         apiKey: this.resolveApiKey(modelConfig),
         baseUrl: modelConfig.base_url,
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: this.buildSystemPrompt(turn, thread),
         messages,
-        tools: this.deps.registry.listDefinitions(),
+        tools: this.listToolDefinitionsForTurn(turn, thread),
         maxTokens: modelConfig.max_tokens,
         temperature: 1,
         thinking: modelConfig.thinking,
-        reasoningEffort: modelConfig.model_reasoning_effort,
+        reasoningEffort: turn.reasoningEffort ?? modelConfig.model_reasoning_effort,
       };
 
       let response: LlmResponse;
@@ -220,7 +295,7 @@ export class AgentRuntime {
           code: "internal",
           message,
         });
-        this.markTurnStatus(turn, "failed");
+        await this.markTurnStatus(turn, "failed");
         return;
       }
 
@@ -287,11 +362,11 @@ export class AgentRuntime {
 
       // Execute tool calls. Each policy is consulted.
       for (const call of response.toolCalls) {
-        await this.executeToolCall(turn, call);
+        await this.executeToolCall(turn, thread, call);
       }
 
       turn.usage = response.usage;
-      this.markTurnStatus(turn, "completed");
+      await this.markTurnStatus(turn, "completed");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.deps.bus.emit("turn_failed", {
@@ -301,7 +376,7 @@ export class AgentRuntime {
         message,
         failedAt: new Date().toISOString(),
       });
-      this.markTurnStatus(turn, "failed");
+      await this.markTurnStatus(turn, "failed");
     }
   }
 
@@ -362,7 +437,11 @@ export class AgentRuntime {
     }
   }
 
-  private async executeToolCall(turn: TurnRecord, call: AgentToolCall): Promise<void> {
+  private async executeToolCall(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    call: AgentToolCall,
+  ): Promise<void> {
     const toolItem: ToolItem = {
       kind: "tool",
       id: randomUUID(),
@@ -382,35 +461,96 @@ export class AgentRuntime {
       item: toolItem,
     });
 
+    if (!this.isToolAllowedForTurn(call.name, turn, thread)) {
+      toolItem.status = "failed";
+      toolItem.result = { message: `Tool "${call.name}" is not available in this turn.` };
+      await this.deps.store.appendItem(turn.threadId, toolItem);
+      this.emitToolItemUpdated(turn, toolItem);
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "internal",
+        message: `Tool "${call.name}" is not available in this turn.`,
+      });
+      return;
+    }
+
     // Approval gate: only `auto` policy runs immediately.
-    if (turn && this.requiresApproval(call.name, turn)) {
+    if (this.requiresApproval(call.name, turn, thread)) {
       const approval = await this.requestApproval(turn, call);
       if (approval === "deny") {
         toolItem.status = "failed";
         toolItem.result = { denied: true };
         await this.deps.store.appendItem(turn.threadId, toolItem);
+        this.emitToolItemUpdated(turn, toolItem);
         return;
       }
     }
 
     try {
-      const content = await this.deps.registry.execute(call);
+      const content = await this.deps.registry.execute(call, {
+        threadId: turn.threadId,
+        turnId: turn.id,
+      });
       toolItem.status = "completed";
-      toolItem.result = { content };
+      toolItem.result = content;
       await this.deps.store.appendItem(turn.threadId, toolItem);
+      this.emitToolItemUpdated(turn, toolItem);
+      if (call.name === "create_plan") {
+        await this.appendPlanItem(turn, content.content);
+      }
     } catch (error) {
       toolItem.status = "failed";
       toolItem.result = {
         message: error instanceof Error ? error.message : String(error),
       };
       await this.deps.store.appendItem(turn.threadId, toolItem);
+      this.emitToolItemUpdated(turn, toolItem);
     }
   }
 
-  private requiresApproval(_name: string, _turn: TurnRecord): boolean {
-    // For the initial implementation, every tool call asks for approval.
-    // A future enhancement can map tool name -> policy.
+  private listToolDefinitionsForTurn(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+  ): AgentToolDefinition[] {
+    return this.deps.registry
+      .listDefinitions()
+      .filter((definition) => this.isToolAllowedForTurn(definition.name, turn, thread));
+  }
+
+  private isToolAllowedForTurn(
+    name: string,
+    turn: TurnRecord,
+    thread: ThreadRecord,
+  ): boolean {
+    if (name === "create_plan") {
+      return turn.mode === "plan";
+    }
+    if (name === "update_goal") {
+      return Boolean(turn.goalMode || thread.goal?.status === "active");
+    }
     return true;
+  }
+
+  private requiresApproval(
+    name: string,
+    turn: TurnRecord,
+    thread: ThreadRecord,
+  ): boolean {
+    return !(
+      (name === "create_plan" || name === "update_goal") &&
+      this.isToolAllowedForTurn(name, turn, thread)
+    );
+  }
+
+  private emitToolItemUpdated(turn: TurnRecord, item: ToolItem): void {
+    this.deps.bus.emit("item_updated", {
+      kind: "item_updated",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      item,
+    });
   }
 
   private requestApproval(
@@ -463,7 +603,10 @@ export class AgentRuntime {
     const out: AgentMessage[] = [];
     for await (const item of this.deps.store.replayItems(thread.id)) {
       if (item.kind === "user") {
-        out.push({ role: "user", content: item.text });
+        out.push({
+          role: "user",
+          content: await this.buildUserContent(item.text, item.attachmentIds ?? []),
+        });
       } else if (item.kind === "assistant") {
         out.push({ role: "assistant", content: item.text });
       } else if (item.kind === "tool") {
@@ -480,6 +623,104 @@ export class AgentRuntime {
     return out;
   }
 
+  private resolveModelProfile(
+    state: ModelConfigProfilesState,
+    request: TurnStartRequest,
+  ): ModelConfigProfile {
+    const profiles = state.profiles;
+    if (request.modelProfileId) {
+      const selected = profiles.find((profile) => profile.id === request.modelProfileId);
+      if (!selected) {
+        throw new Error(`Model config profile ${request.modelProfileId} not found.`);
+      }
+      return selected;
+    }
+
+    const selected = request.model
+      ? profiles.find((profile) => profile.config.model === request.model)
+      : profiles.find((profile) => profile.id === state.activeProfileId);
+    if (selected) return selected;
+
+    const active = profiles.find((profile) => profile.id === state.activeProfileId);
+    if (active) return active;
+
+    const fallback = profiles[0];
+    if (!fallback) {
+      throw new Error("No model config profile is available.");
+    }
+    return fallback;
+  }
+
+  private async resolveAttachmentRecords(
+    attachmentIds: string[],
+  ): Promise<NonNullable<UserItem["attachments"]>> {
+    const attachments: NonNullable<UserItem["attachments"]> = [];
+    for (const id of attachmentIds) {
+      const attachment = await this.deps.attachmentStore.get(id);
+      if (!attachment) {
+        throw new Error(`Attachment ${id} not found.`);
+      }
+      const { dataBase64: _dataBase64, ...record } = attachment;
+      void _dataBase64;
+      attachments.push(record);
+    }
+    return attachments;
+  }
+
+  private async buildUserContent(
+    text: string,
+    attachmentIds: string[],
+  ): Promise<string | AgentContentBlock[]> {
+    if (attachmentIds.length === 0) return text;
+    const blocks: AgentContentBlock[] = [{ type: "text", text }];
+    for (const id of attachmentIds) {
+      const attachment = await this.deps.attachmentStore.get(id);
+      if (!attachment) {
+        throw new Error(`Attachment ${id} not found.`);
+      }
+      blocks.push({
+        type: "image",
+        mimeType: attachment.mimeType,
+        dataBase64: attachment.dataBase64,
+      });
+    }
+    return blocks;
+  }
+
+  private buildSystemPrompt(turn: TurnRecord, thread: ThreadRecord): string {
+    const parts = [SYSTEM_PROMPT];
+    if (turn.mode === "plan") {
+      parts.push(PLAN_MODE_INSTRUCTION);
+    }
+    if (turn.goalMode || thread.goal?.status === "active") {
+      parts.push(GOAL_MODE_INSTRUCTION);
+      if (thread.goal) {
+        parts.push(`Current thread goal: ${thread.goal.text}`);
+      }
+    }
+    return parts.join("\n\n");
+  }
+
+  private async appendPlanItem(turn: TurnRecord, rawContent: string): Promise<void> {
+    const parsed = parsePlanToolContent(rawContent);
+    const item: PlanItem = {
+      kind: "plan",
+      id: randomUUID(),
+      threadId: turn.threadId,
+      turnId: turn.id,
+      ...(parsed.title ? { title: parsed.title } : {}),
+      steps: parsed.steps,
+      createdAt: new Date().toISOString(),
+    };
+    await this.deps.store.appendItem(turn.threadId, item);
+    this.deps.bus.emit("item_appended", {
+      kind: "item_appended",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      item,
+    });
+  }
+
   private resolveApiKey(config: ModelConfig): string {
     if (config.OPENAI_API_KEY) {
       return config.OPENAI_API_KEY;
@@ -494,16 +735,68 @@ export class AgentRuntime {
     return process.env.OPENAI_API_KEY || "";
   }
 
-  private markTurnStatus(turn: TurnRecord, status: TurnRecord["status"]): void {
+  private async markTurnStatus(
+    turn: TurnRecord,
+    status: TurnRecord["status"],
+  ): Promise<void> {
     turn.status = status;
     turn.completedAt = new Date().toISOString();
-    this.deps.bus.emit("turn_completed", {
+    const event = {
       kind: "turn_completed",
       threadId: turn.threadId,
       turnId: turn.id,
       status,
       completedAt: turn.completedAt,
-    });
+      ...(turn.usage ? { usage: turn.usage } : {}),
+    } as const;
+    try {
+      await this.deps.store.appendEvent(turn.threadId, event);
+    } catch (error) {
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "persistence_error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    this.deps.bus.emit("turn_completed", event);
     this.inFlight.delete(turn.id);
   }
+}
+
+function parsePlanToolContent(rawContent: string): { title?: string; steps: PlanStep[] } {
+  const parsed = JSON.parse(rawContent) as unknown;
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("create_plan returned invalid JSON.");
+  }
+  const value = parsed as { title?: unknown; steps?: unknown };
+  if (!Array.isArray(value.steps) || value.steps.length === 0) {
+    throw new Error("create_plan returned no steps.");
+  }
+  return {
+    ...(typeof value.title === "string" && value.title.trim()
+      ? { title: value.title.trim() }
+      : {}),
+    steps: value.steps.map((step, index) => parsePlanStep(step, index)),
+  };
+}
+
+function parsePlanStep(value: unknown, index: number): PlanStep {
+  if (!value || typeof value !== "object") {
+    throw new Error(`Plan step ${index + 1} must be an object.`);
+  }
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.title !== "string" || !raw.title.trim()) {
+    throw new Error(`Plan step ${index + 1} requires title.`);
+  }
+  const status =
+    raw.status === "in_progress" || raw.status === "completed" || raw.status === "pending"
+      ? raw.status
+      : "pending";
+  return {
+    id: randomUUID(),
+    title: raw.title.trim(),
+    status,
+  };
 }

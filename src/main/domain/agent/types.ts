@@ -5,9 +5,13 @@ import type {
 
 export type AgentRole = "system" | "user" | "assistant" | "tool";
 
+export type AgentContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; mimeType: string; dataBase64: string };
+
 export interface AgentMessage {
   role: AgentRole;
-  content: string;
+  content: string | AgentContentBlock[];
   toolCallId?: string;
 }
 
@@ -27,6 +31,11 @@ export interface AgentToolResult {
   toolCallId: string;
   name: string;
   content: string;
+}
+
+export interface AgentToolContext {
+  threadId: string;
+  turnId: string;
 }
 
 export interface AgentUsage {
@@ -80,5 +89,5 @@ export interface LlmGateway {
 
 export interface AgentTool {
   definition: AgentToolDefinition;
-  execute(input: Record<string, unknown>): Promise<string>;
+  execute(input: Record<string, unknown>, context: AgentToolContext): Promise<string>;
 }

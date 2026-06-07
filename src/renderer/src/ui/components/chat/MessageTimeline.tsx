@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { useWorkbench } from "../../store/WorkbenchContext";
 import { ChatBlock } from "./ChatBlock";
+import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
 
 interface MessageTimelineProps {
   onApprove?: (approvalId: string, decision: "allow" | "deny") => void;
@@ -19,7 +20,7 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
           color: "var(--ds-text-faint)",
         }}
       >
-        {state.activeThreadId ? "No messages yet." : "Select a thread to start."}
+        <InitialSessionUsageHeatmap />
       </div>
     );
   }

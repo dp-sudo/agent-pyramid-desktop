@@ -11,6 +11,7 @@ import { DEFAULT_MODEL_CONFIG } from "../../../../shared/agent-contracts";
 import type {
   Item,
   ModelConfig,
+  ModelConfigProfilesState,
   ModelReasoningEffort,
   ThreadRecord,
   ThreadSummary,
@@ -23,13 +24,19 @@ export type RightPanelMode = "changes" | "todo" | "plan" | "file" | null;
 export interface ComposerState {
   text: string;
   model: string;
+  modelProfileId?: string;
   reasoningEffort?: ModelReasoningEffort;
+  mode: "agent" | "plan";
+  goalMode: boolean;
+  attachmentIds: string[];
 }
 
 export interface WorkbenchState {
   route: WorkbenchRoute;
   modelConfig: ModelConfig;
+  modelProfiles: ModelConfigProfilesState | null;
   threads: ThreadSummary[];
+  activeThread: ThreadRecord | null;
   activeThreadId: string | null;
   activeTurnId: string | null;
   items: Item[];
@@ -44,13 +51,22 @@ export interface WorkbenchState {
 const INITIAL_STATE: WorkbenchState = {
   route: "code",
   modelConfig: DEFAULT_MODEL_CONFIG,
+  modelProfiles: null,
   threads: [],
+  activeThread: null,
   activeThreadId: null,
   activeTurnId: null,
   items: [],
   inFlightTurn: null,
   rightPanelMode: null,
-  composer: { text: "", model: DEFAULT_MODEL_CONFIG.model },
+  composer: {
+    text: "",
+    model: DEFAULT_MODEL_CONFIG.model,
+    reasoningEffort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
+    mode: "agent",
+    goalMode: false,
+    attachmentIds: [],
+  },
   errorMessage: null,
   leftSidebarWidth: 268,
   rightSidebarWidth: 360,
@@ -67,8 +83,10 @@ function upsertItem(items: Item[], item: Item): Item[] {
 type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
   | { type: "setModelConfig"; config: ModelConfig }
+  | { type: "setModelProfiles"; profiles: ModelConfigProfilesState }
   | { type: "setThreads"; threads: ThreadSummary[] }
   | { type: "selectThread"; thread: ThreadRecord; items: Item[] }
+  | { type: "updateActiveThread"; thread: ThreadRecord }
   | { type: "deselectThread" }
   | { type: "appendItem"; item: Item }
   | { type: "updateItem"; item: Item }
@@ -76,7 +94,13 @@ type Action =
   | { type: "turnStarted"; turn: TurnRecord }
   | { type: "turnEnded"; status: "completed" | "failed" | "interrupted" }
   | { type: "setComposerText"; text: string }
-  | { type: "setComposerModel"; model: string }
+  | { type: "setComposerModel"; model: string; modelProfileId?: string }
+  | { type: "setComposerReasoningEffort"; reasoningEffort: ModelReasoningEffort }
+  | { type: "setComposerMode"; mode: "agent" | "plan" }
+  | { type: "setComposerGoalMode"; enabled: boolean }
+  | { type: "addComposerAttachment"; attachmentId: string }
+  | { type: "removeComposerAttachment"; attachmentId: string }
+  | { type: "clearComposerAttachments" }
   | { type: "openRightPanel"; mode: Exclude<RightPanelMode, null> }
   | { type: "closeRightPanel" }
   | { type: "setError"; message: string | null }
@@ -91,20 +115,39 @@ function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       return {
         ...state,
         modelConfig: action.config,
-        composer: { ...state.composer, model: action.config.model },
+        composer: {
+          ...state.composer,
+          model: action.config.model,
+          reasoningEffort: action.config.model_reasoning_effort,
+        },
       };
+    case "setModelProfiles":
+      return { ...state, modelProfiles: action.profiles };
     case "setThreads":
       return { ...state, threads: action.threads };
     case "selectThread":
       return {
         ...state,
+        activeThread: action.thread,
         activeThreadId: action.thread.id,
         items: action.items,
         inFlightTurn: null,
         activeTurnId: null,
       };
     case "deselectThread":
-      return { ...state, activeThreadId: null, items: [], activeTurnId: null };
+      return {
+        ...state,
+        activeThread: null,
+        activeThreadId: null,
+        items: [],
+        activeTurnId: null,
+      };
+    case "updateActiveThread":
+      return {
+        ...state,
+        activeThread: action.thread,
+        activeThreadId: action.thread.id,
+      };
     case "appendItem":
       return { ...state, items: upsertItem(state.items, action.item) };
     case "updateItem":
@@ -125,7 +168,45 @@ function reducer(state: WorkbenchState, action: Action): WorkbenchState {
     case "setComposerText":
       return { ...state, composer: { ...state.composer, text: action.text } };
     case "setComposerModel":
-      return { ...state, composer: { ...state.composer, model: action.model } };
+      return {
+        ...state,
+        composer: {
+          ...state.composer,
+          model: action.model,
+          modelProfileId: action.modelProfileId,
+        },
+      };
+    case "setComposerReasoningEffort":
+      return {
+        ...state,
+        composer: { ...state.composer, reasoningEffort: action.reasoningEffort },
+      };
+    case "setComposerMode":
+      return { ...state, composer: { ...state.composer, mode: action.mode } };
+    case "setComposerGoalMode":
+      return { ...state, composer: { ...state.composer, goalMode: action.enabled } };
+    case "addComposerAttachment":
+      return {
+        ...state,
+        composer: {
+          ...state.composer,
+          attachmentIds: state.composer.attachmentIds.includes(action.attachmentId)
+            ? state.composer.attachmentIds
+            : [...state.composer.attachmentIds, action.attachmentId],
+        },
+      };
+    case "removeComposerAttachment":
+      return {
+        ...state,
+        composer: {
+          ...state.composer,
+          attachmentIds: state.composer.attachmentIds.filter(
+            (id) => id !== action.attachmentId,
+          ),
+        },
+      };
+    case "clearComposerAttachments":
+      return { ...state, composer: { ...state.composer, attachmentIds: [] } };
     case "openRightPanel":
       return { ...state, rightPanelMode: action.mode };
     case "closeRightPanel":
@@ -147,15 +228,23 @@ function reducer(state: WorkbenchState, action: Action): WorkbenchState {
 export interface WorkbenchActions {
   setRoute(route: WorkbenchRoute): void;
   setModelConfig(config: ModelConfig): void;
+  setModelProfiles(profiles: ModelConfigProfilesState): void;
   setThreads(threads: ThreadSummary[]): void;
   selectThread(thread: ThreadRecord, items: Item[]): void;
+  updateActiveThread(thread: ThreadRecord): void;
   deselectThread(): void;
   appendItem(item: Item): void;
   updateItem(item: Item): void;
   turnStarted(turn: TurnRecord): void;
   turnEnded(status: "completed" | "failed" | "interrupted"): void;
   setComposerText(text: string): void;
-  setComposerModel(model: string): void;
+  setComposerModel(model: string, modelProfileId?: string): void;
+  setComposerReasoningEffort(reasoningEffort: ModelReasoningEffort): void;
+  setComposerMode(mode: "agent" | "plan"): void;
+  setComposerGoalMode(enabled: boolean): void;
+  addComposerAttachment(attachmentId: string): void;
+  removeComposerAttachment(attachmentId: string): void;
+  clearComposerAttachments(): void;
   openRightPanel(mode: Exclude<RightPanelMode, null>): void;
   closeRightPanel(): void;
   setError(message: string | null): void;
@@ -177,15 +266,28 @@ export function WorkbenchProvider({ children }: { children: ReactNode }): ReactE
     () => ({
       setRoute: (route) => dispatch({ type: "setRoute", route }),
       setModelConfig: (config) => dispatch({ type: "setModelConfig", config }),
+      setModelProfiles: (profiles) => dispatch({ type: "setModelProfiles", profiles }),
       setThreads: (threads) => dispatch({ type: "setThreads", threads }),
       selectThread: (thread, items) => dispatch({ type: "selectThread", thread, items }),
+      updateActiveThread: (thread) => dispatch({ type: "updateActiveThread", thread }),
       deselectThread: () => dispatch({ type: "deselectThread" }),
       appendItem: (item) => dispatch({ type: "appendItem", item }),
       updateItem: (item) => dispatch({ type: "updateItem", item }),
       turnStarted: (turn) => dispatch({ type: "turnStarted", turn }),
       turnEnded: (status) => dispatch({ type: "turnEnded", status }),
       setComposerText: (text) => dispatch({ type: "setComposerText", text }),
-      setComposerModel: (model) => dispatch({ type: "setComposerModel", model }),
+      setComposerModel: (model, modelProfileId) =>
+        dispatch({ type: "setComposerModel", model, modelProfileId }),
+      setComposerReasoningEffort: (reasoningEffort) =>
+        dispatch({ type: "setComposerReasoningEffort", reasoningEffort }),
+      setComposerMode: (mode) => dispatch({ type: "setComposerMode", mode }),
+      setComposerGoalMode: (enabled) =>
+        dispatch({ type: "setComposerGoalMode", enabled }),
+      addComposerAttachment: (attachmentId) =>
+        dispatch({ type: "addComposerAttachment", attachmentId }),
+      removeComposerAttachment: (attachmentId) =>
+        dispatch({ type: "removeComposerAttachment", attachmentId }),
+      clearComposerAttachments: () => dispatch({ type: "clearComposerAttachments" }),
       openRightPanel: (mode) => dispatch({ type: "openRightPanel", mode }),
       closeRightPanel: () => dispatch({ type: "closeRightPanel" }),
       setError: (message) => dispatch({ type: "setError", message }),
