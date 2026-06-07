@@ -14,6 +14,8 @@ export function Workbench(): ReactElement {
   const { state, actions } = useWorkbench();
   const activeThreadIdRef = useRef<string | null>(state.activeThreadId);
   const workspaceRootRef = useRef<string>(state.workspaceRoot);
+  const selectThreadRequestRef = useRef(0);
+  const sendInProgressRef = useRef(false);
   const activeThreadArchived = state.activeThread?.status === "archived";
 
   useEffect(() => {
@@ -99,7 +101,11 @@ export function Workbench(): ReactElement {
     const result = await window.agentApi.threads.list({
       includeArchived: state.showArchivedThreads,
     });
-    if (result.ok) actions.setThreads(result.value);
+    if (result.ok) {
+      actions.setThreads(result.value);
+    } else {
+      actions.setError(result.message);
+    }
   }, [actions, state.showArchivedThreads]);
 
   const ensureWorkspaceRoot = useCallback(async (): Promise<string | null> => {
@@ -122,9 +128,21 @@ export function Workbench(): ReactElement {
 
   const onSelectThread = useCallback(
     async (id: string) => {
+      const requestId = selectThreadRequestRef.current + 1;
+      selectThreadRequestRef.current = requestId;
+      actions.setError(null);
       const threadResult = await window.agentApi.threads.get(id);
-      if (!threadResult.ok) return;
+      if (requestId !== selectThreadRequestRef.current) return;
+      if (!threadResult.ok) {
+        actions.setError(threadResult.message);
+        return;
+      }
       const itemsResult = await window.agentApi.turns.get(id);
+      if (requestId !== selectThreadRequestRef.current) return;
+      if (!itemsResult.ok) {
+        actions.setError(itemsResult.message);
+        return;
+      }
       const items = itemsResult.ok ? itemsResult.value.items : [];
       actions.selectThread(threadResult.value as ThreadRecord, items);
     },
@@ -183,7 +201,7 @@ export function Workbench(): ReactElement {
     activeThreadIdRef.current = created.value.id;
     await window.agentApi.sse.subscribe({ threadId: created.value.id });
     actions.selectThread(created.value as ThreadRecord, []);
-    await refreshThreads();
+    void refreshThreads();
   }, [actions, refreshThreads, selectThreadById, state.showArchivedThreads]);
 
   const onNewChat = useCallback(async () => {
@@ -200,8 +218,9 @@ export function Workbench(): ReactElement {
     }
     activeThreadIdRef.current = result.value.id;
     await window.agentApi.sse.subscribe({ threadId: result.value.id });
-    await refreshThreads();
     actions.selectThread(result.value as ThreadRecord, []);
+    actions.setError(null);
+    void refreshThreads();
   }, [actions, ensureWorkspaceRoot, refreshThreads]);
 
   const onDeleteThread = useCallback(
@@ -276,67 +295,77 @@ export function Workbench(): ReactElement {
     [actions, refreshThreads],
   );
 
-  const onSend = useCallback(async () => {
-    const text = state.composer.text.trim();
-    if (!text) return;
+  const onSend = useCallback(async (draftText: string): Promise<boolean> => {
+    const text = draftText.trim();
+    if (!text) return false;
     if (activeThreadArchived) {
       actions.setError(t("threads.sendBlockedArchived"));
-      return;
+      return false;
+    }
+    if (sendInProgressRef.current) {
+      return false;
     }
 
-    let threadId = state.activeThreadId;
-    if (!threadId) {
-      const workspace = await ensureWorkspaceRoot();
-      if (!workspace) return;
-      const title = text.length > 60 ? `${text.slice(0, 57)}...` : text;
-      const threadResult = await window.agentApi.threads.create({
-        title,
-        workspace,
-        mode: "code",
-      });
-      if (!threadResult.ok) {
-        actions.setError(threadResult.message);
-        return;
+    sendInProgressRef.current = true;
+    actions.setError(null);
+    try {
+      let threadId = state.activeThreadId;
+      if (!threadId) {
+        const workspace = await ensureWorkspaceRoot();
+        if (!workspace) return false;
+        const title = text.length > 60 ? `${text.slice(0, 57)}...` : text;
+        const threadResult = await window.agentApi.threads.create({
+          title,
+          workspace,
+          mode: "code",
+        });
+        if (!threadResult.ok) {
+          actions.setError(threadResult.message);
+          return false;
+        }
+        threadId = threadResult.value.id;
+        activeThreadIdRef.current = threadId;
+        actions.selectThread(threadResult.value as ThreadRecord, []);
+        await window.agentApi.sse.subscribe({ threadId });
+        void refreshThreads();
       }
-      threadId = threadResult.value.id;
-      activeThreadIdRef.current = threadId;
-      await window.agentApi.sse.subscribe({ threadId });
-      await refreshThreads();
-      actions.selectThread(threadResult.value as ThreadRecord, []);
-    }
 
-    if (state.composer.goalMode && threadId && !state.activeThread?.goal) {
-      const goalResult = await window.agentApi.goals.update({
+      if (state.composer.goalMode && threadId && !state.activeThread?.goal) {
+        const goalResult = await window.agentApi.goals.update({
+          threadId,
+          goal: text,
+          status: "active",
+        });
+        if (goalResult.ok) {
+          actions.updateActiveThread(goalResult.value as ThreadRecord);
+        } else {
+          actions.setError(goalResult.message);
+          return false;
+        }
+      }
+
+      const result = await window.agentApi.turns.start({
         threadId,
-        goal: text,
-        status: "active",
+        text,
+        model: state.composer.model,
+        modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
+        reasoningEffort:
+          state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
+        attachmentIds: state.composer.attachmentIds,
+        mode: state.composer.mode,
+        goalMode: state.composer.goalMode,
       });
-      if (goalResult.ok) {
-        actions.updateActiveThread(goalResult.value as ThreadRecord);
-      } else {
-        actions.setError(goalResult.message);
-        return;
+      if (!result.ok) {
+        actions.setError(result.message);
+        return false;
       }
+      actions.setComposerText("");
+      actions.clearComposerAttachments();
+      actions.turnStarted(result.value);
+      return true;
+    } finally {
+      sendInProgressRef.current = false;
     }
-
-    const result = await window.agentApi.turns.start({
-      threadId,
-      text,
-      model: state.composer.model,
-      modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
-      reasoningEffort:
-        state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
-      attachmentIds: state.composer.attachmentIds,
-      mode: state.composer.mode,
-      goalMode: state.composer.goalMode,
-    });
-    if (!result.ok) {
-      actions.setError(result.message);
-      return;
-    }
-    actions.setComposerText("");
-    actions.clearComposerAttachments();
-    actions.turnStarted(result.value);
   }, [
     state.activeThread,
     state.activeThreadId,
@@ -432,7 +461,7 @@ export function Workbench(): ReactElement {
                 <div style={{ padding: "0 0 12px", display: "flex", justifyContent: "center" }}>
                   <div style={{ width: "min(100%, 720px)" }}>
                     <FloatingComposer
-                      onSend={() => void onSend()}
+                      onSend={onSend}
                       onInterrupt={() => void onInterrupt()}
                       disabled={activeThreadArchived}
                     />

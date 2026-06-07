@@ -9,7 +9,7 @@ import type {
 } from "../../../../../shared/agent-contracts";
 
 interface FloatingComposerProps {
-  onSend: () => void;
+  onSend: (text: string) => Promise<boolean>;
   onInterrupt: () => void;
   disabled?: boolean;
 }
@@ -21,11 +21,14 @@ export function FloatingComposer({
 }: FloatingComposerProps): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
-  const busy = state.inFlightTurn !== null;
+  const runtimeBusy = state.inFlightTurn !== null;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [draftText, setDraftText] = useState(state.composer.text);
+  const [sendPending, setSendPending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
+  const sendDisabled = disabled || sendPending || draftText.trim().length === 0;
 
   useEffect(() => {
     if (state.composer.attachmentIds.length === 0 && attachments.length > 0) {
@@ -36,7 +39,23 @@ export function FloatingComposer({
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (!busy && state.composer.text.trim().length > 0) onSend();
+      if (!runtimeBusy && !sendDisabled) {
+        void sendDraft();
+      }
+    }
+  }
+
+  async function sendDraft(): Promise<void> {
+    const text = draftText.trim();
+    if (!text || disabled || sendPending) return;
+    setSendPending(true);
+    try {
+      const sent = await onSend(text);
+      if (sent) {
+        setDraftText("");
+      }
+    } finally {
+      setSendPending(false);
     }
   }
 
@@ -91,8 +110,8 @@ export function FloatingComposer({
         onChange={(event) => void handleImageSelected(event)}
       />
       <textarea
-        value={state.composer.text}
-        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => actions.setComposerText(event.target.value)}
+        value={draftText}
+        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setDraftText(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={t("composer.placeholder")}
         disabled={disabled}
@@ -130,7 +149,7 @@ export function FloatingComposer({
               setMenuOpen((value) => !value);
               setPickerOpen(false);
             }}
-            disabled={disabled || busy}
+            disabled={disabled || runtimeBusy || sendPending}
             title={t("composer.more")}
             aria-label={t("composer.more")}
           >
@@ -201,15 +220,15 @@ export function FloatingComposer({
           {state.composer.goalMode ? (
             <span className="ds-composer-mode-chip">{t("composer.goalMode")}</span>
           ) : null}
-          {busy ? (
+          {runtimeBusy ? (
             <Pill onClick={onInterrupt}>{t("composer.interrupt")}</Pill>
           ) : (
             <Pill
-              onClick={onSend}
+              onClick={() => void sendDraft()}
               accent
-              disabled={disabled || state.composer.text.trim().length === 0}
+              disabled={sendDisabled}
             >
-              {t("composer.send")}
+              {sendPending ? t("composer.sending") : t("composer.send")}
             </Pill>
           )}
         </div>

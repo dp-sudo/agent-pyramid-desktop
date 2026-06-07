@@ -1,7 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
-  AgentRunRequest,
-  AgentRunResponse,
   AttachmentCreateRequest,
   AttachmentDeleteResponse,
   AttachmentRecord,
@@ -39,7 +37,6 @@ import type {
   ModelConfigUpdate,
 } from "../shared/agent-contracts";
 import {
-  AGENT_RUN_CHANNEL,
   ATTACHMENT_CREATE_CHANNEL,
   ATTACHMENT_DELETE_CHANNEL,
   ATTACHMENT_GET_CHANNEL,
@@ -71,14 +68,6 @@ import {
   MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
   MODEL_CONFIG_UPDATE_CHANNEL,
 } from "../shared/ipc";
-
-const legacy = {
-  run(request: AgentRunRequest): Promise<IpcResult<AgentRunResponse>> {
-    return ipcRenderer.invoke(AGENT_RUN_CHANNEL, request) as Promise<
-      IpcResult<AgentRunResponse>
-    >;
-  },
-};
 
 const threads = {
   list(filter: ThreadListFilter): Promise<IpcResult<ThreadSummary[]>> {
@@ -292,7 +281,6 @@ const modelConfig = {
 };
 
 export const agentApi = {
-  ...legacy,
   threads,
   turns,
   sse,

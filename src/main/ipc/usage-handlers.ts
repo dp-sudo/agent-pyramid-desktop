@@ -10,22 +10,60 @@ import type { JsonlThreadStore } from "../persistence/index.js";
 
 const DEFAULT_USAGE_DAYS = 30;
 const MAX_USAGE_DAYS = 180;
+const USAGE_CACHE_TTL_MS = 10_000;
+
+interface UsageCacheEntry {
+  expiresAt: number;
+  promise: Promise<UsageDailyBucket[]>;
+}
+
+const usageCache = new Map<number, UsageCacheEntry>();
 
 export function registerUsageHandlers(store: JsonlThreadStore): void {
   ipcMain.handle(USAGE_DAILY_CHANNEL, async (_event, request?: UsageDailyRequest) => {
     try {
-      return ok(await collectDailyUsage(store, request?.days));
+      return ok(await collectCachedDailyUsage(store, request?.days));
     } catch (error) {
       return err("USAGE_DAILY_FAILED", messageOf(error));
     }
   });
 }
 
-async function collectDailyUsage(
+export async function collectCachedDailyUsage(
   store: JsonlThreadStore,
   daysInput: number | undefined,
 ): Promise<UsageDailyBucket[]> {
   const days = clampDays(daysInput);
+  const now = Date.now();
+  const cached = usageCache.get(days);
+  if (cached && cached.expiresAt > now) {
+    return cached.promise;
+  }
+
+  const promise = collectDailyUsageForDays(store, days).catch((error: unknown) => {
+    if (usageCache.get(days)?.promise === promise) {
+      usageCache.delete(days);
+    }
+    throw error;
+  });
+  usageCache.set(days, {
+    expiresAt: now + USAGE_CACHE_TTL_MS,
+    promise,
+  });
+  return promise;
+}
+
+export async function collectDailyUsage(
+  store: JsonlThreadStore,
+  daysInput: number | undefined,
+): Promise<UsageDailyBucket[]> {
+  return collectDailyUsageForDays(store, clampDays(daysInput));
+}
+
+async function collectDailyUsageForDays(
+  store: JsonlThreadStore,
+  days: number,
+): Promise<UsageDailyBucket[]> {
   const start = startOfLocalDay(Date.now() - (days - 1) * 24 * 60 * 60 * 1000);
   const buckets = new Map<string, UsageDailyBucket>();
   for (let offset = 0; offset < days; offset += 1) {

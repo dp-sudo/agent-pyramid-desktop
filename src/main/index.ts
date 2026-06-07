@@ -1,16 +1,16 @@
 import { join } from "node:path";
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow, session } from "electron";
 import { JsonlThreadStore } from "./persistence/index.js";
 import { AttachmentStore } from "./persistence/attachment-store.js";
 import { ModelConfigStore } from "./persistence/model-config-store.js";
 import { RuntimeEventBus } from "./event-bus.js";
 import { LlmWorkerPool } from "./infrastructure/llm-worker/worker-pool.js";
 import { AgentRuntime } from "./application/agent-runtime.js";
-import { LegacyRunAdapter } from "./application/legacy-run-adapter.js";
 import { MiniMaxGateway } from "./infrastructure/minimax/minimax-gateway.js";
 import { echoTool } from "./application/tools/echo-tool.js";
 import { createPlanTool } from "./application/tools/create-plan-tool.js";
 import { createGoalTools } from "./application/tools/goal-tools.js";
+import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
 import { InMemoryToolRegistry } from "./application/tools/in-memory-tool-registry.js";
 import { registerThreadHandlers } from "./ipc/threads-handlers.js";
 import { registerTurnHandlers } from "./ipc/turns-handlers.js";
@@ -22,13 +22,6 @@ import { registerUsageHandlers } from "./ipc/usage-handlers.js";
 import { registerWorkspaceHandlers } from "./ipc/workspace-handlers.js";
 import { registerWriteHandlers } from "./ipc/write-handlers.js";
 import { registerModelConfigHandlers } from "./ipc/model-config-handlers.js";
-import { AGENT_RUN_CHANNEL } from "../shared/ipc.js";
-import type {
-  AgentRunRequest,
-  AgentRunResponse,
-  IpcResult,
-} from "../shared/agent-contracts.js";
-import { ok, err } from "../shared/agent-contracts.js";
 
 // ---------------------------------------------------------------------------
 // Wiring
@@ -52,6 +45,9 @@ const runtime = new AgentRuntime({
 });
 registry.register(echoTool);
 registry.register(createPlanTool);
+for (const tool of createWorkspaceTools()) {
+  registry.register(tool);
+}
 for (const tool of createGoalTools({
   updateGoal: async (threadId, update) => {
     await runtime.updateThreadGoal(threadId, update);
@@ -59,7 +55,6 @@ for (const tool of createGoalTools({
 })) {
   registry.register(tool);
 }
-const legacy = new LegacyRunAdapter(runtime, store, bus, pool);
 
 let mainWindow: BrowserWindow | null = null;
 const debugErrors: unknown[] = [];
@@ -123,17 +118,6 @@ app.whenReady().then(async () => {
   registerWriteHandlers();
   registerModelConfigHandlers(modelConfigStore);
 
-  ipcMain.handle(AGENT_RUN_CHANNEL, async (_event, request: AgentRunRequest) => {
-    try {
-      validateRunRequest(request);
-      const result = await legacy.runOnce(request);
-      return ok(result) satisfies IpcOk;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return err("AGENT_RUN_FAILED", message) satisfies IpcResult<AgentRunResponse>;
-    }
-  });
-
   createWindow();
 
   app.on("activate", () => {
@@ -195,37 +179,6 @@ setImmediate(() => {
     debugErrors.push({ kind: "unhandledRejection", message: String(reason) });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Validation
-// ---------------------------------------------------------------------------
-
-interface IpcOk {
-  ok: true;
-  value: AgentRunResponse;
-}
-
-function validateRunRequest(request: AgentRunRequest): void {
-  if (!request.goal.trim()) {
-    throw new Error("Task goal is required.");
-  }
-  if (!request.apiKey.trim()) {
-    throw new Error("MiniMax API key is required.");
-  }
-  if (!request.model.trim()) {
-    throw new Error("Model is required.");
-  }
-  if (!Number.isFinite(request.maxTokens) || request.maxTokens < 1) {
-    throw new Error("maxTokens must be greater than 0.");
-  }
-  if (
-    !Number.isFinite(request.temperature) ||
-    request.temperature < 0 ||
-    request.temperature > 2
-  ) {
-    throw new Error("temperature must be between 0 and 2.");
-  }
-}
 
 // Re-export the MiniMaxGateway only to keep tree-shaking honest when
 // tools start importing MiniMax types via gateway constructors.

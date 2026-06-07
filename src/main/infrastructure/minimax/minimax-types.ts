@@ -4,6 +4,7 @@ export interface OpenAiChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | OpenAiContentBlock[];
   tool_call_id?: string;
+  tool_calls?: OpenAiToolCallMessage[];
 }
 
 export type OpenAiContentBlock =
@@ -24,6 +25,15 @@ export interface OpenAiTool {
     name: string;
     description: string;
     parameters: Record<string, unknown>;
+  };
+}
+
+export interface OpenAiToolCallMessage {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
   };
 }
 
@@ -74,6 +84,12 @@ export type AnthropicContentBlock =
       type: "tool_result";
       tool_use_id: string;
       content: string;
+    }
+  | {
+      type: "tool_use";
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
     };
 
 export interface AnthropicTool {

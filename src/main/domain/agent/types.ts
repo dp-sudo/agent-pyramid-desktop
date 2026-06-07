@@ -13,6 +13,7 @@ export interface AgentMessage {
   role: AgentRole;
   content: string | AgentContentBlock[];
   toolCallId?: string;
+  toolCalls?: AgentToolCall[];
 }
 
 export interface AgentToolDefinition {
@@ -36,6 +37,7 @@ export interface AgentToolResult {
 export interface AgentToolContext {
   threadId: string;
   turnId: string;
+  workspace?: string;
 }
 
 export interface AgentUsage {

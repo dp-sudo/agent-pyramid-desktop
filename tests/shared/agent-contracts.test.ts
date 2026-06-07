@@ -39,6 +39,7 @@ describe("shared agent contracts", () => {
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(
       MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
     );
+    expect(RENDERER_TO_MAIN_CHANNELS).not.toContain("agent:run");
   });
 
   it("keeps provider defaults internally consistent", () => {

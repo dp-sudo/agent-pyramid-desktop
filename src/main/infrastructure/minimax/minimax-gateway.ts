@@ -22,7 +22,8 @@ import {
   type AnthropicMessageResponse,
   type OpenAiChatMessage,
   type OpenAiContentBlock,
-  type OpenAiChatResponse
+  type OpenAiChatResponse,
+  type OpenAiToolCallMessage
 } from "./minimax-types";
 
 const OPENAI_CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
@@ -613,7 +614,10 @@ function toOpenAiMessages(request: LlmRequest): OpenAiChatMessage[] {
     messages.push({
       role: message.role,
       content: toOpenAiContent(message.content),
-      tool_call_id: message.toolCallId
+      tool_call_id: message.toolCallId,
+      ...(message.toolCalls && message.toolCalls.length > 0
+        ? { tool_calls: message.toolCalls.map(toOpenAiToolCallMessage) }
+        : {})
     });
   }
 
@@ -643,11 +647,38 @@ function toAnthropicMessages(messages: AgentMessage[]): AnthropicMessage[] {
       throw new Error("Anthropic system messages must be passed through the system field.");
     }
 
+    if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
+      const text = contentAsText(message.content);
+      return {
+        role: "assistant",
+        content: [
+          ...(text ? [{ type: "text" as const, text }] : []),
+          ...message.toolCalls.map((call) => ({
+            type: "tool_use" as const,
+            id: call.id,
+            name: call.name,
+            input: call.arguments
+          }))
+        ]
+      };
+    }
+
     return {
       role: message.role,
       content: toAnthropicContent(message.content)
     };
   });
+}
+
+function toOpenAiToolCallMessage(call: AgentToolCall): OpenAiToolCallMessage {
+  return {
+    id: call.id,
+    type: "function",
+    function: {
+      name: call.name,
+      arguments: JSON.stringify(call.arguments)
+    }
+  };
 }
 
 function toOpenAiContent(content: AgentMessage["content"]): string | OpenAiContentBlock[] {

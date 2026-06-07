@@ -1,13 +1,18 @@
 import type { ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 import type { Item } from "../../../../../shared/agent-contracts";
+import { AssistantMarkdown } from "./AssistantMarkdown";
+import { summarizeToolItem } from "./timeline-model";
 
 interface ChatBlockProps {
   item: Item;
   isLive?: boolean;
+  nested?: boolean;
   onApprove?: (approvalId: string, decision: "allow" | "deny") => void;
 }
 
-export function ChatBlock({ item, isLive, onApprove }: ChatBlockProps): ReactElement {
+export function ChatBlock({ item, isLive, nested, onApprove }: ChatBlockProps): ReactElement {
+  const { t } = useTranslation();
   switch (item.kind) {
     case "user":
       return (
@@ -26,53 +31,30 @@ export function ChatBlock({ item, isLive, onApprove }: ChatBlockProps): ReactEle
       return (
         <div className="ds-message-block assistant">
           <div className={`ds-assistant-bubble ${isLive ? "ds-shiny-text" : ""}`}>
-            {item.text || (isLive ? "..." : "")}
+            <AssistantMarkdown text={item.text || (isLive ? "..." : "")} streaming={isLive} />
           </div>
         </div>
       );
     case "reasoning":
       return (
-        <div className="ds-message-block">
-          <pre
-            className="ds-tool-block"
-            style={{ whiteSpace: "pre-wrap", color: "var(--ds-text-faint)" }}
-          >
-            {item.text}
-          </pre>
-        </div>
-      );
-    case "tool":
-      return (
-        <div className="ds-message-block tool">
-          <div className="ds-tool-block">
-            <strong style={{ color: "var(--ds-accent)" }}>{item.name}</strong>{" "}
-            <span style={{ color: "var(--ds-text-faint)" }}>({item.status})</span>
-            <pre style={{ margin: "6px 0 0", whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(item.args, null, 2)}
-            </pre>
-            {item.result !== undefined ? (
-              <pre
-                style={{
-                  margin: "6px 0 0",
-                  whiteSpace: "pre-wrap",
-                  color: "var(--ds-text-muted)",
-                }}
-              >
-                {JSON.stringify(item.result, null, 2)}
-              </pre>
-            ) : null}
+        <div className={`ds-process-entry ${nested ? "is-nested" : ""}`}>
+          <div className="ds-process-entry-title">{t("chat.reasoningLabel")}</div>
+          <div className="ds-process-entry-detail ds-process-reasoning">
+            <AssistantMarkdown text={item.text} streaming={isLive} />
           </div>
         </div>
       );
+    case "tool":
+      return <ToolBlock item={item} nested={nested} />;
     case "approval":
       return (
-        <div className="ds-message-block">
+        <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
           <div className="ds-approval-block">
             <div>
               <strong>{item.toolName}</strong>
               {item.decision ? (
                 <span style={{ marginLeft: 8, color: "var(--ds-text-faint)" }}>
-                  ({item.decision})
+                  ({t(`approvals.${item.decision}`)})
                 </span>
               ) : null}
             </div>
@@ -85,13 +67,13 @@ export function ChatBlock({ item, isLive, onApprove }: ChatBlockProps): ReactEle
                   className="ds-approval-allow"
                   onClick={() => onApprove(item.approvalId, "allow")}
                 >
-                  Allow
+                  {t("approvals.allow")}
                 </button>
                 <button
                   className="ds-approval-deny"
                   onClick={() => onApprove(item.approvalId, "deny")}
                 >
-                  Deny
+                  {t("approvals.deny")}
                 </button>
               </div>
             ) : null}
@@ -100,8 +82,8 @@ export function ChatBlock({ item, isLive, onApprove }: ChatBlockProps): ReactEle
       );
     case "user_input":
       return (
-        <div className="ds-message-block">
-          <div className="ds-system-bubble">user_input: {item.question}</div>
+        <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
+          <div className="ds-system-bubble">{t("chat.userInputLabel")}: {item.question}</div>
         </div>
       );
     case "plan":
@@ -121,15 +103,15 @@ export function ChatBlock({ item, isLive, onApprove }: ChatBlockProps): ReactEle
       );
     case "compaction":
       return (
-        <div className="ds-message-block">
+        <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
           <div className="ds-system-bubble">
-            compacted {item.replacedItemCount} items
+            {t("chat.compactedItems", { count: item.replacedItemCount })}
           </div>
         </div>
       );
     case "system":
       return (
-        <div className="ds-message-block system">
+        <div className={`ds-message-block system ${nested ? "is-nested" : ""}`}>
           <div className="ds-system-bubble">{item.text}</div>
         </div>
       );
@@ -143,4 +125,26 @@ export function ChatBlock({ item, isLive, onApprove }: ChatBlockProps): ReactEle
       );
     }
   }
+}
+
+function ToolBlock({
+  item,
+  nested,
+}: {
+  item: Extract<Item, { kind: "tool" }>;
+  nested?: boolean;
+}): ReactElement {
+  const { t } = useTranslation();
+  const display = summarizeToolItem(item, t);
+  return (
+    <details className={`ds-process-entry ds-process-tool is-${display.tone} ${nested ? "is-nested" : ""}`}>
+      <summary className="ds-process-entry-summary">
+        <span className="ds-process-entry-title">{display.title}</span>
+        <span className="ds-process-entry-status">{display.statusText}</span>
+      </summary>
+      {display.detail ? (
+        <pre className="ds-process-entry-detail">{display.detail}</pre>
+      ) : null}
+    </details>
+  );
 }

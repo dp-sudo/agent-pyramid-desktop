@@ -20,13 +20,15 @@ const IMAGE_BASE64 =
 class FakePool {
   readonly requests: LlmRequest[] = [];
   readonly canceledThreads: string[] = [];
-  response: LlmResponse = {
+  private readonly defaultResponse: LlmResponse = {
     text: "Assistant final",
     reasoning: "Reasoning final",
     toolCalls: [],
     usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     raw: {},
   };
+  response: LlmResponse = this.defaultResponse;
+  responses: LlmResponse[] = [];
   chunks: LlmStreamChunk[] = [];
   delayMs = 0;
 
@@ -43,12 +45,16 @@ class FakePool {
     if (this.delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.delayMs));
     }
-    return this.response;
+    return this.responses.shift() ?? this.response;
   }
 
   cancel(threadId: string): void {
     this.canceledThreads.push(threadId);
   }
+}
+
+function finalItems<T extends { id: string }>(items: T[]): T[] {
+  return [...new Map(items.map((item) => [item.id, item])).values()];
 }
 
 async function waitFor(
@@ -241,21 +247,29 @@ describe("AgentRuntime", () => {
       workspace: "/workspace",
       mode: "code",
     });
-    fakePool.response = {
-      text: "",
-      reasoning: "",
-      toolCalls: [
-        {
-          id: "call-1",
-          name: "create_plan",
-          arguments: {
-            title: "Test plan",
-            steps: [{ title: "Write tests", status: "completed" }],
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "create_plan",
+            arguments: {
+              title: "Test plan",
+              steps: [{ title: "Write tests", status: "completed" }],
+            },
           },
-        },
-      ],
-      raw: {},
-    };
+        ],
+        raw: {},
+      },
+      {
+        text: "Plan created.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
 
     await createRuntime(new InMemoryToolRegistry([createPlanTool])).startTurn({
       threadId: thread.id,
@@ -265,17 +279,109 @@ describe("AgentRuntime", () => {
     await waitFor(() => events.some((event) => event.kind === "turn_completed"));
 
     expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual(["create_plan"]);
+    expect(fakePool.requests[1].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          toolCalls: [expect.objectContaining({ name: "create_plan" })],
+        }),
+        expect.objectContaining({ role: "tool", toolCallId: "call-1" }),
+      ]),
+    );
     expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
 
     const replayed = [];
     for await (const item of store.replayItems(thread.id)) {
       replayed.push(item);
     }
-    expect(replayed.map((item) => item.kind)).toContain("plan");
-    expect(replayed.find((item) => item.kind === "plan")).toMatchObject({
+    const final = finalItems(replayed);
+    expect(final.map((item) => item.kind)).toContain("plan");
+    expect(final.find((item) => item.kind === "plan")).toMatchObject({
       title: "Test plan",
       steps: [expect.objectContaining({ title: "Write tests", status: "completed" })],
     });
+  });
+
+  it("executes read-only tools without approval and sends tool results into the follow-up request", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_file",
+          description: "Read file",
+          inputSchema: { type: "object" },
+        },
+        async execute(input, context) {
+          expect(input).toEqual({ path: "src/main/index.ts" });
+          expect(context).toMatchObject({
+            threadId: thread.id,
+            workspace: "/workspace",
+          });
+          return "file contents";
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "Need source.",
+        toolCalls: [
+          {
+            id: "call-read",
+            name: "read_file",
+            arguments: { path: "src/main/index.ts" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "The file contains the entrypoint.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Read the entrypoint",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    expect(fakePool.requests).toHaveLength(2);
+    expect(fakePool.requests[1].messages).toEqual(
+      expect.arrayContaining([
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "call-read",
+              name: "read_file",
+              arguments: { path: "src/main/index.ts" },
+            },
+          ],
+        },
+        { role: "tool", content: "file contents", toolCallId: "call-read" },
+      ]),
+    );
+
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    const final = finalItems(replayed);
+    expect(final).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "tool", name: "read_file", status: "completed" }),
+        expect.objectContaining({ kind: "assistant", text: "The file contains the entrypoint." }),
+      ]),
+    );
   });
 
   it("uses update_goal when goal mode is enabled and emits goal updates", async () => {
@@ -293,26 +399,35 @@ describe("AgentRuntime", () => {
         }),
       ]),
     );
-    fakePool.response = {
-      text: "",
-      reasoning: "",
-      toolCalls: [
-        {
-          id: "call-1",
-          name: "update_goal",
-          arguments: { goal: "Finish testing", status: "active" },
-        },
-      ],
-      raw: {},
-    };
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "update_goal",
+            arguments: { goal: "Finish testing", status: "active" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Goal updated.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
 
     await runtime.startTurn({
       threadId: thread.id,
       text: "Set goal",
       goalMode: true,
     });
-    await waitFor(() => events.some((event) => event.kind === "goal_updated"));
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
 
+    expect(events.some((event) => event.kind === "goal_updated")).toBe(true);
     expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual(["update_goal"]);
     expect(await store.getThread(thread.id)).toMatchObject({
       goal: { text: "Finish testing", status: "active" },
@@ -325,12 +440,20 @@ describe("AgentRuntime", () => {
       workspace: "/workspace",
       mode: "code",
     });
-    fakePool.response = {
-      text: "",
-      reasoning: "",
-      toolCalls: [{ id: "call-1", name: "echo", arguments: { text: "bad" } }],
-      raw: {},
-    };
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-1", name: "echo", arguments: { text: "bad" } }],
+        raw: {},
+      },
+      {
+        text: "Handled unavailable tool.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
 
     await createRuntime(new InMemoryToolRegistry([])).startTurn({
       threadId: thread.id,

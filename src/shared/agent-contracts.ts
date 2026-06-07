@@ -1,12 +1,3 @@
-// ============================================================================
-// Legacy single-run contract (kept for backward compatibility)
-// ============================================================================
-
-/**
- * @deprecated since 1.4 — use ThreadRecord + turn.start.
- * Kept so external callers (and the existing `agentApi.run` IPC surface) still
- * work. Internally `runOnce` translates this into the new multi-turn flow.
- */
 export type LlmProtocol = "openai-compatible" | "anthropic-compatible";
 
 export const MODEL_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
@@ -93,49 +84,6 @@ export function isModelReasoningEffort(value: unknown): value is ModelReasoningE
     typeof value === "string" &&
     MODEL_REASONING_EFFORTS.includes(value as ModelReasoningEffort)
   );
-}
-
-/**
- * @deprecated since 1.4
- */
-export type AgentRunStatus = "completed" | "failed";
-
-/**
- * @deprecated since 1.4
- */
-export interface AgentRunRequest {
-  goal: string;
-  protocol: LlmProtocol;
-  model: string;
-  apiKey: string;
-  maxTokens: number;
-  temperature: number;
-  systemPrompt?: string;
-}
-
-/**
- * @deprecated since 1.4
- */
-export interface AgentStageEvent {
-  stage: "observe" | "reason" | "act";
-  title: string;
-  detail: string;
-  timestamp: string;
-}
-
-/**
- * @deprecated since 1.4
- */
-export interface AgentRunResponse {
-  status: AgentRunStatus;
-  output: string;
-  reasoning?: string;
-  trace: AgentStageEvent[];
-  usage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-  };
 }
 
 // ============================================================================
@@ -435,6 +383,7 @@ export interface RuntimeErrorEvent {
     | "worker_timeout"
     | "schema_invalid"
     | "tool_not_found"
+    | "tool_failed"
     | "approval_timeout"
     | "persistence_error"
     | "internal";

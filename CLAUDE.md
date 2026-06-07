@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **The real source code of this project lives in:**
 
-- `src/main/` — Electron main process (domain / core / application / infrastructure / ipc / persistence)
+- `src/main/` — Electron main process (domain / application / infrastructure / ipc / persistence)
 - `src/preload/` — Electron preload bridge
 - `src/renderer/` — React renderer (root is `src/renderer/index.html`, code under `src/renderer/src/`)
 - `src/shared/` — cross-process types and IPC channel names
@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`agent-pyramid-desktop` — an Electron + Vite + React + TypeScript desktop runtime for an agent framework. The architecture is **pyramid layers + triangle loop**: `domain` (types/ports) → `core` (mechanisms) → `application` (orchestration) → `infrastructure` (LLM/IO) → `preload` (security bridge) → `renderer` (UI). The agent loop is **observe → reason → act**, tracked in `src/main/core/triangle-loop.ts` (`TriangleTrace`).
+`agent-pyramid-desktop` — an Electron + Vite + React + TypeScript desktop runtime for an agent framework. The architecture is **pyramid layers + multi-turn runtime**: `domain` (types/ports) → `application` (orchestration) → `infrastructure` (LLM/IO) → `preload` (security bridge) → `renderer` (UI).
 
 ## Commands
 
@@ -57,17 +57,16 @@ There is no test runner, no linter, and no formatter configured. After any non-t
 
 - **Main process** wires `JsonlThreadStore` + `AttachmentStore` + `ModelConfigStore` + `RuntimeEventBus` + `LlmWorkerPool` + `AgentRuntime` + `InMemoryToolRegistry` in `src/main/index.ts` (single composition root, no DI framework). The same file also calls `installContentSecurityPolicy()`, which serves a relaxed CSP in dev (allows Vite's inline preamble + `ws:` for HMR) and a strict CSP (`script-src 'self'`, `connect-src 'self'`) in production — do not loosen the prod policy.
 - **Worker threads** (one per pool slot, default `1`) instantiate `MiniMaxGateway` and stream SSE deltas back via a typed `WorkerInbound`/`WorkerOutbound` protocol (`src/main/infrastructure/llm-worker/protocol.ts`). The pool pins `threadId → worker` so per-thread turns execute serially. The worker entrypoint is a separate Vite rollup input (`src/main/infrastructure/llm-worker/worker.ts` → `out/main/llm-worker.js`); when adding worker-side code keep it reachable from that entry.
-- **Preload** (`src/preload/index.ts`) exposes a single `window.agentApi` object via `contextBridge.exposeInMainWorld`. It is built as **CommonJS** (`out/preload/index.js`) per `electron.vite.config.ts`; do not switch its output format. Keep `contextIsolation: true` and `nodeIntegration: false`; never widen the surface. Current API groups: `run` (legacy), `threads`, `turns`, `sse`, `approvals`, `goals`, `attachments`, `usage`, `write`, `modelConfig`.
+- **Preload** (`src/preload/index.ts`) exposes a single `window.agentApi` object via `contextBridge.exposeInMainWorld`. It is built as **CommonJS** (`out/preload/index.js`) per `electron.vite.config.ts`; do not switch its output format. Keep `contextIsolation: true` and `nodeIntegration: false`; never widen the surface. Current API groups: `threads`, `turns`, `sse`, `approvals`, `goals`, `attachments`, `usage`, `workspace`, `write`, `modelConfig`.
 - **Renderer** is a pure React 19 app with a hand-rolled `useReducer` store (`WorkbenchContext.tsx`); it subscribes to runtime events via `agentApi.sse.subscribe` + `onEvent`. `AppShell.tsx` lazy-loads two route trees by `state.route`: `code | write` → `Workbench`, `settings` → `SettingsView` (the older `SettingsPlaceholder` has been removed).
 
-## Two parallel runtimes (intentional, see `docs/agent-development.md`)
+## Runtime Path
 
-Both call into the same `MiniMaxGateway` but serve different IPC surfaces:
+The app has one Agent runtime surface:
 
-1. **Legacy single-run** — `AgentRunner` (`src/main/application/agent-runner.ts`) + `LegacyRunAdapter` (`src/main/application/legacy-run-adapter.ts`) implement the old `agent:run` channel and the `TriangleTrace` (observe/reason/act stages). Kept for backward compatibility with `agentApi.run()`.
-2. **Multi-turn runtime** — `AgentRuntime` (`src/main/application/agent-runtime.ts`) drives `ThreadRecord` + `TurnRecord` + `Item` streams, persistence, the approval gate, and interrupt. This is the path the new UI uses (`turn:start`, `turn:interrupt`, `sse:*`).
+**Multi-turn runtime** — `AgentRuntime` (`src/main/application/agent-runtime.ts`) drives `ThreadRecord` + `TurnRecord` + `Item` streams, persistence, the approval gate, and interrupt. This is the path the UI uses (`turn:start`, `turn:interrupt`, `sse:*`).
 
-If you add an agent capability, decide which runtime owns it, and update both call sites if the change crosses the boundary. Don't merge them — the legacy path is the migration safety net.
+The old single-run IPC/API surface has been removed. If you add an agent capability, wire it through `AgentRuntime` and the existing turn/SSE contracts.
 
 ## Source of truth contracts (`src/shared/`)
 
@@ -77,7 +76,7 @@ If a field moves (rename, type change, new required field), search the codebase 
 
 ## Domain layer rules
 
-`src/main/domain/agent/` must not import from `infrastructure/`, `application/`, `electron`, `react`, or HTTP response shapes. Contracts that cross this boundary: `LlmGateway` (`complete`/`stream`), `ToolRegistry` (`listDefinitions`/`execute`), and the `LlmRequest`/`LlmResponse`/`LlmStreamChunk` shapes. New supplier-specific logic belongs in `infrastructure/`; new orchestration belongs in `application/`; new mechanisms (like a second loop) belong in `core/`.
+`src/main/domain/agent/` must not import from `infrastructure/`, `application/`, `electron`, `react`, or HTTP response shapes. Contracts that cross this boundary: `LlmGateway` (`complete`/`stream`), `ToolRegistry` (`listDefinitions`/`execute`), and the `LlmRequest`/`LlmResponse`/`LlmStreamChunk` shapes. New supplier-specific logic belongs in `infrastructure/`; new orchestration belongs in `application/`.
 
 ## LLM gateway
 

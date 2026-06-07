@@ -52,13 +52,13 @@ The runtime MUST emit typed `RuntimeEvent`s (`turn_started`, `turn_completed`, `
 - **WHEN** a renderer has not called `sse.subscribe(threadId)` and the runtime emits an event for `threadId`
 - **THEN** the IPC layer MUST NOT send that event to that renderer
 
-### Requirement: Backward-compatible single-run adapter
+### Requirement: Removed single-run adapter
 
-The runtime MUST expose a `runOnce(request: AgentRunRequest): Promise<AgentRunResponse>` function that internally creates a thread, starts a turn, subscribes to events, and resolves when the turn completes. The function MUST return a result compatible with the existing `AgentRunResponse` shape.
+The runtime MUST NOT expose the old single-run adapter or old `AgentRunRequest` / `AgentRunResponse` contract. All runtime entrypoints MUST use the multi-turn thread / turn / SSE contracts.
 
-#### Scenario: Legacy call works
-- **WHEN** external code calls `runOnce({ goal, model, apiKey, ... })`
-- **THEN** the system MUST return an `AgentRunResponse` with the same `status`, `output`, and `trace` fields as the original single-run implementation
+#### Scenario: Legacy call is unavailable
+- **WHEN** code attempts to use the old single-run IPC/API surface
+- **THEN** there MUST be no `agentApi.run`, no `AGENT_RUN_CHANNEL`, and no `LegacyRunAdapter` implementation in the project runtime
 
 ## ADDED Requirements
 

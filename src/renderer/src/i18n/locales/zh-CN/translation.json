@@ -1,72 +1,15 @@
 {
-  "app": {
-    "architectureLayersLabel": "架构分层",
-    "eyebrow": "Agent 运行底座",
-    "languageLabel": "界面语言",
-    "title": "金字塔三角循环"
-  },
-  "defaults": {
-    "goal": "为验证 Agent 运行时设计一个三步计划。",
-    "systemPrompt": "你是一个 Agent 运行时规划器。保持回答简洁，解释行动，只在需要时请求工具。"
-  },
-  "fields": {
-    "apiKey": "MiniMax API Key",
-    "apiKeyPlaceholder": "Bearer key",
-    "goal": "目标",
-    "maxTokens": "最大 Token",
-    "model": "模型",
-    "protocol": "协议",
-    "systemPrompt": "系统提示词",
-    "temperature": "温度"
-  },
-  "layers": {
-    "application": "应用编排",
-    "core": "核心机制",
-    "desktop": "桌面界面",
-    "domain": "领域契约",
-    "infrastructure": "基础设施"
-  },
   "locales": {
     "en": "English",
     "zh-CN": "中文"
-  },
-  "protocols": {
-    "anthropic": "Messages API（Anthropic 兼容）",
-    "openai": "Chat Completions API（OpenAI 兼容）"
-  },
-  "result": {
-    "output": "输出",
-    "outputPlaceholder": "运行 Agent 后查看归一化的 LLM 响应。",
-    "reasoning": "推理",
-    "title": "执行轨迹",
-    "waiting": "等待中"
-  },
-  "runtime": {
-    "description": "MiniMax 兼容 LLM 桥接",
-    "title": "运行时"
-  },
-  "run": {
-    "idle": "运行 Agent",
-    "running": "运行中"
-  },
-  "status": {
-    "completed": "已完成",
-    "failed": "失败"
-  },
-  "task": {
-    "description": "观察 > 推理 > 行动",
-    "title": "Agent 任务"
-  },
-  "traceStages": {
-    "act": "行动",
-    "observe": "观察",
-    "reason": "推理"
   },
   "usage": {
     "input": "输入",
     "output": "输出",
     "total": "总计",
     "heatmap": "每日 Token 用量",
+    "loading": "加载 Token 用量中",
+    "unavailable": "Token 用量暂不可用",
     "less": "较少",
     "more": "较多"
   },
@@ -74,7 +17,28 @@
     "activeSession": "当前会话",
     "noSession": "无活动会话",
     "threadId": "id: {{id}}",
-    "running": "运行中"
+    "running": "运行中",
+    "workProcessOne": "工作过程 · 1 项",
+    "workProcessMany": "工作过程 · {{count}} 项",
+    "reasoningLabel": "推理思考",
+    "userInputLabel": "需要用户输入",
+    "compactedItems": "已压缩 {{count}} 条上下文",
+    "toolStatus": {
+      "pending": "等待中",
+      "running": "运行中",
+      "completed": "已完成",
+      "failed": "失败"
+    },
+    "tools": {
+      "listFiles": "读取目录",
+      "listFilesPath": "读取目录：{{path}}",
+      "readFile": "读取文件",
+      "readFilePath": "读取文件：{{path}}",
+      "searchFiles": "搜索文件",
+      "searchFilesQuery": "搜索：{{query}}",
+      "createPlan": "创建计划",
+      "updateGoal": "更新目标"
+    }
   },
   "write": {
     "openWorkspace": "打开工作区",
@@ -136,6 +100,7 @@
     "addImage": "添加图片",
     "planMode": "计划模式",
     "goalMode": "目标模式",
+    "sending": "发送中…",
     "reasoningEffort": "推理",
     "removeAttachment": "移除附件"
   },

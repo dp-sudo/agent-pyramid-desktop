@@ -1,6 +1,3 @@
-// Legacy single-run channel
-export const AGENT_RUN_CHANNEL = "agent:run";
-
 // Thread management
 export const THREAD_LIST_CHANNEL = "thread:list";
 export const THREAD_CREATE_CHANNEL = "thread:create";
@@ -54,7 +51,6 @@ export const MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL = "config:model:profiles:act
 
 /** All channels a renderer may invoke on the main process. */
 export const RENDERER_TO_MAIN_CHANNELS = [
-  AGENT_RUN_CHANNEL,
   THREAD_LIST_CHANNEL,
   THREAD_CREATE_CHANNEL,
   THREAD_GET_CHANNEL,

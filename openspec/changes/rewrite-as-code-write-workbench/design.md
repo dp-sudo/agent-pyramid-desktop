@@ -2,10 +2,10 @@
 
 **当前状态**（2026-06-07）：
 
-- 仓库 F:\Agent 已搭 Electron + Vite + React + TS 桌面骨架。`docs/agent-development.md` 记录了"金字塔分层 + 三角循环"的架构决策。
-- 主进程已实现：`domain/agent/{ports,types}.ts` 端口契约、`application/agent-runner.ts` 单回合 runner、`application/tools/echo-tool.ts` 工具样例、`infrastructure/minimax/{gateway,types}.ts` LLM 网关、`core/triangle-loop.ts` 三角循环框架。
-- 共享层：`shared/agent-contracts.ts` 定义 `AgentRunRequest/Response/StageEvent`，`shared/ipc.ts` 仅一个 `AGENT_RUN_CHANNEL`。
-- 预加载：`preload/index.ts` 暴露 `window.agentApi.run`。
+- 仓库 F:\Agent 已搭 Electron + Vite + React + TS 桌面骨架。`docs/agent-development.md` 记录了"分层架构 + 多 turn runtime"的架构决策。
+- 主进程已实现：`domain/agent/{ports,types}.ts` 端口契约、`application/agent-runtime.ts` 多 turn runtime、`application/tools/echo-tool.ts` 工具样例、`infrastructure/minimax/{gateway,types}.ts` LLM 网关。
+- 共享层：`shared/agent-contracts.ts` 定义 thread / turn / item / runtime event 等多 turn 契约，`shared/ipc.ts` 定义 renderer 可调用 channel 清单。
+- 预加载：`preload/index.ts` 暴露 `window.agentApi.{threads, turns, sse, approvals, goals, attachments, usage, workspace, write, modelConfig}`。
 - 渲染端：HEAD 中 `App.tsx` 与 `styles.css` 已删除（git 状态 `D`），`main.tsx` 仍 import 两者，导致 `npm run build` 失败。`ui/components/{composer,topbar,sidebar,settings,main,icons}` 全是空目录。
 - i18n：`i18n/{en,zh-CN}/translation.json` 完整，含 12 个命名空间。
 - 持久化：无。
@@ -26,7 +26,7 @@
 **Goals：**
 
 - G1：把渲染端从"单回合控制台"升级为"会话式 workbench"，承载长会话状态。
-- G2：扩协议支持多 turn、tool call、SSE 事件流、approval；旧 `agentApi.run()` 保留为兼容壳。
+- G2：扩协议支持多 turn、tool call、SSE 事件流、approval；旧 `agentApi.run()` 下线，运行入口统一为 turn API。
 - G3：主进程内编排 + Node `worker_threads` 隔离 LLM 推理；推理失败不阻塞 UI。
 - G4：JSONL + 索引持久化，支持 `fork` / `side` 会话族谱。
 - G5：UI 三段式（Sidebar / Center / Right Inspector），覆盖 Code + Write 两个工作面。
@@ -116,11 +116,11 @@
 - `src/renderer/src/ui/styles/shell.css` —— 三段式布局（`.ds-workbench-shell`、`.ds-stage-inset` 等）。
 - 各组件 `*.module.css` —— 组件级样式，引用 `--ds-*` 变量。
 
-### D7：保留旧 `agentApi.run()` 作为兼容壳
+### D7：删除旧 `agentApi.run()` 兼容壳
 
-**为什么**：避免破坏已有外部调用方（虽然本仓库无外部用户，但 API 兼容性是低成本高收益）。
+**为什么**：项目当前主 UI 与 IPC 已迁移到多 turn runtime，继续保留旧单次运行入口会让跨进程契约、主进程组合根和测试存在第二套过期路径。
 
-**实现**：`run()` 内部转译为 `createThread` + `turn.start` + 监听 SSE 流一次性返回 `AgentRunResponse`。约 50 行适配代码。
+**实现**：删除 preload `run()`、旧 IPC channel、旧 shared 类型、旧适配器和旧测试；外部调用方改用 `threads.*` + `turns.start` + `sse.*`。
 
 ### D8：i18n 沿用 `react-i18next`，key 命名空间按域分
 
@@ -136,7 +136,7 @@
 - **[R2] worker 与主进程的 schema 漂移** → 阶段 1 引入 zod，单测覆盖 100% schema 边界。
 - **[R3] JSONL 重放一致性** → 阶段 2 用 vitest 写 fuzz 测试：随机注入畸形行后 `replay()` 应只丢该行、保留其他。
 - **[R4] CSS 变量切换主题时的 FOUC** → `:root[data-theme]` 在 `<html>` 渲染前由 i18n init 同步设置（用 localStorage 同步读取）。
-- **[R5] 旧 `run()` 兼容壳可能让主进程多一条热路径** → 单独走 `LegacyRunAdapter` 不进入新 event-bus，避免污染新 store。
+- **[R5] 旧 `run()` 兼容壳会让主进程多一条热路径** → 下线旧入口，避免恢复 `LegacyRunAdapter` 或旧 trace 数据形态。
 - **[R6] Sidebar 拖拽改变宽度在窗口缩小时的边界** → `min-width: 180px` 硬下限 + `max-width: 420px` 硬上限（DeepSeek 同样做法）。
 - **[R7] Write 模式的 inline completion 触发频率与 LLM 调用成本** → debounce 650ms + min accept score 0.52 + max 96 token（与 DeepSeek 一致）。
 - **[R8] i18n key 在阶段拆分时漏翻译** → 阶段 5 之前 `translation.json` 必须每个 namespace 都有 `en + zh-CN` 同步，CI 加 lint 校验。

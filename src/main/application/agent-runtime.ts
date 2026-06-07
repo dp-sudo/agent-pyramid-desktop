@@ -3,6 +3,7 @@ import type {
   AgentContentBlock,
   AgentMessage,
   AgentToolDefinition,
+  AgentToolResult,
   LlmRequest,
   LlmResponse,
   AgentToolCall,
@@ -55,6 +56,8 @@ interface PendingApproval {
 const SYSTEM_PROMPT = [
   "You are the runtime assistant in the Agent Pyramid desktop app.",
   "Stay concise, explain actions, and only call tools when needed.",
+  "Use the provided structured tools for workspace inspection; do not write <tool_call>, <tool_result>, or raw tool JSON in assistant text.",
+  "Final answers should be clean Markdown meant for the user. Tool calls and tool results are shown by the runtime UI.",
 ].join(" ");
 
 const PLAN_MODE_INSTRUCTION = [
@@ -70,6 +73,8 @@ const GOAL_MODE_INSTRUCTION = [
 ].join(" ");
 
 const INTERNAL_TOOL_NAMES = new Set(["echo"]);
+const READ_ONLY_TOOL_NAMES = new Set(["list_files", "read_file", "search_files"]);
+const MAX_TOOL_ROUNDS = 6;
 
 /**
  * Multi-turn runtime. Holds per-turn state, orchestrates worker pool,
@@ -236,149 +241,83 @@ export class AgentRuntime {
     modelConfig: ModelConfig,
   ): Promise<void> {
     try {
-      const history = await this.collectHistory(thread);
+      const history = await this.collectHistory(thread, turn.id);
       const messages: AgentMessage[] = [
         ...history,
         { role: "user", content: await this.buildUserContent(userText, attachmentIds) },
       ];
 
-      const request: LlmRequest = {
-        protocol: "openai-compatible",
-        provider: modelConfig.model_provide,
-        model: turn.model,
-        apiKey: this.resolveApiKey(modelConfig),
-        baseUrl: modelConfig.base_url,
-        systemPrompt: this.buildSystemPrompt(turn, thread),
-        messages,
-        tools: this.listToolDefinitionsForTurn(turn, thread),
-        maxTokens: modelConfig.max_tokens,
-        temperature: 1,
-        thinking: modelConfig.thinking,
-        reasoningEffort: turn.reasoningEffort ?? modelConfig.model_reasoning_effort,
-      };
-
-      let response: LlmResponse;
-      const streamState: {
-        assistantItem: AssistantItem | null;
-        reasoningItem: ReasoningItem | null;
-      } = {
-        assistantItem: null,
-        reasoningItem: null,
-      };
-      try {
-        response = await this.deps.pool.chat({ id: thread.id }, request, (chunk) => {
-          if (turn.status !== "in-flight") return;
-          this.applyStreamChunk(turn, chunk, streamState);
-        });
-      } catch (error) {
-        if (turn.status === "interrupted") {
-          if (streamState.reasoningItem?.text.trim()) {
-            await this.deps.store.appendItem(turn.threadId, streamState.reasoningItem);
-            this.deps.bus.emit("item_appended", {
-              kind: "item_appended",
-              threadId: turn.threadId,
-              turnId: turn.id,
-              item: streamState.reasoningItem,
-            });
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+        const request = this.buildLlmRequest(turn, thread, messages, modelConfig);
+        const streamState: {
+          assistantItem: AssistantItem | null;
+          reasoningItem: ReasoningItem | null;
+        } = {
+          assistantItem: null,
+          reasoningItem: null,
+        };
+        let response: LlmResponse;
+        try {
+          response = await this.deps.pool.chat({ id: thread.id }, request, (chunk) => {
+            if (turn.status !== "in-flight") return;
+            this.applyStreamChunk(turn, chunk, streamState);
+          });
+        } catch (error) {
+          if (turn.status === "interrupted") {
+            await this.persistInterruptedStream(turn, streamState);
+            return;
           }
-          if (streamState.assistantItem?.text.trim()) {
-            const interruptedAssistantItem: AssistantItem = {
-              ...streamState.assistantItem,
-              truncated: true,
-            };
-            await this.deps.store.appendItem(turn.threadId, interruptedAssistantItem);
-            this.deps.bus.emit("item_appended", {
-              kind: "item_appended",
-              threadId: turn.threadId,
-              turnId: turn.id,
-              item: interruptedAssistantItem,
-            });
-          }
+          const message = error instanceof Error ? error.message : String(error);
+          this.deps.bus.emit("runtime_error", {
+            kind: "runtime_error",
+            threadId: turn.threadId,
+            turnId: turn.id,
+            code: "internal",
+            message,
+          });
+          await this.markTurnStatus(turn, "failed");
           return;
         }
-        const message = error instanceof Error ? error.message : String(error);
-        this.deps.bus.emit("runtime_error", {
-          kind: "runtime_error",
-          threadId: turn.threadId,
-          turnId: turn.id,
-          code: "internal",
-          message,
-        });
-        await this.markTurnStatus(turn, "failed");
-        return;
-      }
 
-      if (streamState.reasoningItem?.text.trim()) {
-        await this.deps.store.appendItem(turn.threadId, streamState.reasoningItem);
-        this.deps.bus.emit("item_appended", {
-          kind: "item_appended",
-          threadId: turn.threadId,
-          turnId: turn.id,
-          item: streamState.reasoningItem,
-        });
-      } else if (response.reasoning?.trim()) {
-        const finalReasoningItem: ReasoningItem = {
-          kind: "reasoning",
-          id: randomUUID(),
-          threadId: turn.threadId,
-          turnId: turn.id,
-          text: response.reasoning,
-          createdAt: new Date().toISOString(),
-        };
-        await this.deps.store.appendItem(turn.threadId, finalReasoningItem);
-        this.deps.bus.emit("item_appended", {
-          kind: "item_appended",
-          threadId: turn.threadId,
-          turnId: turn.id,
-          item: finalReasoningItem,
-        });
-      }
-
-      if (streamState.assistantItem?.text.trim()) {
-        const finalAssistantItem: AssistantItem = {
-          ...streamState.assistantItem,
-          ...(turn.status === "interrupted" ? { truncated: true } : {}),
-        };
-        await this.deps.store.appendItem(turn.threadId, finalAssistantItem);
-        this.deps.bus.emit("item_appended", {
-          kind: "item_appended",
-          threadId: turn.threadId,
-          turnId: turn.id,
-          item: finalAssistantItem,
-        });
-      } else if (response.text) {
-        const finalAssistantItem: AssistantItem = {
-          kind: "assistant",
-          id: randomUUID(),
-          threadId: turn.threadId,
-          turnId: turn.id,
-          text: response.text,
-          ...(turn.status === "interrupted" ? { truncated: true } : {}),
-          createdAt: new Date().toISOString(),
-        };
-        await this.deps.store.appendItem(turn.threadId, finalAssistantItem);
-        this.deps.bus.emit("item_appended", {
-          kind: "item_appended",
-          threadId: turn.threadId,
-          turnId: turn.id,
-          item: finalAssistantItem,
-        });
-      }
-
-      if (turn.status !== "in-flight") {
-        return;
-      }
-
-      // Execute tool calls. Each policy is consulted.
-      for (const call of response.toolCalls) {
-        await this.executeToolCall(turn, thread, call);
+        const assistantText = await this.persistModelOutput(turn, response, streamState);
         if (turn.status !== "in-flight") {
           return;
         }
-      }
+        turn.usage = response.usage ?? turn.usage;
 
-      turn.usage = response.usage;
-      await this.markTurnStatus(turn, "completed");
+        if (response.toolCalls.length === 0) {
+          await this.markTurnStatus(turn, "completed");
+          return;
+        }
+
+        if (round >= MAX_TOOL_ROUNDS) {
+          await this.appendSystemItem(
+            turn,
+            "Tool call round limit reached before the model produced a final answer.",
+            "error",
+          );
+          await this.markTurnStatus(turn, "failed");
+          return;
+        }
+
+        messages.push({
+          role: "assistant",
+          content: assistantText,
+          toolCalls: response.toolCalls,
+        });
+
+        for (const call of response.toolCalls) {
+          const result = await this.executeToolCall(turn, thread, call);
+          messages.push({
+            role: "tool",
+            content: result.content,
+            toolCallId: result.toolCallId,
+          });
+          if (turn.status !== "in-flight") {
+            return;
+          }
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.deps.bus.emit("turn_failed", {
@@ -390,6 +329,131 @@ export class AgentRuntime {
       });
       await this.markTurnStatus(turn, "failed");
     }
+  }
+
+  private buildLlmRequest(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    messages: AgentMessage[],
+    modelConfig: ModelConfig,
+  ): LlmRequest {
+    return {
+      protocol: "openai-compatible",
+      provider: modelConfig.model_provide,
+      model: turn.model,
+      apiKey: this.resolveApiKey(modelConfig),
+      baseUrl: modelConfig.base_url,
+      systemPrompt: this.buildSystemPrompt(turn, thread),
+      messages,
+      tools: this.listToolDefinitionsForTurn(turn, thread),
+      maxTokens: modelConfig.max_tokens,
+      temperature: 1,
+      thinking: modelConfig.thinking,
+      reasoningEffort: turn.reasoningEffort ?? modelConfig.model_reasoning_effort,
+    };
+  }
+
+  private async persistInterruptedStream(
+    turn: TurnRecord,
+    streamState: {
+      assistantItem: AssistantItem | null;
+      reasoningItem: ReasoningItem | null;
+    },
+  ): Promise<void> {
+    if (streamState.reasoningItem?.text.trim()) {
+      await this.deps.store.appendItem(turn.threadId, streamState.reasoningItem);
+      this.deps.bus.emit("item_appended", {
+        kind: "item_appended",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: streamState.reasoningItem,
+      });
+    }
+    if (streamState.assistantItem?.text.trim()) {
+      const interruptedAssistantItem: AssistantItem = {
+        ...streamState.assistantItem,
+        truncated: true,
+      };
+      await this.deps.store.appendItem(turn.threadId, interruptedAssistantItem);
+      this.deps.bus.emit("item_appended", {
+        kind: "item_appended",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: interruptedAssistantItem,
+      });
+    }
+  }
+
+  private async persistModelOutput(
+    turn: TurnRecord,
+    response: LlmResponse,
+    streamState: {
+      assistantItem: AssistantItem | null;
+      reasoningItem: ReasoningItem | null;
+    },
+  ): Promise<string> {
+    if (streamState.reasoningItem?.text.trim()) {
+      await this.deps.store.appendItem(turn.threadId, streamState.reasoningItem);
+      this.deps.bus.emit("item_appended", {
+        kind: "item_appended",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: streamState.reasoningItem,
+      });
+    } else if (response.reasoning?.trim()) {
+      const finalReasoningItem: ReasoningItem = {
+        kind: "reasoning",
+        id: randomUUID(),
+        threadId: turn.threadId,
+        turnId: turn.id,
+        text: response.reasoning,
+        createdAt: new Date().toISOString(),
+      };
+      await this.deps.store.appendItem(turn.threadId, finalReasoningItem);
+      this.deps.bus.emit("item_appended", {
+        kind: "item_appended",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: finalReasoningItem,
+      });
+    }
+
+    if (streamState.assistantItem?.text.trim()) {
+      const finalAssistantItem: AssistantItem = {
+        ...streamState.assistantItem,
+        ...(turn.status === "interrupted" ? { truncated: true } : {}),
+      };
+      await this.deps.store.appendItem(turn.threadId, finalAssistantItem);
+      this.deps.bus.emit("item_appended", {
+        kind: "item_appended",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: finalAssistantItem,
+      });
+      return finalAssistantItem.text;
+    }
+
+    if (response.text) {
+      const finalAssistantItem: AssistantItem = {
+        kind: "assistant",
+        id: randomUUID(),
+        threadId: turn.threadId,
+        turnId: turn.id,
+        text: response.text,
+        ...(turn.status === "interrupted" ? { truncated: true } : {}),
+        createdAt: new Date().toISOString(),
+      };
+      await this.deps.store.appendItem(turn.threadId, finalAssistantItem);
+      this.deps.bus.emit("item_appended", {
+        kind: "item_appended",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: finalAssistantItem,
+      });
+      return finalAssistantItem.text;
+    }
+
+    return "";
   }
 
   private applyStreamChunk(
@@ -453,7 +517,7 @@ export class AgentRuntime {
     turn: TurnRecord,
     thread: ThreadRecord,
     call: AgentToolCall,
-  ): Promise<void> {
+  ): Promise<AgentToolResult> {
     const toolItem: ToolItem = {
       kind: "tool",
       id: randomUUID(),
@@ -485,7 +549,11 @@ export class AgentRuntime {
         code: "internal",
         message: `Tool "${call.name}" is not available in this turn.`,
       });
-      return;
+      return {
+        toolCallId: call.id,
+        name: call.name,
+        content: JSON.stringify(toolItem.result),
+      };
     }
 
     // Approval gate: only `auto` policy runs immediately.
@@ -496,7 +564,11 @@ export class AgentRuntime {
         toolItem.result = { denied: true };
         await this.deps.store.appendItem(turn.threadId, toolItem);
         this.emitToolItemUpdated(turn, toolItem);
-        return;
+        return {
+          toolCallId: call.id,
+          name: call.name,
+          content: JSON.stringify(toolItem.result),
+        };
       }
     }
 
@@ -504,6 +576,7 @@ export class AgentRuntime {
       const content = await this.deps.registry.execute(call, {
         threadId: turn.threadId,
         turnId: turn.id,
+        workspace: thread.workspace,
       });
       toolItem.status = "completed";
       toolItem.result = content;
@@ -512,13 +585,27 @@ export class AgentRuntime {
       if (call.name === "create_plan") {
         await this.appendPlanItem(turn, content.content);
       }
+      return content;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       toolItem.status = "failed";
       toolItem.result = {
-        message: error instanceof Error ? error.message : String(error),
+        message,
       };
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "tool_failed",
+        message: `${call.name}: ${message}`,
+      });
+      return {
+        toolCallId: call.id,
+        name: call.name,
+        content: JSON.stringify(toolItem.result),
+      };
     }
   }
 
@@ -553,6 +640,9 @@ export class AgentRuntime {
     turn: TurnRecord,
     thread: ThreadRecord,
   ): boolean {
+    if (READ_ONLY_TOOL_NAMES.has(name)) {
+      return false;
+    }
     return !(
       (name === "create_plan" || name === "update_goal") &&
       this.isToolAllowedForTurn(name, turn, thread)
@@ -637,9 +727,27 @@ export class AgentRuntime {
     }
   }
 
-  private async collectHistory(thread: ThreadRecord): Promise<AgentMessage[]> {
+  private async collectHistory(
+    thread: ThreadRecord,
+    excludeTurnId?: string,
+  ): Promise<AgentMessage[]> {
     const out: AgentMessage[] = [];
+    const items: Item[] = [];
+    const itemIndexById = new Map<string, number>();
     for await (const item of this.deps.store.replayItems(thread.id)) {
+      if ("turnId" in item && item.turnId === excludeTurnId) {
+        continue;
+      }
+      const existingIndex = itemIndexById.get(item.id);
+      if (existingIndex === undefined) {
+        itemIndexById.set(item.id, items.length);
+        items.push(item);
+      } else {
+        items[existingIndex] = item;
+      }
+    }
+
+    for (const item of items) {
       if (item.kind === "user") {
         out.push({
           role: "user",
@@ -648,6 +756,20 @@ export class AgentRuntime {
       } else if (item.kind === "assistant") {
         out.push({ role: "assistant", content: item.text });
       } else if (item.kind === "tool") {
+        if (item.status !== "completed" && item.status !== "failed") {
+          continue;
+        }
+        out.push({
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: item.toolCallId,
+              name: item.name,
+              arguments: item.args,
+            },
+          ],
+        });
         out.push({
           role: "tool",
           content:
@@ -659,6 +781,29 @@ export class AgentRuntime {
       }
     }
     return out;
+  }
+
+  private async appendSystemItem(
+    turn: TurnRecord,
+    text: string,
+    level: SystemItem["level"],
+  ): Promise<void> {
+    const item: SystemItem = {
+      kind: "system",
+      id: randomUUID(),
+      threadId: turn.threadId,
+      turnId: turn.id,
+      text,
+      level,
+      createdAt: new Date().toISOString(),
+    };
+    await this.deps.store.appendItem(turn.threadId, item);
+    this.deps.bus.emit("item_appended", {
+      kind: "item_appended",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      item,
+    });
   }
 
   private resolveModelProfile(

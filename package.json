@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
-  "description": "Desktop runtime foundation for a pyramid triangle-loop agent framework.",
+  "description": "Desktop runtime foundation for a multi-turn agent workbench.",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -16,7 +16,9 @@
     "i18next": "^24.2.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-i18next": "^15.7.4"
+    "react-i18next": "^15.7.4",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^25.9.2",

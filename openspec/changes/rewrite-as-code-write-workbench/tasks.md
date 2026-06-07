@@ -10,7 +10,7 @@
 - [x] 1.3 在 `src/shared/agent-contracts.ts` 中新增 `Item` 联合类型（`user | assistant | reasoning | tool | compaction | approval | user_input | system`），每种 kind 用判别字段 `kind`
 - [x] 1.4 在 `src/shared/agent-contracts.ts` 中新增 `RuntimeEvent` 联合类型（`turn_started | turn_completed | turn_failed | item_appended | approval_requested | runtime_error`）
 - [x] 1.5 **实现调整**：因 zod 未装且 auto mode 拒装新依赖，用 TypeScript 原生 `isItem / isRuntimeEvent / isThreadRecord` 类型守卫（行为等价于 zod，可后续迁移）
-- [x] 1.6 保留旧 `AgentRunRequest / AgentRunResponse / AgentStageEvent` 不变，加 `/** @deprecated since 1.4 use ThreadRecord + turn.start */` 注释
+- [x] 1.6 删除旧 `AgentRunRequest / AgentRunResponse / AgentStageEvent` 兼容契约，跨进程契约只保留多 turn runtime 类型
 - [x] 1.7 在 `src/shared/ipc.ts` 中新增 channel 常量：`THREAD_LIST / THREAD_CREATE / THREAD_GET / THREAD_UPDATE / THREAD_DELETE / THREAD_FORK / TURN_START / TURN_INTERRUPT / TURN_GET / SSE_SUBSCRIBE / SSE_UNSUBSCRIBE / APPROVAL_RESPOND / WRITE_LIST / WRITE_GET / WRITE_PUT / WRITE_COMPLETE`（16 个）
 - [x] 1.8 在 `src/shared/agent-contracts.ts` 中导出每条 channel 的 `Request` / `Response` 类型（`TurnStartRequest / TurnInterruptOptions / ApprovalRespondRequest / SseSubscribeRequest / SseUnsubscribeRequest / WriteListRequest / WriteGetRequest / WritePutRequest / WriteCompleteRequest / WriteCompleteResponse` + 通用 `IpcResult<T>` 包装）
 
@@ -38,7 +38,7 @@
 - [x] 3.6 新建 `src/main/infrastructure/llm-worker/worker-pool.ts`：维护 1-N 个 worker 线程，按 threadId 路由（同一 thread 的请求始终进同一 worker，保证 turn 串行）
 - [x] 3.7 改造 `src/main/application/agent-runtime.ts`（新文件）：从单 run 变 multi-turn 编排器，导出 `class AgentRuntime`，方法 `startTurn / interruptTurn / resumeThread / respondApproval`
 - [x] 3.8 在 `AgentRuntime` 中实现 approval gate：emit `approval_requested` + 等待 `approval.respond`，决议后 emit `item_appended` 携带 ApprovalItem
-- [x] 3.9 保留旧 `runOnce` 作为 `LegacyRunAdapter`（`src/main/application/legacy-run-adapter.ts`），订阅 event-bus 把多 turn 流重放成 `AgentRunResponse` 兼容壳
+- [x] 3.9 删除旧 `runOnce` / `LegacyRunAdapter` 兼容壳，运行入口统一为 `AgentRuntime.startTurn`
 - [x] 3.10 在 `src/main/ipc/threads-handlers.ts` 注册 `THREAD_LIST / CREATE / GET / UPDATE / DELETE / FORK` 6 个 handler
 - [x] 3.11 在 `src/main/ipc/turns-handlers.ts` 注册 `TURN_START / INTERRUPT / GET` 3 个 handler
 - [x] 3.12 在 `src/main/ipc/sse-handlers.ts` 注册 `SSE_SUBSCRIBE / SSE_UNSUBSCRIBE`，并把订阅关系接到 `webContents` 生命周期（webContents destroyed 时自动清理订阅）
@@ -71,7 +71,7 @@
 
 ## 5. 业务接入（chat + write + 持久化联通）
 
-- [x] 5.1 改造 `src/preload/index.ts`：保留 `agentApi.run` 旧签名，新增 `threads.* / turns.* / sse.* / approvals.* / write.*` 共 14+ 方法
+- [x] 5.1 改造 `src/preload/index.ts`：删除 `agentApi.run` 旧签名，暴露 `threads.* / turns.* / sse.* / approvals.* / write.*` 等多 turn API
 - [x] 5.2 在 `src/renderer/src/ui/store/WorkbenchContext.tsx` 中接 IPC：`useEffect` 中 `threads.list()` 初始化；订阅 `sse.subscribe` 接收 `item_appended` 事件并 dispatch
 - [x] 5.3 在 `Sidebar.tsx` 中渲染 `threads` 列表，搜索过滤用 `threads.list({ search })`
 - [x] 5.4 在 `FloatingComposer.tsx` 中接 `turn.start`，按 Enter 提交、Shift+Enter 换行；`turn.interrupt` 接中断按钮

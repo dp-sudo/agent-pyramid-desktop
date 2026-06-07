@@ -6,10 +6,11 @@
 
 ## 当前开发状态
 
-当前项目已搭建 Electron、Vite、React、TypeScript 桌面应用骨架，用于运行 Agent 框架。核心架构采用“金字塔分层 + 三角循环”：
+当前项目已搭建 Electron、Vite、React、TypeScript 桌面应用骨架，用于运行 Agent 框架。核心架构采用“分层架构 + 多 turn runtime”：
 
-- 金字塔分层：`domain`、`core`、`application`、`infrastructure`、`preload`、`renderer`。
-- 三角循环：`observe` 观察任务输入，`reason` 调用 LLM 推理，`act` 执行工具或完成行动。
+- 分层：`domain`、`application`、`infrastructure`、`preload`、`renderer`。
+- 主运行时：`AgentRuntime` 负责多 turn 编排、LLM worker 调用、工具闭环、approval gate、JSONL 持久化和事件广播。
+- 旧单次运行入口、旧响应 trace 契约和旧编排器已经下线，当前运行时只有多 turn 路径。
 - 模块交互：模块间通过 `domain/agent/types.ts` 和 `domain/agent/ports.ts` 中的接口契约交互。
 
 ## 已完成内容
@@ -18,8 +19,7 @@
 - 建立安全预加载桥接：`src/preload/index.ts`。
 - 建立共享 IPC 与 Agent 请求/响应契约：`src/shared/`。
 - 建立 Agent 领域类型和端口接口：`src/main/domain/agent/`。
-- 建立三角循环追踪机制：`src/main/core/triangle-loop.ts`。
-- 建立 Agent 编排器：`src/main/application/agent-runner.ts`。
+- 建立多 turn Agent 编排器：`src/main/application/agent-runtime.ts`。
 - 建立工具注册机制和 `echo` 验证工具：`src/main/application/tools/`。
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
@@ -61,7 +61,7 @@
 ### 2026-06-07
 
 - 初始化 Agent 桌面框架开发维护文档。
-- 记录当前分层架构、三角循环、MiniMax 双协议接入、工具注册、IPC、React UI 和国际化能力。
+- 记录当前分层架构、多 turn runtime、MiniMax 双协议接入、工具注册、IPC、React UI 和国际化能力。
 - 验证方式：文档检查；代码侧此前已通过 `npm run typecheck` 和 `npm run build`。
 - 落地渲染层中英文界面语言切换：新增 `src/shared/locale.ts`、`src/renderer/src/i18n/` 资源与初始化，并将 React 控制台静态文案迁移到 `react-i18next`。
 - 验证方式：`npm run typecheck`、`npm run build`。
@@ -103,14 +103,13 @@
 - 新建 `src/main/event-bus.ts`：`RuntimeEventBus extends EventEmitter`，提供 `onKind` / `onThread`。
 - 新建 `src/main/infrastructure/llm-worker/`：`protocol.ts`（WorkerInbound/Outbound 类型）+ `worker.ts`（调用 MiniMax 网关、流式 delta、cancel via AbortController）+ `worker-pool.ts`（按 threadId 路由到固定 worker）。
 - 新建 `src/main/application/agent-runtime.ts`：多 turn 编排器，`startTurn / interruptTurn / resumeThread / respondApproval`，含 approval gate。
-- 新建 `src/main/application/legacy-run-adapter.ts`：把新 runtime 重放成旧 `AgentRunResponse` 兼容壳。
 - 新建 `src/main/ipc/{threads,turns,sse,approvals,write}-handlers.ts`：5 个 IPC 注册文件。
 - 重写 `src/main/index.ts`：组装 store + runtime + pool + bus + 全部 handler；`window-all-closed` 优雅关 worker；`uncaughtException` 收集到 `debugErrors[]`（开发期）。
-- 保留旧 `src/main/application/agent-runner.ts` 不删（不再被新代码引用，留在仓库便于回滚对比）。
+- 旧单次运行编排器与 trace 机制已无主路径入口，当前已移除。
 
 ### 预加载
 
-- 扩 `src/preload/index.ts`：暴露 `agentApi.{threads, turns, sse, approvals, write}`，保留 `run()` 旧签名。
+- 扩 `src/preload/index.ts`：暴露 `agentApi.{threads, turns, sse, approvals, write}`。
 
 ### 渲染端
 
@@ -156,7 +155,7 @@
 - 扩展 `src/main/infrastructure/minimax/minimax-gateway.ts`：OpenAI-compatible 请求使用 `stream: true`、`stream_options.include_usage` 与 `text/event-stream`，解析 SSE `data:` 帧和 `[DONE]`；Anthropic-compatible 请求解析 `content_block_delta`、`message_delta` 与工具 JSON 增量。
 - 扩展 `src/main/infrastructure/llm-worker/`：worker 通过 `gateway.stream(..., { signal })` 逐块发送结构化 delta，`cancel` 通过 `AbortController` 终止 HTTP 流；`worker-pool` 的 `onChunk` 传递 `LlmStreamChunk` 而不是裸字符串。
 - 扩展 `src/shared/agent-contracts.ts` 与 `src/main/event-bus.ts`：`RuntimeEvent` 新增 `item_updated`，用于把流式中的 assistant/reasoning item 推给订阅 renderer。
-- 扩展 `src/main/application/agent-runtime.ts`：运行时收到 `text_delta` / `reasoning_delta` 后懒创建同一 turn 的 live item，持续 emit `item_updated`；流结束或中断时把最终/截断 item 写入 JSONL 并 emit `item_appended`，保证 UI 当前态、持久化重放和旧 `runOnce` 兼容壳一致。
+- 扩展 `src/main/application/agent-runtime.ts`：运行时收到 `text_delta` / `reasoning_delta` 后懒创建同一 turn 的 live item，持续 emit `item_updated`；流结束或中断时把最终/截断 item 写入 JSONL 并 emit `item_appended`，保证 UI 当前态与持久化重放一致。
 - 扩展 `src/renderer/src/ui/Workbench.tsx` 与 `src/renderer/src/ui/store/WorkbenchContext.tsx`：renderer 订阅 `item_updated` 并按 item id upsert，`item_appended` 同样 upsert，避免流式最终落盘事件造成重复气泡。
 - 验证方式：`npm run typecheck`、`npm run build`。
 
@@ -208,4 +207,22 @@
 - 新增 `tests/` 分层测试：共享契约与 IPC allowlist、`JsonlThreadStore`、`ModelConfigStore`、`AttachmentStore`、工具注册与输入校验、`RuntimeEventBus`、MiniMax/DeepSeek/custom LLM 网关请求体和 SSE 解析、`AgentRuntime` 主流程与渲染端 `WorkbenchContext` reducer。
 - 修复测试暴露出的持久化并发问题：`AttachmentStore`、`JsonlThreadStore`、`ModelConfigStore` 初始化改为 single-flight；线程索引和模型配置写入增加串行化，避免并发写入同一临时文件造成 Windows rename 失败或索引丢失。
 - `WorkbenchContext` 导出 `INITIAL_STATE`、`Action` 和 `reducer`，用于测试纯状态转移；渲染端运行行为不变。
+- 验证方式：`npm run test`、`npm run typecheck`、`npm run build`。
+
+## 2026-06-07 - 大模型输出展示与工具闭环
+
+- 扩展 `AgentRuntime` 工具循环：模型返回 tool calls 后，运行时执行工具、把 assistant tool call 和 tool result 追加进后续 `LlmRequest.messages`，最多执行 6 轮，直到模型产出最终回答；工具失败会发出 `runtime_error(code: "tool_failed")`，不会静默吞错。
+- 扩展工具上下文：`AgentToolContext` 新增 `workspace`，新增只读工作区工具 `list_files`、`read_file`、`search_files`，并在 `src/main/index.ts` 注册；这些工具只允许访问当前线程 workspace，默认跳过 `.git`、`DeepSeek`、`node_modules`、`out` 等非项目源码或构建目录。
+- 扩展 LLM 消息转换：`AgentMessage` 支持 assistant `toolCalls`，OpenAI-compatible 与 Anthropic-compatible 请求构造都会把历史 tool call / tool result 转成供应商可理解的结构。
+- 优化 renderer 时间线：`MessageTimeline` 先按 `turnId` 分组，再将 reasoning、工具调用、过程性 assistant 文本归入可折叠“工作过程”，最终 assistant 文本作为 Markdown 正文显示；工具项显示本地化标题、状态和可展开详情。
+- 新增渲染端 Markdown 支持：`AssistantMarkdown` 使用 `react-markdown` + `remark-gfm` 渲染段落、列表、代码块和表格；新增中英文 `chat` 文案与 `shell.css` 中的 Markdown / 工作过程样式。
+- 新增测试覆盖：`tests/renderer/timeline-model.test.ts` 覆盖 turn 分组与工具摘要，`tests/main/application/tools.test.ts` 覆盖工作区只读工具边界，`tests/main/application/agent-runtime.test.ts` 覆盖工具结果回灌后的二次模型请求。
+- 验证方式：`npm run typecheck`、`npm run test`；`npm run build`。
+
+## 2026-06-07 - 旧单次运行入口下线
+
+- 删除旧单次运行公开 API：preload 不再暴露 `run()`，shared IPC allowlist 不再包含旧 channel，shared contract 不再保留旧请求/响应/trace 类型。
+- 删除旧兼容适配器及其专用测试；`AgentRuntime.startTurn()` 回到公开 `TurnStartRequest` 契约，不再保留只服务旧入口的内部 API key override。
+- 主进程组合根只注册多 turn、SSE、approval、goal、attachment、usage、workspace、write 和 model config 相关 IPC handler。
+- 更新项目维护文档和协作者指南，明确当前只有多 turn runtime，不要恢复旧单次运行分支。
 - 验证方式：`npm run test`、`npm run typecheck`、`npm run build`。

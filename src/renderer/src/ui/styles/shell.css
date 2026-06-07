@@ -486,10 +486,39 @@ textarea {
 }
 
 /* ---------- Chat blocks ---------- */
+.ds-message-timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-block: 18px 150px;
+}
+
+.ds-message-timeline-content {
+  display: flex;
+  width: min(100%, 920px);
+  min-width: 0;
+  flex-direction: column;
+  gap: 22px;
+  margin: 0 auto;
+  padding-inline: clamp(0.75rem, 3vw, 2rem);
+}
+
+.ds-message-turn {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .ds-message-block {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 6px;
+}
+
+.ds-message-block.is-nested {
+  margin-left: 12px;
 }
 
 .ds-message-block.user {
@@ -497,41 +526,27 @@ textarea {
 }
 
 .ds-user-bubble {
+  max-width: min(82%, 560px);
+  overflow-wrap: anywhere;
+  border-radius: var(--ds-radius-lg);
   background: var(--ds-bubble-user);
   color: var(--ds-bubble-user-fg);
-  padding: 8px 12px;
-  border-radius: var(--ds-radius-lg);
   font-size: var(--ds-size-body);
-  max-width: min(82%, 520px);
+  line-height: 1.58;
+  padding: 8px 12px;
+  white-space: pre-wrap;
 }
 
 .ds-message-block.assistant {
-  align-items: flex-start;
-}
-
-.ds-assistant-bubble {
-  background: var(--ds-surface-card);
-  border: 1px solid var(--ds-border-muted);
-  color: var(--ds-text);
-  padding: 10px 14px;
-  border-radius: var(--ds-radius-lg);
-  font-size: var(--ds-size-body);
-  max-width: min(82%, 720px);
-  box-shadow: var(--ds-shadow-card-soft);
-}
-
-.ds-message-block.tool {
   align-items: stretch;
 }
 
-.ds-tool-block {
-  background: var(--ds-surface-subtle);
-  border: 1px solid var(--ds-border-muted);
-  border-radius: var(--ds-radius-md);
-  padding: 10px 12px;
-  font-family: var(--ds-font-mono);
-  font-size: var(--ds-size-body);
+.ds-assistant-bubble {
+  width: min(100%, 760px);
+  max-width: 100%;
   color: var(--ds-text);
+  font-size: var(--ds-size-body);
+  line-height: 1.68;
 }
 
 .ds-message-block.system {
@@ -545,6 +560,221 @@ textarea {
   padding: 4px 8px;
   border-radius: var(--ds-radius-pill);
   border: 1px dashed var(--ds-border);
+}
+
+.ds-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ds-markdown > :first-child {
+  margin-top: 0;
+}
+
+.ds-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.ds-markdown p,
+.ds-markdown ul,
+.ds-markdown ol,
+.ds-markdown blockquote,
+.ds-markdown table,
+.ds-markdown pre {
+  margin: 0 0 0.75em;
+}
+
+.ds-markdown h1,
+.ds-markdown h2,
+.ds-markdown h3,
+.ds-markdown h4 {
+  margin: 1em 0 0.45em;
+  color: var(--ds-text);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.ds-markdown h1 {
+  font-size: var(--ds-size-title-lg);
+}
+
+.ds-markdown h2,
+.ds-markdown h3,
+.ds-markdown h4 {
+  font-size: var(--ds-size-title);
+}
+
+.ds-markdown ul,
+.ds-markdown ol {
+  padding-left: 1.35rem;
+}
+
+.ds-markdown li + li {
+  margin-top: 0.28em;
+}
+
+.ds-markdown blockquote {
+  border-left: 3px solid var(--ds-border-strong);
+  color: var(--ds-text-muted);
+  padding-left: 12px;
+}
+
+.ds-markdown code {
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text);
+  font-family: var(--ds-font-mono);
+  font-size: 0.92em;
+  padding: 0.1em 0.32em;
+}
+
+.ds-markdown pre {
+  overflow: auto;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-subtle);
+  padding: 12px;
+}
+
+.ds-markdown pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.ds-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.ds-markdown th,
+.ds-markdown td {
+  border: 1px solid var(--ds-border-muted);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.ds-markdown th {
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text);
+  font-weight: 650;
+}
+
+.ds-work-process {
+  width: min(100%, 760px);
+  border-left: 2px solid var(--ds-border-muted);
+  color: var(--ds-text-muted);
+  padding-left: 12px;
+}
+
+.ds-work-process-summary {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  color: var(--ds-text-faint);
+  cursor: pointer;
+  font-size: var(--ds-size-caption);
+  list-style: none;
+  padding: 2px 0;
+}
+
+.ds-work-process-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ds-work-process-summary::before {
+  content: ">";
+  color: var(--ds-text-faint);
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-size-caption);
+  transition: transform var(--ds-motion-micro) var(--ds-motion-ease);
+}
+
+.ds-work-process[open] .ds-work-process-summary::before {
+  transform: rotate(90deg);
+}
+
+.ds-work-process-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.ds-process-entry {
+  min-width: 0;
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  padding: 8px 10px;
+}
+
+.ds-process-entry.is-nested {
+  margin-left: 0;
+}
+
+.ds-process-entry-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ds-process-entry-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ds-process-entry-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ds-text);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-process-entry-status {
+  flex: 0 0 auto;
+  color: var(--ds-text-faint);
+}
+
+.ds-process-entry-detail {
+  margin: 8px 0 0;
+  overflow: auto;
+  color: var(--ds-text-muted);
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-size-caption);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ds-process-reasoning {
+  font-family: var(--ds-font-sans);
+}
+
+.ds-process-tool.is-running {
+  background: var(--ds-accent-soft);
+}
+
+.ds-process-tool.is-success .ds-process-entry-status {
+  color: var(--ds-success);
+}
+
+.ds-process-tool.is-danger {
+  background: var(--ds-danger-soft);
+}
+
+.ds-process-tool.is-danger .ds-process-entry-status {
+  color: var(--ds-danger);
 }
 
 .ds-plan-block {
@@ -619,6 +849,11 @@ textarea {
   display: flex;
   width: 130px;
   justify-content: space-between;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-usage-status {
   color: var(--ds-text-faint);
   font-size: var(--ds-size-caption);
 }

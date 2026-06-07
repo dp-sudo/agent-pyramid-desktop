@@ -193,7 +193,7 @@ grammar:
 i18n:
   locales: [en, zh-CN]
   default: zh-CN
-  namespaces: [app, defaults, fields, layers, locales, protocols, result, runtime, run, status, task, traceStages, usage, chat, write, threads, inspector, approvals, common, composer, settings, routes]
+  namespaces: [locales, usage, chat, write, threads, inspector, approvals, common, composer, settings, routes, empty]
 
 # ---------- 11. Don't (anti-patterns) ----------
 dont:
@@ -255,3 +255,10 @@ Two workbenches plus settings:
 ## 5. i18n
 
 `zh-CN`（默认）+ `en`，key 命名空间见 frontmatter。
+
+## 6. Message timeline
+
+- Assistant 最终回答按 Markdown 文档渲染，不再放进高对比卡片；段落、列表、表格和代码块必须使用 `ds-markdown` 规则，并保持在中心内容列内可换行或横向滚动。
+- 每个 turn 内先显示用户输入，再显示可折叠 `ds-work-process`。推理、工具调用、过程性 assistant 文本放入该区域，当前运行中的 turn 默认展开。
+- 工具过程使用 `ds-process-entry`：summary 显示本地化工具动作和状态，detail 展示参数与结果；失败状态使用 danger token，成功状态使用 success token。
+- 计划项、系统提示和用户输入请求仍使用原有独立块，不混入 assistant 最终回答。

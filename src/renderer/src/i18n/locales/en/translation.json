@@ -1,72 +1,15 @@
 {
-  "app": {
-    "architectureLayersLabel": "Architecture layers",
-    "eyebrow": "Agent Runtime Foundation",
-    "languageLabel": "Interface Language",
-    "title": "Pyramid Triangle Loop"
-  },
-  "defaults": {
-    "goal": "Design a three-step plan for validating an Agent runtime.",
-    "systemPrompt": "You are an agent runtime planner. Keep the answer concise, explain actions, and request tools only when needed."
-  },
-  "fields": {
-    "apiKey": "MiniMax API Key",
-    "apiKeyPlaceholder": "Bearer key",
-    "goal": "Goal",
-    "maxTokens": "Max Tokens",
-    "model": "Model",
-    "protocol": "Protocol",
-    "systemPrompt": "System Prompt",
-    "temperature": "Temperature"
-  },
-  "layers": {
-    "application": "Application",
-    "core": "Core",
-    "desktop": "Desktop",
-    "domain": "Domain",
-    "infrastructure": "Infrastructure"
-  },
   "locales": {
     "en": "English",
     "zh-CN": "中文"
-  },
-  "protocols": {
-    "anthropic": "Messages API (Anthropic compatible)",
-    "openai": "Chat Completions API (OpenAI compatible)"
-  },
-  "result": {
-    "output": "Output",
-    "outputPlaceholder": "Run the agent to see the normalized LLM response.",
-    "reasoning": "Reasoning",
-    "title": "Execution Trace",
-    "waiting": "Waiting"
-  },
-  "runtime": {
-    "description": "MiniMax compatible LLM bridge",
-    "title": "Runtime"
-  },
-  "run": {
-    "idle": "Run Agent",
-    "running": "Running"
-  },
-  "status": {
-    "completed": "Completed",
-    "failed": "Failed"
-  },
-  "task": {
-    "description": "Observe > Reason > Act",
-    "title": "Agent Task"
-  },
-  "traceStages": {
-    "act": "act",
-    "observe": "observe",
-    "reason": "reason"
   },
   "usage": {
     "input": "Input",
     "output": "Output",
     "total": "Total",
     "heatmap": "Daily token usage",
+    "loading": "Loading token usage",
+    "unavailable": "Token usage is unavailable",
     "less": "Less",
     "more": "More"
   },
@@ -74,7 +17,28 @@
     "activeSession": "Active session",
     "noSession": "No active session",
     "threadId": "id: {{id}}",
-    "running": "Running"
+    "running": "Running",
+    "workProcessOne": "Work process · 1 item",
+    "workProcessMany": "Work process · {{count}} items",
+    "reasoningLabel": "Reasoning",
+    "userInputLabel": "User input needed",
+    "compactedItems": "Compacted {{count}} context items",
+    "toolStatus": {
+      "pending": "Pending",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed"
+    },
+    "tools": {
+      "listFiles": "List files",
+      "listFilesPath": "List files: {{path}}",
+      "readFile": "Read file",
+      "readFilePath": "Read file: {{path}}",
+      "searchFiles": "Search files",
+      "searchFilesQuery": "Search: {{query}}",
+      "createPlan": "Create plan",
+      "updateGoal": "Update goal"
+    }
   },
   "write": {
     "openWorkspace": "Open workspace",
@@ -136,6 +100,7 @@
     "addImage": "Add image",
     "planMode": "Plan mode",
     "goalMode": "Pursue goal",
+    "sending": "Sending…",
     "reasoningEffort": "Reasoning",
     "removeAttachment": "Remove attachment"
   },

@@ -105,10 +105,7 @@ renderer React
 
 - `src/main/domain/agent/types.ts`：Agent 领域类型，包括 `AgentMessage`、`AgentToolDefinition`、`AgentToolCall`、`LlmRequest`、`LlmResponse`、`LlmStreamChunk`、`LlmGateway`、`AgentTool`。
 - `src/main/domain/agent/ports.ts`：端口接口，目前包括 `ToolRegistry`。
-- `src/main/core/triangle-loop.ts`：三角循环追踪机制，`TriangleTrace` 记录 `observe | reason | act` 阶段事件。当前主要服务 legacy single-run 兼容路径。
 - `src/main/application/agent-runtime.ts`：当前主运行时。负责多 turn 编排、线程历史收集、模型配置读取、worker 调用、流式 item 更新、工具调用、approval gate、中断和事件广播。
-- `src/main/application/legacy-run-adapter.ts`：把新 `AgentRuntime` 包装成旧 `AgentRunResponse` 形态，服务 `agentApi.run()` / `agent:run` 兼容通道。
-- `src/main/application/agent-runner.ts`：旧单次运行编排器，保留在仓库中用于兼容和对比，不是新 UI 的主路径。
 - `src/main/application/tools/`：工具注册与内置工具。`InMemoryToolRegistry` 是当前注册表，`echoTool` 是验证工具调用链路的内置工具。
 - `src/main/infrastructure/minimax/`：LLM 网关实现。虽然目录名是 `minimax`，但 `MiniMaxGateway` 当前同时处理 MiniMax、DeepSeek、custom OpenAI-compatible 以及 Anthropic-compatible 请求。
 - `src/main/infrastructure/llm-worker/`：worker 协议、worker 池、worker 入口。
@@ -118,7 +115,7 @@ renderer React
 
 ### 5.2 共享契约
 
-- `src/shared/agent-contracts.ts` 是跨 main / preload / renderer 的权威类型来源，包含 legacy run、模型配置、thread、turn、item、runtime event、approval、write-mode、IPC envelope 与类型守卫。
+- `src/shared/agent-contracts.ts` 是跨 main / preload / renderer 的权威类型来源，包含模型配置、thread、turn、item、runtime event、approval、write-mode、IPC envelope 与类型守卫。
 - `src/shared/ipc.ts` 是 IPC channel 名称的权威来源，`RENDERER_TO_MAIN_CHANNELS` 是 renderer 可调用 channel 清单。
 - `src/shared/locale.ts` 是支持语言的权威来源。
 
@@ -135,7 +132,6 @@ renderer React
 
 `src/preload/index.ts` 通过 `contextBridge.exposeInMainWorld("agentApi", agentApi)` 暴露单一 API。当前分组包括：
 
-- `run()`：legacy single-run。
 - `threads.*`：list / create / get / update / delete / fork。
 - `turns.*`：start / interrupt / get。
 - `sse.*`：subscribe / unsubscribe / onEvent。
@@ -168,22 +164,16 @@ renderer React
 
 ## 6. 当前运行时模型
 
-### 6.1 两条运行路径
+### 6.1 单一运行路径
 
-当前仓库有两条 intentional runtime path：
+当前仓库只有一条 Agent 运行路径：
 
-1. **Multi-turn runtime（主路径）**
-   - 入口：`AgentRuntime`。
-   - UI 调用：`window.agentApi.turns.start()`、`turns.interrupt()`、`sse.subscribe()`。
-   - 数据模型：`ThreadRecord`、`TurnRecord`、`Item`、`RuntimeEvent`。
-   - 负责流式输出、JSONL 持久化、approval gate、工具调用和中断。
+- 入口：`AgentRuntime`。
+- UI 调用：`window.agentApi.turns.start()`、`turns.interrupt()`、`sse.subscribe()`。
+- 数据模型：`ThreadRecord`、`TurnRecord`、`Item`、`RuntimeEvent`。
+- 负责流式输出、JSONL 持久化、approval gate、工具调用和中断。
 
-2. **Legacy single-run（兼容路径）**
-   - 入口：`agentApi.run()` / `AGENT_RUN_CHANNEL`。
-   - 适配：`LegacyRunAdapter` 把多 turn runtime 重放成旧 `AgentRunResponse`。
-   - `AgentRunner` 仍存在，但新 UI 不以它为主路径。
-
-新增 Agent 能力时，必须先判断它属于主多轮路径、legacy 兼容路径，还是两者都需要同步。不得无边界地把两条路径混在一起。
+旧单次运行入口、旧 IPC channel 和旧响应 trace 契约已经下线。新增 Agent 能力必须接入多 turn runtime，不要恢复旧单次运行分支。
 
 ### 6.2 Turn 生命周期
 
@@ -353,8 +343,7 @@ UI 改动必须遵守 `docs/ui-design.md` 和当前 CSS token 体系。
 当前必须特别注意：
 
 - `AgentRuntime` 是主路径。
-- `LegacyRunAdapter` / `agentApi.run()` 是兼容路径。
-- `AgentRunner` 是旧编排器，不要把新 UI 逻辑接回去。
+- 旧单次运行入口已删除，不要重新引入兼容壳或旧编排器。
 
 ### 11.4 可验证地完成
 
