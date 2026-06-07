@@ -17,7 +17,6 @@ import {
   type OpenAiChatResponse
 } from "./minimax-types";
 
-const MINIMAX_API_BASE_URL = "https://api.minimaxi.com";
 const OPENAI_CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 const ANTHROPIC_MESSAGES_PATH = "/anthropic/v1/messages";
 
@@ -41,12 +40,12 @@ export class MiniMaxGateway implements LlmGateway {
       max_completion_tokens: request.maxTokens,
       reasoning_split: true,
       thinking: {
-        type: "adaptive"
+        type: request.thinking ? "adaptive" : "disabled"
       }
     };
 
     const response = await postJson<OpenAiChatResponse>(
-      `${MINIMAX_API_BASE_URL}${OPENAI_CHAT_COMPLETIONS_PATH}`,
+      resolveEndpoint(request.baseUrl, OPENAI_CHAT_COMPLETIONS_PATH),
       request.apiKey,
       body,
       "openai-compatible"
@@ -80,12 +79,12 @@ export class MiniMaxGateway implements LlmGateway {
       temperature: request.temperature,
       max_tokens: request.maxTokens,
       thinking: {
-        type: "adaptive"
+        type: request.thinking ? "adaptive" : "disabled"
       }
     };
 
     const response = await postJson<AnthropicMessageResponse>(
-      `${MINIMAX_API_BASE_URL}${ANTHROPIC_MESSAGES_PATH}`,
+      resolveEndpoint(request.baseUrl, ANTHROPIC_MESSAGES_PATH),
       request.apiKey,
       body,
       "anthropic-compatible"
@@ -110,6 +109,34 @@ export class MiniMaxGateway implements LlmGateway {
       raw: response
     };
   }
+}
+
+function resolveEndpoint(baseUrl: string, path: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    throw new Error("base_url is required.");
+  }
+
+  if (path === OPENAI_CHAT_COMPLETIONS_PATH && trimmed.endsWith("/v1")) {
+    return `${trimmed}/chat/completions`;
+  }
+
+  if (path === OPENAI_CHAT_COMPLETIONS_PATH && trimmed.endsWith("/anthropic")) {
+    return `${trimmed.slice(0, -"/anthropic".length)}${OPENAI_CHAT_COMPLETIONS_PATH}`;
+  }
+
+  if (path === ANTHROPIC_MESSAGES_PATH && trimmed.endsWith("/v1")) {
+    return `${trimmed.slice(0, -3)}${ANTHROPIC_MESSAGES_PATH}`;
+  }
+
+  if (
+    path === ANTHROPIC_MESSAGES_PATH &&
+    trimmed.endsWith("/anthropic")
+  ) {
+    return `${trimmed}/v1/messages`;
+  }
+
+  return `${trimmed}${path}`;
 }
 
 function toOpenAiMessages(request: LlmRequest): OpenAiChatMessage[] {

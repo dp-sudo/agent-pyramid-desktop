@@ -115,8 +115,32 @@
   },
   "settings": {
     "title": "Settings",
+    "subtitle": "Model configuration is saved in the runtime config file.",
     "comingSoon": "Settings view is coming soon.",
-    "backToWorkbench": "Back to workbench"
+    "backToWorkbench": "Back to workbench",
+    "save": "Save",
+    "saving": "Saving",
+    "saved": "Saved",
+    "fields": {
+      "modelProvide": "model_provide",
+      "model": "model",
+      "baseUrl": "base_url",
+      "apiKey": "OPENAI_API_KEY",
+      "contextWindow": "model_context_window",
+      "compactLimit": "model_auto_compact_token_limit",
+      "maxTokens": "max_tokens",
+      "thinking": "thinking",
+      "reasoningEffort": "model_reasoning_effort"
+    },
+    "placeholders": {
+      "compactLimit": "90% of model_context_window"
+    },
+    "efforts": {
+      "low": "Low / low",
+      "medium": "Medium / medium",
+      "high": "High / high",
+      "xhigh": "Extra high / xhigh"
+    }
   },
   "routes": {
     "code": "Code",

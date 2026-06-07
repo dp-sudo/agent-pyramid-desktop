@@ -29,6 +29,10 @@ export const WRITE_GET_CHANNEL = "write:get";
 export const WRITE_PUT_CHANNEL = "write:put";
 export const WRITE_COMPLETE_CHANNEL = "write:complete";
 
+// Model configuration
+export const MODEL_CONFIG_GET_CHANNEL = "config:model:get";
+export const MODEL_CONFIG_UPDATE_CHANNEL = "config:model:update";
+
 /** All channels a renderer may invoke on the main process. */
 export const RENDERER_TO_MAIN_CHANNELS = [
   AGENT_RUN_CHANNEL,
@@ -48,6 +52,8 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   WRITE_GET_CHANNEL,
   WRITE_PUT_CHANNEL,
   WRITE_COMPLETE_CHANNEL,
+  MODEL_CONFIG_GET_CHANNEL,
+  MODEL_CONFIG_UPDATE_CHANNEL,
 ] as const;
 
 export type RendererToMainChannel = (typeof RENDERER_TO_MAIN_CHANNELS)[number];

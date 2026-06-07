@@ -7,8 +7,11 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { DEFAULT_MODEL_CONFIG } from "../../../../shared/agent-contracts";
 import type {
   Item,
+  ModelConfig,
+  ModelReasoningEffort,
   ThreadRecord,
   ThreadSummary,
   TurnRecord,
@@ -20,11 +23,12 @@ export type RightPanelMode = "changes" | "todo" | "plan" | "file" | null;
 export interface ComposerState {
   text: string;
   model: string;
-  reasoningEffort?: "low" | "medium" | "high" | "max";
+  reasoningEffort?: ModelReasoningEffort;
 }
 
 export interface WorkbenchState {
   route: WorkbenchRoute;
+  modelConfig: ModelConfig;
   threads: ThreadSummary[];
   activeThreadId: string | null;
   activeTurnId: string | null;
@@ -39,13 +43,14 @@ export interface WorkbenchState {
 
 const INITIAL_STATE: WorkbenchState = {
   route: "code",
+  modelConfig: DEFAULT_MODEL_CONFIG,
   threads: [],
   activeThreadId: null,
   activeTurnId: null,
   items: [],
   inFlightTurn: null,
   rightPanelMode: null,
-  composer: { text: "", model: "MiniMax-M3" },
+  composer: { text: "", model: DEFAULT_MODEL_CONFIG.model },
   errorMessage: null,
   leftSidebarWidth: 268,
   rightSidebarWidth: 360,
@@ -53,6 +58,7 @@ const INITIAL_STATE: WorkbenchState = {
 
 type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
+  | { type: "setModelConfig"; config: ModelConfig }
   | { type: "setThreads"; threads: ThreadSummary[] }
   | { type: "selectThread"; thread: ThreadRecord; items: Item[] }
   | { type: "deselectThread" }
@@ -72,6 +78,12 @@ function reducer(state: WorkbenchState, action: Action): WorkbenchState {
   switch (action.type) {
     case "setRoute":
       return { ...state, route: action.route };
+    case "setModelConfig":
+      return {
+        ...state,
+        modelConfig: action.config,
+        composer: { ...state.composer, model: action.config.model },
+      };
     case "setThreads":
       return { ...state, threads: action.threads };
     case "selectThread":
@@ -123,6 +135,7 @@ function reducer(state: WorkbenchState, action: Action): WorkbenchState {
 
 export interface WorkbenchActions {
   setRoute(route: WorkbenchRoute): void;
+  setModelConfig(config: ModelConfig): void;
   setThreads(threads: ThreadSummary[]): void;
   selectThread(thread: ThreadRecord, items: Item[]): void;
   deselectThread(): void;
@@ -151,6 +164,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }): ReactE
   const actions = useMemo<WorkbenchActions>(
     () => ({
       setRoute: (route) => dispatch({ type: "setRoute", route }),
+      setModelConfig: (config) => dispatch({ type: "setModelConfig", config }),
       setThreads: (threads) => dispatch({ type: "setThreads", threads }),
       selectThread: (thread, items) => dispatch({ type: "selectThread", thread, items }),
       deselectThread: () => dispatch({ type: "deselectThread" }),

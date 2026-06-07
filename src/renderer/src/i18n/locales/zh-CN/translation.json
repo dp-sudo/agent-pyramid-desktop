@@ -115,8 +115,32 @@
   },
   "settings": {
     "title": "设置",
+    "subtitle": "大模型配置会保存到运行时 config 文件。",
     "comingSoon": "设置页即将推出。",
-    "backToWorkbench": "返回工作台"
+    "backToWorkbench": "返回工作台",
+    "save": "保存",
+    "saving": "保存中",
+    "saved": "已保存",
+    "fields": {
+      "modelProvide": "model_provide",
+      "model": "model",
+      "baseUrl": "base_url",
+      "apiKey": "OPENAI_API_KEY",
+      "contextWindow": "model_context_window",
+      "compactLimit": "model_auto_compact_token_limit",
+      "maxTokens": "max_tokens",
+      "thinking": "thinking",
+      "reasoningEffort": "model_reasoning_effort"
+    },
+    "placeholders": {
+      "compactLimit": "model_context_window 的 90%"
+    },
+    "efforts": {
+      "low": "低 / low",
+      "medium": "中 / medium",
+      "high": "高 / high",
+      "xhigh": "超高 / xhigh"
+    }
   },
   "routes": {
     "code": "编码",

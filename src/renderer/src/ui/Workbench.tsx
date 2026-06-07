@@ -21,9 +21,13 @@ export function Workbench(): ReactElement {
     }
     let cancelled = false;
     void (async () => {
-      const result = await window.agentApi.threads.list({});
+      const [threadsResult, configResult] = await Promise.all([
+        window.agentApi.threads.list({}),
+        window.agentApi.modelConfig.get(),
+      ]);
       if (cancelled) return;
-      if (result.ok) actions.setThreads(result.value);
+      if (threadsResult.ok) actions.setThreads(threadsResult.value);
+      if (configResult.ok) actions.setModelConfig(configResult.value);
     })();
     return () => {
       cancelled = true;
@@ -98,14 +102,15 @@ export function Workbench(): ReactElement {
     const result = await window.agentApi.turns.start({
       threadId: state.activeThreadId,
       text,
-      model: state.composer.model,
+      model: state.modelConfig.model,
+      reasoningEffort: state.modelConfig.model_reasoning_effort,
     });
     if (!result.ok) {
       actions.setError(result.message);
       return;
     }
     actions.turnStarted(result.value);
-  }, [state.activeThreadId, state.composer.text, state.composer.model, actions]);
+  }, [state.activeThreadId, state.composer.text, state.modelConfig, actions]);
 
   const onInterrupt = useCallback(async () => {
     if (!state.inFlightTurn) return;

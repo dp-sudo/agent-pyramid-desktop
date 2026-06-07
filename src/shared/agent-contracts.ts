@@ -9,6 +9,52 @@
  */
 export type LlmProtocol = "openai-compatible" | "anthropic-compatible";
 
+export const MODEL_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+export type ModelReasoningEffort = (typeof MODEL_REASONING_EFFORTS)[number];
+
+export interface ModelConfig {
+  model_provide: string;
+  model: string;
+  base_url: string;
+  OPENAI_API_KEY: string;
+  model_context_window: number;
+  model_auto_compact_token_limit: number;
+  max_tokens: number;
+  thinking: boolean;
+  model_reasoning_effort: ModelReasoningEffort;
+}
+
+export interface ModelConfigUpdate {
+  model_provide: string;
+  model: string;
+  base_url: string;
+  OPENAI_API_KEY: string;
+  model_context_window?: number;
+  model_auto_compact_token_limit?: number;
+  max_tokens?: number;
+  thinking?: boolean;
+  model_reasoning_effort?: ModelReasoningEffort;
+}
+
+export const DEFAULT_MODEL_CONFIG: ModelConfig = {
+  model_provide: "MiniMax",
+  model: "MiniMax-M3",
+  base_url: "https://api.minimaxi.com/v1",
+  OPENAI_API_KEY: "",
+  model_context_window: 256000,
+  model_auto_compact_token_limit: 230400,
+  max_tokens: 65536,
+  thinking: true,
+  model_reasoning_effort: "medium",
+};
+
+export function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
+  return (
+    typeof value === "string" &&
+    MODEL_REASONING_EFFORTS.includes(value as ModelReasoningEffort)
+  );
+}
+
 /**
  * @deprecated since 1.4
  */
@@ -115,7 +161,7 @@ export interface TurnRecord {
   startedAt: string;
   completedAt?: string;
   model: string;
-  reasoningEffort?: "low" | "medium" | "high" | "max";
+  reasoningEffort?: ModelReasoningEffort;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
 }
 

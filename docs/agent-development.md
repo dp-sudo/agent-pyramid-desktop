@@ -22,6 +22,7 @@
 - 建立 Agent 编排器：`src/main/application/agent-runner.ts`。
 - 建立工具注册机制和 `echo` 验证工具：`src/main/application/tools/`。
 - 建立 MiniMax OpenAI/Anthropic 兼容协议适配：`src/main/infrastructure/minimax/`。
+- 建立大模型运行配置：`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/renderer/src/ui/SettingsPlaceholder.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
 
@@ -33,12 +34,14 @@
 4. 工具能力通过 `ToolRegistry` 接口注册和执行，后续工具不得绕过注册机制。
 5. 渲染层只通过 preload 暴露的安全 API 调用主进程，不直接访问 Node 能力。
 6. 界面语言切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义。
+7. 大模型配置由 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为唯一契约来源，主进程负责读写 `config` 文件，运行时从该配置读取 `model/base_url/OPENAI_API_KEY/max_tokens/thinking/model_reasoning_effort`。
 
 ## 后续待办
 
 - 为 Agent 循环、MiniMax 响应归一化、工具调用和 IPC 契约补充自动化测试。
 - 增加工具调用多轮历史的完整保留策略。
 - 增加 API Key 的本地安全存储或环境变量读取策略。
+- 将 `model_auto_compact_token_limit` 接入后续上下文自动压缩执行机制；当前仅作为已保存的权威阈值配置。
 - 增加运行日志、错误详情和调试面板。
 - 将主进程返回的运行轨迹标题、校验错误和执行错误升级为可本地化的错误码/消息码。
 - 梳理打包发布流程。
@@ -60,6 +63,8 @@
 - 记录当前分层架构、三角循环、MiniMax 双协议接入、工具注册、IPC、React UI 和国际化能力。
 - 验证方式：文档检查；代码侧此前已通过 `npm run typecheck` 和 `npm run build`。
 - 落地渲染层中英文界面语言切换：新增 `src/shared/locale.ts`、`src/renderer/src/i18n/` 资源与初始化，并将 React 控制台静态文案迁移到 `react-i18next`。
+- 验证方式：`npm run typecheck`、`npm run build`。
+- 落地大模型配置设置：新增 `ModelConfig` 契约、`config:model:get/update` IPC、`ModelConfigStore` 持久化到 `userData/config`、设置页表单和运行时配置读取；MiniMax 网关改为使用配置的 `base_url/max_tokens/thinking`。
 - 验证方式：`npm run typecheck`、`npm run build`。
 
 # 变更记录

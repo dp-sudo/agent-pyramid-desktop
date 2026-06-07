@@ -22,6 +22,8 @@ import type {
   WriteListRequest,
   WritePutRequest,
   Item,
+  ModelConfig,
+  ModelConfigUpdate,
 } from "../shared/agent-contracts";
 import {
   AGENT_RUN_CHANNEL,
@@ -42,6 +44,8 @@ import {
   WRITE_GET_CHANNEL,
   WRITE_LIST_CHANNEL,
   WRITE_PUT_CHANNEL,
+  MODEL_CONFIG_GET_CHANNEL,
+  MODEL_CONFIG_UPDATE_CHANNEL,
 } from "../shared/ipc";
 
 const legacy = {
@@ -173,6 +177,19 @@ const write = {
   },
 };
 
+const modelConfig = {
+  get(): Promise<IpcResult<ModelConfig>> {
+    return ipcRenderer.invoke(MODEL_CONFIG_GET_CHANNEL) as Promise<
+      IpcResult<ModelConfig>
+    >;
+  },
+  update(update: ModelConfigUpdate): Promise<IpcResult<ModelConfig>> {
+    return ipcRenderer.invoke(MODEL_CONFIG_UPDATE_CHANNEL, update) as Promise<
+      IpcResult<ModelConfig>
+    >;
+  },
+};
+
 export const agentApi = {
   ...legacy,
   threads,
@@ -180,6 +197,7 @@ export const agentApi = {
   sse,
   approvals,
   write,
+  modelConfig,
 };
 
 contextBridge.exposeInMainWorld("agentApi", agentApi);

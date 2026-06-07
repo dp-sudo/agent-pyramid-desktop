@@ -7,6 +7,7 @@ import type {
 } from "../domain/agent/types.js";
 import type { ToolRegistry } from "../domain/agent/ports.js";
 import { JsonlThreadStore } from "../persistence/index.js";
+import { ModelConfigStore } from "../persistence/model-config-store.js";
 import { LlmWorkerPool } from "../infrastructure/llm-worker/worker-pool.js";
 import { RuntimeEventBus } from "../event-bus.js";
 import type {
@@ -14,6 +15,7 @@ import type {
   ApprovalRespondRequest,
   AssistantItem,
   Item,
+  ModelConfig,
   ThreadRecord,
   ToolItem,
   TurnRecord,
@@ -23,6 +25,7 @@ import type {
 
 interface RuntimeDeps {
   store: JsonlThreadStore;
+  modelConfigStore: ModelConfigStore;
   pool: LlmWorkerPool;
   bus: RuntimeEventBus;
   registry: ToolRegistry;
@@ -62,14 +65,15 @@ export class AgentRuntime {
     if (busy) {
       throw new Error("RUNTIME_TURN_BUSY");
     }
+    const modelConfig = await this.deps.modelConfigStore.get();
 
     const turn: TurnRecord = {
       id: randomUUID(),
       threadId: request.threadId,
       status: "in-flight",
       startedAt: new Date().toISOString(),
-      model: request.model ?? "MiniMax-M3",
-      ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}),
+      model: request.model ?? modelConfig.model,
+      reasoningEffort: request.reasoningEffort ?? modelConfig.model_reasoning_effort,
     };
     this.inFlight.set(turn.id, turn);
 
@@ -98,7 +102,7 @@ export class AgentRuntime {
     });
 
     // Run the loop in the background; return the turn record immediately.
-    void this.runTurn(turn, thread, request.text);
+    void this.runTurn(turn, thread, request.text, modelConfig);
     return turn;
   }
 
@@ -126,6 +130,7 @@ export class AgentRuntime {
     turn: TurnRecord,
     thread: ThreadRecord,
     userText: string,
+    modelConfig: ModelConfig,
   ): Promise<void> {
     try {
       const history = await this.collectHistory(thread);
@@ -137,12 +142,14 @@ export class AgentRuntime {
       const request: LlmRequest = {
         protocol: "openai-compatible",
         model: turn.model,
-        apiKey: await this.resolveApiKey(thread),
+        apiKey: this.resolveApiKey(modelConfig),
+        baseUrl: modelConfig.base_url,
         systemPrompt: SYSTEM_PROMPT,
         messages,
         tools: this.deps.registry.listDefinitions(),
-        maxTokens: 1024,
+        maxTokens: modelConfig.max_tokens,
         temperature: 1,
+        thinking: modelConfig.thinking,
       };
 
       let response: LlmResponse;
@@ -322,11 +329,8 @@ export class AgentRuntime {
     return out;
   }
 
-  private async resolveApiKey(_thread: ThreadRecord): Promise<string> {
-    // The legacy adapter pre-supplies the API key via process.env when
-    // a runOnce call is in flight. For turn.start requests from the
-    // renderer the key is supplied per-request (future enhancement).
-    return process.env.MINIMAX_API_KEY ?? "";
+  private resolveApiKey(config: ModelConfig): string {
+    return config.OPENAI_API_KEY || process.env.MINIMAX_API_KEY || "";
   }
 
   private markTurnStatus(turn: TurnRecord, status: TurnRecord["status"]): void {

@@ -2,6 +2,7 @@ import type { AgentRunRequest, AgentRunResponse } from "../../shared/agent-contr
 import { TriangleTrace } from "../core/triangle-loop";
 import type { ToolRegistry } from "../domain/agent/ports";
 import type { AgentMessage, LlmGateway } from "../domain/agent/types";
+import { DEFAULT_MODEL_CONFIG } from "../../shared/agent-contracts";
 
 export class AgentRunner {
   constructor(
@@ -28,11 +29,13 @@ export class AgentRunner {
       protocol: request.protocol,
       model: request.model,
       apiKey: request.apiKey,
+      baseUrl: DEFAULT_MODEL_CONFIG.base_url,
       systemPrompt: request.systemPrompt,
       messages,
       tools: this.toolRegistry.listDefinitions(),
       maxTokens: request.maxTokens,
-      temperature: request.temperature
+      temperature: request.temperature,
+      thinking: DEFAULT_MODEL_CONFIG.thinking
     });
 
     trace.record({
@@ -85,11 +88,13 @@ export class AgentRunner {
       protocol: request.protocol,
       model: request.model,
       apiKey: request.apiKey,
+      baseUrl: DEFAULT_MODEL_CONFIG.base_url,
       systemPrompt: request.systemPrompt,
       messages: followUpMessages,
       tools: this.toolRegistry.listDefinitions(),
       maxTokens: request.maxTokens,
-      temperature: request.temperature
+      temperature: request.temperature,
+      thinking: DEFAULT_MODEL_CONFIG.thinking
     });
 
     trace.record({

@@ -36,11 +36,13 @@ export interface LlmRequest {
   protocol: LlmProtocol;
   model: string;
   apiKey: string;
+  baseUrl: string;
   systemPrompt?: string;
   messages: AgentMessage[];
   tools: AgentToolDefinition[];
   maxTokens: number;
   temperature: number;
+  thinking: boolean;
 }
 
 export interface LlmResponse {

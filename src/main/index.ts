@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { JsonlThreadStore } from "./persistence/index.js";
+import { ModelConfigStore } from "./persistence/model-config-store.js";
 import { RuntimeEventBus } from "./event-bus.js";
 import { LlmWorkerPool } from "./infrastructure/llm-worker/worker-pool.js";
 import { AgentRuntime } from "./application/agent-runtime.js";
@@ -13,6 +14,7 @@ import { registerTurnHandlers } from "./ipc/turns-handlers.js";
 import { registerSseHandlers } from "./ipc/sse-handlers.js";
 import { registerApprovalHandlers } from "./ipc/approvals-handlers.js";
 import { registerWriteHandlers } from "./ipc/write-handlers.js";
+import { registerModelConfigHandlers } from "./ipc/model-config-handlers.js";
 import { AGENT_RUN_CHANNEL } from "../shared/ipc.js";
 import type {
   AgentRunRequest,
@@ -27,11 +29,12 @@ import { ok, err } from "../shared/agent-contracts.js";
 
 const userDataDir = app.getPath("userData");
 const store = new JsonlThreadStore(userDataDir);
+const modelConfigStore = new ModelConfigStore(userDataDir);
 const bus = new RuntimeEventBus();
 bus.setMaxListeners(50);
 const pool = new LlmWorkerPool(1);
 const registry = new InMemoryToolRegistry([echoTool]);
-const runtime = new AgentRuntime({ store, pool, bus, registry });
+const runtime = new AgentRuntime({ store, modelConfigStore, pool, bus, registry });
 const legacy = new LegacyRunAdapter(runtime, store, bus, pool);
 
 let mainWindow: BrowserWindow | null = null;
@@ -72,8 +75,9 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   try {
     await store.init();
+    await modelConfigStore.init();
   } catch (error) {
-    console.error("[main] store init failed:", error);
+    console.error("[main] persistence init failed:", error);
   }
   try {
     await pool.start();
@@ -86,6 +90,7 @@ app.whenReady().then(async () => {
   registerSseHandlers(bus);
   registerApprovalHandlers(runtime);
   registerWriteHandlers();
+  registerModelConfigHandlers(modelConfigStore);
 
   ipcMain.handle(AGENT_RUN_CHANNEL, async (_event, request: AgentRunRequest) => {
     try {
