@@ -66,5 +66,60 @@
     "input": "输入",
     "output": "输出",
     "total": "总计"
+  },
+  "chat": {
+    "activeSession": "当前会话",
+    "noSession": "无活动会话",
+    "threadId": "id: {{id}}",
+    "running": "运行中"
+  },
+  "write": {
+    "openWorkspace": "打开工作区",
+    "editorPlaceholder": "开始撰写 Markdown 文档…",
+    "saving": "保存中…",
+    "saved": "已保存",
+    "error": "错误",
+    "activeFile": "正在编辑：{{path}}",
+    "save": "保存"
+  },
+  "threads": {
+    "newChat": "新建会话",
+    "empty": "暂无会话。"
+  },
+  "inspector": {
+    "changes": "变更",
+    "todo": "待办",
+    "plan": "计划",
+    "file": "文件",
+    "open": "打开",
+    "close": "关闭",
+    "noChanges": "暂无变更。",
+    "todoEmpty": "暂无待办。",
+    "planEmpty": "暂无计划。",
+    "fileEmpty": "暂无文件。"
+  },
+  "approvals": {
+    "allow": "允许",
+    "deny": "拒绝"
+  },
+  "common": {
+    "settings": "设置",
+    "send": "发送",
+    "cancel": "取消"
+  },
+  "composer": {
+    "placeholder": "发送消息…",
+    "model": "模型",
+    "send": "发送",
+    "interrupt": "中断"
+  },
+  "settings": {
+    "title": "设置",
+    "comingSoon": "设置页即将推出。",
+    "backToWorkbench": "返回工作台"
+  },
+  "routes": {
+    "code": "编码",
+    "write": "写作"
   }
 }

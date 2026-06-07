@@ -1,0 +1,40 @@
+import { lazy, Suspense, useEffect, type ReactElement } from "react";
+import { useWorkbench } from "./store/WorkbenchContext";
+
+const Workbench = lazy(() =>
+  import("./Workbench").then((module) => ({ default: module.Workbench })),
+);
+
+const SettingsPlaceholder = lazy(() =>
+  import("./SettingsPlaceholder").then((module) => ({ default: module.SettingsPlaceholder })),
+);
+
+function RouteFallback(): ReactElement {
+  return (
+    <div
+      style={{
+        height: "100%",
+        width: "100%",
+        background: "var(--ds-bg-main)",
+        opacity: 0.6,
+      }}
+    />
+  );
+}
+
+export function AppShell(): ReactElement {
+  const { state, actions } = useWorkbench();
+
+  useEffect(() => {
+    void actions.setThreads([]);
+  }, [actions]);
+
+  return (
+    <div className="ds-workbench-shell">
+      <Suspense fallback={<RouteFallback />}>
+        {state.route === "code" || state.route === "write" ? <Workbench /> : null}
+        {state.route === "settings" ? <SettingsPlaceholder /> : null}
+      </Suspense>
+    </div>
+  );
+}

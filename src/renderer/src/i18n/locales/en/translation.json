@@ -66,5 +66,60 @@
     "input": "Input",
     "output": "Output",
     "total": "Total"
+  },
+  "chat": {
+    "activeSession": "Active session",
+    "noSession": "No active session",
+    "threadId": "id: {{id}}",
+    "running": "Running"
+  },
+  "write": {
+    "openWorkspace": "Open workspace",
+    "editorPlaceholder": "Start writing your markdown document…",
+    "saving": "Saving…",
+    "saved": "Saved",
+    "error": "Error",
+    "activeFile": "Editing: {{path}}",
+    "save": "Save"
+  },
+  "threads": {
+    "newChat": "New thread",
+    "empty": "No threads yet."
+  },
+  "inspector": {
+    "changes": "Changes",
+    "todo": "Todo",
+    "plan": "Plan",
+    "file": "File",
+    "open": "Open",
+    "close": "Close",
+    "noChanges": "No changes yet.",
+    "todoEmpty": "No todos.",
+    "planEmpty": "No plan.",
+    "fileEmpty": "No file."
+  },
+  "approvals": {
+    "allow": "Allow",
+    "deny": "Deny"
+  },
+  "common": {
+    "settings": "Settings",
+    "send": "Send",
+    "cancel": "Cancel"
+  },
+  "composer": {
+    "placeholder": "Send a message…",
+    "model": "Model",
+    "send": "Send",
+    "interrupt": "Interrupt"
+  },
+  "settings": {
+    "title": "Settings",
+    "comingSoon": "Settings view is coming soon.",
+    "backToWorkbench": "Back to workbench"
+  },
+  "routes": {
+    "code": "Code",
+    "write": "Write"
   }
 }

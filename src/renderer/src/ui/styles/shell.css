@@ -1,0 +1,400 @@
+/* ============================================================================
+ * Shell layout — three-pane workbench
+ *
+ * Grammar (see docs/ui-design.md):
+ *   [ Topbar (translucent glass strip) ]
+ *   [ Sidebar | divider | Center column + Side panel | divider | Right inspector ]
+ *
+ * Drag handles are 5px wide, full height, sit above the panels (z-20).
+ * ========================================================================== */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--ds-font-sans);
+  background: var(--ds-bg-main);
+  color: var(--ds-text);
+  zoom: var(--ds-ui-scale);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--ds-selection);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--ds-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ds-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+/* ---------- Workbench shell ---------- */
+.ds-workbench-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  min-width: 0;
+  background: var(--ds-bg-main);
+  box-shadow: var(--ds-shadow-shell);
+}
+
+.ds-stage-surface {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ds-bg-canvas);
+}
+
+.ds-stage-inset {
+  padding-inline: clamp(0.75rem, calc((100% - 56rem) / 2 + 1.25rem), 4rem);
+}
+
+.ds-chat-column-inset {
+  padding-inline: clamp(0.75rem, calc((100% - 48rem) / 2 + 1rem), 2rem);
+}
+
+/* ---------- Drag divider ---------- */
+.ds-workbench-divider {
+  position: relative;
+  z-index: 20;
+  width: 5px;
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.ds-workbench-divider::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--ds-border-muted);
+  opacity: 0.4;
+  transition: opacity var(--ds-motion-micro) var(--ds-motion-ease);
+}
+
+.ds-workbench-divider:hover::before {
+  opacity: 0.8;
+  background: var(--ds-accent-soft);
+}
+
+/* ---------- Topbar ---------- */
+.ds-topbar-surface {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: var(--ds-radius-2xl);
+  background: var(--ds-surface-card);
+  border: 1px solid var(--ds-border);
+  padding: 8px 16px;
+  box-shadow: var(--ds-shadow-card-soft);
+}
+
+/* ---------- Sidebar ---------- */
+.ds-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--ds-bg-sidebar);
+  border-right: 1px solid var(--ds-border-muted);
+}
+
+.ds-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ds-sidebar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--ds-radius-md);
+  cursor: pointer;
+  transition: background-color var(--ds-motion-micro) var(--ds-motion-ease);
+  color: var(--ds-text);
+  font-size: var(--ds-size-body);
+}
+
+.ds-sidebar-row:hover {
+  background: var(--ds-surface-hover);
+}
+
+.ds-sidebar-row.is-active {
+  background: var(--ds-accent-soft);
+  color: var(--ds-accent);
+}
+
+/* ---------- Chat stage ---------- */
+.ds-chat-stage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+/* ---------- Composer ---------- */
+.ds-composer-shell {
+  position: relative;
+  overflow: hidden;
+  background: var(--ds-surface-elevated);
+  border: 1px solid var(--ds-border-strong);
+  border-radius: var(--ds-radius-composer);
+  box-shadow: var(--ds-shadow-composer);
+}
+
+.ds-composer-shell textarea {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  resize: none;
+  padding: 12px 16px;
+  color: var(--ds-text);
+  outline: none;
+  min-height: 56px;
+  max-height: 240px;
+}
+
+/* ---------- Chat blocks ---------- */
+.ds-message-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ds-message-block.user {
+  align-items: flex-end;
+}
+
+.ds-user-bubble {
+  background: var(--ds-bubble-user);
+  color: var(--ds-bubble-user-fg);
+  padding: 8px 12px;
+  border-radius: var(--ds-radius-lg);
+  font-size: var(--ds-size-body);
+  max-width: min(82%, 520px);
+}
+
+.ds-message-block.assistant {
+  align-items: flex-start;
+}
+
+.ds-assistant-bubble {
+  background: var(--ds-surface-card);
+  border: 1px solid var(--ds-border-muted);
+  color: var(--ds-text);
+  padding: 10px 14px;
+  border-radius: var(--ds-radius-lg);
+  font-size: var(--ds-size-body);
+  max-width: min(82%, 720px);
+  box-shadow: var(--ds-shadow-card-soft);
+}
+
+.ds-message-block.tool {
+  align-items: stretch;
+}
+
+.ds-tool-block {
+  background: var(--ds-surface-subtle);
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  padding: 10px 12px;
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-size-body);
+  color: var(--ds-text);
+}
+
+.ds-message-block.system {
+  align-items: center;
+}
+
+.ds-system-bubble {
+  background: transparent;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  padding: 4px 8px;
+  border-radius: var(--ds-radius-pill);
+  border: 1px dashed var(--ds-border);
+}
+
+/* Streaming shimmer (assistant live delta). */
+.ds-shiny-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--ds-text) 0%,
+    var(--ds-text) 27%,
+    var(--ds-accent) 50%,
+    var(--ds-text) 73%,
+    var(--ds-text) 100%
+  );
+  background-size: 200% 100%;
+  background-position: -100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: ds-shiny-text 2.4s linear infinite;
+}
+
+@keyframes ds-shiny-text {
+  to {
+    background-position: 200% 0;
+  }
+}
+
+/* ---------- Approval block ---------- */
+.ds-approval-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--ds-warning-soft);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  padding: 12px 14px;
+  font-size: var(--ds-size-body);
+}
+
+.ds-approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ds-approval-allow {
+  background: var(--ds-accent);
+  color: white;
+  border: 0;
+  padding: 6px 12px;
+  border-radius: var(--ds-radius-pill);
+  cursor: pointer;
+  font-size: var(--ds-size-body);
+}
+
+.ds-approval-deny {
+  background: transparent;
+  color: var(--ds-danger);
+  border: 1px solid var(--ds-danger-soft);
+  padding: 6px 12px;
+  border-radius: var(--ds-radius-pill);
+  cursor: pointer;
+  font-size: var(--ds-size-body);
+}
+
+/* ---------- Right inspector ---------- */
+.ds-right-inspector {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--ds-bg-sidebar);
+  border-left: 1px solid var(--ds-border-muted);
+}
+
+.ds-right-inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ds-border-muted);
+}
+
+.ds-right-inspector-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* ---------- Write editor ---------- */
+.ds-write-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 0;
+  background: var(--ds-bg-canvas);
+}
+
+.ds-write-editor textarea {
+  flex: 1 1 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ds-text);
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-size-body);
+  line-height: 1.6;
+  padding: 24px clamp(1rem, 8vw, 6rem);
+  outline: none;
+  resize: none;
+}
+
+.ds-write-status {
+  padding: 8px 16px;
+  font-size: var(--ds-size-caption);
+  color: var(--ds-text-faint);
+  border-top: 1px solid var(--ds-border-muted);
+}
+
+/* ---------- Pill button primitive ---------- */
+.ds-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-surface-card);
+  border: 1px solid var(--ds-border);
+  color: var(--ds-text);
+  font-size: var(--ds-size-label);
+  cursor: pointer;
+  transition: background-color var(--ds-motion-micro) var(--ds-motion-ease);
+}
+
+.ds-pill:hover {
+  background: var(--ds-surface-hover);
+}
+
+.ds-pill.is-accent {
+  background: var(--ds-accent);
+  color: white;
+  border-color: transparent;
+}
