@@ -36,15 +36,6 @@
 6. 界面语言切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义。
 7. 大模型配置由 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为唯一契约来源，主进程负责读写 `config` 文件，运行时从该配置读取 `model/base_url/OPENAI_API_KEY/max_tokens/thinking/model_reasoning_effort`。
 
-## 后续待办
-
-- 为 Agent 循环、MiniMax 响应归一化、工具调用和 IPC 契约补充自动化测试。
-- 增加工具调用多轮历史的完整保留策略。
-- 增加 API Key 的本地安全存储或环境变量读取策略。
-- 将 `model_auto_compact_token_limit` 接入后续上下文自动压缩执行机制；当前仅作为已保存的权威阈值配置。
-- 增加运行日志、错误详情和调试面板。
-- 将主进程返回的运行轨迹标题、校验错误和执行错误升级为可本地化的错误码/消息码。
-- 梳理打包发布流程。
 
 ## 维护要求
 

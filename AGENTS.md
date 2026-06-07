@@ -1,3 +1,17 @@
+# ⚠️ 参考资料声明（务必先读）
+
+`DeepSeek/` 目录是**参考开发资料**，**不属于本项目的源代码**。
+
+- 本项目的**真实源码**位于 `src/`、`docs/`（不含 `DeepSeek/docs/`）、根目录 `package.json`、`electron.vite.config.ts` 等位置，遵循下方"项目结构与模块组织"约定。
+- `DeepSeek/` 仅作为第三方实现的只读参考资料被纳入仓库，用于查阅架构、协议、UI 交互和设计模式，**不是本项目的一部分**。
+- 严格规则：
+  - **不得**将 `DeepSeek/` 下的任何文件纳入本项目的构建、运行、测试、打包、发布流程。
+  - **不得**在本项目的 `package.json`、`tsconfig.json`、Vite / Electron / eslint / vitest / tailwind 等配置中引用 `DeepSeek/`。
+  - **不得**在改动本项目时"顺手"修改 `DeepSeek/` 下的任何文件。
+  - **不得**在 `docs/agent-development.md` 或其他项目文档中把 `DeepSeek/` 列为依赖、来源或实现依据。
+  - 如需借鉴其设计，必须在 `src/` 下独立实现，不得直接 import、link 或 build `DeepSeek/` 下的任何文件。
+- 本规则对人类协作者与 LLM Agent（包括本仓库内置的 Agent 运行框架）一律生效；任何对 `DeepSeek/` 的写入、引入、引用都视为越界。
+
 # Repository Guidelines
 
 ## 项目结构与模块组织

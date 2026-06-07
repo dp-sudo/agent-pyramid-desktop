@@ -57,5 +57,3 @@ coverage/
 # Electron-vite specific
 .vite/
 
-# External reference sources (NOT part of this project's development content)
-DeepSeek-GUI-master/
