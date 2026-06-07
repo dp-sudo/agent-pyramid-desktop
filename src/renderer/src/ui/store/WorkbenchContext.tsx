@@ -50,7 +50,7 @@ export interface WorkbenchState {
   rightSidebarWidth: number;
 }
 
-const INITIAL_STATE: WorkbenchState = {
+export const INITIAL_STATE: WorkbenchState = {
   route: "code",
   modelConfig: DEFAULT_MODEL_CONFIG,
   modelProfiles: null,
@@ -84,7 +84,7 @@ function upsertItem(items: Item[], item: Item): Item[] {
   return next;
 }
 
-type Action =
+export type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
   | { type: "setModelConfig"; config: ModelConfig }
   | { type: "setModelProfiles"; profiles: ModelConfigProfilesState }
@@ -114,7 +114,7 @@ type Action =
   | { type: "setLeftSidebarWidth"; width: number }
   | { type: "setRightSidebarWidth"; width: number };
 
-function reducer(state: WorkbenchState, action: Action): WorkbenchState {
+export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
   switch (action.type) {
     case "setRoute":
       return { ...state, route: action.route };

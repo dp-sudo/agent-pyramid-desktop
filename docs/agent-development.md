@@ -25,6 +25,7 @@
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
+- 建立 Vitest 自动化测试体系：`vitest.config.ts`、`tsconfig.test.json`、`tests/`，覆盖共享契约、主进程持久化、模型配置、附件、工具、事件总线、LLM 网关、AgentRuntime 和渲染端 reducer。
 
 ## 架构决策
 
@@ -36,6 +37,7 @@
 6. 界面语言切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义。
 7. 大模型运行时仍以 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为当前激活配置契约；持久层在外层维护 `ModelConfigProfilesState`（`activeProfileId + profiles[]`），`ModelConfigStore.get()` 只返回当前激活档案的 `ModelConfig`，避免 Agent 运行循环感知多档案 UI。
 8. LLM 网关按 `ModelConfig.model_provide` 做供应商感知请求体分流：`MiniMax` 使用 `max_completion_tokens/reasoning_split/thinking.type=adaptive|disabled`，`DeepSeek` 使用 `/chat/completions`、`max_tokens/thinking.type=enabled|disabled/reasoning_effort=high|max`，其他供应商走通用 OpenAI-compatible 请求体。
+9. 自动化测试使用 Vitest，优先测试公开类、共享契约和纯状态逻辑；持久化测试使用临时目录隔离，LLM 网关测试通过 mock `fetch` 验证请求体和 SSE 解析，不依赖真实 API key。
 
 
 ## 维护要求
@@ -46,6 +48,13 @@
 - 如果改变分层、接口、循环流程或供应商接入方式，更新“架构决策”。
 - 如果发现未完成事项，更新“后续待办”。
 - 如果修复重要问题，在“变更记录”追加日期、摘要和验证方式。
+
+## 测试与验证
+
+- `npm run test`：运行 Vitest 自动化测试。
+- `npm run typecheck`：同时检查 renderer/shared、main/preload/shared 和测试源码。
+- `npm run build`：构建 Electron main、preload 与 renderer 产物。
+- 新增或修改 Agent 运行框架、LLM 接入、工具、IPC、持久化、UI 状态或 i18n 时，应优先补充对应 `tests/` 用例，再运行上述命令。
 
 ## 变更记录
 
@@ -127,14 +136,13 @@
 ### 已知偏差
 
 - **R2（design.md 风险）**：未引入 zod，改用 TypeScript 原生类型守卫（行为等价，可后续迁移）。
-- **R3**：未引入 vitest，`JsonlThreadStore` 单测 `task 2.11` 暂未实现。
+- **R3**：已在 2026-06-07 的测试补充中引入 Vitest，并补充 `JsonlThreadStore` 自动化测试。
 - **手动冒烟（task 5.12）**：未做交互式验证。`npm run dev` 启动后可见三段式空骨架；点击“New thread”后会通过 IPC 写 JSONL。
 - 老的空目录 `src/renderer/src/ui/components/{composer,topbar,sidebar,main,settings,icons}` 在新代码落地后仍有同名子目录，新旧共存；新代码全部位于 `src/renderer/src/ui/components/{primitives,sidebar,topbar,composer,chat,inspector,write}` 下。
 
 ### 下一阶段候选
 
 - 真接 MiniMax API key + 跑一次流式对话，验证 worker 隔离。
-- 补 `JsonlThreadStore` 单测。
 - 写 `docs/kun-architecture.md` 同源文档（本仓库版），记录主进程/渲染端/worker 三层关系。
 - 把 zod 装回来，把 `is*` 守卫迁移到 zod schema。
 
@@ -193,3 +201,11 @@
 - Write 模式不再使用 `window.prompt`；它复用工作区选择器和共享的渲染端 `workspaceRoot` 状态执行 list/get/put 文件操作。
 - 更新侧边栏/写作模式样式，以及工作区切换、归档/恢复、归档可见性和写作刷新相关英文/中文 i18n 文案。
 - 验证方式：`npm run typecheck`；`npm run build`。
+
+## 2026-06-07 - 自动化测试体系
+
+- 新增 Vitest 测试运行器和 `npm run test` 脚本，并新增 `tsconfig.test.json`，使测试源码参与 `npm run typecheck`。
+- 新增 `tests/` 分层测试：共享契约与 IPC allowlist、`JsonlThreadStore`、`ModelConfigStore`、`AttachmentStore`、工具注册与输入校验、`RuntimeEventBus`、MiniMax/DeepSeek/custom LLM 网关请求体和 SSE 解析、`AgentRuntime` 主流程与渲染端 `WorkbenchContext` reducer。
+- 修复测试暴露出的持久化并发问题：`AttachmentStore`、`JsonlThreadStore`、`ModelConfigStore` 初始化改为 single-flight；线程索引和模型配置写入增加串行化，避免并发写入同一临时文件造成 Windows rename 失败或索引丢失。
+- `WorkbenchContext` 导出 `INITIAL_STATE`、`Action` 和 `reducer`，用于测试纯状态转移；渲染端运行行为不变。
+- 验证方式：`npm run test`、`npm run typecheck`、`npm run build`。

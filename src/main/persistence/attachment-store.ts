@@ -26,6 +26,7 @@ export class AttachmentStore {
   private readonly attachmentsDir: string;
   private readonly indexPath: string;
   private initialized = false;
+  private initPromise: Promise<void> | null = null;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly userDataDir: string) {
@@ -35,11 +36,22 @@ export class AttachmentStore {
 
   async init(): Promise<void> {
     if (this.initialized) return;
-    await fs.mkdir(this.attachmentsDir, { recursive: true });
-    if (!existsSync(this.indexPath)) {
-      await this.atomicWriteJson([] as AttachmentRecord[]);
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        await fs.mkdir(this.attachmentsDir, { recursive: true });
+        if (!existsSync(this.indexPath)) {
+          await this.atomicWriteJson([] as AttachmentRecord[]);
+        }
+        this.initialized = true;
+      })();
     }
-    this.initialized = true;
+    try {
+      await this.initPromise;
+    } finally {
+      if (!this.initialized) {
+        this.initPromise = null;
+      }
+    }
   }
 
   async create(request: AttachmentCreateRequest): Promise<AttachmentRecord> {

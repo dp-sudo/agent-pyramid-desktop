@@ -25,6 +25,8 @@ export class JsonlThreadStore {
   private readonly threadsDir: string;
   private readonly indexPath: string;
   private initialized = false;
+  private initPromise: Promise<void> | null = null;
+  private indexQueue: Promise<unknown> = Promise.resolve();
   /** Per-thread serial write queue. Same-thread writes run serially. */
   private readonly mutexes = new Map<string, Promise<unknown>>();
 
@@ -36,11 +38,22 @@ export class JsonlThreadStore {
   /** 2.2 init: ensure directories, read or initialize index. */
   async init(): Promise<void> {
     if (this.initialized) return;
-    await fs.mkdir(this.threadsDir, { recursive: true });
-    if (!existsSync(this.indexPath)) {
-      await this.atomicWriteJson(this.indexPath, [] as ThreadSummary[]);
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        await fs.mkdir(this.threadsDir, { recursive: true });
+        if (!existsSync(this.indexPath)) {
+          await this.atomicWriteJson(this.indexPath, [] as ThreadSummary[]);
+        }
+        this.initialized = true;
+      })();
     }
-    this.initialized = true;
+    try {
+      await this.initPromise;
+    } finally {
+      if (!this.initialized) {
+        this.initPromise = null;
+      }
+    }
   }
 
   /** 2.3 createThread */
@@ -171,10 +184,12 @@ export class JsonlThreadStore {
   /** 2.9 deleteThread */
   async deleteThread(id: string): Promise<void> {
     await this.init();
-    const indexRaw = await fs.readFile(this.indexPath, "utf8");
-    const all = JSON.parse(indexRaw) as ThreadSummary[];
-    const next = all.filter((row) => row.id !== id);
-    await this.atomicWriteJson(this.indexPath, next);
+    await this.serializedIndex(async () => {
+      const indexRaw = await fs.readFile(this.indexPath, "utf8");
+      const all = JSON.parse(indexRaw) as ThreadSummary[];
+      const next = all.filter((row) => row.id !== id);
+      await this.atomicWriteJson(this.indexPath, next);
+    });
     await fs.rm(this.threadDir(id), { recursive: true, force: true });
   }
 
@@ -247,18 +262,22 @@ export class JsonlThreadStore {
   }
 
   private async appendToIndex(summary: ThreadSummary): Promise<void> {
-    const raw = await fs.readFile(this.indexPath, "utf8");
-    const all = JSON.parse(raw) as ThreadSummary[];
-    const dedup = all.filter((row) => row.id !== summary.id);
-    dedup.push(summary);
-    await this.atomicWriteJson(this.indexPath, dedup);
+    await this.serializedIndex(async () => {
+      const raw = await fs.readFile(this.indexPath, "utf8");
+      const all = JSON.parse(raw) as ThreadSummary[];
+      const dedup = all.filter((row) => row.id !== summary.id);
+      dedup.push(summary);
+      await this.atomicWriteJson(this.indexPath, dedup);
+    });
   }
 
   private async replaceInIndex(summary: ThreadSummary): Promise<void> {
-    const raw = await fs.readFile(this.indexPath, "utf8");
-    const all = JSON.parse(raw) as ThreadSummary[];
-    const next = all.map((row) => (row.id === summary.id ? summary : row));
-    await this.atomicWriteJson(this.indexPath, next);
+    await this.serializedIndex(async () => {
+      const raw = await fs.readFile(this.indexPath, "utf8");
+      const all = JSON.parse(raw) as ThreadSummary[];
+      const next = all.map((row) => (row.id === summary.id ? summary : row));
+      await this.atomicWriteJson(this.indexPath, next);
+    });
   }
 
   private async *replayJsonl<T>(
@@ -319,5 +338,11 @@ export class JsonlThreadStore {
         }
       });
     }
+  }
+
+  private serializedIndex<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.indexQueue.then(work, work);
+    this.indexQueue = next.catch(() => undefined);
+    return next;
   }
 }

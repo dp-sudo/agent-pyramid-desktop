@@ -1,0 +1,135 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
+import {
+  DEFAULT_MODEL_CONFIG,
+  type ModelConfig,
+  type ModelConfigProfilesState,
+} from "../../../src/shared/agent-contracts";
+import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
+
+describe("ModelConfigStore", () => {
+  let userDataDir: string;
+  let store: ModelConfigStore;
+
+  beforeEach(async () => {
+    userDataDir = await makeTempDir("agent-model-config-");
+    store = new ModelConfigStore(userDataDir);
+  });
+
+  afterEach(async () => {
+    await removeTempDir(userDataDir);
+  });
+
+  it("initializes a default profile and updates the active config", async () => {
+    const initial = await store.listProfiles();
+    expect(initial.activeProfileId).toBe("default");
+    expect(initial.profiles).toHaveLength(1);
+
+    const updated = await store.update({
+      model_provide: "Agnes",
+      model: "agnes-2.0-flash",
+      base_url: "https://apihub.example.test/v1",
+      OPENAI_API_KEY: "",
+      model_context_window: 1000,
+      model_auto_compact_token_limit: 900,
+      max_tokens: 200,
+      thinking: false,
+      model_reasoning_effort: "high",
+    });
+
+    expect(updated).toMatchObject({
+      model_provide: "Agnes",
+      model: "agnes-2.0-flash",
+      model_auto_compact_token_limit: 900,
+      thinking: false,
+      model_reasoning_effort: "high",
+    });
+  });
+
+  it("creates, activates, updates, and deletes profiles", async () => {
+    const created = await store.createProfile({
+      name: " DeepSeek ",
+      activate: true,
+      config: {
+        model_provide: "DeepSeek",
+        model: "deepseek-v4-flash",
+        base_url: "https://api.deepseek.com",
+        OPENAI_API_KEY: "",
+      },
+    });
+    const createdProfile = created.profiles.find((profile) => profile.name === "DeepSeek");
+    expect(createdProfile).toBeDefined();
+    expect(created.activeProfileId).toBe(createdProfile?.id);
+
+    if (!createdProfile) {
+      throw new Error("Expected created profile to exist.");
+    }
+
+    const renamed = await store.updateProfile({
+      id: createdProfile.id,
+      name: "DeepSeek Flash",
+      config: {
+        model_provide: "DeepSeek",
+        model: "deepseek-v4-flash",
+        base_url: "https://api.deepseek.com",
+        OPENAI_API_KEY: "",
+        max_tokens: 4096,
+      },
+    });
+    expect(renamed.name).toBe("DeepSeek Flash");
+    expect(renamed.config.max_tokens).toBe(4096);
+
+    const afterDelete = await store.deleteProfile(createdProfile.id);
+    expect(afterDelete.activeProfileId).toBe("default");
+    expect(afterDelete.profiles.map((profile) => profile.id)).toEqual(["default"]);
+  });
+
+  it("normalizes a legacy single-config file into profile state", async () => {
+    const legacyConfig: ModelConfig = {
+      ...DEFAULT_MODEL_CONFIG,
+      model_provide: "Legacy",
+      model: "legacy-model",
+      base_url: "https://legacy.example.test/v1",
+      model_context_window: 100,
+      model_auto_compact_token_limit: 90,
+      max_tokens: 50,
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(legacyConfig));
+
+    const profiles = await store.listProfiles();
+    const expectedProfiles: ModelConfigProfilesState = {
+      activeProfileId: "default",
+      profiles: [
+        {
+          id: "default",
+          name: "Legacy",
+          config: legacyConfig,
+          createdAt: expect.any(String) as string,
+          updatedAt: expect.any(String) as string,
+        },
+      ],
+    };
+    expect(profiles).toMatchObject(expectedProfiles);
+  });
+
+  it("rejects invalid token limits and keeps failures observable", async () => {
+    await expect(
+      store.update({
+        model_provide: "MiniMax",
+        model: "MiniMax-M3",
+        base_url: "https://api.minimaxi.com/v1",
+        OPENAI_API_KEY: "",
+        model_context_window: 100,
+        model_auto_compact_token_limit: 101,
+        max_tokens: 50,
+        model_reasoning_effort: "medium",
+      }),
+    ).rejects.toThrow("model_auto_compact_token_limit must be <= model_context_window.");
+
+    await expect(store.deleteProfile("default")).rejects.toThrow(
+      "At least one model config profile is required.",
+    );
+  });
+});

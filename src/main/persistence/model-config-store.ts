@@ -19,6 +19,8 @@ const TMP_SUFFIX = ".tmp";
 export class ModelConfigStore {
   private readonly configPath: string;
   private initialized = false;
+  private initPromise: Promise<void> | null = null;
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly userDataDir: string) {
     this.configPath = path.join(userDataDir, CONFIG_FILENAME);
@@ -26,14 +28,25 @@ export class ModelConfigStore {
 
   async init(): Promise<void> {
     if (this.initialized) return;
-    await fs.mkdir(this.userDataDir, { recursive: true });
-    if (!existsSync(this.configPath)) {
-      await this.atomicWriteJson(createDefaultProfilesState());
-    } else {
-      const state = await this.readState();
-      await this.atomicWriteJson(state);
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        await fs.mkdir(this.userDataDir, { recursive: true });
+        if (!existsSync(this.configPath)) {
+          await this.atomicWriteJson(createDefaultProfilesState());
+        } else {
+          const state = await this.readState();
+          await this.atomicWriteJson(state);
+        }
+        this.initialized = true;
+      })();
     }
-    this.initialized = true;
+    try {
+      await this.initPromise;
+    } finally {
+      if (!this.initialized) {
+        this.initPromise = null;
+      }
+    }
   }
 
   async get(): Promise<ModelConfig> {
@@ -44,31 +57,33 @@ export class ModelConfigStore {
 
   async update(update: ModelConfigUpdate): Promise<ModelConfig> {
     await this.init();
-    const state = await this.readState();
-    const active = getActiveProfile(state);
-    const contextWindow =
-      update.model_context_window ?? active.config.model_context_window;
-    const next = normalizeModelConfig({
-      ...active.config,
-      ...update,
-      model_context_window: contextWindow,
-      model_auto_compact_token_limit:
-        update.model_auto_compact_token_limit ??
-        active.config.model_auto_compact_token_limit,
-      max_tokens: update.max_tokens ?? active.config.max_tokens,
-      thinking: update.thinking ?? active.config.thinking,
-      model_reasoning_effort:
-        update.model_reasoning_effort ?? active.config.model_reasoning_effort,
+    return this.serialized(async () => {
+      const state = await this.readState();
+      const active = getActiveProfile(state);
+      const contextWindow =
+        update.model_context_window ?? active.config.model_context_window;
+      const next = normalizeModelConfig({
+        ...active.config,
+        ...update,
+        model_context_window: contextWindow,
+        model_auto_compact_token_limit:
+          update.model_auto_compact_token_limit ??
+          active.config.model_auto_compact_token_limit,
+        max_tokens: update.max_tokens ?? active.config.max_tokens,
+        thinking: update.thinking ?? active.config.thinking,
+        model_reasoning_effort:
+          update.model_reasoning_effort ?? active.config.model_reasoning_effort,
+      });
+      const updatedAt = new Date().toISOString();
+      const nextState: ModelConfigProfilesState = {
+        ...state,
+        profiles: state.profiles.map((profile) =>
+          profile.id === active.id ? { ...profile, config: next, updatedAt } : profile,
+        ),
+      };
+      await this.atomicWriteJson(nextState);
+      return next;
     });
-    const updatedAt = new Date().toISOString();
-    const nextState: ModelConfigProfilesState = {
-      ...state,
-      profiles: state.profiles.map((profile) =>
-        profile.id === active.id ? { ...profile, config: next, updatedAt } : profile,
-      ),
-    };
-    await this.atomicWriteJson(nextState);
-    return next;
   }
 
   async listProfiles(): Promise<ModelConfigProfilesState> {
@@ -80,93 +95,101 @@ export class ModelConfigStore {
     request: ModelConfigProfileCreateRequest,
   ): Promise<ModelConfigProfilesState> {
     await this.init();
-    const state = await this.readState();
-    const name = assertNonEmptyString(request.name, "name");
-    const now = new Date().toISOString();
-    const profile: ModelConfigProfile = {
-      id: randomUUID(),
-      name,
-      config: normalizeModelConfig({
-        ...DEFAULT_MODEL_CONFIG,
-        ...request.config,
-      }),
-      createdAt: now,
-      updatedAt: now,
-    };
-    const next: ModelConfigProfilesState = {
-      activeProfileId: request.activate ? profile.id : state.activeProfileId,
-      profiles: [...state.profiles, profile],
-    };
-    await this.atomicWriteJson(next);
-    return next;
+    return this.serialized(async () => {
+      const state = await this.readState();
+      const name = assertNonEmptyString(request.name, "name");
+      const now = new Date().toISOString();
+      const profile: ModelConfigProfile = {
+        id: randomUUID(),
+        name,
+        config: normalizeModelConfig({
+          ...DEFAULT_MODEL_CONFIG,
+          ...request.config,
+        }),
+        createdAt: now,
+        updatedAt: now,
+      };
+      const next: ModelConfigProfilesState = {
+        activeProfileId: request.activate ? profile.id : state.activeProfileId,
+        profiles: [...state.profiles, profile],
+      };
+      await this.atomicWriteJson(next);
+      return next;
+    });
   }
 
   async updateProfile(
     request: ModelConfigProfileUpdateRequest,
   ): Promise<ModelConfigProfile> {
     await this.init();
-    const state = await this.readState();
-    const existing = state.profiles.find((profile) => profile.id === request.id);
-    if (!existing) {
-      throw new Error(`Model config profile ${request.id} not found.`);
-    }
+    return this.serialized(async () => {
+      const state = await this.readState();
+      const existing = state.profiles.find((profile) => profile.id === request.id);
+      if (!existing) {
+        throw new Error(`Model config profile ${request.id} not found.`);
+      }
 
-    const updatedAt = new Date().toISOString();
-    const nextProfile: ModelConfigProfile = {
-      ...existing,
-      ...(request.name !== undefined
-        ? { name: assertNonEmptyString(request.name, "name") }
-        : {}),
-      ...(request.config
-        ? {
-            config: normalizeModelConfig({
-              ...existing.config,
-              ...request.config,
-            }),
-          }
-        : {}),
-      updatedAt,
-    };
-    const nextState: ModelConfigProfilesState = {
-      ...state,
-      profiles: state.profiles.map((profile) =>
-        profile.id === request.id ? nextProfile : profile,
-      ),
-    };
-    await this.atomicWriteJson(nextState);
-    return nextProfile;
+      const updatedAt = new Date().toISOString();
+      const nextProfile: ModelConfigProfile = {
+        ...existing,
+        ...(request.name !== undefined
+          ? { name: assertNonEmptyString(request.name, "name") }
+          : {}),
+        ...(request.config
+          ? {
+              config: normalizeModelConfig({
+                ...existing.config,
+                ...request.config,
+              }),
+            }
+          : {}),
+        updatedAt,
+      };
+      const nextState: ModelConfigProfilesState = {
+        ...state,
+        profiles: state.profiles.map((profile) =>
+          profile.id === request.id ? nextProfile : profile,
+        ),
+      };
+      await this.atomicWriteJson(nextState);
+      return nextProfile;
+    });
   }
 
   async deleteProfile(id: string): Promise<ModelConfigProfilesState> {
     await this.init();
-    const state = await this.readState();
-    const existing = state.profiles.find((profile) => profile.id === id);
-    if (!existing) {
-      throw new Error(`Model config profile ${id} not found.`);
-    }
-    if (state.profiles.length <= 1) {
-      throw new Error("At least one model config profile is required.");
-    }
+    return this.serialized(async () => {
+      const state = await this.readState();
+      const existing = state.profiles.find((profile) => profile.id === id);
+      if (!existing) {
+        throw new Error(`Model config profile ${id} not found.`);
+      }
+      if (state.profiles.length <= 1) {
+        throw new Error("At least one model config profile is required.");
+      }
 
-    const profiles = state.profiles.filter((profile) => profile.id !== id);
-    const nextActive = state.activeProfileId === id ? profiles[0] : getActiveProfile(state);
-    const nextState: ModelConfigProfilesState = {
-      activeProfileId: nextActive.id,
-      profiles,
-    };
-    await this.atomicWriteJson(nextState);
-    return nextState;
+      const profiles = state.profiles.filter((profile) => profile.id !== id);
+      const nextActive = state.activeProfileId === id ? profiles[0] : getActiveProfile(state);
+      const nextState: ModelConfigProfilesState = {
+        activeProfileId: nextActive.id,
+        profiles,
+      };
+      await this.atomicWriteJson(nextState);
+      return nextState;
+    });
   }
 
   async setActiveProfile(id: string): Promise<ModelConfigProfilesState> {
     await this.init();
-    const state = await this.readState();
-    if (!state.profiles.some((profile) => profile.id === id)) {
-      throw new Error(`Model config profile ${id} not found.`);
-    }
-    const nextState: ModelConfigProfilesState = { ...state, activeProfileId: id };
-    await this.atomicWriteJson(nextState);
-    return nextState;
+    return this.serialized(async () => {
+      const state = await this.readState();
+      if (!state.profiles.some((profile) => profile.id === id)) {
+        throw new Error(`Model config profile ${id} not found.`);
+      }
+      const nextState: ModelConfigProfilesState = { ...state, activeProfileId: id };
+      await this.atomicWriteJson(nextState);
+      return nextState;
+    });
   }
 
   private async readState(): Promise<ModelConfigProfilesState> {
@@ -185,6 +208,12 @@ export class ModelConfigStore {
       await handle.close();
     }
     await fs.rename(tmp, this.configPath);
+  }
+
+  private serialized<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(work, work);
+    this.queue = next.catch(() => undefined);
+    return next;
   }
 }
 
