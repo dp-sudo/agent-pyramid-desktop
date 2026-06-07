@@ -1,0 +1,70 @@
+{
+  "app": {
+    "architectureLayersLabel": "架构分层",
+    "eyebrow": "Agent 运行底座",
+    "languageLabel": "界面语言",
+    "title": "金字塔三角循环"
+  },
+  "defaults": {
+    "goal": "为验证 Agent 运行时设计一个三步计划。",
+    "systemPrompt": "你是一个 Agent 运行时规划器。保持回答简洁，解释行动，只在需要时请求工具。"
+  },
+  "fields": {
+    "apiKey": "MiniMax API Key",
+    "apiKeyPlaceholder": "Bearer key",
+    "goal": "目标",
+    "maxTokens": "最大 Token",
+    "model": "模型",
+    "protocol": "协议",
+    "systemPrompt": "系统提示词",
+    "temperature": "温度"
+  },
+  "layers": {
+    "application": "应用编排",
+    "core": "核心机制",
+    "desktop": "桌面界面",
+    "domain": "领域契约",
+    "infrastructure": "基础设施"
+  },
+  "locales": {
+    "en": "English",
+    "zh-CN": "中文"
+  },
+  "protocols": {
+    "anthropic": "Messages API（Anthropic 兼容）",
+    "openai": "Chat Completions API（OpenAI 兼容）"
+  },
+  "result": {
+    "output": "输出",
+    "outputPlaceholder": "运行 Agent 后查看归一化的 LLM 响应。",
+    "reasoning": "推理",
+    "title": "执行轨迹",
+    "waiting": "等待中"
+  },
+  "runtime": {
+    "description": "MiniMax 兼容 LLM 桥接",
+    "title": "运行时"
+  },
+  "run": {
+    "idle": "运行 Agent",
+    "running": "运行中"
+  },
+  "status": {
+    "completed": "已完成",
+    "failed": "失败"
+  },
+  "task": {
+    "description": "观察 > 推理 > 行动",
+    "title": "Agent 任务"
+  },
+  "traceStages": {
+    "act": "行动",
+    "observe": "观察",
+    "reason": "推理"
+  },
+  "usage": {
+    "input": "输入",
+    "output": "输出",
+    "total": "总计"
+  }
+}
