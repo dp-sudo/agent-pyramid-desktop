@@ -15,11 +15,13 @@ describe("SettingsView helpers", () => {
     expect(isProfileDeletePending(null, "profile-1")).toBe(false);
   });
 
-  it("blocks profile-changing settings actions only while dirty", () => {
+  it("blocks profile-changing settings actions while dirty or failed with unsaved changes", () => {
     expect(shouldBlockSettingsNavigation("dirty")).toBe(true);
     expect(shouldBlockSettingsNavigation("idle")).toBe(false);
     expect(shouldBlockSettingsNavigation("saved")).toBe(false);
     expect(shouldBlockSettingsNavigation("error")).toBe(false);
+    expect(shouldBlockSettingsNavigation("error", true)).toBe(true);
+    expect(shouldBlockSettingsNavigation("error", false)).toBe(false);
     expect(shouldBlockSettingsNavigation("loading")).toBe(false);
     expect(shouldBlockSettingsNavigation("saving")).toBe(false);
   });

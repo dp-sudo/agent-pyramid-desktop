@@ -94,7 +94,7 @@ threads/
   <threadId>/
     thread.json           # ThreadRecord
     messages.jsonl        # Item per line
-    events.jsonl          # RuntimeEvent per line
+    events.jsonl          # Persisted runtime event per line
 ```
 
 Important semantics:
@@ -166,7 +166,7 @@ Turn records are not currently stored as a separate file. Their lifecycle is rec
 
 - in-memory `AgentRuntime.inFlight`
 - `Item.turnId` in `messages.jsonl`
-- `turn_started`, `turn_completed`, `turn_failed` events in `events.jsonl`
+- persisted lifecycle events in `events.jsonl` (`turn_completed`, `turn_failed`, and tool budget audit events)
 
 ## Item Model
 
@@ -287,7 +287,7 @@ Rules:
 
 ## Runtime Event Model
 
-Runtime events are persisted to `events.jsonl` and pushed to renderer through SSE IPC.
+Runtime events are pushed to renderer through SSE IPC. `events.jsonl` is the audit log for persisted lifecycle/usage events; timeline content is persisted as `Item` rows in `messages.jsonl`, then surfaced to renderer as `item_appended` / `item_updated` events.
 
 Current event kinds:
 
@@ -301,6 +301,7 @@ Current event kinds:
 - `goal_updated`
 - `runtime_error`
 
+`turn_started` carries the complete runtime-created `TurnRecord` as `turn`.
 Usage data lives on `turn_completed.usage` and is aggregated by `usage:daily`.
 
 `RuntimeEventBus.onThread()` must include every thread-scoped event kind that renderer subscribers need to receive.

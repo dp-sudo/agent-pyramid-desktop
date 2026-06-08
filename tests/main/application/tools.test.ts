@@ -731,6 +731,32 @@ describe("application tools", () => {
       await expect(
         registry.execute(
           {
+            id: "call-duplicate-target",
+            name: "apply_patch",
+            arguments: {
+              patch: [
+                "--- a/src/index.ts",
+                "+++ b/src/index.ts",
+                "@@ -1 +1 @@",
+                "-const value = 1;",
+                "+const value = 2;",
+                "--- a/src/index.ts",
+                "+++ b/src/index.ts",
+                "@@ -1 +1 @@",
+                "-const value = 1;",
+                "+const value = 3;",
+              ].join("\n"),
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("apply_patch contains duplicate file sections for src/index.ts.");
+      expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
+        .toBe("const value = 1;\n");
+
+      await expect(
+        registry.execute(
+          {
             id: "call-escape",
             name: "apply_patch",
             arguments: {
@@ -745,6 +771,70 @@ describe("application tools", () => {
           context,
         ),
       ).rejects.toThrow("Path escapes workspace: ../outside.ts");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rolls back committed files when apply_patch fails during execution", async () => {
+    const workspace = await makeTempDir("apply-patch-exec-failure-");
+    const failingPath = path.join(workspace, "locked", "new.ts");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value = 1;\n", "utf8");
+      const readState = new FileReadStateStore();
+      const fileHistory = new FileHistoryStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState, fileHistory };
+      await registry.execute(
+        { id: "call-read-index", name: "read_file", arguments: { path: "src/index.ts" } },
+        context,
+      );
+      const originalWriteFile = fs.writeFile.bind(fs);
+      const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation((async (
+        ...args: Parameters<typeof fs.writeFile>
+      ) => {
+        const targetPath = args[0];
+        if (typeof targetPath === "string" && path.resolve(targetPath) === failingPath) {
+          throw new Error("simulated write failure");
+        }
+        return originalWriteFile(...args);
+      }) as typeof fs.writeFile);
+
+      try {
+        await expect(
+          registry.execute(
+            {
+              id: "call-partial-patch",
+              name: "apply_patch",
+              arguments: {
+                patch: [
+                  "--- a/src/index.ts",
+                  "+++ b/src/index.ts",
+                  "@@ -1 +1 @@",
+                  "-const value = 1;",
+                  "+const value = 2;",
+                  "--- /dev/null",
+                  "+++ b/locked/new.ts",
+                  "@@ -0,0 +1 @@",
+                  "+created",
+                ].join("\n"),
+              },
+            },
+            context,
+          ),
+        ).rejects.toThrow("simulated write failure");
+      } finally {
+        writeFileSpy.mockRestore();
+      }
+
+      expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
+        .toBe("const value = 1;\n");
+      await expect(fs.access(failingPath)).rejects.toThrow();
+      expect(fileHistory.latest(path.join(workspace, "src", "index.ts"))).toBeUndefined();
     } finally {
       await removeTempDir(workspace);
     }
@@ -1113,6 +1203,60 @@ describe("application tools", () => {
       expect(parsed.diagnosticCount).toBeGreaterThan(0);
       expect(parsed.diagnostics[0]).toMatchObject({
         path: "src/index.ts",
+        code: "TS2322",
+      });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("resolves diagnose_workspace diagnostics relative to the command cwd", async () => {
+    const workspace = await makeTempDir("diagnose-tools-cwd-");
+    try {
+      const packageRoot = path.join(workspace, "packages", "app");
+      await fs.mkdir(path.join(packageRoot, "src"), { recursive: true });
+      await fs.writeFile(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          scripts: {
+            typecheck: tscCommand(),
+          },
+          devDependencies: {
+            typescript: "local",
+          },
+        }),
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(packageRoot, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            noEmit: true,
+          },
+          include: ["src/**/*.ts"],
+        }),
+        "utf8",
+      );
+      await fs.writeFile(path.join(packageRoot, "src", "index.ts"), "const value: string = 1;\n", "utf8");
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-diagnose-cwd",
+          name: "diagnose_workspace",
+          arguments: { cwd: "packages/app" },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        cwd: string;
+        diagnostics: Array<{ path: string; code: string }>;
+      };
+
+      expect(parsed.cwd).toBe("packages/app");
+      expect(parsed.diagnostics[0]).toMatchObject({
+        path: "packages/app/src/index.ts",
         code: "TS2322",
       });
     } finally {

@@ -28,6 +28,10 @@
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
 - 修复多会话运行投影：renderer 以 `inFlightTurnsByThreadId` 追踪每个 thread 的运行中 turn，SSE 支持同一窗口多 thread 订阅；切换会话不再丢失后台完成、失败或审批事件，当前 thread 的未决审批会在 composer 上方显示即时处理面板。
+- 修复 `turn_started` 状态投影：事件携带 runtime 创建的完整 `TurnRecord`，renderer 不再用当前 composer/model 状态推断后台 turn 的模型、profile 或模式。
+- 清理 Write 模式 IPC 契约：`WritePutRequest` 只保留当前已实现的 plain UTF-8 写入字段，删除未接入 handler 的 `viaGit` 旧字段，避免调用方误以为 `write.put` 会走 git apply。
+- 修复设置页模型档案状态机：profile 保存失败后如果表单仍与 active profile 不一致，切换 section/profile、复制、删除或返回工作台会继续触发未保存修改守卫，避免把失败后的用户修改静默丢弃。
+- 修复 SSE IPC envelope 边界：`sse:subscribe` / `sse:unsubscribe` 对坏请求返回 `SSE_SUBSCRIBE_FAILED` / `SSE_UNSUBSCRIBE_FAILED`，不再让 ipcMain handler 直接 throw。
 - 设置页采用两级导航：顶部切换设置大类，左侧切换当前大类下的小类，中间展示详细配置；当前“基础设置”大类承载外观与语言、启动与布局、会话与工作区偏好，“大模型设置”大类承载模型档案、连接信息、上下文和推理行为。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
 - 建立 Vitest 自动化测试体系：`vitest.config.ts`、`tsconfig.test.json`、`tests/`，覆盖共享契约、主进程持久化、模型配置、附件、工具、事件总线、LLM 网关、AgentRuntime 和渲染端 reducer。
@@ -42,6 +46,7 @@
 6. 界面语言和主题切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义；设置页“基础设置”直接调用渲染层 localStorage 偏好，不进入主进程运行时配置。
 7. 大模型运行时仍以 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为当前激活配置契约；持久层在外层维护 `ModelConfigProfilesState`（`activeProfileId + profiles[]`），`ModelConfigStore.get()` 只返回当前激活档案的 `ModelConfig`，避免 Agent 运行循环感知多档案 UI。
 8. LLM 网关按 `ModelConfig.model_provide` 做供应商感知请求体分流：`MiniMax` 使用 `max_completion_tokens/reasoning_split/thinking.type=adaptive|disabled`，`DeepSeek` 使用 `/chat/completions`、`max_tokens/thinking.type=enabled|disabled/reasoning_effort=high|max`，其他供应商走通用 OpenAI-compatible 请求体。
+   当前 `AgentRuntime` 从模型 profile 构造请求时固定使用 `protocol: "openai-compatible"`；Anthropic-compatible 映射是 gateway 层已有测试覆盖的能力，尚未接入设置页/profile 协议选择。
 9. 自动化测试使用 Vitest，优先测试公开类、共享契约和纯状态逻辑；持久化测试使用临时目录隔离，LLM 网关测试通过 mock `fetch` 验证请求体和 SSE 解析，不依赖真实 API key。
 
 
@@ -304,7 +309,9 @@
 - 加固 `write.get/put` 路径边界：读写前会校验目标或最近存在父目录的 realpath 仍位于 workspace 内，防止工作区内符号链接指向外部文件后被读取或覆盖。
 - 修复 `write.list` 目录遍历错误处理：无法读取工作区或子目录时不再静默返回空结果，而是通过 `WRITE_LIST_FAILED` envelope 暴露可追踪错误。
 - 完善 Write 模式基础交互：文件列表支持搜索过滤，编辑器按 800ms debounce 自动保存，`write.complete` 提供本地 Markdown 列表/引用续写建议，渲染端支持 650ms completion debounce、Tab 接受与 Escape 取消。
+- 修复 Write 模式文件服务职责边界：`write.get` / `write.put` / `write.complete` 现在和 `write.list` 一样只接受 `.md`、`.mdx`、`.markdown`，避免绕过 Markdown 文件列表读写任意 UTF-8 文件。
 - 修复 Write 模式自动保存竞态：同一文件保存请求串行化，保存中继续编辑会在前一轮完成后再写入最新内容，避免旧请求晚返回覆盖新内容。
+- 修复 Write 模式文件切换丢改动风险：打开其他文件或刷新/切换工作区前会先 flush 当前脏文件；保存失败时停留当前文件并展示错误。
 - 修复 Write 模式文件搜索竞态：`write.list` 搜索/刷新请求现在按渲染端请求序号只应用最新响应，避免慢返回的旧搜索结果覆盖新文件列表。
 - 修复 approval IPC 边界：`approval:respond` 现在统一返回 `IpcResult` envelope，非法 decision 和不存在的 approvalId 会返回可追踪错误，渲染端会把失败显示到现有错误区域，不再静默当作成功。
 - 修复 usage 统计缓存边界：`usage:daily` 的短 TTL 缓存现在按 `JsonlThreadStore` 实例隔离，避免测试、多实例或未来多数据目录场景中按 days 复用导致统计串数据。
@@ -337,17 +344,24 @@
 - 扩展 Settings 基础设置：新增“基础设置”大类，并完整提供“外观与语言 / 启动与布局 / 会话与工作区”三组偏好；这些偏好选择后立即生效并保存到渲染端 localStorage，不复用大模型配置保存状态。
 - 修复附件存储输入校验：`AttachmentStore` 现在严格校验 `dataBase64`，非法 base64 不会被 `Buffer.from(..., "base64")` 宽松解码后保存为损坏附件。
 - 修复附件创建失败副产物：`AttachmentStore.create()` 在附件二进制写入后如果索引更新失败，会删除刚创建的 `.bin` 文件并原样抛出错误，避免留下孤儿附件。
+- 修复 composer 附件删除竞态：发送中或当前 active thread 运行中会禁用附件删除，避免用户在 runtime 读取附件前删除 blob 导致 turn 读取缺失。
 - 加固本地持久化 ID 边界：`JsonlThreadStore` 和 `AttachmentStore` 在解析 thread / attachment 本地路径前校验 UUID，阻止 renderer 或损坏数据传入 `../` 之类路径片段访问、写入或删除持久化目录外文件。
 - 加固线程持久化输入校验：`JsonlThreadStore.createThread/listThreads/updateThread` 现在会在写入或过滤前校验 workspace、mode、relation、status、approvalPolicy、sandboxMode、goal 等运行时输入，避免坏 IPC 数据写入 index/thread JSON。
 - 修复线程创建失败副产物：`JsonlThreadStore.createThread()` 在新线程目录和 JSONL 文件创建后，如果索引写入失败，会删除本次新建线程目录并原样抛出错误，避免留下未索引线程数据。
 - 加固 workspace 工具符号链接边界：`list_files` 和 `search_files` 会跳过符号链接条目，避免通过工作区内 symlink 暴露或遍历工作区外内容；`read_file` 继续使用 realpath 校验阻止 symlink 文件读取越界。
 - 修复 OpenAI-compatible 流式工具调用收尾：provider 以 `stop` 或 `[DONE]` 结束但已发送完整 tool call delta 时，`MiniMaxGateway` 会 flush pending tool call，避免 runtime 静默丢失工具调用。
+- 修复 OpenAI-compatible 流式 usage 收尾：`MiniMaxGateway` 不再在 terminal `finish_reason` 后提前停止读取 SSE，会继续读到 `[DONE]` 或 stream close，避免 provider 单独发送的 usage-only 尾帧丢失。
+- 修复 Anthropic-compatible 流式 usage 收尾：`MiniMaxGateway` 不再在 `message_delta.stop_reason` 后提前停止读取 SSE，会继续读到 `[DONE]` 或 stream close，避免兼容服务单独发送的 usage-only 尾帧丢失。
 - 修复 Anthropic-compatible 流式工具调用收尾：兼容服务缺少 `content_block_stop` 但以 `message_delta` / `[DONE]` 结束时，`MiniMaxGateway` 会 flush 已累积的 pending tool call。
 - 修复 LLM SSE reader 清理可追踪性：释放 SSE reader lock 失败时会记录带上下文的 warning，不再使用静默空 catch 分支。
 - 修复工具注册边界：`InMemoryToolRegistry.register()` 现在拒绝重复工具名，避免组合根或测试接线错误被后注册工具静默覆盖。
 - 加固 `update_goal` 目标机制：工具清除目标改为显式 `clear: true`，空字符串或非字符串 `goal` 不再被静默解释为清除；归档线程拒绝 goal 更新；`complete` / `blocked` 时间戳只在首次进入对应终态时写入，后续编辑 summary 或文本不会刷新终态时间；renderer 仅处理当前 active thread 的 `goal_updated` 事件。
 - 优化 workspace 搜索工具容错：`search_files` 的 `path` 现在既可指向目录，也可指向单个 UTF-8 文本文件；单文件路径会只搜索该文件，避免模型把文件路径传给搜索工具时反复得到 `path is not a directory` 并触发工具轮数上限。
 - 优化 AgentRuntime 自动工具预算：固定 6 轮硬限制升级为模型档案 `agent_autonomy` 三档策略（保守 12、平衡 32、深度 64），仍可通过 `AGENT_MAX_TOOL_ROUNDS` 覆盖；运行时会在预算后段提示模型收敛或避免重复失败工具，预算耗尽时会把最后一批未执行 tool call 记录为 failed tool result，发出 `tool_budget_reached`，并以 `needs_continuation` 结束当前 turn。
+- 修复 `apply_patch` 执行阶段部分提交风险：多文件 patch 在全部 hunk dry-run 后写入；若后续文件写入失败，会按本次已提交文件逆序恢复原内容/删除新建文件，且失败 patch 不写入 file history。
+- 修复 `apply_patch` 重复文件段边界：同一个 patch 内重复出现同一 resolved target 会被拒绝；同一文件的多段修改必须放在一个文件头下的多个 hunk，避免成功路径覆盖早先段落或失败回滚恢复到中间状态。
+- 修复 Workbench SSE 订阅生命周期：删除或归档曾经打开过但当前不 active 的线程时，也会释放 renderer 保留的 thread subscription，避免后台事件订阅长期残留。
+- 修复 `diagnose_workspace` 子项目路径解析：当工具在 workspace 子目录 cwd 中运行 typecheck 时，TypeScript 相对诊断路径会从实际命令 cwd 解析，再转换为 workspace-relative 路径，避免 monorepo 子包错误被误报到根目录。
 - 清理未使用的 worker protocol helper、worker-pool 类型守卫和 main 入口的无消费者 gateway re-export。
 - 新增 `tests/main/ipc/write-handlers.test.ts` 覆盖 Markdown 列表过滤、path escape、跳过目录策略和不可读工作区错误。
 - 验证方式：`npm test`、`npm run typecheck`、`npm run build`。

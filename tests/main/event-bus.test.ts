@@ -1,6 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeEventBus } from "../../src/main/event-bus";
-import type { RuntimeEvent } from "../../src/shared/agent-contracts";
+import type { RuntimeEvent, TurnRecord } from "../../src/shared/agent-contracts";
+
+function turn(overrides: Partial<TurnRecord> = {}): TurnRecord {
+  return {
+    id: "turn-1",
+    threadId: "thread-1",
+    status: "in-flight",
+    startedAt: "2026-06-07T00:00:00.000Z",
+    model: "MiniMax-M3",
+    mode: "agent",
+    ...overrides,
+  };
+}
+
+function turnStartedEvent(overrides: Partial<TurnRecord> = {}): RuntimeEvent {
+  const record = turn(overrides);
+  return {
+    kind: "turn_started",
+    threadId: record.threadId,
+    turnId: record.id,
+    startedAt: record.startedAt,
+    turn: record,
+  };
+}
 
 describe("RuntimeEventBus", () => {
   it("filters thread subscriptions and unsubscribes cleanly", () => {
@@ -8,18 +31,8 @@ describe("RuntimeEventBus", () => {
     const listener = vi.fn<(event: RuntimeEvent) => void>();
     const unsubscribe = bus.onThread("thread-1", listener);
 
-    const matching: RuntimeEvent = {
-      kind: "turn_started",
-      threadId: "thread-1",
-      turnId: "turn-1",
-      startedAt: "2026-06-07T00:00:00.000Z",
-    };
-    const other: RuntimeEvent = {
-      kind: "turn_started",
-      threadId: "thread-2",
-      turnId: "turn-2",
-      startedAt: "2026-06-07T00:00:00.000Z",
-    };
+    const matching = turnStartedEvent();
+    const other = turnStartedEvent({ id: "turn-2", threadId: "thread-2" });
 
     bus.emit(matching.kind, matching);
     bus.emit(other.kind, other);
@@ -42,12 +55,7 @@ describe("RuntimeEventBus", () => {
       message: "failure",
     };
 
-    bus.emit("turn_started", {
-      kind: "turn_started",
-      threadId: "thread-1",
-      turnId: "turn-1",
-      startedAt: "2026-06-07T00:00:00.000Z",
-    });
+    bus.emit("turn_started", turnStartedEvent());
     bus.emit("runtime_error", event);
 
     expect(listener).toHaveBeenCalledOnce();

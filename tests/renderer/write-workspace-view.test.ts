@@ -3,6 +3,7 @@ import {
   formatWriteFileMeta,
   getWriteListState,
   shouldDisableWriteSave,
+  shouldSaveWriteFileBeforeSwitch,
 } from "../../src/renderer/src/ui/components/write/WriteWorkspaceView";
 
 describe("WriteWorkspaceView helpers", () => {
@@ -55,6 +56,33 @@ describe("WriteWorkspaceView helpers", () => {
         status: "idle",
       }),
     ).toBe(false);
+  });
+
+  it("requires a save before switching away from a changed open file", () => {
+    expect(shouldSaveWriteFileBeforeSwitch({
+      activePath: "notes.md",
+      workspaceRoot: "/workspace",
+      content: "draft",
+      savedContent: "",
+    })).toBe(true);
+    expect(shouldSaveWriteFileBeforeSwitch({
+      activePath: "notes.md",
+      workspaceRoot: "/workspace",
+      content: "draft",
+      savedContent: "draft",
+    })).toBe(false);
+    expect(shouldSaveWriteFileBeforeSwitch({
+      activePath: null,
+      workspaceRoot: "/workspace",
+      content: "draft",
+      savedContent: "",
+    })).toBe(false);
+    expect(shouldSaveWriteFileBeforeSwitch({
+      activePath: "notes.md",
+      workspaceRoot: "",
+      content: "draft",
+      savedContent: "",
+    })).toBe(false);
   });
 
   it("derives file list empty states from workspace, search, and loading status", () => {

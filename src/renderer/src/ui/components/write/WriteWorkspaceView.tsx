@@ -27,7 +27,7 @@ export function WriteWorkspaceView(): ReactElement {
   const contentRef = useRef("");
   const savedContentRef = useRef("");
   const saveInFlightRef = useRef(false);
-  const pendingSaveRef = useRef(false);
+  const savePromiseRef = useRef<Promise<boolean> | null>(null);
 
   useEffect(() => {
     activePathRef.current = activePath;
@@ -48,7 +48,12 @@ export function WriteWorkspaceView(): ReactElement {
     return result.value.path;
   }
 
-  async function loadList(workspaceInput?: string, searchInput = search): Promise<void> {
+  async function loadList(
+    workspaceInput?: string,
+    searchInput = search,
+    options: { saveBeforeLoad?: boolean } = {},
+  ): Promise<void> {
+    if (options.saveBeforeLoad && !(await saveCurrentFileBeforeSwitch())) return;
     const workspace = workspaceInput ?? await pickWorkspace();
     if (!workspace) return;
     const requestId = listRequestId.current + 1;
@@ -88,18 +93,21 @@ export function WriteWorkspaceView(): ReactElement {
   function handleClearSearch(): void {
     setSearch("");
     if (state.workspaceRoot) {
-      void loadList(state.workspaceRoot, "");
+      void loadList(state.workspaceRoot, "", { saveBeforeLoad: false });
     }
   }
 
   async function openFile(path: string): Promise<void> {
     if (!state.workspaceRoot) return;
-    setActivePath(path);
+    if (path === activePathRef.current) return;
+    if (!(await saveCurrentFileBeforeSwitch())) return;
     setStatus("loading");
     const result = await window.agentApi.write.get({ workspace: state.workspaceRoot, path });
     if (result.ok) {
+      activePathRef.current = path;
       contentRef.current = result.value.content;
       savedContentRef.current = result.value.content;
+      setActivePath(path);
       setContent(result.value.content);
       setSavedContent(result.value.content);
       setCompletion("");
@@ -148,51 +156,74 @@ export function WriteWorkspaceView(): ReactElement {
   async function save(): Promise<void> {
     if (!activePathRef.current || !workspaceRootRef.current) return;
     if (saveInFlightRef.current) {
-      pendingSaveRef.current = true;
+      await savePromiseRef.current;
       return;
     }
     await flushSave();
   }
 
-  async function flushSave(): Promise<void> {
-    const savingPath = activePathRef.current;
-    const savingWorkspace = workspaceRootRef.current;
-    if (!savingPath || !savingWorkspace) return;
-    const nextContent = contentRef.current;
-    if (nextContent === savedContentRef.current) return;
+  async function saveCurrentFileBeforeSwitch(): Promise<boolean> {
+    if (!shouldSaveWriteFileBeforeSwitch({
+      activePath: activePathRef.current,
+      workspaceRoot: workspaceRootRef.current,
+      content: contentRef.current,
+      savedContent: savedContentRef.current,
+    })) {
+      return true;
+    }
+    if (saveInFlightRef.current) {
+      await savePromiseRef.current;
+      return contentRef.current === savedContentRef.current;
+    }
+    return flushSave();
+  }
 
-    saveInFlightRef.current = true;
-    setStatus("saving");
+  async function flushSave(): Promise<boolean> {
+    if (savePromiseRef.current) return savePromiseRef.current;
+    savePromiseRef.current = flushSaveNow();
     try {
-      const result = await window.agentApi.write.put({
-        workspace: savingWorkspace,
-        path: savingPath,
-        content: nextContent,
-      });
-      if (activePathRef.current === savingPath && workspaceRootRef.current === savingWorkspace) {
-        if (result.ok) {
-          savedContentRef.current = nextContent;
-          setSavedContent(nextContent);
-          setStatus(contentRef.current === nextContent ? "saved" : "saving");
-          setErrorMessage(null);
-        } else {
+      return await savePromiseRef.current;
+    } finally {
+      savePromiseRef.current = null;
+    }
+  }
+
+  async function flushSaveNow(): Promise<boolean> {
+    while (true) {
+      const savingPath = activePathRef.current;
+      const savingWorkspace = workspaceRootRef.current;
+      if (!savingPath || !savingWorkspace) return true;
+      const nextContent = contentRef.current;
+      if (nextContent === savedContentRef.current) return true;
+
+      saveInFlightRef.current = true;
+      setStatus("saving");
+      try {
+        const result = await window.agentApi.write.put({
+          workspace: savingWorkspace,
+          path: savingPath,
+          content: nextContent,
+        });
+        if (activePathRef.current !== savingPath || workspaceRootRef.current !== savingWorkspace) {
+          return false;
+        }
+        if (!result.ok) {
           setErrorMessage(result.message);
           setStatus("error");
+          return false;
         }
-      }
-    } catch (error) {
-      if (activePathRef.current === savingPath && workspaceRootRef.current === savingWorkspace) {
-        setErrorMessage(messageOf(error));
-        setStatus("error");
-      }
-    } finally {
-      saveInFlightRef.current = false;
-      if (contentRef.current !== nextContent) {
-        pendingSaveRef.current = true;
-      }
-      if (pendingSaveRef.current) {
-        pendingSaveRef.current = false;
-        void flushSave();
+        savedContentRef.current = nextContent;
+        setSavedContent(nextContent);
+        setStatus(contentRef.current === nextContent ? "saved" : "saving");
+        setErrorMessage(null);
+      } catch (error) {
+        if (activePathRef.current === savingPath && workspaceRootRef.current === savingWorkspace) {
+          setErrorMessage(messageOf(error));
+          setStatus("error");
+        }
+        return false;
+      } finally {
+        saveInFlightRef.current = false;
       }
     }
   }
@@ -274,13 +305,13 @@ export function WriteWorkspaceView(): ReactElement {
           </button>
         </div>
         <div style={{ padding: 12, display: "flex", gap: 6 }}>
-          <button className="ds-pill" onClick={() => void loadList()}>
+          <button className="ds-pill" onClick={() => void loadList(undefined, search, { saveBeforeLoad: true })}>
             {t("write.openWorkspace")}
           </button>
           {state.workspaceRoot ? (
             <button
               className="ds-pill"
-              onClick={() => void loadList(state.workspaceRoot, search)}
+              onClick={() => void loadList(state.workspaceRoot, search, { saveBeforeLoad: true })}
             >
               {t("write.refresh")}
             </button>
@@ -302,7 +333,7 @@ export function WriteWorkspaceView(): ReactElement {
               const nextSearch = event.target.value;
               setSearch(nextSearch);
               if (state.workspaceRoot) {
-                void loadList(state.workspaceRoot, nextSearch);
+                void loadList(state.workspaceRoot, nextSearch, { saveBeforeLoad: false });
               }
             }}
             placeholder={t("write.searchPlaceholder")}
@@ -402,6 +433,15 @@ export function shouldDisableWriteSave(input: WriteSaveStateInput): boolean {
     input.status === "saving" ||
     input.content === input.savedContent
   );
+}
+
+export function shouldSaveWriteFileBeforeSwitch(input: {
+  activePath: string | null;
+  workspaceRoot: string;
+  content: string;
+  savedContent: string;
+}): boolean {
+  return Boolean(input.activePath && input.workspaceRoot && input.content !== input.savedContent);
 }
 
 export type WriteListState = "loading" | "no-workspace" | "empty" | "empty-search" | "ready";

@@ -32,6 +32,11 @@ export function FloatingComposer({
   const [menuOpen, setMenuOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
+  const attachmentRemovalDisabled = isAttachmentRemovalDisabled({
+    disabled: Boolean(disabled),
+    runtimeBusy,
+    sendPending,
+  });
   const sendDisabled = !canSubmitComposerDraft({
     text: draftText,
     attachmentCount: state.composer.attachmentIds.length,
@@ -136,6 +141,7 @@ export function FloatingComposer({
   }
 
   async function removeAttachment(id: string): Promise<void> {
+    if (attachmentRemovalDisabled) return;
     const result = await window.agentApi.attachments.delete(id);
     if (!result.ok) {
       actions.setError(result.message);
@@ -176,6 +182,7 @@ export function FloatingComposer({
               type="button"
               className="ds-composer-attachment"
               onClick={() => void removeAttachment(attachment.id)}
+              disabled={attachmentRemovalDisabled}
               title={t("composer.removeAttachment")}
             >
               <span>{attachment.name}</span>
@@ -328,4 +335,16 @@ export function canSubmitComposerDraft({
   sendPending: boolean;
 }): boolean {
   return !disabled && !sendPending && (text.trim().length > 0 || attachmentCount > 0);
+}
+
+export function isAttachmentRemovalDisabled({
+  disabled,
+  runtimeBusy,
+  sendPending,
+}: {
+  disabled: boolean;
+  runtimeBusy: boolean;
+  sendPending: boolean;
+}): boolean {
+  return disabled || runtimeBusy || sendPending;
 }

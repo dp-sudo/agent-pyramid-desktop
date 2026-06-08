@@ -228,8 +228,8 @@ async function prepareEdit(
   }
 
   const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
-  const { content, stat } = await readEditableTextFile(filePath, relativePath);
-  assertFreshRead(context, filePath, content, stat);
+  const { content } = await readEditableTextFile(filePath, relativePath);
+  assertFreshRead(context, filePath, content);
   const matches = countOccurrences(content, oldString);
   if (matches === 0) {
     throw new Error(`edit_file old_string was not found in ${relativePath}.`);
@@ -260,14 +260,14 @@ async function prepareWrite(
   let operation: FileChangeResult["operation"] = "create";
 
   try {
-    const { content: currentContent, stat } = await readEditableTextFile(filePath, relativePath);
+    const { content: currentContent } = await readEditableTextFile(filePath, relativePath);
     if (createOnly) {
       throw new Error(`write_file create_only is true but file already exists: ${relativePath}`);
     }
     if (!overwrite) {
       throw new Error(`write_file requires overwrite: true for existing file ${relativePath}.`);
     }
-    assertFreshRead(context, filePath, currentContent, stat);
+    assertFreshRead(context, filePath, currentContent);
     original = currentContent;
     operation = "update";
   } catch (error) {
@@ -312,30 +312,11 @@ async function writePreparedChange(
   context: AgentToolContext,
   toolName: string,
 ): Promise<PreparedFileChange> {
-  const { filePath, nextContent } = change;
-  if (change.operation === "delete") {
-    await fs.rm(filePath, { force: true });
-  } else {
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, nextContent, "utf8");
-  }
-  const stat = change.operation === "delete" ? undefined : await fs.stat(filePath);
-  const contentHash = sha256(nextContent);
+  await commitPreparedChange(change);
+  const stat = change.operation === "delete" ? undefined : await fs.stat(change.filePath);
+  const contentHash = sha256(change.nextContent);
   recordFileHistory(context, change, toolName);
-  if (stat) {
-    context.readState?.set(filePath, {
-      content: nextContent,
-      mtimeMs: stat.mtimeMs,
-      size: stat.size,
-      sha256: contentHash,
-      fullSha256: contentHash,
-      truncated: false,
-      offsetBytes: 0,
-      bytesRead: stat.size,
-    });
-  } else {
-    context.readState?.delete(filePath);
-  }
+  updateReadStateForCommittedChange(context, change, stat, contentHash);
   return {
     ...change,
     bytes: stat?.size ?? 0,
@@ -351,10 +332,98 @@ async function writePreparedChanges(
   toolName: string,
 ): Promise<PreparedFileChange[]> {
   const committed: PreparedFileChange[] = [];
-  for (const change of changes) {
-    committed.push(await writePreparedChange(change, context, toolName));
+  try {
+    for (const change of changes) {
+      await commitPreparedChange(change);
+      const stat = change.operation === "delete" ? undefined : await fs.stat(change.filePath);
+      const contentHash = sha256(change.nextContent);
+      committed.push({
+        ...change,
+        bytes: stat?.size ?? 0,
+        modifiedAt: stat?.mtime.toISOString() ?? new Date().toISOString(),
+        mtimeMs: stat?.mtimeMs ?? 0,
+        sha256: contentHash,
+      });
+    }
+  } catch (error) {
+    try {
+      await restoreCommittedChanges(committed);
+    } catch (rollbackError) {
+      throw new Error(
+        `apply_patch failed: ${messageOf(error)}; rollback failed: ${messageOf(rollbackError)}`,
+      );
+    }
+    throw error;
+  }
+
+  for (const change of committed) {
+    recordFileHistory(context, change, toolName);
+    if (change.operation === "delete") {
+      context.readState?.delete(change.filePath);
+      continue;
+    }
+    context.readState?.set(change.filePath, {
+      content: change.nextContent,
+      mtimeMs: change.mtimeMs,
+      size: change.bytes,
+      sha256: change.sha256,
+      fullSha256: change.sha256,
+      truncated: false,
+      offsetBytes: 0,
+      bytesRead: change.bytes,
+    });
   }
   return committed;
+}
+
+async function commitPreparedChange(change: PreparedFileChange): Promise<void> {
+  if (change.operation === "delete") {
+    await fs.rm(change.filePath, { force: true });
+    return;
+  }
+  await fs.mkdir(path.dirname(change.filePath), { recursive: true });
+  await fs.writeFile(change.filePath, change.nextContent, "utf8");
+}
+
+function updateReadStateForCommittedChange(
+  context: AgentToolContext,
+  change: PreparedFileChange,
+  stat: Stats | undefined,
+  contentHash: string,
+): void {
+  if (stat) {
+    context.readState?.set(change.filePath, {
+      content: change.nextContent,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      sha256: contentHash,
+      fullSha256: contentHash,
+      truncated: false,
+      offsetBytes: 0,
+      bytesRead: stat.size,
+    });
+  } else {
+    context.readState?.delete(change.filePath);
+  }
+}
+
+async function restoreCommittedChanges(committed: PreparedFileChange[]): Promise<void> {
+  const failures: string[] = [];
+  for (const change of [...committed].reverse()) {
+    try {
+      if (change.operation === "create") {
+        await fs.rm(change.filePath, { force: true });
+      } else {
+        await fs.mkdir(path.dirname(change.filePath), { recursive: true });
+        await fs.writeFile(change.filePath, change.originalContent, "utf8");
+      }
+    } catch (error) {
+      failures.push(`${change.path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`apply_patch failed and rollback also failed: ${failures.join("; ")}`);
+  }
 }
 
 async function preparePatch(
@@ -368,6 +437,7 @@ async function preparePatch(
   }
   const files = parseUnifiedDiff(patchText);
   const changes: PreparedFileChange[] = [];
+  const seenTargets = new Set<string>();
 
   for (const file of files) {
     const targetPath = file.newPath ?? file.oldPath;
@@ -376,10 +446,14 @@ async function preparePatch(
     }
     const operation: FileChangeResult["operation"] = file.oldPath === undefined ? "create" : "update";
     const filePath = await resolveWorkspacePathForAccess(workspace, targetPath, operation === "create" ? "write" : "read");
+    if (seenTargets.has(filePath)) {
+      throw new Error(`apply_patch contains duplicate file sections for ${targetPath}.`);
+    }
+    seenTargets.add(filePath);
     let original = "";
     if (operation === "update") {
-      const { content, stat } = await readEditableTextFile(filePath, targetPath);
-      assertFreshRead(context, filePath, content, stat);
+      const { content } = await readEditableTextFile(filePath, targetPath);
+      assertFreshRead(context, filePath, content);
       original = content;
     } else {
       try {
@@ -618,7 +692,6 @@ function assertFreshRead(
   context: AgentToolContext,
   filePath: string,
   content: string,
-  stat: Stats,
 ): void {
   const readState = context.readState?.get(filePath);
   if (!readState) {
@@ -858,4 +931,8 @@ function getErrorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code)
     : undefined;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -13,6 +13,7 @@ import {
   isModelReasoningEffort,
   isRuntimeEvent,
   ok,
+  type WritePutRequest,
 } from "../../src/shared/agent-contracts";
 
 describe("shared agent contracts", () => {
@@ -61,6 +62,20 @@ describe("shared agent contracts", () => {
     expect(DEFAULT_MODEL_CONFIG.agent_autonomy).toBe("balanced");
     expect(DEFAULT_DEEPSEEK_MODEL_CONFIG.model_provide).toBe("DeepSeek");
     expect(DEFAULT_DEEPSEEK_MODEL_CONFIG.base_url).toBe("https://api.deepseek.com");
+  });
+
+  it("keeps write put requests limited to the implemented plain write contract", () => {
+    const request = {
+      workspace: "/workspace",
+      path: "notes.md",
+      content: "# Notes\n",
+    } satisfies WritePutRequest;
+
+    expect(request).toEqual({
+      workspace: "/workspace",
+      path: "notes.md",
+      content: "# Notes\n",
+    });
   });
 
   it("recognizes tool budget runtime events", () => {

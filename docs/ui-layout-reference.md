@@ -316,6 +316,8 @@ States:
   `state.inFlightTurnsByThreadId`.
 - `attachments`: local display records; authoritative ids live in
   `state.composer.attachmentIds`.
+- Attachment removal is disabled while a send is pending or the active thread is
+  running, so runtime attachment reads cannot race with composer cleanup.
 - `menuOpen`, `pickerOpen`: popovers close on outside pointer down or Escape.
 
 Send behavior:
@@ -470,6 +472,11 @@ Behavior constants:
 - Autosave delay: `800ms`.
 - Completion delay: `650ms`.
 - Completion requires at least `10` trailing content characters.
+- Opening another file or refreshing/switching workspace first flushes the
+  current dirty file through `write.put`; if that save fails, navigation stays
+  on the current file and surfaces the error.
+- `write.get`, `write.put`, and inline completion only accept Markdown file
+  paths (`.md`, `.mdx`, `.markdown`), matching the file list.
 
 Save state:
 
@@ -615,6 +622,8 @@ Save state:
 | `saving` | Profile operation in flight. |
 | `saved` | Last profile operation succeeded. |
 | `error` | Handler returned error or local validation failed. |
+
+Navigation guard treats `dirty` as unsaved, and also treats `error` as unsaved when the current form still differs from the active profile after a failed save.
 
 Primary save button:
 

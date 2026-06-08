@@ -123,7 +123,8 @@ function isExternalHttpUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
     return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
+  } catch (_error) {
+    void _error;
     return false;
   }
 }
@@ -138,7 +139,8 @@ function isAllowedAppNavigation(rawUrl: string): boolean {
 
     const rendererUrl = pathToFileURL(RENDERER_INDEX_FILE);
     return url.protocol === "file:" && url.pathname === rendererUrl.pathname;
-  } catch {
+  } catch (_error) {
+    void _error;
     return false;
   }
 }

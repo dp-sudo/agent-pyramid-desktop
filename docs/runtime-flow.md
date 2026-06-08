@@ -79,7 +79,7 @@ sequenceDiagram
   RT->>Att: get(attachmentIds)
   RT->>Store: appendItem(UserItem)
   RT->>Bus: item_appended(UserItem)
-  RT->>Bus: turn_started
+  RT->>Bus: turn_started(TurnRecord)
   RT-->>IPC: TurnRecord(status="in-flight")
   IPC-->>API: ok(TurnRecord)
   API-->>UI: IpcResult<TurnRecord>
@@ -261,15 +261,15 @@ Approval policy currently implemented in runtime:
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
 - All remaining non-read-only tools require approval.
 
-`edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the file no longer matches the latest agent-written content. `run_command` is also treated as destructive because arbitrary shell commands can modify files or run workspace scripts; it requests approval even when `approvalPolicy: "auto"` is set.
+`edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, and restores files already written in the same patch if a later write fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the file no longer matches the latest agent-written content. `run_command` is also treated as destructive because arbitrary shell commands can modify files or run workspace scripts; it requests approval even when `approvalPolicy: "auto"` is set.
 
-`apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written.
+`apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written. A patch may include multiple hunks for one file under a single file header, but duplicate file sections for the same resolved target are rejected so successful writes and failure rollback both have one authoritative pre-write snapshot per file.
 
 File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; it is not replayed from JSONL after restart.
 
 `run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions.
 
-`diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or `npx tsc`, it uses the command approval boundary instead of the read-only bypass. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
+`diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or `npx tsc`, it uses the command approval boundary instead of the read-only bypass. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
 
 ## Tool Budget
 
@@ -366,19 +366,23 @@ Completion persistence:
 Failure behavior:
 
 - Runtime emits `runtime_error` for worker/internal/tool/persistence categories where available.
-- Runtime emits `turn_failed` for top-level run loop failures.
+- Runtime appends and emits `turn_failed` for top-level run loop failures.
 - Runtime marks turn failed through `markTurnStatus("failed")`.
+
+`RuntimeEventBus` carries live UI events such as `item_appended`, `item_updated`, `approval_requested`, and `goal_updated`. The durable event log is narrower: terminal turn usage/failure and tool budget audit events live in `events.jsonl`, while item state lives in `messages.jsonl`.
 
 ## Renderer Event Consumption
 
 `Workbench.tsx` keeps SSE subscriptions for every thread opened in the window.
 Switching sessions does not unsubscribe the previous thread, so background
 turns can still complete, fail, or request approval without leaving renderer
-state stale.
+state stale. When a thread is deleted or archived from the sidebar, the
+renderer releases any retained subscription for that thread after the main
+process confirms the operation.
 
 Renderer event handling:
 
-- `turn_started`: `actions.turnStarted(turn)` keyed by `event.threadId`
+- `turn_started`: `actions.turnStarted(event.turn)` keyed by `event.threadId`
 - `item_appended`: append only when the event belongs to the active thread
 - `item_updated`: update only when the event belongs to the active thread
 - `turn_completed`: `actions.turnEnded(event.threadId, event.status)`
@@ -405,6 +409,10 @@ Defined in `src/shared/agent-contracts.ts`:
 - `tool_budget_reached`
 - `goal_updated`
 - `runtime_error`
+
+`turn_started` includes the complete `TurnRecord` as `event.turn`, so renderer
+state uses runtime-created model/profile/mode metadata instead of inferring it
+from the current composer state.
 
 When adding an event:
 

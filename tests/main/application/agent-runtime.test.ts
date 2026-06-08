@@ -38,6 +38,7 @@ class FakePool {
   response: LlmResponse = this.defaultResponse;
   responses: LlmResponse[] = [];
   chunks: LlmStreamChunk[] = [];
+  error: Error | null = null;
   delayMs = 0;
   rejectCanceledThreads = false;
   activeChats = 0;
@@ -58,6 +59,9 @@ class FakePool {
       }
       if (this.rejectCanceledThreads && this.canceledThreads.includes(thread.id)) {
         throw new Error("aborted by cancel");
+      }
+      if (this.error) {
+        throw this.error;
       }
       return this.responses.shift() ?? this.response;
     } finally {
@@ -201,6 +205,16 @@ describe("AgentRuntime", () => {
         "turn_completed",
       ]),
     );
+    expect(events.find((event) => event.kind === "turn_started")).toMatchObject({
+      kind: "turn_started",
+      turn: {
+        id: turn.id,
+        threadId: thread.id,
+        model: DEFAULT_MODEL_CONFIG.model,
+        modelProfileId: "default",
+        mode: "agent",
+      },
+    });
 
     const replayed = [];
     for await (const item of store.replayItems(thread.id)) {
@@ -292,6 +306,69 @@ describe("AgentRuntime", () => {
       .toEqual(["First"]);
   });
 
+  it("emits turn_failed when the worker chat fails before completion", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.error = new Error("worker connection lost");
+    const runtime = createRuntime();
+
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Run",
+    });
+
+    await waitFor(() =>
+      events.some(
+        (event) =>
+          event.kind === "turn_completed" &&
+          event.turnId === turn.id &&
+          event.status === "failed",
+      ),
+    );
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          code: "internal",
+          message: "worker connection lost",
+        }),
+        expect.objectContaining({
+          kind: "turn_failed",
+          turnId: turn.id,
+          message: "worker connection lost",
+        }),
+        expect.objectContaining({
+          kind: "turn_completed",
+          turnId: turn.id,
+          status: "failed",
+        }),
+      ]),
+    );
+    const persistedEvents: RuntimeEvent[] = [];
+    for await (const event of store.replayEvents(thread.id)) {
+      persistedEvents.push(event);
+    }
+    expect(persistedEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "turn_failed",
+          turnId: turn.id,
+          message: "worker connection lost",
+        }),
+        expect.objectContaining({
+          kind: "turn_completed",
+          turnId: turn.id,
+          status: "failed",
+        }),
+      ]),
+    );
+    expect(runtime.isThreadInFlight(thread.id)).toBe(false);
+  });
+
   it("clears in-flight state when appending the initial user item fails", async () => {
     const thread = await store.createThread({
       title: "Runtime",
@@ -317,6 +394,18 @@ describe("AgentRuntime", () => {
           code: "persistence_error",
           message: "disk full",
         }),
+        expect.objectContaining({
+          kind: "turn_failed",
+          message: "disk full",
+        }),
+      ]),
+    );
+    const persistedEvents: RuntimeEvent[] = [];
+    for await (const event of store.replayEvents(thread.id)) {
+      persistedEvents.push(event);
+    }
+    expect(persistedEvents).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
           kind: "turn_failed",
           message: "disk full",

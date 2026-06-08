@@ -299,7 +299,9 @@ export function SettingsView(): ReactElement {
   }
 
   function ensureNoUnsavedProfileChanges(): boolean {
-    if (!shouldBlockSettingsNavigation(saveState)) return true;
+    if (!shouldBlockSettingsNavigation(saveState, hasUnsavedProfileChanges(activeProfile, profileName, form))) {
+      return true;
+    }
     setError(t("settings.unsavedChanges"));
     return false;
   }
@@ -1116,8 +1118,33 @@ export function isProfileDeletePending(
   return pendingDeleteProfileId === profileId;
 }
 
-export function shouldBlockSettingsNavigation(saveState: SaveState): boolean {
-  return saveState === "dirty";
+export function shouldBlockSettingsNavigation(
+  saveState: SaveState,
+  hasUnsavedChanges = false,
+): boolean {
+  return saveState === "dirty" || (saveState === "error" && hasUnsavedChanges);
+}
+
+function hasUnsavedProfileChanges(
+  activeProfile: ModelConfigProfile | null,
+  profileName: string,
+  form: SettingsFormState,
+): boolean {
+  if (!activeProfile) return false;
+  return (
+    profileName !== activeProfile.name ||
+    form.model_provide !== activeProfile.config.model_provide ||
+    form.model !== activeProfile.config.model ||
+    form.base_url !== activeProfile.config.base_url ||
+    form.OPENAI_API_KEY !== activeProfile.config.OPENAI_API_KEY ||
+    form.model_context_window !== String(activeProfile.config.model_context_window) ||
+    form.model_auto_compact_token_limit !==
+      String(activeProfile.config.model_auto_compact_token_limit) ||
+    form.max_tokens !== String(activeProfile.config.max_tokens) ||
+    form.thinking !== activeProfile.config.thinking ||
+    form.model_reasoning_effort !== activeProfile.config.model_reasoning_effort ||
+    form.agent_autonomy !== activeProfile.config.agent_autonomy
+  );
 }
 
 export function getDefaultCategoryForSection(

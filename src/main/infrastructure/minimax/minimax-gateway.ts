@@ -168,9 +168,6 @@ export class MiniMaxGateway implements LlmGateway {
       for (const chunk of result.chunks) {
         yield chunk;
       }
-      if (isTerminalFinishReason(finishReason)) {
-        break;
-      }
     }
 
     for (const toolCall of toolAccumulator.completeAll()) {
@@ -222,9 +219,6 @@ export class MiniMaxGateway implements LlmGateway {
       }
       for (const chunk of result.chunks) {
         yield chunk;
-      }
-      if (result.stopReason) {
-        break;
       }
     }
 
@@ -965,10 +959,6 @@ function mapAnthropicStopReason(reason: string | undefined | null): LlmStopReaso
     default:
       return "stop";
   }
-}
-
-function isTerminalFinishReason(reason: string | undefined): boolean {
-  return reason === "stop" || reason === "tool_calls" || reason === "length" || reason === "error";
 }
 
 function findOpenAiToolCallByIndex(

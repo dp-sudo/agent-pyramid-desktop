@@ -184,7 +184,7 @@ sequenceDiagram
   A->>C: listProfiles()
   A->>Att: get(attachmentIds)
   A->>S: appendItem(user)
-  A->>Bus: item_appended + turn_started
+  A->>Bus: item_appended + turn_started(TurnRecord)
   A-->>M: TurnRecord(status=in-flight)
   M-->>P: ok(TurnRecord)
   P-->>R: IpcResult<TurnRecord>
@@ -293,11 +293,19 @@ Worker rules:
 
 Gateway rules:
 
+- `AgentRuntime` currently builds `LlmRequest` with
+  `protocol: "openai-compatible"` from model profiles; Anthropic-compatible
+  handling is a gateway-level tested path, not yet exposed as a model profile
+  setting.
 - Provider dialect is resolved from `LlmRequest.provider`.
 - MiniMax and DeepSeek use provider-specific request body fields.
 - Custom OpenAI-compatible providers use generic chat completions bodies.
 - Anthropic-compatible providers use messages/tool_use/tool_result mapping.
-- SSE parsing flushes pending tool calls on terminal finish or `[DONE]`.
+- OpenAI-compatible and Anthropic-compatible SSE keep reading after terminal
+  finish/stop signals until `[DONE]` or stream close so provider usage-only
+  tail frames are preserved.
+- SSE parsing flushes pending tool calls on terminal finish, `[DONE]`, or stream
+  close.
 
 ## Persistence Architecture
 
@@ -316,7 +324,7 @@ flowchart TB
   ThreadsDir --> ThreadFolder["<threadId>/"]
   ThreadFolder --> ThreadJson["thread.json\nThreadRecord"]
   ThreadFolder --> Messages["messages.jsonl\nItem per line"]
-  ThreadFolder --> Events["events.jsonl\nRuntimeEvent per line"]
+  ThreadFolder --> Events["events.jsonl\nPersisted runtime event per line"]
 
   AttachDir --> AttachIndex["index.json\nAttachmentRecord[]"]
   AttachDir --> Blob["<attachmentId>.bin"]

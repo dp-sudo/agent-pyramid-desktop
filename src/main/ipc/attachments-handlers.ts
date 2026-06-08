@@ -37,8 +37,8 @@ export function registerAttachmentHandlers(store: AttachmentStore): void {
   ipcMain.handle(
     ATTACHMENT_DELETE_CHANNEL,
     async (_event, request: AttachmentDeleteRequest | string) => {
-      const id = typeof request === "string" ? request : request.id;
       try {
+        const id = parseAttachmentDeleteId(request);
         await store.delete(id);
         return ok({ id });
       } catch (error) {
@@ -46,6 +46,20 @@ export function registerAttachmentHandlers(store: AttachmentStore): void {
       }
     },
   );
+}
+
+function parseAttachmentDeleteId(request: AttachmentDeleteRequest | string): string {
+  if (typeof request === "string") {
+    return request;
+  }
+  if (!request || typeof request !== "object") {
+    throw new Error("Attachment delete request must be an object or id string.");
+  }
+  const id = (request as { id?: unknown }).id;
+  if (typeof id !== "string" || !id.trim()) {
+    throw new Error("Attachment id is required.");
+  }
+  return id;
 }
 
 function messageOf(error: unknown): string {

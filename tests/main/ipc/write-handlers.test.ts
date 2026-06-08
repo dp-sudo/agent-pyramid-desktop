@@ -57,6 +57,26 @@ describe("write handlers helpers", () => {
     }
   });
 
+  it("limits write get/put paths to markdown files", async () => {
+    const workspace = await makeTempDir("write-markdown-policy-");
+    try {
+      expect(resolveWritePath(workspace, "docs/guide.md")).toBe(
+        path.join(workspace, "docs", "guide.md"),
+      );
+      expect(resolveWritePath(workspace, "docs/guide.mdx")).toBe(
+        path.join(workspace, "docs", "guide.mdx"),
+      );
+      expect(resolveWritePath(workspace, "docs/guide.markdown")).toBe(
+        path.join(workspace, "docs", "guide.markdown"),
+      );
+      expect(() => resolveWritePath(workspace, "src/index.ts")).toThrow(
+        "Write service only supports Markdown files: src/index.ts",
+      );
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("surfaces unreadable workspace scans as errors instead of returning an empty list", async () => {
     await expect(listMarkdownFiles("/path/that/does/not/exist", "")).rejects.toThrow();
   });

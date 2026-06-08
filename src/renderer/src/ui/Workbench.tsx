@@ -82,14 +82,7 @@ export function Workbench(): ReactElement {
       if (!threadId || !("threadId" in event)) return;
       const isActiveThreadEvent = event.threadId === threadId;
       if (event.kind === "turn_started") {
-        actions.turnStarted({
-          id: event.turnId,
-          threadId: event.threadId,
-          status: "in-flight",
-          startedAt: event.startedAt,
-          model: state.modelConfig.model,
-          mode: state.composer.mode,
-        });
+        actions.turnStarted(event.turn);
       } else if (event.kind === "item_appended" && isActiveThreadEvent) {
         actions.appendItem(event.item);
       } else if (event.kind === "item_updated" && isActiveThreadEvent) {
@@ -116,7 +109,7 @@ export function Workbench(): ReactElement {
         });
       }
     },
-    [actions, state.activeThread, state.composer.mode, state.modelConfig.model],
+    [actions, state.activeThread],
   );
 
   useEffect(() => {
@@ -150,13 +143,18 @@ export function Workbench(): ReactElement {
   );
 
   const unsubscribeThreadEvents = useCallback(
-    async (threadId: string): Promise<void> => {
-      if (!subscribedThreadIdsRef.current.has(threadId)) return;
+    async (threadId: string): Promise<boolean> => {
+      if (!shouldUnsubscribeRemovedThread(subscribedThreadIdsRef.current, threadId)) {
+        return true;
+      }
       const result = await window.agentApi.sse.unsubscribe({ threadId });
       if (!result.ok && result.code !== "SSE_NOT_SUBSCRIBED") {
         actions.setError(result.message);
+        subscribedThreadIdsRef.current.delete(threadId);
+        return false;
       }
       subscribedThreadIdsRef.current.delete(threadId);
+      return true;
     },
     [actions],
   );
@@ -300,12 +298,13 @@ export function Workbench(): ReactElement {
         return;
       }
 
-      if (state.activeThreadId === id) {
+      const wasActiveThread = state.activeThreadId === id;
+      if (wasActiveThread) {
         activeThreadIdRef.current = null;
-        await unsubscribeThreadEvents(id);
       }
+      const unsubscribed = await unsubscribeThreadEvents(id);
       actions.removeThread(id);
-      actions.setError(null);
+      if (unsubscribed) actions.setError(null);
       await refreshThreads();
     },
     [actions, refreshThreads, state, t, unsubscribeThreadEvents],
@@ -328,12 +327,13 @@ export function Workbench(): ReactElement {
         return;
       }
 
-      if (state.activeThreadId === id) {
+      const wasActiveThread = state.activeThreadId === id;
+      if (wasActiveThread) {
         activeThreadIdRef.current = null;
-        await unsubscribeThreadEvents(id);
         actions.deselectThread();
       }
-      actions.setError(null);
+      const unsubscribed = await unsubscribeThreadEvents(id);
+      if (unsubscribed) actions.setError(null);
       await refreshThreads();
     },
     [actions, refreshThreads, state, t, unsubscribeThreadEvents],
@@ -587,6 +587,13 @@ export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): str
     .filter((result) => !result.ok)
     .map((result) => result.message);
   return messages.length > 0 ? messages.join("\n") : null;
+}
+
+export function shouldUnsubscribeRemovedThread(
+  subscribedThreadIds: ReadonlySet<string>,
+  threadId: string,
+): boolean {
+  return subscribedThreadIds.has(threadId);
 }
 
 export function clampSidebarWidth(width: number): number {

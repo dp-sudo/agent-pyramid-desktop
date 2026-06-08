@@ -288,7 +288,7 @@ async function executeDiagnoseWorkspace(
   const output = await spawnWorkspaceCommand(command, cwdPath, timeoutMs, context.signal);
   const rawOutput = joinCommandOutput(output.stdout.text, output.stderr.text);
   const cwd = toWorkspaceRelative(workspace, cwdPath) || ".";
-  const diagnostics = parseTypeScriptDiagnostics(rawOutput, workspace);
+  const diagnostics = parseTypeScriptDiagnostics(rawOutput, workspace, cwdPath);
   return {
     command,
     cwd,
@@ -480,13 +480,14 @@ function toToolResult(result: CommandRunResult): AgentToolResult {
 function parseTypeScriptDiagnostics(
   output: string,
   workspace: string,
+  diagnosticBasePath: string,
 ): WorkspaceDiagnostic[] {
   const diagnostics: WorkspaceDiagnostic[] = [];
   const pattern = /^(.+?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$/;
   for (const line of output.split(/\r?\n/)) {
     const match = pattern.exec(line.trim());
     if (!match) continue;
-    const fullPath = path.resolve(workspace, match[1]);
+    const fullPath = path.resolve(diagnosticBasePath, match[1]);
     diagnostics.push({
       path: toWorkspaceRelative(workspace, fullPath),
       line: Number(match[2]),
@@ -666,10 +667,6 @@ async function assertTextFile(filePath: string, relativePath: string): Promise<v
   if (sample.includes(0)) {
     throw new Error(`diagnose_file path appears to be binary: ${relativePath}`);
   }
-}
-
-function normalizeRelativePath(value: string): string {
-  return value.replaceAll("\\", "/");
 }
 
 function optionalString(value: unknown): string | undefined {

@@ -5,6 +5,7 @@ import {
   clampSidebarWidth,
   formatInitialLoadErrors,
   getNextSidebarWidth,
+  shouldUnsubscribeRemovedThread,
 } from "../../src/renderer/src/ui/Workbench";
 
 describe("Workbench", () => {
@@ -53,6 +54,13 @@ describe("Workbench", () => {
       displayText: "Analyze attached images",
       threadTitle: "Analyze attached images",
     });
+  });
+
+  it("cleans up only threads with retained SSE subscriptions", () => {
+    const subscribed = new Set(["thread-1", "thread-2"]);
+
+    expect(shouldUnsubscribeRemovedThread(subscribed, "thread-1")).toBe(true);
+    expect(shouldUnsubscribeRemovedThread(subscribed, "thread-3")).toBe(false);
   });
 });
 

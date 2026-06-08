@@ -244,6 +244,42 @@ describe("MiniMaxGateway", () => {
     ]);
   });
 
+  it("keeps reading OpenAI-compatible streams after finish_reason to capture usage-only frames", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":[{"delta":{"content":"Done"},"finish_reason":"stop"}],"usage":null}',
+              "",
+              'data: {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11}}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    const chunks: LlmStreamChunk[] = [];
+    for await (const chunk of new MiniMaxGateway().stream(baseRequest)) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      { kind: "text_delta", text: "Done" },
+      { kind: "usage", usage: { inputTokens: 8, outputTokens: 3, totalTokens: 11 } },
+      { kind: "completed", stopReason: "stop" },
+    ]);
+  });
+
   it("flushes pending OpenAI-compatible tool calls when streams end with DONE only", async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -401,6 +437,48 @@ describe("MiniMaxGateway", () => {
         },
       },
       { kind: "completed", stopReason: "tool_calls" },
+    ]);
+  });
+
+  it("keeps reading Anthropic-compatible streams after stop_reason to capture usage-only frames", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done"}}',
+              "",
+              'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+              "",
+              'data: {"type":"message_delta","usage":{"input_tokens":7,"output_tokens":4}}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    const chunks: LlmStreamChunk[] = [];
+    for await (const chunk of new MiniMaxGateway().stream({
+      ...baseRequest,
+      protocol: "anthropic-compatible",
+      baseUrl: "https://provider.example.test/anthropic",
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      { kind: "text_delta", text: "Done" },
+      { kind: "usage", usage: { inputTokens: 7, outputTokens: 4, totalTokens: 11 } },
+      { kind: "completed", stopReason: "stop" },
     ]);
   });
 

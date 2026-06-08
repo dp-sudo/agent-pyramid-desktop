@@ -167,6 +167,7 @@ export function resolveWritePath(workspace: string, relative: string): string {
   const resolved = path.resolve(root, relative);
   assertWithinWorkspace(root, resolved, relative);
   assertAllowedWorkspacePath(root, resolved, relative);
+  assertMarkdownFilePath(relative);
   return resolved;
 }
 
@@ -202,6 +203,12 @@ function shouldSkipEntry(name: string): boolean {
 
 function isSkippedSegment(name: string): boolean {
   return name.startsWith(".") || SKIPPED_DIRECTORIES.has(name);
+}
+
+function assertMarkdownFilePath(relativePath: string): void {
+  if (!MARKDOWN_EXT.includes(path.extname(relativePath).toLowerCase())) {
+    throw new Error(`Write service only supports Markdown files: ${relativePath}`);
+  }
 }
 
 function emptyCompletion(): WriteCompleteResponse {

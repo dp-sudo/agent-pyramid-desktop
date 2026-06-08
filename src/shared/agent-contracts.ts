@@ -123,7 +123,7 @@ export type ThreadStatus = "active" | "archived";
 export interface ThreadRecord {
   id: string;
   title: string;
-  workspace: string; // absolute path; empty for write-mode
+  workspace: string; // absolute workspace path for code and write flows
   mode: "code" | "write";
   status: ThreadStatus;
   relation: ThreadRelation;
@@ -382,6 +382,7 @@ export interface TurnStartedEvent {
   threadId: string;
   turnId: string;
   startedAt: string;
+  turn: TurnRecord;
 }
 
 export interface TurnCompletedEvent {
@@ -584,8 +585,6 @@ export interface WritePutRequest {
   workspace: string;
   path: string;
   content: string;
-  /** If true, write happens via git apply. Otherwise plain fs.writeFile. */
-  viaGit?: boolean;
 }
 
 export interface WriteCompleteRequest {

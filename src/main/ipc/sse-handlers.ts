@@ -29,35 +29,45 @@ export function registerSseHandlers(bus: RuntimeEventBus): void {
   ipcMain.handle(
     SSE_SUBSCRIBE_CHANNEL,
     async (event, request: SseSubscribeRequest) => {
-      const webContents = event.sender;
-      const bucket = ensureWebContentsSubscriptions(webContents);
-      const existing = bucket.threads.get(request.threadId);
-      if (existing) {
-        existing.unsubscribe();
-        bucket.threads.delete(request.threadId);
+      try {
+        const threadId = parseThreadId(request, "threadId");
+        const webContents = event.sender;
+        const bucket = ensureWebContentsSubscriptions(webContents);
+        const existing = bucket.threads.get(threadId);
+        if (existing) {
+          existing.unsubscribe();
+          bucket.threads.delete(threadId);
+        }
+
+        const unsubscribe = bus.onThread(threadId, (evt: RuntimeEvent) => {
+          if (webContents.isDestroyed()) return;
+          webContents.send(SSE_PUSH_CHANNEL, evt);
+        });
+        bucket.threads.set(threadId, {
+          threadId,
+          ...(request.streamId ? { streamId: request.streamId } : {}),
+          unsubscribe,
+        });
+
+        return ok({ subscribed: threadId });
+      } catch (error) {
+        return err("SSE_SUBSCRIBE_FAILED", messageOf(error));
       }
-
-      const unsubscribe = bus.onThread(request.threadId, (evt: RuntimeEvent) => {
-        if (webContents.isDestroyed()) return;
-        webContents.send(SSE_PUSH_CHANNEL, evt);
-      });
-      bucket.threads.set(request.threadId, {
-        threadId: request.threadId,
-        ...(request.streamId ? { streamId: request.streamId } : {}),
-        unsubscribe,
-      });
-
-      return ok({ subscribed: request.threadId });
     },
   );
 
   ipcMain.handle(
     SSE_UNSUBSCRIBE_CHANNEL,
     async (event, request: SseUnsubscribeRequest) => {
-      if (disposeThreadSubscription(event.sender.id, request.threadId)) {
-        return ok({ unsubscribed: true });
+      try {
+        const threadId = parseThreadId(request, "threadId");
+        if (disposeThreadSubscription(event.sender.id, threadId)) {
+          return ok({ unsubscribed: true });
+        }
+        return err("SSE_NOT_SUBSCRIBED", "No active subscription for this thread");
+      } catch (error) {
+        return err("SSE_UNSUBSCRIBE_FAILED", messageOf(error));
       }
-      return err("SSE_NOT_SUBSCRIBED", "No active subscription for this thread");
     },
   );
 
@@ -122,6 +132,21 @@ function disposeWebContentsSubscriptions(webContentsId: number): void {
   }
   bucket.cleanup();
   subscriptions.delete(webContentsId);
+}
+
+function parseThreadId(request: unknown, field: string): string {
+  if (!request || typeof request !== "object") {
+    throw new Error("SSE request must be an object.");
+  }
+  const value = (request as { threadId?: unknown }).threadId;
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${field} is required.`);
+  }
+  return value;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function __resetSseSubscriptionsForTests(): void {

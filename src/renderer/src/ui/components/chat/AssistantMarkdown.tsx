@@ -104,7 +104,8 @@ function CodeBlock({
       await navigator.clipboard.writeText(code);
       setCopyState("copied");
       window.setTimeout(() => setCopyState("idle"), 1600);
-    } catch {
+    } catch (error) {
+      console.warn("[chat] failed to copy code block:", error);
       setCopyState("failed");
     }
   }

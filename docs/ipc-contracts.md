@@ -109,8 +109,8 @@ Notes:
 
 | Channel | Preload Method | Request | Success Value | Error Codes |
 | --- | --- | --- | --- | --- |
-| `sse:subscribe` | `sse.subscribe(request)` | `SseSubscribeRequest` | `{ subscribed: string }` | none currently returned |
-| `sse:unsubscribe` | `sse.unsubscribe(request)` | `SseUnsubscribeRequest` | `{ unsubscribed: boolean }` | `SSE_NOT_SUBSCRIBED` |
+| `sse:subscribe` | `sse.subscribe(request)` | `SseSubscribeRequest` | `{ subscribed: string }` | `SSE_SUBSCRIBE_FAILED` |
+| `sse:unsubscribe` | `sse.unsubscribe(request)` | `SseUnsubscribeRequest` | `{ unsubscribed: boolean }` | `SSE_NOT_SUBSCRIBED`, `SSE_UNSUBSCRIBE_FAILED` |
 | `sse:push` | `sse.onEvent(listener)` | main push only | `RuntimeEvent` payload | not invoke-based |
 
 Notes:
@@ -192,7 +192,10 @@ Notes:
 
 Notes:
 
+- `write.put` performs a plain UTF-8 file write after workspace path validation.
+
 - Write file paths are workspace-relative.
+- Write file paths must target `.md`, `.mdx`, or `.markdown` files.
 - Access uses workspace path checks and realpath checks to prevent path escape.
 - Skipped directories include dot directories, `DeepSeek`, `dist`, `node_modules`, and `out`.
 - Inline complete is currently local Markdown pattern completion, not an LLM request.
@@ -242,6 +245,10 @@ Current `RuntimeEvent.kind` values:
 - `tool_budget_reached`
 - `goal_updated`
 - `runtime_error`
+
+`turn_started` carries `turn: TurnRecord` in addition to `threadId`, `turnId`,
+and `startedAt`; renderer consumers should use `event.turn` as the authoritative
+in-flight turn metadata.
 
 When adding a runtime event, update:
 

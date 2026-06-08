@@ -176,6 +176,7 @@ export class AgentRuntime {
         threadId: turn.threadId,
         turnId: turn.id,
         startedAt: turn.startedAt,
+        turn,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -187,13 +188,7 @@ export class AgentRuntime {
         code: "persistence_error",
         message,
       });
-      this.deps.bus.emit("turn_failed", {
-        kind: "turn_failed",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        message,
-        failedAt: new Date().toISOString(),
-      });
+      await this.emitTurnFailed(turn, message);
       throw error;
     }
 
@@ -353,6 +348,7 @@ export class AgentRuntime {
             code: "internal",
             message,
           });
+          await this.emitTurnFailed(turn, message);
           await this.markTurnStatus(turn, "failed");
           return;
         }
@@ -435,13 +431,7 @@ export class AgentRuntime {
         });
         return;
       }
-      this.deps.bus.emit("turn_failed", {
-        kind: "turn_failed",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        message,
-        failedAt: new Date().toISOString(),
-      });
+      await this.emitTurnFailed(turn, message);
       await this.markTurnStatus(turn, "failed");
     }
   }
@@ -504,6 +494,28 @@ export class AgentRuntime {
       });
     }
     this.deps.bus.emit("tool_budget_reached", event);
+  }
+
+  private async emitTurnFailed(turn: TurnRecord, message: string): Promise<void> {
+    const event = {
+      kind: "turn_failed",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      message,
+      failedAt: new Date().toISOString(),
+    } as const;
+    try {
+      await this.deps.store.appendEvent(turn.threadId, event);
+    } catch (error) {
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "persistence_error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    this.deps.bus.emit("turn_failed", event);
   }
 
   private buildLlmRequest(

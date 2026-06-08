@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { canSubmitComposerDraft } from "../../src/renderer/src/ui/components/composer/FloatingComposer";
+import {
+  canSubmitComposerDraft,
+  isAttachmentRemovalDisabled,
+} from "../../src/renderer/src/ui/components/composer/FloatingComposer";
 
 describe("FloatingComposer", () => {
   it("allows attachment-only drafts to be submitted", () => {
@@ -41,5 +44,29 @@ describe("FloatingComposer", () => {
         sendPending: true,
       }),
     ).toBe(false);
+  });
+
+  it("blocks attachment removal while a send or active turn can still need the blob", () => {
+    expect(
+      isAttachmentRemovalDisabled({
+        disabled: false,
+        runtimeBusy: false,
+        sendPending: false,
+      }),
+    ).toBe(false);
+    expect(
+      isAttachmentRemovalDisabled({
+        disabled: false,
+        runtimeBusy: false,
+        sendPending: true,
+      }),
+    ).toBe(true);
+    expect(
+      isAttachmentRemovalDisabled({
+        disabled: false,
+        runtimeBusy: true,
+        sendPending: false,
+      }),
+    ).toBe(true);
   });
 });
