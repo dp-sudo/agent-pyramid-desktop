@@ -31,7 +31,7 @@ export class AttachmentStore {
   private initPromise: Promise<void> | null = null;
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly userDataDir: string) {
+  constructor(userDataDir: string) {
     this.attachmentsDir = path.join(userDataDir, ATTACHMENTS_DIRNAME);
     this.indexPath = path.join(this.attachmentsDir, INDEX_FILENAME);
   }

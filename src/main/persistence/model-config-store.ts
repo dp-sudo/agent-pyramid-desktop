@@ -308,13 +308,16 @@ function normalizeStoredConfig(value: unknown): ModelConfig {
   }
   const raw = value as Partial<ModelConfig>;
   const contextWindow = normalizeStoredContextWindow(raw.model_context_window);
+  const compactLimit = normalizeStoredCompactLimit(
+    raw.model_auto_compact_token_limit,
+    contextWindow,
+  );
   const maxTokens = normalizeStoredMaxTokens(raw.max_tokens, contextWindow);
   return normalizeModelConfig({
     ...DEFAULT_MODEL_CONFIG,
     ...raw,
     model_context_window: contextWindow,
-    model_auto_compact_token_limit:
-      raw.model_auto_compact_token_limit ?? Math.floor(contextWindow * 0.9),
+    model_auto_compact_token_limit: compactLimit,
     max_tokens: maxTokens,
   });
 }
@@ -333,6 +336,14 @@ function normalizeStoredMaxTokens(value: unknown, contextWindow: number): number
     return fallback;
   }
   return Math.min(Number(value), maxAllowed);
+}
+
+function normalizeStoredCompactLimit(value: unknown, contextWindow: number): number {
+  const fallback = Math.min(Math.floor(contextWindow * 0.9), contextWindow);
+  if (!Number.isInteger(value) || Number(value) < 1) {
+    return fallback;
+  }
+  return Math.min(Number(value), contextWindow);
 }
 
 function normalizeModelConfig(value: Partial<ModelConfig>): ModelConfig {

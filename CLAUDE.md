@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## ⚠️ Read this first — `DeepSeek/` is NOT this project's source code
+## Read this first — DeepSeek GUI is external reference only
 
-`DeepSeek/` at the repo root is **third-party reference material only**. It is **not** part of this project's source, **not** a build dependency, and **not** something to be edited, imported, linked, or developed against.
+This repository does not contain DeepSeek GUI source. DeepSeek GUI is only an external read-only design reference, not project source, dependency, implementation basis, or build input.
 
 **The real source code of this project lives in:**
 
@@ -15,16 +15,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `docs/` — project docs (`docs/agent-development.md`, `docs/ui-design.md`, `docs/minimax/` are read-only protocol references)
 - Root config: `package.json`, `electron.vite.config.ts`, `tsconfig.json`, `tsconfig.node.json`, `tsconfig.test.json`, `vitest.config.ts`
 
-**Hard rules for `DeepSeek/`:**
+**Hard rules for DeepSeek GUI reference source:**
 
-- Do not `import`, `require`, or reference any file under `DeepSeek/` from `src/`, configs, or docs.
-- Do not add it to `package.json`, `tsconfig.json`, Vite/Electron config, or any build/test/lint pipeline.
-- Do not edit files under `DeepSeek/` — even drive-by fixes.
-- Do not describe `DeepSeek/` as a dependency, source, or implementation basis in `docs/agent-development.md` or any other project doc.
-- If a design pattern is needed, **re-implement it in `src/`** — never copy, link, or vendor from `DeepSeek/`.
+- Do not `import`, `require`, link, copy, or reference external DeepSeek GUI files from `src/`, configs, or project docs.
+- Do not add external DeepSeek GUI paths to `package.json`, `tsconfig.json`, Vite/Electron config, or any build/test/lint pipeline.
+- Do not describe DeepSeek GUI reference source as a dependency, source, or implementation basis in `docs/agent-development.md` or any other project doc.
+- If a design pattern is needed, **re-implement it in `src/`** — never copy, link, or vendor from the reference source.
 - This rule applies to humans, to LLM agents (including Claude Code), and to the in-app Agent runtime itself.
 
-`.gitignore` excludes `DeepSeek/`, `.agents/`, `.codex/`, `.claude/`. The full statement is at the top of `AGENTS.md` under "⚠️ 参考资料声明".
+External read-only learning references are listed in `AGENTS.md`, including `/mnt/f/cc_src/DeepSeek` for DeepSeek GUI and `/mnt/f/cc_src/claude code` for Claude Code. They are learning references only, never implementation inputs.
 
 ## Companion file: `AGENTS.md`
 
@@ -40,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run dev` — start Electron + Vite renderer dev server (HMR).
 - `npm run build` — bundle main, preload, renderer to `out/`.
 - `npm run typecheck` — `tsc --noEmit` for renderer, node, **and** test tsconfigs (`tsconfig.json` + `tsconfig.node.json` + `tsconfig.test.json`); test sources are type-checked alongside source.
-- `npm run test` — `vitest run` over `tests/**/*.test.ts(x)`. To run a single file: `npx vitest run tests/main/application/agent-runtime.test.ts`. To watch: `npx vitest`. `DeepSeek/`, `node_modules/`, `out/` are excluded by `vitest.config.ts`.
+- `npm run test` — `vitest run` over `tests/**/*.test.ts(x)`. To run a single file: `npx vitest run tests/main/application/agent-runtime.test.ts`. To watch: `npx vitest`.
 - `npm run preview` — run the production build.
 
 No linter or formatter is configured. After any non-trivial change, treat `npm run typecheck && npm run test && npm run build` as the de facto validation gate.
@@ -129,7 +128,6 @@ Conventional Commits (`feat:`, `fix:`, `chore:`). When changing the agent framew
 - Thread + turn + item state machines: start at `src/main/application/agent-runtime.ts`, then trace items into `JsonlThreadStore` and back via `replayItems`.
 - IPC plumbing: `src/shared/ipc.ts` (channel names) → `src/main/ipc/*-handlers.ts` (main side) → `src/preload/index.ts` (bridge) → `src/renderer/src/ui/Workbench.tsx` (consumer).
 - New tool: implement `AgentTool` (`src/main/domain/agent/types.ts`), register via `InMemoryToolRegistry` in `src/main/index.ts`. `ToolRegistry.execute()` is called with an `AgentToolContext` — current fields include `workspace` (current thread workspace path). Existing built-ins to mirror:
-  - `echoTool` — smoke test for the tool call chain.
   - `createPlanTool` — returns a plan JSON; exposed and **approval-free only in plan mode**.
   - `createGoalTools(deps)` — factory returning `update_goal`; receives a `GoalToolDeps` callback so the tool can call back into `AgentRuntime.updateThreadGoal` **without importing the runtime**. Use this pattern when a tool needs to mutate thread state. `update_goal` is exposed and approval-free only in goal mode or an active-goal thread.
   - `createWorkspaceTools()` — read-only `list_files` / `read_file` / `search_files`. All paths resolve against `context.workspace` and refuse to escape it. `.git`, `.idea`, `.vscode`, `DeepSeek`, `dist`, `node_modules`, `out` are skipped by default. These are the canonical example of a tool that reads `AgentToolContext`.

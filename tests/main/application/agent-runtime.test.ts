@@ -1050,7 +1050,7 @@ describe("AgentRuntime", () => {
 
     expect(events.find((event) => event.kind === "runtime_error")).toMatchObject({
       kind: "runtime_error",
-      code: "internal",
+      code: "tool_not_found",
       message: 'Tool "echo" is not available in this turn.',
     });
   });
@@ -1238,6 +1238,56 @@ describe("AgentRuntime", () => {
         (event) => event.kind === "runtime_error" && event.message === "aborted by cancel",
       ),
     ).toBe(false);
+  });
+
+  it("keeps interrupted turns terminal when partial stream persistence fails", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.delayMs = 30;
+    fakePool.chunks = [{ kind: "text_delta", text: "Partial" }];
+    fakePool.rejectCanceledThreads = true;
+    const originalAppendItem = store.appendItem.bind(store);
+    const appendItem = vi.spyOn(store, "appendItem");
+    appendItem.mockImplementation(async (threadId, item) => {
+      if (item.kind === "assistant" && item.truncated) {
+        throw new Error("partial assistant write failed");
+      }
+      return originalAppendItem(threadId, item);
+    });
+    const runtime = createRuntime();
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Long run",
+    });
+
+    await waitFor(() =>
+      events.some(
+        (event) => event.kind === "item_updated" && event.item.kind === "assistant",
+      ),
+    );
+    await runtime.interruptTurn(turn.id);
+    await waitFor(() => !runtime.isThreadInFlight(thread.id) && fakePool.activeChats === 0);
+
+    const terminalEvents = events.filter(
+      (event) => event.kind === "turn_completed" && event.turnId === turn.id,
+    );
+    expect(terminalEvents).toEqual([
+      expect.objectContaining({ status: "interrupted" }),
+    ]);
+    expect(events.some((event) => event.kind === "turn_failed")).toBe(false);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          code: "persistence_error",
+          message: "partial assistant write failed",
+        }),
+      ]),
+    );
+    appendItem.mockRestore();
   });
 
   it("finishes interrupt cleanup when the interrupt notice cannot be persisted", async () => {

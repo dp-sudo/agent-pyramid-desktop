@@ -95,7 +95,7 @@ export async function resolveWritePathForAccess(
     await assertTargetIsNotSymlink(resolved, relative);
   }
 
-  const realParent = await resolveExistingParentRealpath(root, realRoot, resolved, relative);
+  const realParent = await resolveExistingParentRealpath(root, resolved, relative);
   assertWithinWorkspace(realRoot, realParent, relative);
   assertAllowedWorkspacePath(realRoot, realParent, relative);
   return resolved;
@@ -210,7 +210,6 @@ function emptyCompletion(): WriteCompleteResponse {
 
 async function resolveExistingParentRealpath(
   lexicalRoot: string,
-  realRoot: string,
   targetPath: string,
   relativePath: string,
 ): Promise<string> {

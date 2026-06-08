@@ -131,6 +131,23 @@ describe("ModelConfigStore", () => {
     expect(profiles.profiles[0]?.config.max_tokens).toBe(99);
   });
 
+  it("clamps legacy single-config compact limits to the context window", async () => {
+    const legacyConfig: ModelConfig = {
+      ...DEFAULT_MODEL_CONFIG,
+      model_provide: "Legacy",
+      model: "legacy-model",
+      base_url: "https://legacy.example.test/v1",
+      model_context_window: 100,
+      model_auto_compact_token_limit: 120,
+      max_tokens: 50,
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(legacyConfig));
+
+    const profiles = await store.listProfiles();
+    expect(profiles.profiles[0]?.config.model_context_window).toBe(100);
+    expect(profiles.profiles[0]?.config.model_auto_compact_token_limit).toBe(100);
+  });
+
   it("clamps stored profile max tokens below the context window", async () => {
     const profileState: ModelConfigProfilesState = {
       activeProfileId: "legacy-profile",
@@ -158,6 +175,35 @@ describe("ModelConfigStore", () => {
     expect(profiles.activeProfileId).toBe("legacy-profile");
     expect(profiles.profiles[0]?.config.model_context_window).toBe(100);
     expect(profiles.profiles[0]?.config.max_tokens).toBe(99);
+  });
+
+  it("clamps stored profile compact limits to the context window", async () => {
+    const profileState: ModelConfigProfilesState = {
+      activeProfileId: "legacy-profile",
+      profiles: [
+        {
+          id: "legacy-profile",
+          name: "Legacy",
+          config: {
+            ...DEFAULT_MODEL_CONFIG,
+            model_provide: "Legacy",
+            model: "legacy-model",
+            base_url: "https://legacy.example.test/v1",
+            model_context_window: 100,
+            model_auto_compact_token_limit: 120,
+            max_tokens: 50,
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(profileState));
+
+    const profiles = await store.listProfiles();
+    expect(profiles.activeProfileId).toBe("legacy-profile");
+    expect(profiles.profiles[0]?.config.model_context_window).toBe(100);
+    expect(profiles.profiles[0]?.config.model_auto_compact_token_limit).toBe(100);
   });
 
   it("rejects invalid token limits and keeps failures observable", async () => {

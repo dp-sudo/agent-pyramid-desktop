@@ -52,7 +52,7 @@ export class JsonlThreadStore {
   /** Per-thread serial write queue. Same-thread writes run serially. */
   private readonly mutexes = new Map<string, Promise<unknown>>();
 
-  constructor(private readonly userDataDir: string) {
+  constructor(userDataDir: string) {
     this.threadsDir = path.join(userDataDir, THREADS_DIRNAME);
     this.indexPath = path.join(this.threadsDir, INDEX_FILENAME);
   }

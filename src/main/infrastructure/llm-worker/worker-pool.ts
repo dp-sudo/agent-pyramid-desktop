@@ -17,6 +17,7 @@ const WORKER_FILE = path.join(__dirname, "llm-worker.js");
 interface PoolEntry {
   worker: WorkerLike;
   activeRequests: number;
+  index: number;
 }
 
 interface WorkerLike {
@@ -52,17 +53,8 @@ export class LlmWorkerPool {
 
   async start(): Promise<void> {
     for (let i = 0; i < this.size; i += 1) {
-      const worker = this.workerFactory(WORKER_FILE);
-      const entry: PoolEntry = { worker, activeRequests: 0 };
+      const entry = this.createEntry(i);
       this.workers.push(entry);
-      worker.on("error", (error) => {
-        console.error(`[llm-worker ${i}] error:`, error);
-      });
-      worker.on("exit", (code) => {
-        if (!this.destroyed && code !== 0) {
-          console.error(`[llm-worker ${i}] exited with code ${code}`);
-        }
-      });
     }
   }
 
@@ -160,5 +152,43 @@ export class LlmWorkerPool {
     if (!entry) throw new Error("No worker available");
     this.threadToWorker.set(threadId, entry);
     return entry;
+  }
+
+  private createEntry(index: number): PoolEntry {
+    const worker = this.workerFactory(WORKER_FILE);
+    const entry: PoolEntry = { worker, activeRequests: 0, index };
+    worker.on("error", (error) => {
+      console.error(`[llm-worker ${index}] error:`, error);
+    });
+    worker.on("exit", (code) => {
+      if (this.destroyed) return;
+      if (code !== 0) {
+        console.error(`[llm-worker ${index}] exited with code ${code}`);
+      }
+      this.replaceExitedEntry(entry);
+    });
+    return entry;
+  }
+
+  private replaceExitedEntry(entry: PoolEntry): void {
+    // A dead worker must not keep thread affinity; future turns need a live
+    // replacement while the current chat's exit listener rejects its promise.
+    this.releaseThreadMappingsForEntry(entry);
+    const index = this.workers.indexOf(entry);
+    if (index < 0) return;
+    try {
+      this.workers[index] = this.createEntry(entry.index);
+    } catch (error) {
+      console.error(`[llm-worker ${entry.index}] replacement failed:`, error);
+      this.workers.splice(index, 1);
+    }
+  }
+
+  private releaseThreadMappingsForEntry(entry: PoolEntry): void {
+    for (const [threadId, mappedEntry] of this.threadToWorker) {
+      if (mappedEntry !== entry) continue;
+      this.threadToWorker.delete(threadId);
+      this.threadToCancel.delete(threadId);
+    }
   }
 }

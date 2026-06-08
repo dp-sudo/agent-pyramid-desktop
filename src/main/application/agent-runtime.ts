@@ -72,7 +72,6 @@ const GOAL_MODE_INSTRUCTION = [
   "Use update_goal when the goal text, completion state, or blocked state changes.",
 ].join(" ");
 
-const INTERNAL_TOOL_NAMES = new Set(["echo"]);
 const READ_ONLY_TOOL_NAMES = new Set(["list_files", "read_file", "search_files"]);
 const DEFAULT_AGENT_AUTONOMY = "balanced";
 const AGENT_AUTONOMY_TOOL_ROUNDS = {
@@ -420,6 +419,16 @@ export class AgentRuntime {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (turn.status === "interrupted") {
+        this.deps.bus.emit("runtime_error", {
+          kind: "runtime_error",
+          threadId: turn.threadId,
+          turnId: turn.id,
+          code: "persistence_error",
+          message,
+        });
+        return;
+      }
       this.deps.bus.emit("turn_failed", {
         kind: "turn_failed",
         threadId: turn.threadId,
@@ -705,7 +714,7 @@ export class AgentRuntime {
       item: toolItem,
     });
 
-    if (!this.isToolAllowedForTurn(call.name, turn, thread)) {
+    if (!this.isToolAvailableForTurn(call.name, turn, thread)) {
       toolItem.status = "failed";
       toolItem.result = { message: `Tool "${call.name}" is not available in this turn.` };
       await this.deps.store.appendItem(turn.threadId, toolItem);
@@ -714,7 +723,7 @@ export class AgentRuntime {
         kind: "runtime_error",
         threadId: turn.threadId,
         turnId: turn.id,
-        code: "internal",
+        code: "tool_not_found",
         message: `Tool "${call.name}" is not available in this turn.`,
       });
       return {
@@ -783,17 +792,24 @@ export class AgentRuntime {
   ): AgentToolDefinition[] {
     return this.deps.registry
       .listDefinitions()
-      .filter((definition) => this.isToolAllowedForTurn(definition.name, turn, thread));
+      .filter((definition) => this.isToolEnabledForTurn(definition.name, turn, thread));
   }
 
-  private isToolAllowedForTurn(
+  private isToolAvailableForTurn(
     name: string,
     turn: TurnRecord,
     thread: ThreadRecord,
   ): boolean {
-    if (INTERNAL_TOOL_NAMES.has(name)) {
-      return false;
-    }
+    return this.listToolDefinitionsForTurn(turn, thread).some(
+      (definition) => definition.name === name,
+    );
+  }
+
+  private isToolEnabledForTurn(
+    name: string,
+    turn: TurnRecord,
+    thread: ThreadRecord,
+  ): boolean {
     if (name === "create_plan") {
       return turn.mode === "plan";
     }
@@ -813,7 +829,7 @@ export class AgentRuntime {
     }
     return !(
       (name === "create_plan" || name === "update_goal") &&
-      this.isToolAllowedForTurn(name, turn, thread)
+      this.isToolAvailableForTurn(name, turn, thread)
     );
   }
 

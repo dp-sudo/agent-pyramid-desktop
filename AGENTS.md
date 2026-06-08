@@ -46,9 +46,9 @@ Verification_Strategy: "如何验证本次改动"
 
 ---
 
-## 3. 参考资料边界：`DeepSeek/` 不是本项目源码
+## 3. 参考资料边界：本仓库不包含 DeepSeek GUI 源码
 
-仓库内 `DeepSeek/` 目录是第三方参考开发资料，**不属于本项目的源代码**。
+本项目不携带 DeepSeek GUI 源码副本。DeepSeek GUI 只允许作为仓库外只读设计学习参考，不属于本项目源码、依赖、实现依据或构建输入。
 
 本项目真实源码与项目文档位于：
 
@@ -57,19 +57,18 @@ Verification_Strategy: "如何验证本次改动"
 - `src/renderer/`
 - `src/shared/`
 - `tests/`
-- `docs/`（不含 `DeepSeek/docs/`）
+- `docs/`
 - 根目录 `package.json`、`package-lock.json`、`electron.vite.config.ts`、`tsconfig.json`、`tsconfig.node.json`、`tsconfig.test.json`、`vitest.config.ts`
 - `openspec/`（如存在；当前仓库未创建该目录）
 
 严格规则：
 
-- **不得**将 `DeepSeek/` 下的任何文件纳入构建、运行、测试、打包、发布流程。
-- **不得**在 `package.json`、`tsconfig.json`、Vite / Electron / eslint / vitest / tailwind 等配置中引用 `DeepSeek/`。
-- **不得**在改动本项目时修改 `DeepSeek/` 下的任何文件。
-- **不得**在 `docs/agent-development.md` 或其他项目文档中把 `DeepSeek/` 列为依赖、来源或实现依据。
-- 如需借鉴设计，必须在 `src/` 下独立实现，不得直接 import、link、copy 或 build `DeepSeek/` 下的任何文件。
+- **不得**将仓库外 DeepSeek GUI 参考源码纳入构建、运行、测试、打包、发布流程。
+- **不得**在 `package.json`、`tsconfig.json`、Vite / Electron / eslint / vitest / tailwind 等配置中新增对 DeepSeek GUI 参考源码路径的引用。
+- **不得**在 `docs/agent-development.md` 或其他项目文档中把 DeepSeek GUI 参考源码列为依赖、来源或实现依据。
+- 如需借鉴设计，必须在 `src/` 下独立实现，不得直接 import、link、copy 或 build 参考源码下的任何文件。
 
-本规则对人类协作者与 LLM Agent（包括本仓库内置 Agent 运行框架）一律生效；任何对仓库内 `DeepSeek/` 的写入、引入、引用都视为越界。
+本规则对人类协作者与 LLM Agent（包括本仓库内置 Agent 运行框架）一律生效；任何把外部参考源码接入实现链路的行为都视为越界。
 
 ### 3.1 外部设计学习参考源码
 
@@ -80,7 +79,7 @@ Verification_Strategy: "如何验证本次改动"
   - 学习重点：成熟完整的技术类 agent 平台结构，包括 QueryEngine / query loop 边界、工具注册与权限策略、命令系统、MCP / LSP 接入、上下文压缩、遥测与远程控制。只借鉴架构分层和机制设计，不复用其代码、协议私有实现或配置。
 - DeepSeek GUI 参考：Windows 路径 `F:\cc_src\DeepSeek`，WSL 路径 `/mnt/f/cc_src/DeepSeek`。
   - 源码观察：该项目 package 名为 `deepseek-gui`，是 Electron + React 桌面工作台；`src/renderer/src/components/Workbench.tsx` 呈现 sidebar、topbar、timeline、floating composer、right panels、write workspace、SDD/计划/插件/定时任务等布局组合，和本项目前端界面布局相似；`src/main/runtime/kun-adapter.ts` 通过主进程管理本地 Kun runtime；`kun/src/loop/agent-loop.ts`、`kun/src/server/routes/index.ts`、`kun/src/contracts/` 展示 HTTP/SSE runtime、thread/turn/event/approval/usage/attachment/workspace 等契约边界。
-  - 学习重点：桌面 agent workbench 的前端布局、运行时托管边界、HTTP/SSE contract、Code / Write 工作台、计划/Todo/Goal/审批/用量/附件/插件等用户体验组织方式。只用于 UI 布局和产品机制学习，不得把 `/mnt/f/cc_src/DeepSeek` 或仓库内 `DeepSeek/` 作为实现来源。
+  - 学习重点：桌面 agent workbench 的前端布局、运行时托管边界、HTTP/SSE contract、Code / Write 工作台、计划/Todo/Goal/审批/用量/附件/插件等用户体验组织方式。只用于 UI 布局和产品机制学习，不得把 `/mnt/f/cc_src/DeepSeek` 作为实现来源。
 
 ---
 
@@ -118,7 +117,7 @@ renderer React
 - `src/main/domain/agent/types.ts`：Agent 领域类型，包括 `AgentMessage`、`AgentToolDefinition`、`AgentToolCall`、`LlmRequest`、`LlmResponse`、`LlmStreamChunk`、`LlmGateway`、`AgentTool`。
 - `src/main/domain/agent/ports.ts`：端口接口，目前包括 `ToolRegistry`。
 - `src/main/application/agent-runtime.ts`：当前主运行时。负责多 turn 编排、线程历史收集、模型 profile 选择、附件上下文、上下文预算压缩、worker 调用、流式 item 更新、工具循环、approval gate、中断、goal 更新和事件广播。
-- `src/main/application/tools/`：工具注册与内置工具。`InMemoryToolRegistry` 是当前注册表；`createPlanTool`、`createGoalTools()`、`createWorkspaceTools()` 是当前 runtime 可用工具来源；`echoTool` 仅用于验证工具调用链路，runtime 不暴露给模型。
+- `src/main/application/tools/`：工具注册与内置工具。`InMemoryToolRegistry` 是当前注册表；`createPlanTool`、`createGoalTools()`、`createWorkspaceTools()` 是当前 runtime 可用工具来源。
 - `src/main/infrastructure/minimax/`：LLM 网关实现。虽然目录名是 `minimax`，但 `MiniMaxGateway` 当前同时处理 MiniMax、DeepSeek、custom OpenAI-compatible 以及 Anthropic-compatible 请求。
 - `src/main/infrastructure/llm-worker/`：worker 协议、worker 池、worker 入口。
 - `src/main/ipc/`：主进程 IPC handler，按 `threads`、`turns`、`sse`、`approvals`、`goals`、`attachments`、`usage`、`workspace`、`write`、`model-config` 分文件注册。
@@ -218,8 +217,8 @@ renderer React
 - 工具定义通过 `ToolRegistry.listDefinitions()` 提供给模型。
 - 工具执行通过 `ToolRegistry.execute(call)` 返回 `AgentToolResult`。
 - 新工具应放在 `src/main/application/tools/` 或更合适的 application 子目录，并在 `src/main/index.ts` 的 `InMemoryToolRegistry([...])` 组合处注册。
-- 当前注册工具包括 `echoTool`、`createPlanTool`、`createWorkspaceTools()` 返回的 `list_files` / `read_file` / `search_files`，以及 `createGoalTools()` 返回的 `update_goal`。
-- `AgentRuntime` 不向模型暴露 `echo`；只读 workspace 工具跳过 approval；`create_plan` / `update_goal` 由模式门控并跳过 approval；其它工具调用进入 approval gate。
+- 当前注册工具包括 `createPlanTool`、`createWorkspaceTools()` 返回的 `list_files` / `read_file` / `search_files`，以及 `createGoalTools()` 返回的 `update_goal`。
+- 只读 workspace 工具跳过 approval；`create_plan` / `update_goal` 由模式门控并跳过 approval；其它工具调用进入 approval gate。
 - Workspace 工具只允许访问 active thread 的 `workspace`，使用 realpath 防 path escape，并跳过隐藏目录、`DeepSeek`、`dist`、`node_modules`、`out` 等目录。
 - 修改工具策略时必须同步 `AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime.requiresApproval()`、UI 和持久化记录。
 
@@ -380,7 +379,7 @@ UI 改动必须遵守 `docs/ui-design.md` 和当前 CSS token 体系。
 - 新增或变更字段、接口、状态、枚举、路径或返回值时，同步检查所有调用方、类型定义和测试是否需要一起更新。
 - 同一个业务概念只允许有一个权威来源，不散落为多个字面量。
 - 状态码、节点名、阈值等多处引用的值，提取为常量、枚举或配置项。
-- 优先使用 `rg` / `rg --files` 搜索。搜索范围默认排除 `DeepSeek/`，除非任务明确要求只读参考。
+- 优先使用 `rg` / `rg --files` 搜索。默认只搜索本仓库真实源码与文档；若任务明确要求参考 DeepSeek GUI，只能只读查看仓库外 `/mnt/f/cc_src/DeepSeek`。
 
 ### 11.3 新旧逻辑划界
 
@@ -434,7 +433,7 @@ npm run build
 - `npm run dev`：启动 Electron + Vite renderer 开发环境。
 - `npm run build`：构建 main、preload、renderer 到 `out/`。
 - `npm run typecheck`：运行 renderer、node 与 test tsconfig 的 TypeScript 类型检查。
-- `npm run test`：运行 Vitest 测试；测试配置位于 `vitest.config.ts`，排除 `DeepSeek/**`、`node_modules/**`、`out/**`。
+- `npm run test`：运行 Vitest 测试；测试配置位于 `vitest.config.ts`。
 - `npm run preview`：预览构建后的 Electron 应用。
 
 如果 Electron 下载失败，可使用镜像：
@@ -539,7 +538,7 @@ PR 需说明：
 - [ ] 如果涉及接口/类型变更，所有调用方和测试是否已同步更新？
 - [ ] 函数、API handler、工具、协议转换、持久化、安全边界等重要机制是否已有准确注释？已有注释是否仍然与代码一致？
 - [ ] 如果涉及 Agent、LLM、工具、IPC、持久化、UI 或 i18n，是否已同步更新 `docs/agent-development.md`？
-- [ ] 是否避免了对 `DeepSeek/` 的写入、构建引用和文档依赖表述？
+- [ ] 是否避免了把仓库外 DeepSeek GUI 参考路径写入依赖、构建引用或实现依据？
 
 ---
 

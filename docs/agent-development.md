@@ -20,7 +20,7 @@
 - 建立共享 IPC 与 Agent 请求/响应契约：`src/shared/`。
 - 建立 Agent 领域类型和端口接口：`src/main/domain/agent/`。
 - 建立多 turn Agent 编排器：`src/main/application/agent-runtime.ts`。
-- 建立工具注册机制和 `echo` 验证工具：`src/main/application/tools/`。
+- 建立工具注册机制：`src/main/application/tools/`。
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
@@ -256,8 +256,10 @@
 - 修复 renderer IPC 结果处理：Workbench 现在检查 `sse.subscribe`、`sse.unsubscribe` 和 `turns.interrupt` 的 `IpcResult`，订阅或中断失败会显示到现有错误区域。
 - 修复 Workbench 初始加载错误可见性：启动时 `threads.list`、`modelConfig.get`、`modelConfig.listProfiles` 的失败不再被静默忽略，会合并显示到现有错误区域。
 - 修复 FloatingComposer 草稿同步：Code composer 会跟随全局 `composer.text` 更新，避免 Write 模式写入草稿后切回 Code 仍显示旧本地 draft。
+- 修复 FloatingComposer 弹层收束：`+` 菜单和模型选择器打开时会响应 composer 外部 `pointerdown` 与 `Escape` 自动关闭，添加图片入口触发文件选择后也会立即收起菜单，避免弹层长期悬浮遮挡时间线。
 - 修复模型选择器高亮：当多个 profile 使用同一 model 字符串时，Composer 优先按 `modelProfileId` 高亮唯一档案，避免多 profile 同时显示为选中。
 - 修复模型 profile 状态同步：`WorkbenchContext` 会在 active profile 真实切换或当前 profile 被删除时同步 composer 到新 active profile；普通 profile 列表刷新会保留用户当前有效选择，并刷新该 profile 的最新模型和 reasoning 配置，避免 `model` 文本与 `modelProfileId` 错位。
+- 优化大模型输出 Markdown 渲染：`AssistantMarkdown` 继续使用 `react-markdown` + `remark-gfm`，但新增链接、代码块、表格、任务列表、图片和分隔线的稳定容器/样式映射，长代码和宽表格在中心内容列内横向滚动，外链打开新窗口。
 - 修复附件存储输入校验：`AttachmentStore` 现在严格校验 `dataBase64`，非法 base64 不会被 `Buffer.from(..., "base64")` 宽松解码后保存为损坏附件。
 - 修复附件创建失败副产物：`AttachmentStore.create()` 在附件二进制写入后如果索引更新失败，会删除刚创建的 `.bin` 文件并原样抛出错误，避免留下孤儿附件。
 - 加固本地持久化 ID 边界：`JsonlThreadStore` 和 `AttachmentStore` 在解析 thread / attachment 本地路径前校验 UUID，阻止 renderer 或损坏数据传入 `../` 之类路径片段访问、写入或删除持久化目录外文件。
@@ -282,3 +284,13 @@
 - 主进程组合根只注册多 turn、SSE、approval、goal、attachment、usage、workspace、write 和 model config 相关 IPC handler。
 - 更新项目维护文档和协作者指南，明确当前只有多 turn runtime，不要恢复旧单次运行分支。
 - 验证方式：`npm run test`、`npm run typecheck`、`npm run build`。
+
+## 2026-06-08 - 维护审计与旧调试工具清理
+
+- 清理生产运行时旧验证工具：删除 `echo` 调试工具源码，主进程组合根只注册 `create_plan`、只读 workspace 工具和 `update_goal`，注册表行为改由测试内本地 tool double 覆盖。
+- 优化工具调用错误分类：模型请求未在当前 turn 工具 catalog 中暴露的工具时，`AgentRuntime` 现在发出 `runtime_error(code: "tool_not_found")`，不再混用泛化 `internal`。
+- 修复 LLM worker 池恢复路径：worker 异常退出后会清除指向死亡 worker 的 thread affinity / cancel 映射并创建 replacement worker，避免后续同线程 turn 继续投递到已退出 worker。
+- 清理静态分析发现的死引用：移除未使用的 React import、store 构造参数属性和 write handler 未使用参数。
+- 修复中断状态机边缘情况：用户中断已经写入 `interrupted` 终态后，后台 partial stream 持久化失败只发出可追踪 `runtime_error(code: "persistence_error")`，不会再把同一 turn 覆盖为 `failed`。
+- 修复模型配置迁移兼容性：读取旧单配置或旧 profiles 状态时，过大的 `model_auto_compact_token_limit` 会被收敛到 `model_context_window`，与旧 `max_tokens` 收敛策略一致；用户主动保存新配置仍保持严格校验。
+- 验证方式：`npm run typecheck`、`npm run test`、`npm run build`。

@@ -118,6 +118,41 @@ describe("LlmWorkerPool", () => {
     expect(worker.listenerCount("message")).toBe(0);
   });
 
+  it("replaces exited workers and clears stale thread affinity", async () => {
+    const firstWorker = new FakeWorker();
+    const replacementWorker = new FakeWorker();
+    const workers = [firstWorker, replacementWorker];
+    const pool = new LlmWorkerPool(1, () => {
+      const worker = workers.shift();
+      if (!worker) throw new Error("No fake worker available.");
+      return worker;
+    });
+    await pool.start();
+
+    const firstPromise = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+    firstWorker.emit("exit", 9);
+    await expect(firstPromise).rejects.toThrow("LLM worker exited before completing request");
+
+    const secondPromise = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+    const chat = replacementWorker.posted.find((message) => message.type === "chat");
+    if (!chat || chat.type !== "chat") throw new Error("Expected replacement chat message.");
+
+    replacementWorker.emit("message", {
+      kind: "done",
+      requestId: chat.requestId,
+      response: {
+        text: "recovered",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    } satisfies WorkerOutbound);
+
+    await expect(secondPromise).resolves.toMatchObject({ text: "recovered" });
+    expect(firstWorker.posted).toHaveLength(1);
+    expect(replacementWorker.posted).toHaveLength(1);
+  });
+
   it("posts cancel messages for the in-flight thread request", async () => {
     const worker = new FakeWorker();
     const pool = createPoolWithWorker(worker);

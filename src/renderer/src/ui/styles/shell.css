@@ -564,7 +564,9 @@ textarea {
 
 .ds-markdown {
   min-width: 0;
+  color: var(--ds-text);
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ds-markdown > :first-child {
@@ -579,8 +581,9 @@ textarea {
 .ds-markdown ul,
 .ds-markdown ol,
 .ds-markdown blockquote,
-.ds-markdown table,
-.ds-markdown pre {
+.ds-markdown .ds-code-block,
+.ds-markdown .ds-markdown-table-wrap,
+.ds-markdown .ds-markdown-image-frame {
   margin: 0 0 0.75em;
 }
 
@@ -613,9 +616,37 @@ textarea {
   margin-top: 0.28em;
 }
 
+.ds-markdown li {
+  padding-left: 0.1rem;
+}
+
+.ds-markdown li > p {
+  margin-bottom: 0.38em;
+}
+
+.ds-markdown li > p:last-child {
+  margin-bottom: 0;
+}
+
+.ds-markdown input[type="checkbox"] {
+  margin: 0 0.42em 0 -1.15rem;
+  vertical-align: -0.12em;
+}
+
+.ds-markdown a {
+  color: var(--ds-accent);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+.ds-markdown a:hover {
+  text-decoration: underline;
+}
+
 .ds-markdown blockquote {
   border-left: 3px solid var(--ds-border-strong);
   color: var(--ds-text-muted);
+  margin-left: 0;
   padding-left: 12px;
 }
 
@@ -626,27 +657,57 @@ textarea {
   color: var(--ds-text);
   font-family: var(--ds-font-mono);
   font-size: 0.92em;
+  line-height: 1.65;
   padding: 0.1em 0.32em;
 }
 
-.ds-markdown pre {
-  overflow: auto;
+.ds-code-block {
+  min-width: 0;
   border: 1px solid var(--ds-border-muted);
   border-radius: var(--ds-radius-md);
   background: var(--ds-surface-subtle);
+  overflow: hidden;
+}
+
+.ds-code-block-header {
+  border-bottom: 1px solid var(--ds-border-muted);
+  color: var(--ds-text-faint);
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-size-caption);
+  padding: 6px 12px;
+  text-transform: lowercase;
+}
+
+.ds-markdown pre {
+  max-width: 100%;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--ds-font-mono);
+  line-height: 1.62;
   padding: 12px;
 }
 
 .ds-markdown pre code {
   border: 0;
   background: transparent;
+  color: inherit;
+  font-size: var(--ds-size-caption);
   padding: 0;
+  white-space: pre;
+  word-break: normal;
 }
 
-.ds-markdown table {
+.ds-markdown-table-wrap {
   display: block;
   max-width: 100%;
   overflow-x: auto;
+}
+
+.ds-markdown table {
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
 }
 
@@ -661,6 +722,28 @@ textarea {
   background: var(--ds-surface-subtle);
   color: var(--ds-text);
   font-weight: 650;
+}
+
+.ds-markdown-divider {
+  height: 1px;
+  border: 0;
+  background: var(--ds-border-muted);
+  margin: 1rem 0;
+}
+
+.ds-markdown-image-frame {
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-subtle);
+}
+
+.ds-markdown-image-frame img {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }
 
 .ds-work-process {

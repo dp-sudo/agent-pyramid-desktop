@@ -1,12 +1,12 @@
 import { join } from "node:path";
-import { app, BrowserWindow, session } from "electron";
+import { pathToFileURL } from "node:url";
+import { app, BrowserWindow, session, shell } from "electron";
 import { JsonlThreadStore } from "./persistence/index.js";
 import { AttachmentStore } from "./persistence/attachment-store.js";
 import { ModelConfigStore } from "./persistence/model-config-store.js";
 import { RuntimeEventBus } from "./event-bus.js";
 import { LlmWorkerPool } from "./infrastructure/llm-worker/worker-pool.js";
 import { AgentRuntime } from "./application/agent-runtime.js";
-import { echoTool } from "./application/tools/echo-tool.js";
 import { createPlanTool } from "./application/tools/create-plan-tool.js";
 import { createGoalTools } from "./application/tools/goal-tools.js";
 import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
@@ -42,7 +42,6 @@ const runtime = new AgentRuntime({
   bus,
   registry,
 });
-registry.register(echoTool);
 registry.register(createPlanTool);
 for (const tool of createWorkspaceTools()) {
   registry.register(tool);
@@ -56,6 +55,7 @@ for (const tool of createGoalTools({
 }
 
 let mainWindow: BrowserWindow | null = null;
+const RENDERER_INDEX_FILE = join(__dirname, "../renderer/index.html");
 
 // ---------------------------------------------------------------------------
 // Window
@@ -75,6 +75,7 @@ function createWindow(): void {
       nodeIntegration: false,
     },
   });
+  configureExternalNavigation(mainWindow);
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -82,7 +83,56 @@ function createWindow(): void {
     return;
   }
 
-  void mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+  void mainWindow.loadFile(RENDERER_INDEX_FILE);
+}
+
+function configureExternalNavigation(window: BrowserWindow): void {
+  // Renderer markdown can request new windows, but main owns the security
+  // boundary: external http(s) URLs leave Electron, everything else is denied.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalHttpUrl(url)) {
+      openExternalUrl(url);
+    }
+    return { action: "deny" };
+  });
+
+  window.webContents.on("will-navigate", (event, url) => {
+    if (isAllowedAppNavigation(url)) return;
+    event.preventDefault();
+    if (isExternalHttpUrl(url)) {
+      openExternalUrl(url);
+    }
+  });
+}
+
+function openExternalUrl(url: string): void {
+  void shell.openExternal(url).catch((error) => {
+    console.error("[main] open external URL failed:", error);
+  });
+}
+
+function isExternalHttpUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedAppNavigation(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (process.env.ELECTRON_RENDERER_URL) {
+      const rendererUrl = new URL(process.env.ELECTRON_RENDERER_URL);
+      return url.origin === rendererUrl.origin;
+    }
+
+    const rendererUrl = pathToFileURL(RENDERER_INDEX_FILE);
+    return url.protocol === "file:" && url.pathname === rendererUrl.pathname;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

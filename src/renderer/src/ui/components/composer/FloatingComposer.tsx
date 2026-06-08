@@ -22,6 +22,7 @@ export function FloatingComposer({
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
   const runtimeBusy = state.inFlightTurn !== null;
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [draftText, setDraftText] = useState(state.composer.text);
   const [sendPending, setSendPending] = useState(false);
@@ -39,6 +40,36 @@ export function FloatingComposer({
       setAttachments([]);
     }
   }, [attachments.length, state.composer.attachmentIds.length]);
+
+  useEffect(() => {
+    if (!menuOpen && !pickerOpen) return undefined;
+
+    function closeOpenPopover(): void {
+      setMenuOpen(false);
+      setPickerOpen(false);
+    }
+
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (shellRef.current?.contains(target)) return;
+      closeOpenPopover();
+    }
+
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        closeOpenPopover();
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuOpen, pickerOpen]);
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -104,7 +135,7 @@ export function FloatingComposer({
   }
 
   return (
-    <div className="ds-composer-shell" style={{ width: "100%" }}>
+    <div ref={shellRef} className="ds-composer-shell" style={{ width: "100%" }}>
       <input
         ref={fileInputRef}
         type="file"
@@ -164,7 +195,10 @@ export function FloatingComposer({
               <button
                 type="button"
                 className="ds-composer-menu-row"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => {
+                  fileInputRef.current?.click();
+                  setMenuOpen(false);
+                }}
               >
                 <span>{t("composer.addImage")}</span>
                 <span>PNG/JPEG/WebP/GIF</span>

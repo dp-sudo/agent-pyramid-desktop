@@ -2,43 +2,65 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createPlanTool } from "../../../src/main/application/tools/create-plan-tool";
-import { echoTool } from "../../../src/main/application/tools/echo-tool";
 import { createGoalTools } from "../../../src/main/application/tools/goal-tools";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
+import type { AgentTool } from "../../../src/main/domain/agent/types";
 import type { ThreadGoalStatus } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
+const sampleTool: AgentTool = {
+  definition: {
+    name: "sample",
+    description: "Test-only tool for exercising registry plumbing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+        },
+      },
+      required: ["text"],
+    },
+  },
+  async execute(input) {
+    if (typeof input.text !== "string") {
+      throw new Error("sample tool requires a string field named text.");
+    }
+    return input.text;
+  },
+};
+
 describe("application tools", () => {
   it("registers and executes tools by name", async () => {
-    const registry = new InMemoryToolRegistry([echoTool]);
+    const registry = new InMemoryToolRegistry([sampleTool]);
 
-    expect(registry.listDefinitions()).toEqual([echoTool.definition]);
+    expect(registry.listDefinitions()).toEqual([sampleTool.definition]);
     await expect(
       registry.execute(
-        { id: "call-1", name: "echo", arguments: { text: "hello" } },
+        { id: "call-1", name: "sample", arguments: { text: "hello" } },
         { threadId: "thread-1", turnId: "turn-1" },
       ),
     ).resolves.toEqual({
       toolCallId: "call-1",
-      name: "echo",
+      name: "sample",
       content: "hello",
     });
   });
 
   it("rejects duplicate tool names during construction and registration", () => {
-    expect(() => new InMemoryToolRegistry([echoTool, echoTool]))
-      .toThrow('Tool "echo" is already registered.');
+    expect(() => new InMemoryToolRegistry([sampleTool, sampleTool]))
+      .toThrow('Tool "sample" is already registered.');
 
     const registry = new InMemoryToolRegistry([]);
-    registry.register(echoTool);
+    registry.register(sampleTool);
 
-    expect(() => registry.register(echoTool))
-      .toThrow('Tool "echo" is already registered.');
+    expect(() => registry.register(sampleTool))
+      .toThrow('Tool "sample" is already registered.');
   });
 
   it("keeps missing and invalid tool failures observable", async () => {
-    const registry = new InMemoryToolRegistry([echoTool]);
+    const registry = new InMemoryToolRegistry([sampleTool]);
 
     await expect(
       registry.execute(
@@ -47,8 +69,8 @@ describe("application tools", () => {
       ),
     ).rejects.toThrow('Tool "missing" is not registered.');
 
-    await expect(echoTool.execute({}, { threadId: "thread-1", turnId: "turn-1" }))
-      .rejects.toThrow("echo tool requires a string field named text.");
+    await expect(sampleTool.execute({}, { threadId: "thread-1", turnId: "turn-1" }))
+      .rejects.toThrow("sample tool requires a string field named text.");
   });
 
   it("normalizes create_plan input into visible plan payloads", async () => {
