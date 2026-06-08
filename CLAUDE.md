@@ -1,135 +1,295 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file is the quick-start guide for Claude Code and other coding agents working in this repository. `AGENTS.md` is the authoritative rulebook. When the two overlap, `AGENTS.md` wins.
 
-## Read this first — DeepSeek GUI is external reference only
+## First Read
 
-This repository does not contain DeepSeek GUI source. DeepSeek GUI is only an external read-only design reference, not project source, dependency, implementation basis, or build input.
+Read in this order before making a non-trivial change:
 
-**The real source code of this project lives in:**
+1. `AGENTS.md` sections 1-2 for hard gates and the required Pre-Flight Manifest.
+2. `docs/project-map.md` for the project map, source ownership, entry points and tests.
+3. `docs/runtime-flow.md` before touching `AgentRuntime`, worker streaming, tools, approvals or interrupts.
+4. `docs/ipc-contracts.md` before touching IPC, preload or renderer API calls.
+5. `docs/data-model.md` before touching shared contracts, JSONL persistence, attachments, model config or migrations.
+6. `docs/ui-design.md` and `docs/ui-layout-reference.md` before touching UI layout, styles, tokens or page structure.
 
-- `src/main/` — Electron main process (domain / application / infrastructure / ipc / persistence)
-- `src/preload/` — Electron preload bridge
-- `src/renderer/` — React renderer (root is `src/renderer/index.html`, code under `src/renderer/src/`)
-- `src/shared/` — cross-process types and IPC channel names
-- `docs/` — project docs (`docs/agent-development.md`, `docs/ui-design.md`, `docs/minimax/` are read-only protocol references)
-- Root config: `package.json`, `electron.vite.config.ts`, `tsconfig.json`, `tsconfig.node.json`, `tsconfig.test.json`, `vitest.config.ts`
+`docs/architecture.md` is the diagram-first architecture reference. `docs/agent-development.md` is the long-running development log and must be updated when Agent framework capabilities change.
 
-**Hard rules for DeepSeek GUI reference source:**
+## External Reference Boundary
 
-- Do not `import`, `require`, link, copy, or reference external DeepSeek GUI files from `src/`, configs, or project docs.
-- Do not add external DeepSeek GUI paths to `package.json`, `tsconfig.json`, Vite/Electron config, or any build/test/lint pipeline.
-- Do not describe DeepSeek GUI reference source as a dependency, source, or implementation basis in `docs/agent-development.md` or any other project doc.
-- If a design pattern is needed, **re-implement it in `src/`** — never copy, link, or vendor from the reference source.
-- This rule applies to humans, to LLM agents (including Claude Code), and to the in-app Agent runtime itself.
+This repository does not contain DeepSeek GUI or Claude Code source. External directories under `/mnt/f/cc_src/*` are read-only learning references only.
 
-External read-only learning references are listed in `AGENTS.md`, including `/mnt/f/cc_src/DeepSeek` for DeepSeek GUI and `/mnt/f/cc_src/claude code` for Claude Code. They are learning references only, never implementation inputs.
+Never import, link, copy, build, test, package, or document those external reference files as implementation sources. Do not add them to `package.json`, TypeScript config, Vite/Electron config, Vitest config, docs dependency lists, or runtime code. If a pattern is useful, re-implement it inside this repository.
 
-## Companion file: `AGENTS.md`
+## Project Summary
 
-`AGENTS.md` (Chinese) is the **authoritative LLM rulebook** for this repo: hard gates (no hallucinated references, no out-of-scope edits, no swallowed errors), the required **Pre-Flight Manifest** before any code change, IPC change checklist, persistence invariants, and the post-generation self-check. This file (`CLAUDE.md`) is the productivity quick-start — when the two overlap, AGENTS.md wins. Read AGENTS.md sections 1–2 before your first edit in a session, sections 9 / 12 / 17 before changing IPC contracts, persistence, or shipping.
+`agent-pyramid-desktop` is an Electron + Vite + React + TypeScript desktop Agent Workbench.
 
-## What this project is
+The real runtime path is:
 
-`agent-pyramid-desktop` — an Electron + Vite + React + TypeScript desktop runtime for an agent framework. The architecture is **pyramid layers + multi-turn runtime**: `domain` (types/ports) → `application` (orchestration) → `infrastructure` (LLM/IO) → `preload` (security bridge) → `renderer` (UI).
+```text
+renderer React
+  -> window.agentApi
+  -> preload contextBridge
+  -> ipcMain handlers
+  -> AgentRuntime / stores / event bus / tool registry
+  -> LlmWorkerPool
+  -> worker_threads
+  -> MiniMaxGateway
+  -> provider HTTP API
+```
+
+There is one Agent runtime path: `src/main/application/agent-runtime.ts`. Do not reintroduce old single-run IPC or orchestration paths.
 
 ## Commands
 
-- `npm install` — first time only. On Windows, if Electron download fails, use `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npx install-electron`.
-- `npm run dev` — start Electron + Vite renderer dev server (HMR).
-- `npm run build` — bundle main, preload, renderer to `out/`.
-- `npm run typecheck` — `tsc --noEmit` for renderer, node, **and** test tsconfigs (`tsconfig.json` + `tsconfig.node.json` + `tsconfig.test.json`); test sources are type-checked alongside source.
-- `npm run test` — `vitest run` over `tests/**/*.test.ts(x)`. To run a single file: `npx vitest run tests/main/application/agent-runtime.test.ts`. To watch: `npx vitest`.
-- `npm run preview` — run the production build.
+- `npm install` - install dependencies.
+- `npm run dev` - start Electron + Vite renderer dev environment.
+- `npm run build` - build main, preload and renderer into `out/`.
+- `npm run typecheck` - type-check renderer, node and test TypeScript configs.
+- `npm run test` - run Vitest.
+- `npm run preview` - run the production build.
 
-No linter or formatter is configured. After any non-trivial change, treat `npm run typecheck && npm run test && npm run build` as the de facto validation gate.
+For code changes, the default validation gate is:
 
-## Test layout
-
-Tests mirror `src/` shape under `tests/`:
-
-- `tests/shared/` — IPC channel allowlist, contracts type guards.
-- `tests/main/persistence/` — `JsonlThreadStore`, `AttachmentStore`, `ModelConfigStore` (single-flight init + serialized writes are the invariants being protected; do not regress).
-- `tests/main/infrastructure/` — `minimax-gateway` request bodies and SSE parsing for both protocols.
-- `tests/main/application/` — `AgentRuntime` end-to-end (incl. tool-result re-feeding), workspace tool boundaries.
-- `tests/main/ipc/` — handler-level tests (e.g. `usage-handlers`).
-- `tests/renderer/` — pure reducer test (`WorkbenchContext` exports `INITIAL_STATE` / `Action` / `reducer` *only* for tests; do not consume them in app code) and `timeline-model` grouping logic.
-- `tests/helpers/temp-dir.ts` — shared throwaway-directory helper for store tests.
-
-## Three process layers
-
-```
-┌──────────────────────┐     contextBridge       ┌─────────────────────┐
-│ main process         │ ──── ipcMain.handle ───▶│ renderer (React 19) │
-│ src/main/*           │ ◀── webContents.send ───│ src/renderer/src/*  │
-│                      │                         │                     │
-│ LlmWorkerPool ── spawns worker_threads ── MiniMaxGateway (HTTP)   │
-└──────────────────────┘
+```bash
+npm run typecheck
+npm run test
+npm run build
 ```
 
-- **Main process** wires `JsonlThreadStore` + `AttachmentStore` + `ModelConfigStore` + `RuntimeEventBus` + `LlmWorkerPool` + `AgentRuntime` + `InMemoryToolRegistry` in `src/main/index.ts` (single composition root, no DI framework). The same file also calls `installContentSecurityPolicy()`, which serves a relaxed CSP in dev (allows Vite's inline preamble + `ws:` for HMR) and a strict CSP (`script-src 'self'`, `connect-src 'self'`) in production — do not loosen the prod policy.
-- **Worker threads** (one per pool slot, default `1`) instantiate `MiniMaxGateway` and stream SSE deltas back via a typed `WorkerInbound`/`WorkerOutbound` protocol (`src/main/infrastructure/llm-worker/protocol.ts`). The pool pins `threadId → worker` so per-thread turns execute serially. The worker entrypoint is a separate Vite rollup input (`src/main/infrastructure/llm-worker/worker.ts` → `out/main/llm-worker.js`); when adding worker-side code keep it reachable from that entry.
-- **Preload** (`src/preload/index.ts`) exposes a single `window.agentApi` object via `contextBridge.exposeInMainWorld`. It is built as **CommonJS** (`out/preload/index.js`) per `electron.vite.config.ts`; do not switch its output format. Keep `contextIsolation: true` and `nodeIntegration: false`; never widen the surface. Current API groups: `threads`, `turns`, `sse`, `approvals`, `goals`, `attachments`, `usage`, `workspace`, `write`, `modelConfig`. The corresponding main-side handlers are one file per family under `src/main/ipc/`: `threads`, `turns`, `sse`, `approvals`, `attachments`, `goals`, `usage`, `workspace`, `write`, `model-config`.
-- **Renderer** is a pure React 19 app with a hand-rolled `useReducer` store (`WorkbenchContext.tsx`); it subscribes to runtime events via `agentApi.sse.subscribe` + `onEvent`. `AppShell.tsx` lazy-loads two route trees by `state.route`: `code | write` → `Workbench`, `settings` → `SettingsView` (the older `SettingsPlaceholder` has been removed).
+For documentation-only changes, run `git diff --check -- <changed-docs>` and verify referenced paths exist. Explain why build/test were not run.
 
-## Runtime Path
+No linter or formatter is configured. Do not add one without an explicit task and plan.
 
-The app has one Agent runtime surface:
+## Process Boundaries
 
-**Multi-turn runtime** — `AgentRuntime` (`src/main/application/agent-runtime.ts`) drives `ThreadRecord` + `TurnRecord` + `Item` streams, persistence, the approval gate, and interrupt. This is the path the UI uses (`turn:start`, `turn:interrupt`, `sse:*`).
+Main process:
 
-Within a single turn, when the model returns tool calls, the runtime executes them, appends `assistant`-with-toolCalls + each `tool` result back into `LlmRequest.messages`, and re-asks the model — up to `MAX_TOOL_ROUNDS = 6` rounds (`agent-runtime.ts:77`) before stopping. Tool failures emit `runtime_error` with `code: "tool_failed"`; **errors must not be swallowed to "let the flow continue"** (AGENTS.md §1.5).
+- Composition root: `src/main/index.ts`.
+- Wires `JsonlThreadStore`, `AttachmentStore`, `ModelConfigStore`, `RuntimeEventBus`, `LlmWorkerPool`, `AgentRuntime` and `InMemoryToolRegistry`.
+- Registers all `src/main/ipc/*-handlers.ts`.
+- Owns Electron security settings, CSP, external navigation and filesystem access.
 
-The old single-run IPC/API surface has been removed. If you add an agent capability, wire it through `AgentRuntime` and the existing turn/SSE contracts.
+Worker threads:
 
-## Source of truth contracts (`src/shared/`)
+- Code lives in `src/main/infrastructure/llm-worker/*`.
+- `worker-pool.ts` keeps `threadId -> worker` affinity and supports cancel.
+- `worker.ts` instantiates `MiniMaxGateway` and streams typed worker messages back to main.
+- Worker protocol is defined in `protocol.ts`.
 
-`agent-contracts.ts` is the **only** file that defines cross-process types: `ThreadRecord`, `TurnRecord`, the 9-kind `Item` union (user / assistant / reasoning / tool / compaction / approval / userInput / plan / system), `RuntimeEvent` (8 kinds, including `goal_updated` and `runtime_error`), `ModelConfig`/`ModelConfigUpdate`, attachment / goal / usage / approval / write request shapes, the `IpcResult<T>` envelope, and the `isItem`/`isRuntimeEvent`/`isThreadRecord` type guards that replace zod. `ipc.ts` lists every channel name; `RENDERER_TO_MAIN_CHANNELS` is the renderer-allowlist — any new IPC channel must be added there and registered in `src/main/ipc/`.
+Preload:
 
-If a field moves (rename, type change, new required field), search the codebase for that field name before editing — it is consumed in main, preload, and renderer simultaneously.
+- `src/preload/index.ts` exposes only `window.agentApi`.
+- Keep `contextIsolation: true` and `nodeIntegration: false`.
+- Do not widen the preload surface without a typed shared contract and a clear business need.
 
-## Domain layer rules
+Renderer:
 
-`src/main/domain/agent/` must not import from `infrastructure/`, `application/`, `electron`, `react`, or HTTP response shapes. Contracts that cross this boundary: `LlmGateway` (`complete`/`stream`), `ToolRegistry` (`listDefinitions`/`execute`), and the `LlmRequest`/`LlmResponse`/`LlmStreamChunk` shapes. New supplier-specific logic belongs in `infrastructure/`; new orchestration belongs in `application/`.
+- React app under `src/renderer/src/`.
+- `src/renderer/src/main.tsx` mounts `WorkbenchProvider + AppShell`.
+- `AppShell.tsx` routes `code | write` to `Workbench` and `settings` to `SettingsView`.
+- `WorkbenchContext.tsx` is the `useReducer` state center. There is no external state library.
 
-## LLM gateway
+## Source Of Truth
 
-`MiniMaxGateway` (`src/main/infrastructure/minimax/minimax-gateway.ts`) implements both `openai-compatible` and `anthropic-compatible` protocols in one class. It resolves base-URL path suffixes, accumulates tool-call JSON across SSE frames (`OpenAiToolCallAccumulator` / `AnthropicToolCallAccumulator`), and yields typed `LlmStreamChunk`s. Reference: `docs/minimax/` (read-only; never edit; never `import` from inside `src/`).
+Cross-process contracts:
 
-Settings persist to `userData/config` via `ModelConfigStore`; `AgentRuntime` reads `base_url` / `max_tokens` / `thinking` / `model_reasoning_effort` from there on every turn. The `OPENAI_API_KEY` falls back to `process.env.MINIMAX_API_KEY`. Never hard-code keys.
+- `src/shared/agent-contracts.ts` defines `ModelConfig`, `ThreadRecord`, `TurnRecord`, `Item`, `RuntimeEvent`, approvals, goals, attachments, usage, write-mode requests and `IpcResult<T>`.
+- `src/shared/ipc.ts` defines all channel names and `RENDERER_TO_MAIN_CHANNELS`.
+- `src/shared/locale.ts` defines supported locales.
 
-## Persistence layout (`userData/threads/`)
+If a shared field changes, search first and update all layers:
 
+```bash
+rg "fieldName|TypeName|CHANNEL_NAME" src tests docs
 ```
-index.json                          # ThreadSummary[], atomic write
-<threadId>/thread.json              # ThreadRecord, atomic write
-<threadId>/messages.jsonl           # one Item per line, fsync per append
-<threadId>/events.jsonl             # one RuntimeEvent per line
+
+Then check main handlers, preload, renderer state/call sites and tests.
+
+## Runtime Notes
+
+`turns.start()` returns an in-flight `TurnRecord` quickly. Assistant output, reasoning, tool updates and terminal state arrive later as `RuntimeEvent` values through `SSE_PUSH_CHANNEL`.
+
+Current event kinds:
+
+- `turn_started`
+- `turn_completed`
+- `turn_failed`
+- `item_appended`
+- `item_updated`
+- `approval_requested`
+- `tool_budget_reached`
+- `goal_updated`
+- `runtime_error`
+
+Tool rounds are controlled by `agent_autonomy` defaults and optional `AGENT_MAX_TOOL_ROUNDS`, clamped from 1 to 128. Current defaults are conservative 12, balanced 32 and deep 64.
+
+Tool rules:
+
+- Tools implement `AgentTool` and are registered through `InMemoryToolRegistry` in `src/main/index.ts`.
+- `list_files`, `read_file` and `search_files` are read-only workspace tools and skip approval.
+- `create_plan` is enabled only in plan mode and skips approval.
+- `update_goal` is enabled only in goal mode or active-goal threads and skips approval.
+- Other enabled tool calls go through the approval gate.
+- Disallowed or failing tool calls must fail visibly through `ToolItem` state and/or `runtime_error`.
+
+## LLM Gateway
+
+`src/main/infrastructure/minimax/minimax-gateway.ts` implements `LlmGateway` for:
+
+- OpenAI-compatible chat completions.
+- Anthropic-compatible messages.
+- Provider-specific MiniMax and DeepSeek request body differences.
+
+Model config profiles persist through `ModelConfigStore` in Electron `userData/config`. `AgentRuntime` resolves a profile per turn by explicit `modelProfileId`, model match, active profile, then first profile.
+
+API key resolution:
+
+- Config `OPENAI_API_KEY` wins when present.
+- DeepSeek falls back to `DEEPSEEK_API_KEY`, then `OPENAI_API_KEY`.
+- MiniMax falls back to `MINIMAX_API_KEY`, then `OPENAI_API_KEY`.
+- Other providers fall back to `OPENAI_API_KEY`.
+
+Never hard-code real API keys in code, tests, docs or commits.
+
+## Persistence
+
+Thread store layout under Electron `userData/threads/`:
+
+```text
+threads/
+  index.json
+  <threadId>/
+    thread.json
+    messages.jsonl
+    events.jsonl
 ```
 
-`JsonlThreadStore` serializes writes per `threadId` (mutex chain), replays via `readline` and **skips malformed lines with a console warning** rather than failing. Replay-tolerant formats are intentional; do not tighten them without a migration plan.
+Key invariants:
 
-`AttachmentStore` (under `userData/attachments/`) and `ModelConfigStore` (under `userData/config`) are separate stores; both are initialised in `src/main/index.ts` before any IPC handlers are registered. Renderer-facing access goes through `agentApi.attachments.*` (base64 round-trip; do not stream large blobs over IPC) and `agentApi.modelConfig.*`. Attachment index writes are serialized; composer-side delete removes only unsent attachments, not attachments already referenced by persisted user messages.
+- `index.json` stores `ThreadSummary[]`.
+- `thread.json` stores `ThreadRecord`.
+- `messages.jsonl` stores one `Item` per line.
+- `events.jsonl` stores one `RuntimeEvent` per line.
+- JSON writes use temp file + fsync + rename.
+- JSONL appends use fsync.
+- Same-thread writes are serialized.
+- Replay skips malformed lines with `console.warn`; do not tighten this without a migration plan.
+- Repeated item ids in JSONL represent append-only updates; replay consumers dedupe by id and keep the latest row.
 
-## Renderer conventions
+Attachment store:
 
-- Tokens live in `src/renderer/src/ui/styles/tokens.css` as `--ds-*` variables; the design frontmatter in `docs/ui-design.md` mirrors them. Use tokens, not literal hex.
-- i18n keys live in `src/renderer/src/i18n/locales/{zh-CN,en}/translation.json`. When adding a new locale, update `src/shared/locale.ts` (`SUPPORTED_LOCALES` + `isSupportedLocale`).
-- Components are grouped by area (`chat/`, `composer/`, `sidebar/`, `topbar/`, `inspector/`, `write/`, `primitives/`, `settings/`, `icons/`); the new UI lives in the current `Workbench.tsx` + `AppShell.tsx`.
-- Final assistant text is rendered as Markdown via `AssistantMarkdown` (`react-markdown` + `remark-gfm`); intermediate reasoning / tool calls / process-style assistant text are grouped by `turnId` into a collapsible "工作过程" block by `MessageTimeline` — see `tests/renderer/timeline-model.test.ts` for the grouping contract before editing.
-- The renderer never imports from `src/main/` directly — only via the `agentApi` bridge or through `src/shared/`.
+- Stored under `userData/attachments/`.
+- `index.json` stores `AttachmentRecord[]`.
+- Binary bytes live in `<attachmentId>.bin`.
+- Only PNG, JPEG, WebP and GIF are supported.
+- Max attachment size is 12 MB.
+- Timeline items store attachment ids and metadata, not base64 bytes.
 
-## Commit / PR conventions
+Model config store:
 
-Conventional Commits (`feat:`, `fix:`, `chore:`). When changing the agent framework, LLM gateway, tool mechanism, IPC contract, desktop UI, or i18n, update `docs/agent-development.md` in the same change (add a "变更记录" entry with date, summary, and verification command). For UI changes, attach a screenshot; for protocol changes, cite the relevant `docs/minimax/` file. For substantial design work, use the `openspec-propose` / `openspec-apply-change` / `openspec-archive-change` skills (no tracked `openspec/` directory — changes are archived into `docs/agent-development.md` after implementation).
+- Stored in `userData/config`.
+- Current shape is `ModelConfigProfilesState`.
+- Older single-config data is normalized to profile state.
+- At least one profile must remain.
 
-## When you're stuck
+## IPC Rules
 
-- Thread + turn + item state machines: start at `src/main/application/agent-runtime.ts`, then trace items into `JsonlThreadStore` and back via `replayItems`.
-- IPC plumbing: `src/shared/ipc.ts` (channel names) → `src/main/ipc/*-handlers.ts` (main side) → `src/preload/index.ts` (bridge) → `src/renderer/src/ui/Workbench.tsx` (consumer).
-- New tool: implement `AgentTool` (`src/main/domain/agent/types.ts`), register via `InMemoryToolRegistry` in `src/main/index.ts`. `ToolRegistry.execute()` is called with an `AgentToolContext` — current fields include `workspace` (current thread workspace path). Existing built-ins to mirror:
-  - `createPlanTool` — returns a plan JSON; exposed and **approval-free only in plan mode**.
-  - `createGoalTools(deps)` — factory returning `update_goal`; receives a `GoalToolDeps` callback so the tool can call back into `AgentRuntime.updateThreadGoal` **without importing the runtime**. Use this pattern when a tool needs to mutate thread state. `update_goal` is exposed and approval-free only in goal mode or an active-goal thread.
-  - `createWorkspaceTools()` — read-only `list_files` / `read_file` / `search_files`. All paths resolve against `context.workspace` and refuse to escape it. `.git`, `.idea`, `.vscode`, `DeepSeek`, `dist`, `node_modules`, `out` are skipped by default. These are the canonical example of a tool that reads `AgentToolContext`.
+All renderer-invoked IPC returns `IpcResult<T>`:
 
-  Other tool calls still go through `AgentRuntime.requiresApproval`, and **disallowed tool calls must fail visibly instead of executing** (AGENTS.md §1.5 + §6.3).
+```ts
+{ ok: true; value: T } | { ok: false; code: string; message: string }
+```
+
+Current preload groups:
+
+- `threads`
+- `turns`
+- `sse`
+- `approvals`
+- `goals`
+- `attachments`
+- `usage`
+- `workspace`
+- `write`
+- `modelConfig`
+
+Adding IPC requires updating:
+
+1. `src/shared/agent-contracts.ts`
+2. `src/shared/ipc.ts`
+3. `RENDERER_TO_MAIN_CHANNELS`
+4. `src/main/ipc/*-handlers.ts`
+5. `src/main/index.ts`
+6. `src/preload/index.ts`
+7. renderer call sites
+8. tests
+9. `docs/ipc-contracts.md`
+
+## Renderer Conventions
+
+- UI tokens live in `src/renderer/src/ui/styles/tokens.css` as `--ds-*`.
+- Shell/layout styles live in `src/renderer/src/ui/styles/shell.css`.
+- Basic preferences live in `src/renderer/src/ui/preferences.ts` and localStorage key `agent-pyramid.basicPreferences`.
+- Last workspace uses localStorage key `agent-pyramid.lastWorkspaceRoot`.
+- Locale selection uses localStorage key `agent-pyramid.locale`.
+- i18n text must be updated in both `src/renderer/src/i18n/locales/zh-CN/translation.json` and `src/renderer/src/i18n/locales/en/translation.json`.
+- Renderer components must not import from `src/main/`; use `window.agentApi` or `src/shared/*`.
+- Use current component areas: `chat/`, `composer/`, `sidebar/`, `topbar/`, `inspector/`, `write/`, `settings/`, `primitives/`.
+
+## Security Notes
+
+- Keep Electron `contextIsolation: true` and `nodeIntegration: false`.
+- Main process owns filesystem and external navigation.
+- Write-mode file access uses `resolveWritePathForAccess()` / `resolveWritePath()`, realpath checks and skipped directory policy to prevent path escape.
+- Workspace tools also enforce workspace boundaries and skip hidden/generated directories.
+- Do not expand preload APIs casually.
+- Do not place secrets in docs, tests, config or commits.
+
+## Test Map
+
+- `tests/shared/` - shared contracts and IPC allowlist.
+- `tests/main/application/` - AgentRuntime and tools.
+- `tests/main/infrastructure/` - worker pool and MiniMax gateway/protocol parsing.
+- `tests/main/ipc/` - IPC handler behavior.
+- `tests/main/persistence/` - thread, attachment and model config stores.
+- `tests/renderer/` - renderer reducer, components and timeline helpers.
+- `tests/helpers/temp-dir.ts` - temporary directory helper.
+
+Run targeted tests while iterating, then the full validation gate for code changes.
+
+## Change Hygiene
+
+Before editing code, output the Pre-Flight Manifest required by `AGENTS.md`.
+
+During edits:
+
+- Use `rg` / `rg --files` first for search.
+- Keep changes scoped to the requested task.
+- Use existing patterns before inventing abstractions.
+- Do not use `any`, `// @ts-ignore`, silent catches, fake success paths or hard-coded secrets.
+- Do not revert user changes or unrelated dirty files.
+- Use `apply_patch` for manual edits.
+
+After edits:
+
+- Remove dead imports, unused variables and temporary artifacts.
+- Update relevant docs from the reading list above.
+- Run the required verification for the change type.
+
+## Common Starting Points
+
+- Overall map: `docs/project-map.md`
+- Architecture diagrams: `docs/architecture.md`
+- Runtime lifecycle: `docs/runtime-flow.md`
+- IPC contracts: `docs/ipc-contracts.md`
+- Data model: `docs/data-model.md`
+- Main composition: `src/main/index.ts`
+- Runtime: `src/main/application/agent-runtime.ts`
+- Shared contracts: `src/shared/agent-contracts.ts`
+- IPC constants: `src/shared/ipc.ts`
+- Preload bridge: `src/preload/index.ts`
+- Renderer state: `src/renderer/src/ui/store/WorkbenchContext.tsx`
+- Workbench UI flow: `src/renderer/src/ui/Workbench.tsx`
+- Settings UI: `src/renderer/src/ui/SettingsView.tsx`

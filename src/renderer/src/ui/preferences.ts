@@ -57,13 +57,6 @@ export function saveBasicPreferences(
   return normalized;
 }
 
-export function updateBasicPreference<K extends keyof WorkbenchBasicPreferences>(
-  key: K,
-  value: WorkbenchBasicPreferences[K],
-): WorkbenchBasicPreferences {
-  return saveBasicPreferences({ ...loadBasicPreferences(), [key]: value });
-}
-
 export function loadLastWorkspaceRoot(): string {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem(LAST_WORKSPACE_STORAGE_KEY) ?? "";

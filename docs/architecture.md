@@ -1,0 +1,415 @@
+# Project Architecture
+
+This document is a diagram-first map of the current `agent-pyramid-desktop`
+implementation. It describes the real code path in this repository, not an
+aspirational target architecture.
+
+## Scope
+
+Authoritative source areas:
+
+- `src/main/`: Electron main process, runtime orchestration, IPC handlers,
+  persistence, worker pool, LLM gateway, tools, and event bus.
+- `src/preload/`: secure `window.agentApi` bridge.
+- `src/renderer/`: React workbench UI and local UI preferences.
+- `src/shared/`: cross-process contracts, IPC channel constants, locale list.
+- `tests/`: Vitest coverage for contracts, runtime, IPC, persistence, worker,
+  gateway, and renderer state helpers.
+
+Out of scope:
+
+- `docs/minimax/` protocol notes are reference material only.
+- External reference source directories under `/mnt/f/cc_src/*` are not project
+  source, dependencies, implementation inputs, or build inputs.
+
+## System Overview
+
+```mermaid
+flowchart LR
+  subgraph Renderer["Renderer Process (React)"]
+    AppShell["AppShell"]
+    Workbench["Workbench route: code/write"]
+    Settings["SettingsView route"]
+    Store["WorkbenchContext reducer"]
+    UI["UI components"]
+  end
+
+  subgraph Preload["Preload Bridge"]
+    AgentApi["window.agentApi"]
+  end
+
+  subgraph Main["Main Process"]
+    IpcHandlers["IPC handlers"]
+    Runtime["AgentRuntime"]
+    Registry["InMemoryToolRegistry"]
+    Bus["RuntimeEventBus"]
+    Threads["JsonlThreadStore"]
+    Attachments["AttachmentStore"]
+    Config["ModelConfigStore"]
+    WorkerPool["LlmWorkerPool"]
+    WriteSvc["write-handlers"]
+  end
+
+  subgraph Worker["Worker Thread"]
+    WorkerEntry["llm-worker.js"]
+    Gateway["MiniMaxGateway"]
+  end
+
+  subgraph External["External Services"]
+    Providers["MiniMax / DeepSeek / Custom OpenAI-compatible / Anthropic-compatible"]
+    Filesystem["Electron userData + selected workspace"]
+  end
+
+  AppShell --> Workbench
+  AppShell --> Settings
+  Workbench --> Store
+  Settings --> Store
+  UI --> Store
+  Workbench --> AgentApi
+  Settings --> AgentApi
+  AgentApi --> IpcHandlers
+  IpcHandlers --> Runtime
+  IpcHandlers --> Threads
+  IpcHandlers --> Attachments
+  IpcHandlers --> Config
+  IpcHandlers --> WriteSvc
+  Runtime --> Registry
+  Runtime --> Bus
+  Runtime --> Threads
+  Runtime --> Attachments
+  Runtime --> Config
+  Runtime --> WorkerPool
+  WorkerPool --> WorkerEntry
+  WorkerEntry --> Gateway
+  Gateway --> Providers
+  Threads --> Filesystem
+  Attachments --> Filesystem
+  Config --> Filesystem
+  WriteSvc --> Filesystem
+  Bus --> IpcHandlers
+  IpcHandlers -. "sse:push RuntimeEvent" .-> AgentApi
+  AgentApi -. "onEvent()" .-> Workbench
+```
+
+## Process Boundaries
+
+```mermaid
+flowchart TB
+  Renderer["Renderer\nReact 19 UI\nNo Node filesystem access"]
+  Preload["Preload\ncontextBridge.exposeInMainWorld('agentApi')"]
+  Main["Main\nElectron app, stores, runtime, IPC"]
+  Worker["Worker thread\nLLM HTTP/SSE isolation"]
+  Provider["Provider HTTP API"]
+
+  Renderer -->|"typed API calls return IpcResult<T>"| Preload
+  Preload -->|"ipcRenderer.invoke(channel, payload)"| Main
+  Main -->|"postMessage(chat/cancel)"| Worker
+  Worker -->|"fetch + SSE"| Provider
+  Provider -->|"SSE chunks / JSON"| Worker
+  Worker -->|"delta/done/error messages"| Main
+  Main -->|"SSE_PUSH_CHANNEL RuntimeEvent"| Preload
+  Preload -->|"listener fan-out"| Renderer
+```
+
+Security invariants:
+
+- Electron window keeps `contextIsolation: true` and `nodeIntegration: false`
+  in `src/main/index.ts`.
+- Renderer only uses `window.agentApi` and `src/shared/*` contracts.
+- External links opened from renderer markdown are mediated by
+  `configureExternalNavigation()` in `src/main/index.ts`.
+- File access stays in main process handlers and tools, with workspace/path
+  boundary checks.
+
+## Main Composition Root
+
+`src/main/index.ts` creates and wires the application graph:
+
+```mermaid
+flowchart TD
+  AppReady["app.whenReady()"]
+  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore"]
+  Bus["RuntimeEventBus"]
+  Pool["LlmWorkerPool(1)"]
+  Registry["InMemoryToolRegistry"]
+  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateGoalTools()"]
+  Runtime["AgentRuntime"]
+  Handlers["register*Handlers()"]
+  Window["BrowserWindow"]
+
+  AppReady --> Stores
+  AppReady --> Pool
+  Registry --> Tools
+  Stores --> Runtime
+  Bus --> Runtime
+  Pool --> Runtime
+  Registry --> Runtime
+  Runtime --> Handlers
+  Stores --> Handlers
+  Bus --> Handlers
+  AppReady --> Window
+```
+
+Registered IPC groups:
+
+- `threads`: list, create, get, update, delete, fork.
+- `turns`: start, interrupt, get.
+- `sse`: subscribe, unsubscribe, push runtime events.
+- `approvals`: respond.
+- `goals`: update.
+- `attachments`: create, get, delete.
+- `usage`: daily aggregation.
+- `workspace`: pick directory.
+- `write`: markdown list, get, put, inline complete.
+- `modelConfig`: get/update and profile lifecycle.
+
+## Runtime Turn Lifecycle
+
+```mermaid
+sequenceDiagram
+  participant R as Renderer Workbench
+  participant P as window.agentApi
+  participant M as IPC turns handler
+  participant A as AgentRuntime
+  participant S as JsonlThreadStore
+  participant C as ModelConfigStore
+  participant Att as AttachmentStore
+  participant W as LlmWorkerPool
+  participant Bus as RuntimeEventBus
+
+  R->>P: turns.start(TurnStartRequest)
+  P->>M: ipcRenderer.invoke(turn:start)
+  M->>A: startTurn(request)
+  A->>S: getThread(threadId)
+  A->>C: listProfiles()
+  A->>Att: get(attachmentIds)
+  A->>S: appendItem(user)
+  A->>Bus: item_appended + turn_started
+  A-->>M: TurnRecord(status=in-flight)
+  M-->>P: ok(TurnRecord)
+  P-->>R: IpcResult<TurnRecord>
+  A->>S: replayItems(threadId)
+  A->>W: chat(thread, LlmRequest, onChunk)
+  W-->>A: text/reasoning/usage/tool chunks
+  A->>Bus: item_updated
+  A->>S: append final reasoning/assistant/tool/system items
+  A->>S: appendEvent(turn_completed)
+  A->>Bus: turn_completed
+  Bus-->>R: SSE push via preload listener
+```
+
+Key runtime responsibilities in `src/main/application/agent-runtime.ts`:
+
+- Blocks concurrent in-flight turns for the same thread.
+- Resolves model profile by `modelProfileId`, model string, or active profile.
+- Injects attachments as `AgentContentBlock[]`.
+- Builds runtime context for plan mode and goal mode.
+- Applies request history hygiene and context compaction before LLM calls.
+- Executes tool rounds until the model stops or tool budget is reached.
+- Requests approval for non-read-only and non-mode-gated tools.
+- Persists visible items/events and emits `RuntimeEvent` updates.
+- Handles interrupt by cancelling worker request, denying pending approvals, and
+  finishing with `interrupted`.
+
+## Tool Architecture
+
+```mermaid
+flowchart LR
+  Runtime["AgentRuntime"]
+  Registry["ToolRegistry port"]
+  InMemory["InMemoryToolRegistry"]
+  Plan["create_plan"]
+  Workspace["list_files\nread_file\nsearch_files"]
+  Goal["update_goal"]
+  Approval["Approval gate"]
+
+  Runtime --> Registry
+  Registry --> InMemory
+  InMemory --> Plan
+  InMemory --> Workspace
+  InMemory --> Goal
+  Runtime --> Approval
+  Approval -->|"skipped for read-only workspace tools"| Workspace
+  Approval -->|"skipped when mode-gated and available"| Plan
+  Approval -->|"skipped when goal mode/active goal allows it"| Goal
+```
+
+Tool availability is decided at the runtime boundary:
+
+- `create_plan`: only exposed in plan mode.
+- `update_goal`: exposed in goal mode or active-goal threads.
+- `list_files`, `read_file`, `search_files`: read-only workspace tools and do
+  not require approval.
+- Unknown or unavailable tool calls produce a visible `runtime_error` with
+  `code: "tool_not_found"`.
+
+## Worker And LLM Gateway
+
+```mermaid
+flowchart TD
+  Runtime["AgentRuntime"]
+  Pool["LlmWorkerPool"]
+  ThreadMap["threadId -> worker affinity"]
+  CancelMap["threadId -> cancel request"]
+  Worker["worker.ts"]
+  Gateway["MiniMaxGateway"]
+  OpenAI["OpenAI-compatible path"]
+  Anthropic["Anthropic-compatible path"]
+
+  Runtime --> Pool
+  Pool --> ThreadMap
+  Pool --> CancelMap
+  Pool --> Worker
+  Worker --> Gateway
+  Gateway --> OpenAI
+  Gateway --> Anthropic
+```
+
+Worker rules:
+
+- Same thread routes to the same worker while alive.
+- `cancel(threadId)` posts a request-specific cancel message.
+- Worker exit clears stale thread affinity and creates a replacement worker.
+- Worker stream chunks become `LlmStreamChunk` events for runtime consumption.
+
+Gateway rules:
+
+- Provider dialect is resolved from `LlmRequest.provider`.
+- MiniMax and DeepSeek use provider-specific request body fields.
+- Custom OpenAI-compatible providers use generic chat completions bodies.
+- Anthropic-compatible providers use messages/tool_use/tool_result mapping.
+- SSE parsing flushes pending tool calls on terminal finish or `[DONE]`.
+
+## Persistence Architecture
+
+```mermaid
+flowchart TB
+  UserData["Electron userData"]
+  ThreadsDir["threads/"]
+  AttachDir["attachments/"]
+  ConfigFile["config"]
+
+  UserData --> ThreadsDir
+  UserData --> AttachDir
+  UserData --> ConfigFile
+
+  ThreadsDir --> Index["index.json\nThreadSummary[]"]
+  ThreadsDir --> ThreadFolder["<threadId>/"]
+  ThreadFolder --> ThreadJson["thread.json\nThreadRecord"]
+  ThreadFolder --> Messages["messages.jsonl\nItem per line"]
+  ThreadFolder --> Events["events.jsonl\nRuntimeEvent per line"]
+
+  AttachDir --> AttachIndex["index.json\nAttachmentRecord[]"]
+  AttachDir --> Blob["<attachmentId>.bin"]
+
+  ConfigFile --> Profiles["ModelConfigProfilesState"]
+```
+
+Persistence invariants:
+
+- JSON writes use temp file + fsync + rename.
+- JSONL appends use fsync.
+- Same-thread writes are serialized with a per-thread mutex.
+- Malformed JSONL lines are warned and skipped during replay.
+- Thread and attachment ids must be UUIDs before path construction.
+- Attachment names are reduced with `path.basename()`.
+- Model config keeps at least one profile and normalizes legacy single-config
+  files into profile state.
+
+## Renderer State Architecture
+
+```mermaid
+flowchart TD
+  AppShell["AppShell"]
+  Provider["WorkbenchProvider"]
+  Reducer["WorkbenchContext reducer"]
+  Code["Code route"]
+  Write["Write route"]
+  Settings["Settings route"]
+  LocalStorage["localStorage preferences"]
+  AgentApi["window.agentApi"]
+
+  AppShell --> Provider
+  Provider --> Reducer
+  Reducer --> Code
+  Reducer --> Write
+  Reducer --> Settings
+  Reducer <--> LocalStorage
+  Code --> AgentApi
+  Write --> AgentApi
+  Settings --> AgentApi
+```
+
+State center: `src/renderer/src/ui/store/WorkbenchContext.tsx`.
+
+Important state slices:
+
+- `route`: `code | write | settings`.
+- `modelConfig` and `modelProfiles`.
+- `workspaceRoot`, `threads`, `activeThread`, `items`.
+- `inFlightTurn`, `activeTurnId`.
+- `composer`: text, model, profile, reasoning effort, mode, goal mode,
+  attachment ids.
+- `rightPanelMode`: `changes | todo | plan | file | null`.
+- `basicPreferences`: theme, startup, sidebar widths, inspector default,
+  archive visibility, last workspace, delete confirmation.
+
+## IPC Contract Map
+
+```mermaid
+flowchart LR
+  Shared["src/shared/ipc.ts\nchannel constants"]
+  Contracts["src/shared/agent-contracts.ts\nrequest/response/runtime types"]
+  MainHandlers["src/main/ipc/*-handlers.ts"]
+  Preload["src/preload/index.ts"]
+  Renderer["src/renderer/src/global.d.ts + UI calls"]
+
+  Shared --> MainHandlers
+  Shared --> Preload
+  Contracts --> MainHandlers
+  Contracts --> Preload
+  Contracts --> Renderer
+  Preload --> Renderer
+```
+
+Every renderer-invoked IPC handler returns:
+
+- `ok(value)` for success.
+- `err(code, message)` for failure.
+
+The push event channel is separate:
+
+- `SSE_PUSH_CHANNEL = "sse:push"` sends `RuntimeEvent` payloads from main to
+  preload to renderer listeners.
+
+## Module Ownership
+
+| Area | Ownership |
+| --- | --- |
+| `src/main/application/agent-runtime.ts` | Turn state machine, tool loop, model request construction, runtime events. |
+| `src/main/application/tools/` | Tool registry and built-in tool implementations. |
+| `src/main/infrastructure/minimax/` | Provider HTTP/SSE protocols and message/tool conversion. |
+| `src/main/infrastructure/llm-worker/` | Worker isolation, worker affinity, cancellation, worker protocol. |
+| `src/main/ipc/` | IPC envelope handlers and Electron-only services. |
+| `src/main/persistence/` | userData persistence and migration/normalization. |
+| `src/preload/index.ts` | Minimal bridge API and SSE listener fan-out. |
+| `src/renderer/src/ui/` | Routes, UI components, reducer state, preferences, styles. |
+| `src/shared/` | Cross-process authority for contracts, channels, locales. |
+
+## Verification Commands
+
+Use these after architecture-affecting code changes:
+
+```bash
+npm run typecheck
+npm run test
+npm run build
+```
+
+For documentation-only edits, at minimum verify referenced paths and Markdown
+diff hygiene:
+
+```bash
+rg "src/main/index.ts|src/preload/index.ts|src/renderer/src/ui" docs/architecture.md
+git diff --check
+```

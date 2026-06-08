@@ -289,7 +289,7 @@ Topbar exposes the Right Inspector modes as a segmented control for Changes / To
 ## 9. Settings
 
 - 设置页使用两级结构：顶部 `ds-settings-section-tabs` 只切换设置大类，左侧 `SettingsSidebar` 只显示当前大类下的小类，中间受约束内容列展示当前“大类 + 小类”的详细配置。
-- 当前“基础设置”大类包含外观与语言小类，界面语言和界面主题选择后立即生效并保存到渲染端 localStorage；它不使用模型配置保存按钮。
+- 当前“基础设置”大类包含外观与语言、启动与布局、会话与工作区三组小类；这些本地偏好选择后立即生效并保存到渲染端 localStorage，不使用模型配置保存按钮。
 - 当前“大模型设置”大类包含模型档案、连接信息、上下文和推理行为四个小类；新增其它大类时必须在入口层分流，不把不同大类的配置项混入同一组小类。
 - 模型 profile 删除必须使用卡片内行内确认态，不使用系统 `confirm`，并提供明确的确认、取消和删除中状态。
 - 模型 profile 表单处于 dirty 状态时，切换/创建/复制/删除 profile 或返回工作台必须先提示保存，不能静默丢弃未保存修改。

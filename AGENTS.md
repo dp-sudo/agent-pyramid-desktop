@@ -87,6 +87,17 @@ Verification_Strategy: "如何验证本次改动"
 
 本仓库是 `agent-pyramid-desktop`：基于 Electron、Vite、React、TypeScript 的桌面 Agent Workbench。当前实现是“主进程运行时 + worker 隔离 LLM HTTP + preload 安全桥 + React 渲染端 + Vitest 覆盖关键逻辑”的桌面应用。
 
+新 Agent 进入项目时，建议按以下顺序阅读：
+
+1. `AGENTS.md`：本仓库最高优先级 LLM 编码规则。
+2. `CLAUDE.md`：Claude Code / coding agent 快速启动指南。
+3. `docs/project-map.md`：项目总地图、模块职责、入口文件和测试地图。
+4. `docs/architecture.md`：当前实现架构图。
+5. `docs/runtime-flow.md`：turn 生命周期、stream、工具循环、approval 和中断。
+6. `docs/ipc-contracts.md`：IPC channel、preload API、handler 和错误码。
+7. `docs/data-model.md`：Thread / Turn / Item / RuntimeEvent / Attachment / ModelConfig 数据权威来源。
+8. `docs/ui-layout-reference.md` 与 `docs/ui-design.md`：涉及 UI 时必须阅读。
+
 真实运行链路：
 
 ```text
@@ -101,7 +112,7 @@ renderer React
   -> provider HTTP API
 ```
 
-三层进程边界：
+四层进程边界：
 
 - `src/main/index.ts` 是主进程组合根，组装 `JsonlThreadStore`、`AttachmentStore`、`ModelConfigStore`、`RuntimeEventBus`、`LlmWorkerPool`、`AgentRuntime`、`InMemoryToolRegistry` 和全部 IPC handler。
 - `src/main/infrastructure/llm-worker/` 使用 Node `worker_threads` 隔离 LLM 请求。`worker-pool.ts` 固定 `threadId -> worker` 路由并支持 cancel，`worker.ts` 实例化 `MiniMaxGateway` 并把 SSE delta 转成 typed worker message。
@@ -354,7 +365,7 @@ UI 改动必须遵守 `docs/ui-design.md` 和当前 CSS token 体系。
 - 优先使用 `tokens.css` 中的 `--ds-*` 变量，不新增散落 hex 色值。
 - 不引入 Tailwind、Zustand、React Router 或新的 UI 框架，除非用户明确要求并完成方案确认。
 - 现有路由由 `WorkbenchContext.state.route` 表示：`code | write | settings`。
-- 现有主题通过 `agent.theme` localStorage 和 `<html data-theme>` 控制。
+- 现有基础偏好通过 `agent-pyramid.basicPreferences` localStorage 保存；主题由其中的 `theme` / `followSystemTheme` 派生并写入 `<html data-theme>`。
 - 新增文案必须同时更新 `src/renderer/src/i18n/locales/zh-CN/translation.json` 和 `src/renderer/src/i18n/locales/en/translation.json`。
 - 新增语言必须同步更新 `src/shared/locale.ts`。
 - 渲染端错误不能静默吞掉，至少写入 UI state 或返回可见错误信息。
@@ -476,7 +487,15 @@ npx install-electron --no
 
 ## 14. 文档同步要求
 
-Agent 开发维护文档位于 `docs/agent-development.md`。
+Agent 开发维护文档位于 `docs/agent-development.md`。项目快速理解文档包括：
+
+- `docs/project-map.md`：项目总地图、入口文件、模块职责和测试地图。
+- `docs/architecture.md`：当前架构图。
+- `docs/runtime-flow.md`：Agent turn 生命周期和 runtime 状态机。
+- `docs/ipc-contracts.md`：IPC 契约、channel、preload API 和错误码。
+- `docs/data-model.md`：跨进程数据模型、持久化布局和迁移规则。
+- `docs/ui-layout-reference.md`：页面 UI 布局与 UI 属性说明。
+- `docs/ui-design.md`：UI token、布局语法、主题和组件模式规则。
 
 凡是修改以下能力，必须同步更新该文档：
 
@@ -490,7 +509,14 @@ Agent 开发维护文档位于 `docs/agent-development.md`。
 - 模型配置。
 - worker 运行方式。
 
-UI 设计规则位于 `docs/ui-design.md`。修改设计 token、布局语法、主题、组件模式时必须同步更新。
+同步范围按变更内容决定：
+
+- 修改整体模块边界、入口文件、测试地图或项目阅读顺序时，同步 `docs/project-map.md` 和必要时 `docs/architecture.md`。
+- 修改 turn 生命周期、工具循环、approval、中断、worker stream 或 runtime event 时，同步 `docs/runtime-flow.md`。
+- 新增、删除或改名 IPC channel / request / response / preload API / handler 错误码时，同步 `docs/ipc-contracts.md`。
+- 修改 `ThreadRecord`、`TurnRecord`、`Item`、`RuntimeEvent`、附件、模型配置、JSONL 格式或迁移规则时，同步 `docs/data-model.md`。
+- 修改设计 token、布局语法、主题、组件模式时同步 `docs/ui-design.md`；修改页面结构或组件布局时同步 `docs/ui-layout-reference.md`。
+- 修改 Agent 框架能力、LLM、工具、IPC、持久化、UI、i18n、模型配置或 worker 运行方式时，同步 `docs/agent-development.md` 的状态或变更记录。
 
 涉及 OpenSpec change 且仓库中存在对应目录时，优先检查 `openspec/changes/` 下对应 change 的 `proposal.md`、`design.md`、`tasks.md` 和 `specs/`。
 
@@ -520,7 +546,7 @@ PR 需说明：
 - 不提交 API Key、密钥或本地敏感配置。
 - MiniMax / DeepSeek / OpenAI-compatible 凭据只允许通过运行时输入、模型配置或环境变量提供。
 - 保持 Electron 安全设置：`contextIsolation: true`、`nodeIntegration: false`。
-- 文件写入能力必须做路径边界检查；`write-handlers.ts` 当前使用 `resolveSafe()` 防止 path escape。
+- 文件写入能力必须做路径边界检查；`write-handlers.ts` 当前通过 `resolveWritePathForAccess()` / `resolveWritePath()`、realpath 校验和 skipped directory 策略防止 path escape。
 - 不扩大 preload 暴露面，除非有明确业务需求和类型契约。
 - 不把 renderer 变成 Node 环境，不在 renderer 直接访问文件系统。
 
