@@ -15,6 +15,7 @@ import { AttachmentStore } from "../persistence/attachment-store.js";
 import { ModelConfigStore } from "../persistence/model-config-store.js";
 import { LlmWorkerPool } from "../infrastructure/llm-worker/worker-pool.js";
 import { RuntimeEventBus } from "../event-bus.js";
+import { FileReadStateStore } from "./tools/file-read-state.js";
 import type {
   ApprovalItem,
   ApprovalRespondRequest,
@@ -50,6 +51,7 @@ interface PendingApproval {
   turnId: string;
   toolName: string;
   args: Record<string, unknown>;
+  preview?: ApprovalItem["preview"];
   resolve: (decision: "allow" | "deny") => void | Promise<void>;
 }
 
@@ -72,7 +74,6 @@ const GOAL_MODE_INSTRUCTION = [
   "Use update_goal when the goal text, completion state, or blocked state changes.",
 ].join(" ");
 
-const READ_ONLY_TOOL_NAMES = new Set(["list_files", "read_file", "search_files"]);
 const DEFAULT_AGENT_AUTONOMY = "balanced";
 const AGENT_AUTONOMY_TOOL_ROUNDS = {
   conservative: 12,
@@ -108,6 +109,7 @@ const MAX_PROGRESSIVE_COMPACTION_PASSES = 24;
 export class AgentRuntime {
   private readonly inFlight = new Map<string, TurnRecord>(); // turnId -> record
   private readonly pendingApprovals = new Map<string, PendingApproval>();
+  private readonly readState = new FileReadStateStore();
 
   constructor(private readonly deps: RuntimeDeps) {}
 
@@ -733,30 +735,46 @@ export class AgentRuntime {
       };
     }
 
-    // Approval gate: only `auto` policy runs immediately.
-    if (this.requiresApproval(call.name, turn, thread)) {
-      const approval = await this.requestApproval(turn, call);
-      if (approval === "deny") {
-        toolItem.status = "failed";
-        toolItem.result = { denied: true };
-        await this.deps.store.appendItem(turn.threadId, toolItem);
-        this.emitToolItemUpdated(turn, toolItem);
-        return {
-          toolCallId: call.id,
-          name: call.name,
-          content: JSON.stringify(toolItem.result),
-        };
-      }
+    const policyDecision = this.resolveToolPolicy(call.name, turn, thread);
+    if (policyDecision === "deny") {
+      toolItem.status = "failed";
+      toolItem.result = {
+        denied: true,
+        message: `Tool "${call.name}" is denied by thread policy.`,
+      };
+      await this.deps.store.appendItem(turn.threadId, toolItem);
+      this.emitToolItemUpdated(turn, toolItem);
+      return {
+        toolCallId: call.id,
+        name: call.name,
+        content: JSON.stringify(toolItem.result),
+      };
     }
 
     try {
+      if (policyDecision === "ask") {
+        const approval = await this.requestApproval(turn, call, thread);
+        if (approval === "deny") {
+          toolItem.status = "failed";
+          toolItem.result = { denied: true };
+          await this.deps.store.appendItem(turn.threadId, toolItem);
+          this.emitToolItemUpdated(turn, toolItem);
+          return {
+            toolCallId: call.id,
+            name: call.name,
+            content: JSON.stringify(toolItem.result),
+          };
+        }
+      }
+
       const content = await this.deps.registry.execute(call, {
         threadId: turn.threadId,
         turnId: turn.id,
         workspace: thread.workspace,
+        readState: this.readState,
       });
       toolItem.status = "completed";
-      toolItem.result = content;
+      toolItem.result = content.displayResult ?? content;
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
       if (call.name === "create_plan") {
@@ -819,18 +837,34 @@ export class AgentRuntime {
     return true;
   }
 
-  private requiresApproval(
+  private resolveToolPolicy(
     name: string,
     turn: TurnRecord,
     thread: ThreadRecord,
-  ): boolean {
-    if (READ_ONLY_TOOL_NAMES.has(name)) {
-      return false;
+  ): "allow" | "ask" | "deny" {
+    const tool = this.deps.registry.getTool(name);
+    if (!tool) {
+      return "deny";
     }
-    return !(
+    if (tool.metadata?.isReadOnly) {
+      return "allow";
+    }
+    if (
       (name === "create_plan" || name === "update_goal") &&
       this.isToolAvailableForTurn(name, turn, thread)
-    );
+    ) {
+      return "allow";
+    }
+    if (thread.sandboxMode === "read-only") {
+      return "deny";
+    }
+    if (thread.approvalPolicy === "never") {
+      return "deny";
+    }
+    if (thread.approvalPolicy === "auto" && tool.metadata?.isDestructive === false) {
+      return "allow";
+    }
+    return "ask";
   }
 
   private emitToolItemUpdated(turn: TurnRecord, item: ToolItem): void {
@@ -845,8 +879,10 @@ export class AgentRuntime {
   private async requestApproval(
     turn: TurnRecord,
     call: AgentToolCall,
+    thread: ThreadRecord,
   ): Promise<"allow" | "deny"> {
     const approvalId = randomUUID();
+    const preview = await this.buildApprovalPreview(call, turn, thread);
     const pendingItem: ApprovalItem = {
       kind: "approval",
       id: randomUUID(),
@@ -855,6 +891,7 @@ export class AgentRuntime {
       approvalId,
       toolName: call.name,
       args: call.arguments,
+      ...(preview ? { preview } : {}),
       createdAt: new Date().toISOString(),
     };
     await this.deps.store.appendItem(turn.threadId, pendingItem);
@@ -872,6 +909,7 @@ export class AgentRuntime {
         turnId: turn.id,
         toolName: call.name,
         args: call.arguments,
+        ...(preview ? { preview } : {}),
         resolve: (decision) => {
           const item: ApprovalItem = {
             ...pendingItem,
@@ -908,8 +946,25 @@ export class AgentRuntime {
         approvalId,
         toolName: call.name,
         args: call.arguments,
+        ...(preview ? { preview } : {}),
       });
     });
+  }
+
+  private async buildApprovalPreview(
+    call: AgentToolCall,
+    turn: TurnRecord,
+    thread: ThreadRecord,
+  ): Promise<ApprovalItem["preview"] | undefined> {
+    const tool = this.deps.registry.getTool(call.name);
+    if (!tool?.preview) return undefined;
+    const preview = await tool.preview(call.arguments, {
+      threadId: turn.threadId,
+      turnId: turn.id,
+      workspace: thread.workspace,
+      readState: this.readState,
+    });
+    return isApprovalPreview(preview) ? preview : undefined;
   }
 
   private resolvePendingApprovalsForTurn(
@@ -1183,6 +1238,19 @@ function parsePlanStep(value: unknown, index: number): PlanStep {
     title: raw.title.trim(),
     status,
   };
+}
+
+function isApprovalPreview(value: unknown): value is ApprovalItem["preview"] {
+  if (!value || typeof value !== "object") return false;
+  const preview = value as Record<string, unknown>;
+  return (
+    preview.kind === "file_diff" &&
+    typeof preview.path === "string" &&
+    (preview.operation === "create" || preview.operation === "update") &&
+    typeof preview.added === "number" &&
+    typeof preview.removed === "number" &&
+    Array.isArray(preview.lines)
+  );
 }
 
 function prepareMessagesForRequest(

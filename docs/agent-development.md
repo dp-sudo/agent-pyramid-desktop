@@ -21,6 +21,7 @@
 - 建立 Agent 领域类型和端口接口：`src/main/domain/agent/`。
 - 建立多 turn Agent 编排器：`src/main/application/agent-runtime.ts`。
 - 建立工具注册机制：`src/main/application/tools/`。
+- 建立首批 coding agent 写入工具：`read_file` 会记录文件读状态；`edit_file` / `write_file` 使用共享 workspace 路径策略、读后未过期校验和结构化 diff preview，经 approval gate 后写入工作区文本文件。
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
@@ -33,7 +34,7 @@
 1. 领域层不依赖 MiniMax、Electron、React 或 HTTP 响应结构。
 2. LLM 接入统一通过 `LlmGateway`，供应商协议差异只存在于 `infrastructure`。
 3. Agent 编排器只处理运行流程，不直接拼接供应商请求体。
-4. 工具能力通过 `ToolRegistry` 接口注册和执行，后续工具不得绕过注册机制。
+4. 工具能力通过 `ToolRegistry` 接口注册、预览和执行，后续工具不得绕过注册机制；工具用 metadata 声明只读、破坏性和类别，runtime 基于 metadata、`approvalPolicy` 与 `sandboxMode` 做审批/拒绝决策。
 5. 渲染层只通过 preload 暴露的安全 API 调用主进程，不直接访问 Node 能力。
 6. 界面语言和主题切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义；设置页“基础设置”直接调用渲染层 localStorage 偏好，不进入主进程运行时配置。
 7. 大模型运行时仍以 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为当前激活配置契约；持久层在外层维护 `ModelConfigProfilesState`（`activeProfileId + profiles[]`），`ModelConfigStore.get()` 只返回当前激活档案的 `ModelConfig`，避免 Agent 运行循环感知多档案 UI。
@@ -58,6 +59,17 @@
 - 新增或修改 Agent 运行框架、LLM 接入、工具、IPC、持久化、UI 状态或 i18n 时，应优先补充对应 `tests/` 用例，再运行上述命令。
 
 ## 变更记录
+
+### 2026-06-08 — coding-agent 文件写入能力首批落地
+
+- 扩展工具契约：`AgentTool` 支持 `metadata` 与 `preview()`，`AgentToolResult` 支持 `displayResult`，`ToolRegistry` 支持按名称取工具；runtime 在 approval 前可生成结构化预览，并把模型可读结果和 UI 展示结果分离。
+- 新增共享 workspace 路径策略：`src/main/application/tools/workspace-policy.ts` 统一处理 lexical path、realpath、父目录 realpath、symlink 与 skipped path 校验，避免读写工具路径策略漂移。
+- 新增读状态：`FileReadStateStore` 记录 `read_file` 读取到的内容、mtime、size、sha256 与截断状态；`edit_file` / `write_file` 对现有文件要求先完整读取，且写前确认文件未被外部修改。
+- 新增 coding tools：`edit_file` 使用 `old_string/new_string/replace_all` 精确替换，默认要求唯一匹配；`write_file` 支持新建文件和显式 `overwrite: true` 覆盖现有文件；两者都返回结构化 file diff。
+- 强化 runtime policy：只读工具免审批；`create_plan` / `update_goal` 继续按模式免审批；`sandboxMode: read-only` 和 `approvalPolicy: never` 会拒绝写入类工具；需要审批的写入工具会在 approval item/event 上携带 diff preview。
+- 扩展 renderer：approval block 会展示文件 diff 预览；工具摘要识别 `edit_file` / `write_file`；中英文 i18n 同步新增写入工具和 diff 操作文案。
+- 当前仍未实现 `run_command`、`apply_patch`、LSP 诊断和文件历史回滚；这些应作为后续独立切片继续推进。
+- 验证方式：新增 Vitest 覆盖 workspace/read-state/edit/write/runtime approval preview/renderer summary；完整验证命令见本次实现记录。
 
 ### 2026-06-07
 

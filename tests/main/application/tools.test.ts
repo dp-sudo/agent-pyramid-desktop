@@ -1,7 +1,10 @@
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { createCodingTools } from "../../../src/main/application/tools/coding-tools";
 import { createPlanTool } from "../../../src/main/application/tools/create-plan-tool";
+import { FileReadStateStore } from "../../../src/main/application/tools/file-read-state";
 import { createGoalTools } from "../../../src/main/application/tools/goal-tools";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
@@ -30,6 +33,10 @@ const sampleTool: AgentTool = {
     return input.text;
   },
 };
+
+function asStringToolResult(result: string | { content: string }): string {
+  return typeof result === "string" ? result : result.content;
+}
 
 describe("application tools", () => {
   it("registers and executes tools by name", async () => {
@@ -85,7 +92,7 @@ describe("application tools", () => {
       { threadId: "thread-1", turnId: "turn-1" },
     );
 
-    expect(JSON.parse(content) as unknown).toEqual({
+    expect(JSON.parse(asStringToolResult(content)) as unknown).toEqual({
       title: "Review",
       steps: [
         { title: "Read code", status: "in_progress" },
@@ -116,7 +123,7 @@ describe("application tools", () => {
       { goal: " Ship tests ", status: "complete", summary: " Done " },
       { threadId: "thread-1", turnId: "turn-1" },
     );
-    expect(JSON.parse(result) as unknown).toEqual({ updated: true });
+    expect(JSON.parse(asStringToolResult(result)) as unknown).toEqual({ updated: true });
     expect(updateGoal).toHaveBeenCalledWith("thread-1", {
       goal: "Ship tests",
       status: "complete",
@@ -161,6 +168,7 @@ describe("application tools", () => {
       await fs.writeFile(path.join(outside, "outside.ts"), "external marker\n", "utf8");
       await fs.symlink(outside, path.join(workspace, "linked-outside"));
       const registry = new InMemoryToolRegistry(createWorkspaceTools());
+      const readState = new FileReadStateStore();
 
       const listed = JSON.parse(
         (
@@ -179,14 +187,18 @@ describe("application tools", () => {
         (
           await registry.execute(
             { id: "call-read", name: "read_file", arguments: { path: "src/index.ts" } },
-            { threadId: "thread-1", turnId: "turn-1", workspace },
+            { threadId: "thread-1", turnId: "turn-1", workspace, readState },
           )
         ).content,
-      ) as { path: string; content: string };
+      ) as { path: string; content: string; sha256: string; mtimeMs: number };
       expect(read).toMatchObject({
         path: "src/index.ts",
         content: "export const marker = 1;\n",
+        sha256: createHash("sha256").update("export const marker = 1;\n").digest("hex"),
       });
+      expect(read.mtimeMs).toBeGreaterThan(0);
+      expect(readState.get(path.join(workspace, "src", "index.ts"))?.content)
+        .toBe("export const marker = 1;\n");
 
       const truncated = JSON.parse(
         (
@@ -269,6 +281,127 @@ describe("application tools", () => {
     } finally {
       await removeTempDir(workspace);
       await removeTempDir(outside);
+    }
+  });
+
+  it("edits and writes files only after a fresh read and returns structured diffs", async () => {
+    const workspace = await makeTempDir("coding-tools-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value = 1;\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "src/index.ts" } },
+        context,
+      );
+      const edit = await registry.execute(
+        {
+          id: "call-edit",
+          name: "edit_file",
+          arguments: {
+            path: "src/index.ts",
+            old_string: "const value = 1;",
+            new_string: "const value = 2;",
+          },
+        },
+        context,
+      );
+      expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
+        .toBe("const value = 2;\n");
+      expect(edit.displayResult).toMatchObject({
+        path: "src/index.ts",
+        operation: "update",
+        diff: {
+          kind: "file_diff",
+          added: 1,
+          removed: 1,
+          lines: [
+            { type: "removed", text: "const value = 1;" },
+            { type: "added", text: "const value = 2;" },
+          ],
+        },
+      });
+
+      const write = await registry.execute(
+        {
+          id: "call-write",
+          name: "write_file",
+          arguments: { path: "src/new.ts", content: "export const created = true;\n" },
+        },
+        context,
+      );
+      expect(await fs.readFile(path.join(workspace, "src", "new.ts"), "utf8"))
+        .toBe("export const created = true;\n");
+      expect(write.displayResult).toMatchObject({
+        path: "src/new.ts",
+        operation: "create",
+        diff: {
+          kind: "file_diff",
+          added: 1,
+          removed: 0,
+        },
+      });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects ambiguous edits, stale reads, and unsafe write overwrites", async () => {
+    const workspace = await makeTempDir("coding-tools-guard-");
+    try {
+      await fs.writeFile(path.join(workspace, "file.ts"), "x\nx\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-edit-no-read",
+            name: "edit_file",
+            arguments: { path: "file.ts", old_string: "x", new_string: "y" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Read the file with read_file before attempting to edit or overwrite it.");
+
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "file.ts" } },
+        context,
+      );
+      await expect(
+        registry.execute(
+          {
+            id: "call-edit-ambiguous",
+            name: "edit_file",
+            arguments: { path: "file.ts", old_string: "x", new_string: "y" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("edit_file found 2 matches");
+
+      await fs.writeFile(path.join(workspace, "file.ts"), "external\n", "utf8");
+      await expect(
+        registry.execute(
+          {
+            id: "call-write-stale",
+            name: "write_file",
+            arguments: { path: "file.ts", content: "next\n", overwrite: true },
+          },
+          context,
+        ),
+      ).rejects.toThrow("File has been modified since it was read.");
+    } finally {
+      await removeTempDir(workspace);
     }
   });
 });

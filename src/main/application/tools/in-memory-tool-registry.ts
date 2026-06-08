@@ -26,6 +26,10 @@ export class InMemoryToolRegistry implements ToolRegistry {
     return [...this.tools.values()].map((tool) => tool.definition);
   }
 
+  getTool(name: string): AgentTool | undefined {
+    return this.tools.get(name);
+  }
+
   async execute(call: AgentToolCall, context: AgentToolContext): Promise<AgentToolResult> {
     const tool = this.tools.get(call.name);
 
@@ -33,12 +37,19 @@ export class InMemoryToolRegistry implements ToolRegistry {
       throw new Error(`Tool "${call.name}" is not registered.`);
     }
 
-    const content = await tool.execute(call.arguments, context);
+    const result = await tool.execute(call.arguments, context);
+    if (typeof result !== "string") {
+      return {
+        ...result,
+        toolCallId: call.id,
+        name: call.name,
+      };
+    }
 
     return {
       toolCallId: call.id,
       name: call.name,
-      content
+      content: result,
     };
   }
 }

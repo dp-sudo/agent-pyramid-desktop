@@ -139,6 +139,14 @@ function titleForTool(
       return query
         ? t("chat.tools.searchFilesQuery", { query })
         : t("chat.tools.searchFiles");
+    case "edit_file":
+      return path
+        ? t("chat.tools.editFilePath", { path })
+        : t("chat.tools.editFile");
+    case "write_file":
+      return path
+        ? t("chat.tools.writeFilePath", { path })
+        : t("chat.tools.writeFile");
     case "create_plan":
       return t("chat.tools.createPlan");
     case "update_goal":

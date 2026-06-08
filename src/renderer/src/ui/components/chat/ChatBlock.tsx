@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import type { Item } from "../../../../../shared/agent-contracts";
+import type { ApprovalPreview, FileDiffLine, Item } from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { summarizeToolItem } from "./timeline-model";
 
@@ -126,6 +126,7 @@ function ApprovalBlock({
           <strong>{item.toolName}</strong>
           {statusText ? <span>{statusText}</span> : null}
         </div>
+        {item.preview ? <ApprovalPreviewBlock preview={item.preview} /> : null}
         <pre className="ds-approval-args">{JSON.stringify(item.args, null, 2)}</pre>
         {item.decision === undefined && onApprove ? (
           <div className="ds-approval-actions">
@@ -148,6 +149,42 @@ function ApprovalBlock({
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function ApprovalPreviewBlock({ preview }: { preview: ApprovalPreview }): ReactElement {
+  if (preview.kind === "file_diff") {
+    return <FileDiffPreviewBlock preview={preview} />;
+  }
+  return <></>;
+}
+
+function FileDiffPreviewBlock({ preview }: { preview: Extract<ApprovalPreview, { kind: "file_diff" }> }): ReactElement {
+  const { t } = useTranslation();
+  return (
+    <div className="ds-diff-preview">
+      <div className="ds-diff-preview-header">
+        <span>{preview.path}</span>
+        <span>
+          {t(`approvals.diff.${preview.operation}`)} · +{preview.added} / -{preview.removed}
+        </span>
+      </div>
+      <div className="ds-diff-preview-lines">
+        {preview.lines.map((line, index) => (
+          <DiffLine key={`${index}:${line.type}:${line.text}`} line={line} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DiffLine({ line }: { line: FileDiffLine }): ReactElement {
+  const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
+  return (
+    <div className={`ds-diff-line is-${line.type}`}>
+      <span>{prefix}</span>
+      <code>{line.text || " "}</code>
     </div>
   );
 }

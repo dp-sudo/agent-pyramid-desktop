@@ -1,23 +1,25 @@
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import * as path from "node:path";
-import type { AgentTool, AgentToolContext } from "../../domain/agent/types";
+import type { AgentTool } from "../../domain/agent/types";
+import {
+  requireWorkspace,
+  resolveWorkspacePathForAccess,
+  shouldSkipEntry,
+  toWorkspaceRelative,
+} from "./workspace-policy.js";
 
 const DEFAULT_LIST_LIMIT = 120;
 const DEFAULT_SEARCH_LIMIT = 80;
 const DEFAULT_READ_LIMIT_BYTES = 80_000;
 const MAX_READ_LIMIT_BYTES = 240_000;
 const MAX_SEARCH_FILE_BYTES = 1_000_000;
-const SKIPPED_DIRECTORIES = new Set([
-  ".git",
-  ".idea",
-  ".vscode",
-  "DeepSeek",
-  "dist",
-  "node_modules",
-  "out",
-]);
 
 export const listFilesTool: AgentTool = {
+  metadata: {
+    isReadOnly: true,
+    category: "workspace",
+  },
   definition: {
     name: "list_files",
     description:
@@ -40,7 +42,7 @@ export const listFilesTool: AgentTool = {
     const workspace = requireWorkspace(context);
     const relativePath = optionalString(input.path) ?? ".";
     const limit = numberInRange(input.max_entries, 1, 500, DEFAULT_LIST_LIMIT);
-    const directory = await resolveReadablePath(workspace, relativePath);
+    const directory = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(directory);
     if (!stat.isDirectory()) {
       throw new Error(`list_files path is not a directory: ${relativePath}`);
@@ -77,6 +79,10 @@ export const listFilesTool: AgentTool = {
 };
 
 export const readFileTool: AgentTool = {
+  metadata: {
+    isReadOnly: true,
+    category: "workspace",
+  },
   definition: {
     name: "read_file",
     description:
@@ -100,7 +106,7 @@ export const readFileTool: AgentTool = {
     const workspace = requireWorkspace(context);
     const relativePath = requiredString(input.path, "read_file requires a string path.");
     const maxBytes = numberInRange(input.max_bytes, 1, MAX_READ_LIMIT_BYTES, DEFAULT_READ_LIMIT_BYTES);
-    const filePath = await resolveReadablePath(workspace, relativePath);
+    const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) {
       throw new Error(`read_file path is not a file: ${relativePath}`);
@@ -116,16 +122,32 @@ export const readFileTool: AgentTool = {
       await handle.close();
     }
     const sliced = buffer.subarray(0, Math.min(bytesRead, maxBytes));
+    const content = sliced.toString("utf8");
+    const sha256 = createHash("sha256").update(content).digest("hex");
+    context.readState?.set(filePath, {
+      content,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      sha256,
+      truncated: bytesRead > maxBytes || stat.size > maxBytes,
+    });
     return JSON.stringify({
       path: toWorkspaceRelative(workspace, filePath),
-      content: sliced.toString("utf8"),
+      content,
       bytes: stat.size,
+      modifiedAt: stat.mtime.toISOString(),
+      mtimeMs: stat.mtimeMs,
+      sha256,
       truncated: bytesRead > maxBytes || stat.size > maxBytes,
     });
   },
 };
 
 export const searchFilesTool: AgentTool = {
+  metadata: {
+    isReadOnly: true,
+    category: "workspace",
+  },
   definition: {
     name: "search_files",
     description:
@@ -154,7 +176,7 @@ export const searchFilesTool: AgentTool = {
     const query = requiredString(input.query, "search_files requires a string query.");
     const relativePath = optionalString(input.path) ?? ".";
     const limit = numberInRange(input.max_results, 1, 300, DEFAULT_SEARCH_LIMIT);
-    const root = await resolveReadablePath(workspace, relativePath);
+    const root = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(root);
     if (!stat.isDirectory() && !stat.isFile()) {
       throw new Error(`search_files path is not a file or directory: ${relativePath}`);
@@ -205,45 +227,6 @@ export function createWorkspaceTools(): AgentTool[] {
   return [listFilesTool, readFileTool, searchFilesTool];
 }
 
-function requireWorkspace(context: AgentToolContext): string {
-  if (!context.workspace?.trim()) {
-    throw new Error("Workspace tools require an active thread workspace.");
-  }
-  return path.resolve(context.workspace);
-}
-
-async function resolveReadablePath(workspace: string, relativePath: string): Promise<string> {
-  const root = path.resolve(workspace);
-  const resolved = path.resolve(root, relativePath);
-  assertWithinWorkspace(root, resolved, relativePath);
-  assertAllowedWorkspacePath(root, resolved, relativePath);
-
-  const realRoot = await fs.realpath(root);
-  const realResolved = await fs.realpath(resolved);
-  assertWithinWorkspace(realRoot, realResolved, relativePath);
-  assertAllowedWorkspacePath(realRoot, realResolved, relativePath);
-  return resolved;
-}
-
-function assertWithinWorkspace(root: string, resolved: string, relativePath: string): void {
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
-    throw new Error(`Path escapes workspace: ${relativePath}`);
-  }
-}
-
-function assertAllowedWorkspacePath(root: string, resolved: string, relativePath: string): void {
-  const relative = path.relative(root, resolved);
-  if (!relative) return;
-  const segments = relative.split(path.sep).filter(Boolean);
-  if (segments.some(isSkippedSegment)) {
-    throw new Error(`Path is skipped by workspace tool policy: ${relativePath}`);
-  }
-}
-
-function toWorkspaceRelative(workspace: string, fullPath: string): string {
-  return path.relative(workspace, fullPath).replaceAll(path.sep, "/");
-}
-
 async function walkTextFiles(
   directory: string,
   onFile: (filePath: string) => Promise<void>,
@@ -278,14 +261,6 @@ function looksTextFile(name: string): boolean {
     ".yaml",
     ".yml",
   ].includes(ext);
-}
-
-function shouldSkipEntry(name: string): boolean {
-  return isSkippedSegment(name);
-}
-
-function isSkippedSegment(name: string): boolean {
-  return name.startsWith(".") || SKIPPED_DIRECTORIES.has(name);
 }
 
 function requiredString(value: unknown, message: string): string {

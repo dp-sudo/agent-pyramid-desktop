@@ -10,6 +10,7 @@ import { AgentRuntime } from "./application/agent-runtime.js";
 import { createPlanTool } from "./application/tools/create-plan-tool.js";
 import { createGoalTools } from "./application/tools/goal-tools.js";
 import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
+import { createCodingTools } from "./application/tools/coding-tools.js";
 import { InMemoryToolRegistry } from "./application/tools/in-memory-tool-registry.js";
 import { registerThreadHandlers } from "./ipc/threads-handlers.js";
 import { registerTurnHandlers } from "./ipc/turns-handlers.js";
@@ -44,6 +45,9 @@ const runtime = new AgentRuntime({
 });
 registry.register(createPlanTool);
 for (const tool of createWorkspaceTools()) {
+  registry.register(tool);
+}
+for (const tool of createCodingTools()) {
   registry.register(tool);
 }
 for (const tool of createGoalTools({

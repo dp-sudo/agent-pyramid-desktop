@@ -43,6 +43,10 @@
       "readFilePath": "读取文件：{{path}}",
       "searchFiles": "搜索文件",
       "searchFilesQuery": "搜索：{{query}}",
+      "editFile": "编辑文件",
+      "editFilePath": "编辑文件：{{path}}",
+      "writeFile": "写入文件",
+      "writeFilePath": "写入文件：{{path}}",
       "createPlan": "创建计划",
       "updateGoal": "更新目标"
     }
@@ -106,7 +110,11 @@
   "approvals": {
     "allow": "允许",
     "deny": "拒绝",
-    "submitting": "提交中…"
+    "submitting": "提交中…",
+    "diff": {
+      "create": "新建",
+      "update": "更新"
+    }
   },
   "common": {
     "settings": "设置",

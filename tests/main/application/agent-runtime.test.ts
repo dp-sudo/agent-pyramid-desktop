@@ -1,9 +1,12 @@
 import { promises as fs } from "node:fs";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../../../src/main/application/agent-runtime";
+import { createCodingTools } from "../../../src/main/application/tools/coding-tools";
 import { createPlanTool } from "../../../src/main/application/tools/create-plan-tool";
 import { createGoalTools } from "../../../src/main/application/tools/goal-tools";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
+import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
 import { RuntimeEventBus } from "../../../src/main/event-bus";
 import type { LlmRequest, LlmResponse, LlmStreamChunk } from "../../../src/main/domain/agent/types";
 import { AttachmentStore } from "../../../src/main/persistence/attachment-store";
@@ -569,6 +572,7 @@ describe("AgentRuntime", () => {
           description: "Read file",
           inputSchema: { type: "object" },
         },
+        metadata: { isReadOnly: true },
         async execute(input, context) {
           expect(input).toEqual({ path: "src/main/index.ts" });
           expect(context).toMatchObject({
@@ -636,6 +640,207 @@ describe("AgentRuntime", () => {
         expect.objectContaining({ kind: "assistant", text: "The file contains the entrypoint." }),
       ]),
     );
+  });
+
+  it("requests approval with a structured diff preview for file edits", async () => {
+    const workspace = await makeTempDir("runtime-coding-tools-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value = 1;\n", "utf8");
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            { id: "call-read", name: "read_file", arguments: { path: "src/index.ts" } },
+          ],
+          raw: {},
+        },
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-edit",
+              name: "edit_file",
+              arguments: {
+                path: "src/index.ts",
+                old_string: "const value = 1;",
+                new_string: "const value = 2;",
+              },
+            },
+          ],
+          raw: {},
+        },
+      ];
+      const runtime = createRuntime(registry);
+      await runtime.startTurn({
+        threadId: thread.id,
+        text: "Patch value",
+      });
+      await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+
+      const approval = events.find((event) => event.kind === "approval_requested");
+      expect(approval).toMatchObject({
+        kind: "approval_requested",
+        toolName: "edit_file",
+        preview: {
+          kind: "file_diff",
+          path: "src/index.ts",
+          added: 1,
+          removed: 1,
+        },
+      });
+      if (!approval || approval.kind !== "approval_requested") {
+        throw new Error("Expected approval request.");
+      }
+      runtime.respondApproval({ approvalId: approval.approvalId, decision: "deny" });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("keeps preview failures scoped to the tool call", async () => {
+    const workspace = await makeTempDir("runtime-coding-preview-failure-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value = 1;\n", "utf8");
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-edit",
+              name: "edit_file",
+              arguments: {
+                path: "src/index.ts",
+                old_string: "const value = 1;",
+                new_string: "const value = 2;",
+              },
+            },
+          ],
+          raw: {},
+        },
+        {
+          text: "Read the file first.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+
+      await createRuntime(registry).startTurn({
+        threadId: thread.id,
+        text: "Patch without reading",
+      });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+      expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+      expect(events.some((event) => event.kind === "turn_failed")).toBe(false);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "runtime_error",
+            code: "tool_failed",
+            message: expect.stringContaining("Read the file with read_file"),
+          }),
+        ]),
+      );
+      const replayed = [];
+      for await (const item of store.replayItems(thread.id)) {
+        replayed.push(item);
+      }
+      expect(
+        finalItems(replayed).find((item) => item.kind === "tool" && item.name === "edit_file"),
+      ).toMatchObject({
+        status: "failed",
+        result: {
+          message: "Read the file with read_file before attempting to edit or overwrite it.",
+        },
+      });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("denies write tools in read-only sandbox mode before execution", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    await store.updateThread(thread.id, { sandboxMode: "read-only" });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "write_file",
+          description: "Write file",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isDestructive: true },
+        async execute() {
+          throw new Error("write_file should not execute in read-only sandbox.");
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-write",
+            name: "write_file",
+            arguments: { path: "src/index.ts", content: "next" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Denied.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Try writing",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(
+      finalItems(replayed).find((item) => item.kind === "tool" && item.name === "write_file"),
+    ).toMatchObject({
+      status: "failed",
+      result: { denied: true },
+    });
   });
 
   it("uses update_goal when goal mode is enabled and emits goal updates", async () => {
@@ -821,6 +1026,7 @@ describe("AgentRuntime", () => {
           description: "Read file",
           inputSchema: { type: "object" },
         },
+        metadata: { isReadOnly: true },
         async execute() {
           return longToolResult;
         },
@@ -881,6 +1087,7 @@ describe("AgentRuntime", () => {
           description: "Read file",
           inputSchema: { type: "object" },
         },
+        metadata: { isReadOnly: true },
         async execute() {
           return "short result";
         },
@@ -950,6 +1157,7 @@ describe("AgentRuntime", () => {
           description: "Read file",
           inputSchema: { type: "object" },
         },
+        metadata: { isReadOnly: true },
         async execute() {
           return "short result";
         },
@@ -1069,6 +1277,7 @@ describe("AgentRuntime", () => {
           description: "Read file",
           inputSchema: { type: "object" },
         },
+        metadata: { isReadOnly: true },
         async execute(call) {
           return JSON.stringify({ path: call.path, content: "still need more" });
         },

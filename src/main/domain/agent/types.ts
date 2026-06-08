@@ -33,12 +33,34 @@ export interface AgentToolResult {
   toolCallId: string;
   name: string;
   content: string;
+  displayResult?: unknown;
 }
 
 export interface AgentToolContext {
   threadId: string;
   turnId: string;
   workspace?: string;
+  readState?: {
+    get(filePath: string): {
+      content: string;
+      mtimeMs: number;
+      size: number;
+      sha256: string;
+      truncated: boolean;
+    } | undefined;
+    set(
+      filePath: string,
+      state: {
+        content: string;
+        mtimeMs: number;
+        size: number;
+        sha256: string;
+        truncated: boolean;
+      },
+    ): void;
+    delete(filePath: string): void;
+    clear(): void;
+  };
 }
 
 export type AgentUsage = TokenUsage;
@@ -88,5 +110,11 @@ export interface LlmGateway {
 
 export interface AgentTool {
   definition: AgentToolDefinition;
-  execute(input: Record<string, unknown>, context: AgentToolContext): Promise<string>;
+  metadata?: {
+    isReadOnly?: boolean;
+    isDestructive?: boolean;
+    category?: "workspace" | "plan" | "goal" | "command";
+  };
+  preview?(input: Record<string, unknown>, context: AgentToolContext): Promise<unknown>;
+  execute(input: Record<string, unknown>, context: AgentToolContext): Promise<string | AgentToolResult>;
 }

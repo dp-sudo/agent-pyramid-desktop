@@ -137,4 +137,27 @@ describe("timeline model", () => {
       tone: "success",
     });
   });
+
+  it("summarizes coding tools with file paths", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "edit_file",
+      args: { path: "src/main/index.ts" },
+      result: {
+        content: "{\"path\":\"src/main/index.ts\"}",
+      },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key, options) =>
+      options?.path ? `${key}:${String(options.path)}` : key,
+    );
+
+    expect(display.title).toBe("chat.tools.editFilePath:src/main/index.ts");
+    expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
 });

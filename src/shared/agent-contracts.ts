@@ -274,6 +274,22 @@ export interface ToolItem {
   createdAt: string;
 }
 
+export interface FileDiffLine {
+  type: "context" | "added" | "removed";
+  text: string;
+}
+
+export interface FileDiffPreview {
+  kind: "file_diff";
+  path: string;
+  operation: "create" | "update";
+  added: number;
+  removed: number;
+  lines: FileDiffLine[];
+}
+
+export type ApprovalPreview = FileDiffPreview;
+
 export interface CompactionItem {
   kind: "compaction";
   id: string;
@@ -292,6 +308,7 @@ export interface ApprovalItem {
   approvalId: string;
   toolName: string;
   args: Record<string, unknown>;
+  preview?: ApprovalPreview;
   decision?: "allow" | "deny";
   resolvedAt?: string;
   createdAt: string;
@@ -398,6 +415,7 @@ export interface ApprovalRequestedEvent {
   approvalId: string;
   toolName: string;
   args: Record<string, unknown>;
+  preview?: ApprovalPreview;
 }
 
 export interface RuntimeErrorEvent {

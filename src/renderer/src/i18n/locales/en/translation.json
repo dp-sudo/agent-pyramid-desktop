@@ -43,6 +43,10 @@
       "readFilePath": "Read file: {{path}}",
       "searchFiles": "Search files",
       "searchFilesQuery": "Search: {{query}}",
+      "editFile": "Edit file",
+      "editFilePath": "Edit file: {{path}}",
+      "writeFile": "Write file",
+      "writeFilePath": "Write file: {{path}}",
       "createPlan": "Create plan",
       "updateGoal": "Update goal"
     }
@@ -106,7 +110,11 @@
   "approvals": {
     "allow": "Allow",
     "deny": "Deny",
-    "submitting": "Submitting…"
+    "submitting": "Submitting…",
+    "diff": {
+      "create": "Create",
+      "update": "Update"
+    }
   },
   "common": {
     "settings": "Settings",
