@@ -113,7 +113,7 @@ export interface AnthropicMessageResponse {
     thinking?: string;
     id?: string;
     name?: string;
-    input?: Record<string, unknown>;
+    input?: unknown;
   }>;
   stop_reason?: string;
   usage?: {
@@ -203,7 +203,7 @@ export function parseAnthropicToolCalls(response: AnthropicMessageResponse): Age
       return {
         id: block.id ?? `tool_call_${index}`,
         name,
-        arguments: block.input ?? {}
+        arguments: normalizeToolInputRecord(block.input, name)
       };
     });
 }
@@ -221,6 +221,17 @@ function parseToolArguments(raw: string, toolName: string): Record<string, unkno
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse arguments for tool "${toolName}": ${reason}`);
   }
+}
+
+export function normalizeToolInputRecord(
+  value: unknown,
+  toolName: string,
+): Record<string, unknown> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Anthropic tool input for "${toolName}" must be a JSON object.`);
+  }
+  return value as Record<string, unknown>;
 }
 
 function requiredToolName(value: unknown, label: string): string {

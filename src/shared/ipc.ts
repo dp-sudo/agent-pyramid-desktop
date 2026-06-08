@@ -39,6 +39,15 @@ export const WRITE_LIST_CHANNEL = "write:list";
 export const WRITE_GET_CHANNEL = "write:get";
 export const WRITE_PUT_CHANNEL = "write:put";
 export const WRITE_COMPLETE_CHANNEL = "write:complete";
+export const WRITE_ACTION_CHANNEL = "write:action";
+export const WRITE_MEMORY_CHANNEL = "write:memory";
+export const WRITE_TREE_CHANNEL = "write:tree";
+export const WRITE_CREATE_CHANNEL = "write:create";
+export const WRITE_RENAME_CHANNEL = "write:rename";
+export const WRITE_DELETE_CHANNEL = "write:delete";
+export const WRITE_EXPORT_CHANNEL = "write:export";
+export const WRITE_MEDIA_CHANNEL = "write:media";
+export const WRITE_WATCH_CHANNEL = "write:watch";
 
 // Model configuration
 export const MODEL_CONFIG_GET_CHANNEL = "config:model:get";
@@ -73,6 +82,15 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   WRITE_GET_CHANNEL,
   WRITE_PUT_CHANNEL,
   WRITE_COMPLETE_CHANNEL,
+  WRITE_ACTION_CHANNEL,
+  WRITE_MEMORY_CHANNEL,
+  WRITE_TREE_CHANNEL,
+  WRITE_CREATE_CHANNEL,
+  WRITE_RENAME_CHANNEL,
+  WRITE_DELETE_CHANNEL,
+  WRITE_EXPORT_CHANNEL,
+  WRITE_MEDIA_CHANNEL,
+  WRITE_WATCH_CHANNEL,
   MODEL_CONFIG_GET_CHANNEL,
   MODEL_CONFIG_UPDATE_CHANNEL,
   MODEL_CONFIG_PROFILES_LIST_CHANNEL,

@@ -557,6 +557,19 @@ export interface WriteFileEntry {
   path: string; // workspace-relative, forward slashes
   size: number;
   modifiedAt: string;
+  readonly?: boolean;
+  reason?: string;
+}
+
+export interface WriteTreeNode {
+  kind: "directory" | "file";
+  name: string;
+  path: string;
+  children?: WriteTreeNode[];
+  size?: number;
+  modifiedAt?: string;
+  readonly?: boolean;
+  reason?: string;
 }
 
 export interface WriteListRequest {
@@ -570,10 +583,90 @@ export interface WriteGetRequest {
   path: string;
 }
 
+export interface WriteGetResponse {
+  path: string;
+  content: string;
+  size: number;
+  modifiedAt: string;
+  readonly: boolean;
+  reason?: string;
+}
+
 export interface WritePutRequest {
   workspace: string;
   path: string;
   content: string;
+}
+
+export interface WriteCreateRequest {
+  workspace: string;
+  path: string;
+  content?: string;
+}
+
+export interface WriteRenameRequest {
+  workspace: string;
+  fromPath: string;
+  toPath: string;
+}
+
+export interface WriteDeleteRequest {
+  workspace: string;
+  path: string;
+}
+
+export interface WriteExportRequest {
+  workspace: string;
+  path: string;
+}
+
+export interface WriteMediaRequest {
+  workspace: string;
+  path: string;
+  content: string;
+}
+
+export interface WriteWatchRequest {
+  workspace: string;
+  path: string;
+  knownModifiedAt?: string;
+  knownSize?: number;
+}
+
+export interface WriteFileMutationResponse {
+  path: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface WriteExportResponse {
+  path: string;
+  suggestedName: string;
+  markdown: string;
+}
+
+export interface WriteMediaReference {
+  alt: string;
+  rawTarget: string;
+  path: string | null;
+  exists: boolean;
+  external: boolean;
+  mimeType?: string;
+  dataUrl?: string;
+  previewUnavailableReason?: string;
+}
+
+export interface WriteMediaResponse {
+  path: string;
+  references: WriteMediaReference[];
+}
+
+export interface WriteWatchResponse {
+  path: string;
+  exists: boolean;
+  changed: boolean;
+  size?: number;
+  modifiedAt?: string;
 }
 
 export interface WriteCompleteRequest {
@@ -591,6 +684,73 @@ export interface WriteCompleteResponse {
   score: number;
   /** Truncated flag: model hit token limit. */
   truncated: boolean;
+}
+
+export interface WriteActionRequest {
+  workspace: string;
+  path: string;
+  /** Raw model output or caller-provided JSON action payload. */
+  rawAction: string;
+}
+
+export interface WriteActionScope {
+  path: string;
+  start: number;
+  end: number;
+  originalText: string;
+}
+
+export interface WriteInlineCompleteAction {
+  kind: "write:inline-complete";
+  path: string;
+  insertText: string;
+  cursor: number;
+  score: number;
+  truncated: boolean;
+}
+
+export interface WriteInlineEditAction {
+  kind: "write:inline-edit";
+  path: string;
+  scope: WriteActionScope;
+  replacement: string;
+  summary: string;
+}
+
+export interface WriteAssistantContextAction {
+  kind: "write:assistant-context";
+  path: string | null;
+  prompt: string;
+}
+
+export type WriteAction =
+  | WriteInlineCompleteAction
+  | WriteInlineEditAction
+  | WriteAssistantContextAction;
+
+export interface WriteActionResponse {
+  action: WriteAction;
+}
+
+export interface WriteMemoryRequest {
+  workspace: string;
+  query: string;
+  activePath?: string | null;
+  limit?: number;
+}
+
+export interface WriteMemoryEvidence {
+  id: string;
+  path: string;
+  start: number;
+  end: number;
+  score: number;
+  snippet: string;
+}
+
+export interface WriteMemoryResponse {
+  query: string;
+  evidence: WriteMemoryEvidence[];
 }
 
 // ============================================================================
@@ -766,6 +926,28 @@ export function isThreadRecord(value: unknown): value is ThreadRecord {
   );
 }
 
+export function isWriteAction(value: unknown): value is WriteAction {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "write:inline-complete") {
+    return hasString(value, "path") &&
+      hasString(value, "insertText") &&
+      isFiniteNumber(value.cursor) &&
+      isFiniteNumber(value.score) &&
+      typeof value.truncated === "boolean";
+  }
+  if (value.kind === "write:inline-edit") {
+    return hasString(value, "path") &&
+      isWriteActionScope(value.scope) &&
+      hasString(value, "replacement") &&
+      hasString(value, "summary");
+  }
+  if (value.kind === "write:assistant-context") {
+    return (value.path === null || typeof value.path === "string") &&
+      hasString(value, "prompt");
+  }
+  return false;
+}
+
 function hasBaseItemFields(value: Record<string, unknown>): boolean {
   return hasString(value, "kind") &&
     hasString(value, "id") &&
@@ -795,6 +977,14 @@ function isThreadGoal(value: unknown): value is ThreadGoal {
     isOptionalString(value.completedAt) &&
     isOptionalString(value.blockedAt) &&
     isOptionalString(value.summary);
+}
+
+function isWriteActionScope(value: unknown): value is WriteActionScope {
+  if (!isRecord(value)) return false;
+  return hasString(value, "path") &&
+    isFiniteNumber(value.start) &&
+    isFiniteNumber(value.end) &&
+    hasString(value, "originalText");
 }
 
 function isPlanStep(value: unknown): value is PlanStep {

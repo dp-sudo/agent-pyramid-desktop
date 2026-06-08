@@ -15,6 +15,7 @@ import {
   normalizeOpenAiUsage,
   normalizeToolDefinitions,
   mapOpenAiUsageFields,
+  normalizeToolInputRecord,
   parseAnthropicToolCalls,
   parseOpenAiToolCalls,
   stableJsonStringify,
@@ -257,7 +258,7 @@ interface AnthropicStreamPayload {
     type?: string;
     id?: string;
     name?: string;
-    input?: Record<string, unknown>;
+    input?: unknown;
   };
   delta?: {
     type?: string;
@@ -353,11 +354,12 @@ class AnthropicToolCallAccumulator {
 
   start(index: number, block: NonNullable<AnthropicStreamPayload["content_block"]>): void {
     if (block.type !== "tool_use") return;
+    const input = normalizeToolInputRecord(block.input, block.name ?? `tool_call_${index}`);
     this.pendingByIndex.set(index, {
       id: block.id ?? `tool_call_${index}`,
       name: block.name,
       argumentsText:
-        block.input && Object.keys(block.input).length > 0 ? JSON.stringify(block.input) : ""
+        Object.keys(input).length > 0 ? JSON.stringify(input) : ""
     });
   }
 

@@ -4,6 +4,15 @@ import {
   MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
   RENDERER_TO_MAIN_CHANNELS,
   TURN_START_CHANNEL,
+  WRITE_ACTION_CHANNEL,
+  WRITE_CREATE_CHANNEL,
+  WRITE_DELETE_CHANNEL,
+  WRITE_EXPORT_CHANNEL,
+  WRITE_MEDIA_CHANNEL,
+  WRITE_MEMORY_CHANNEL,
+  WRITE_RENAME_CHANNEL,
+  WRITE_TREE_CHANNEL,
+  WRITE_WATCH_CHANNEL,
 } from "../../src/shared/ipc";
 import {
   DEFAULT_DEEPSEEK_MODEL_CONFIG,
@@ -13,6 +22,7 @@ import {
   isItem,
   isModelReasoningEffort,
   isRuntimeEvent,
+  isWriteAction,
   ok,
   type WritePutRequest,
 } from "../../src/shared/agent-contracts";
@@ -50,7 +60,33 @@ describe("shared agent contracts", () => {
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(
       MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
     );
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(WRITE_ACTION_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(WRITE_MEMORY_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(WRITE_TREE_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(WRITE_CREATE_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(WRITE_RENAME_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(WRITE_DELETE_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(WRITE_EXPORT_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(WRITE_MEDIA_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(WRITE_WATCH_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).not.toContain("agent:run");
+  });
+
+  it("recognizes only dedicated Write action contracts", () => {
+    expect(isWriteAction({
+      kind: "write:inline-complete",
+      path: "notes.md",
+      insertText: " continued",
+      cursor: 12,
+      score: 0.74,
+      truncated: false,
+    })).toBe(true);
+    expect(isWriteAction({
+      kind: "edit_file",
+      path: "notes.md",
+      old_string: "a",
+      new_string: "b",
+    })).toBe(false);
   });
 
   it("keeps provider defaults internally consistent", () => {

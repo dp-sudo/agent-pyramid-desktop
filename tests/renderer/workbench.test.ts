@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { err, ok } from "../../src/shared/agent-contracts";
 import {
+  buildWriteAssistantSendPayload,
   buildComposerSendPayload,
   clampSidebarWidth,
   findLatestThreadForWorkspace,
   formatInitialLoadErrors,
+  getWriteCursorContext,
   getNextSidebarWidth,
   isGlobalRuntimeErrorEvent,
   shouldUnsubscribeRemovedThread,
   workbenchThreadModeForRoute,
 } from "../../src/renderer/src/ui/Workbench";
+import {
+  createInitialWriteWorkspaceState,
+  type WriteWorkspaceState,
+} from "../../src/renderer/src/ui/store/WorkbenchContext";
 
 describe("Workbench", () => {
   it("formats initial load IPC errors instead of silently ignoring them", () => {
@@ -102,6 +108,78 @@ describe("Workbench", () => {
     expect(findLatestThreadForWorkspace(threads, "/workspace", "write")?.id).toBe("write-1");
     expect(findLatestThreadForWorkspace(threads, "/workspace", "code")?.id).toBe("code-1");
     expect(findLatestThreadForWorkspace(threads, "/missing", "write")).toBeNull();
+  });
+
+  it("builds a Write assistant payload with structured file context and visible prompt", () => {
+    const writeState: WriteWorkspaceState = {
+      ...createInitialWriteWorkspaceState("/workspace"),
+      activeFile: "draft.md",
+      content: "Intro paragraph.\nSelected sentence.\nClosing note.",
+      savedContent: "Intro paragraph.\nSelected sentence.\nClosing note.",
+      selection: {
+        start: 17,
+        end: 35,
+        direction: "forward",
+      },
+      recentEdits: [
+        {
+          id: "edit-1",
+          filePath: "draft.md",
+          editedAt: "2026-06-09T00:00:00.000Z",
+          start: 17,
+          end: 35,
+          beforeLength: 4,
+          afterLength: 18,
+          summary: "Expanded selected sentence.",
+        },
+      ],
+      memoryState: {
+        query: "warmer selected sentence",
+        loading: false,
+        error: null,
+        expanded: true,
+        evidence: [
+          {
+            id: "voice.md:0:42",
+            path: "voice.md",
+            start: 0,
+            end: 42,
+            score: 1.25,
+            snippet: "Use a warmer but still practical voice.",
+          },
+        ],
+      },
+    };
+
+    const payload = buildWriteAssistantSendPayload("  Make this warmer  ", writeState);
+
+    expect(payload?.displayText).toBe("Make this warmer");
+    expect(payload?.threadTitle).toBe("Make this warmer");
+    expect(payload?.text).toContain("write:assistant-context");
+    expect(payload?.text).toContain("\"activeFile\": \"draft.md\"");
+    expect(payload?.text).toContain("\"text\": \"Selected sentence.\"");
+    expect(payload?.text).toContain("Expanded selected sentence.");
+    expect(payload?.text).toContain("Use a warmer but still practical voice.");
+    expect(payload?.text).toContain("<user_request>\nMake this warmer\n</user_request>");
+  });
+
+  it("does not build a Write assistant payload for an empty prompt", () => {
+    expect(
+      buildWriteAssistantSendPayload("  ", createInitialWriteWorkspaceState("/workspace")),
+    ).toBeNull();
+  });
+
+  it("clips Write cursor context around the current selection", () => {
+    expect(
+      getWriteCursorContext("0123456789abcdefghij", {
+        start: 10,
+        end: 10,
+        direction: "none",
+      }, 8),
+    ).toEqual({
+      before: "6789",
+      after: "abcd",
+    });
   });
 });
 

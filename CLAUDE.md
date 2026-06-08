@@ -18,6 +18,7 @@ Read in this order before making a non-trivial change:
 ## External Reference Boundary
 
 This repository does not contain DeepSeek GUI or Claude Code source. External directories under `/mnt/f/cc_src/*` are read-only learning references only.
+This repository does not contain claude code or Claude Code source. External directories under `/mnt/f/cc_src/*` are read-only learning references only.
 
 Never import, link, copy, build, test, package, or document those external reference files as implementation sources. Do not add them to `package.json`, TypeScript config, Vite/Electron config, Vitest config, docs dependency lists, or runtime code. If a pattern is useful, re-implement it inside this repository.
 

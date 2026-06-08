@@ -16,12 +16,28 @@ import type {
   ThreadUpdatePatch,
   TurnRecord,
   TurnStartRequest,
+  WriteActionRequest,
+  WriteActionResponse,
   WriteCompleteRequest,
   WriteCompleteResponse,
+  WriteCreateRequest,
+  WriteDeleteRequest,
+  WriteExportRequest,
+  WriteExportResponse,
   WriteFileEntry,
+  WriteFileMutationResponse,
   WriteGetRequest,
+  WriteGetResponse,
   WriteListRequest,
+  WriteMediaRequest,
+  WriteMediaResponse,
+  WriteMemoryRequest,
+  WriteMemoryResponse,
   WritePutRequest,
+  WriteRenameRequest,
+  WriteTreeNode,
+  WriteWatchRequest,
+  WriteWatchResponse,
   Item,
   UsageDailyBucket,
   UsageDailyRequest,
@@ -55,10 +71,19 @@ import {
   TURN_START_CHANNEL,
   USAGE_DAILY_CHANNEL,
   WORKSPACE_PICK_DIRECTORY_CHANNEL,
+  WRITE_ACTION_CHANNEL,
   WRITE_COMPLETE_CHANNEL,
+  WRITE_CREATE_CHANNEL,
+  WRITE_DELETE_CHANNEL,
+  WRITE_EXPORT_CHANNEL,
   WRITE_GET_CHANNEL,
   WRITE_LIST_CHANNEL,
+  WRITE_MEDIA_CHANNEL,
+  WRITE_MEMORY_CHANNEL,
   WRITE_PUT_CHANNEL,
+  WRITE_RENAME_CHANNEL,
+  WRITE_TREE_CHANNEL,
+  WRITE_WATCH_CHANNEL,
   MODEL_CONFIG_GET_CHANNEL,
   MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
   MODEL_CONFIG_PROFILES_CREATE_CHANNEL,
@@ -209,9 +234,9 @@ const write = {
   },
   get(
     request: WriteGetRequest,
-  ): Promise<IpcResult<{ path: string; content: string }>> {
+  ): Promise<IpcResult<WriteGetResponse>> {
     return ipcRenderer.invoke(WRITE_GET_CHANNEL, request) as Promise<
-      IpcResult<{ path: string; content: string }>
+      IpcResult<WriteGetResponse>
     >;
   },
   put(
@@ -226,6 +251,55 @@ const write = {
   ): Promise<IpcResult<WriteCompleteResponse>> {
     return ipcRenderer.invoke(WRITE_COMPLETE_CHANNEL, request) as Promise<
       IpcResult<WriteCompleteResponse>
+    >;
+  },
+  action(
+    request: WriteActionRequest,
+  ): Promise<IpcResult<WriteActionResponse>> {
+    return ipcRenderer.invoke(WRITE_ACTION_CHANNEL, request) as Promise<
+      IpcResult<WriteActionResponse>
+    >;
+  },
+  memory(
+    request: WriteMemoryRequest,
+  ): Promise<IpcResult<WriteMemoryResponse>> {
+    return ipcRenderer.invoke(WRITE_MEMORY_CHANNEL, request) as Promise<
+      IpcResult<WriteMemoryResponse>
+    >;
+  },
+  tree(request: WriteListRequest): Promise<IpcResult<WriteTreeNode[]>> {
+    return ipcRenderer.invoke(WRITE_TREE_CHANNEL, request) as Promise<
+      IpcResult<WriteTreeNode[]>
+    >;
+  },
+  create(request: WriteCreateRequest): Promise<IpcResult<WriteFileMutationResponse>> {
+    return ipcRenderer.invoke(WRITE_CREATE_CHANNEL, request) as Promise<
+      IpcResult<WriteFileMutationResponse>
+    >;
+  },
+  rename(request: WriteRenameRequest): Promise<IpcResult<WriteFileMutationResponse>> {
+    return ipcRenderer.invoke(WRITE_RENAME_CHANNEL, request) as Promise<
+      IpcResult<WriteFileMutationResponse>
+    >;
+  },
+  delete(request: WriteDeleteRequest): Promise<IpcResult<{ path: string }>> {
+    return ipcRenderer.invoke(WRITE_DELETE_CHANNEL, request) as Promise<
+      IpcResult<{ path: string }>
+    >;
+  },
+  export(request: WriteExportRequest): Promise<IpcResult<WriteExportResponse>> {
+    return ipcRenderer.invoke(WRITE_EXPORT_CHANNEL, request) as Promise<
+      IpcResult<WriteExportResponse>
+    >;
+  },
+  media(request: WriteMediaRequest): Promise<IpcResult<WriteMediaResponse>> {
+    return ipcRenderer.invoke(WRITE_MEDIA_CHANNEL, request) as Promise<
+      IpcResult<WriteMediaResponse>
+    >;
+  },
+  watch(request: WriteWatchRequest): Promise<IpcResult<WriteWatchResponse>> {
+    return ipcRenderer.invoke(WRITE_WATCH_CHANNEL, request) as Promise<
+      IpcResult<WriteWatchResponse>
     >;
   },
 };

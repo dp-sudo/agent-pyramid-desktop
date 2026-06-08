@@ -964,6 +964,48 @@ describe("application tools", () => {
     }
   });
 
+  it("places zero-count insertion hunks at unified diff insertion points", async () => {
+    const workspace = await makeTempDir("apply-patch-zero-count-");
+    try {
+      await fs.writeFile(path.join(workspace, "file.txt"), "a\nb\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "file.txt" } },
+        context,
+      );
+
+      await registry.execute(
+        {
+          id: "call-patch-zero-count",
+          name: "apply_patch",
+          arguments: {
+            patch: [
+              "--- a/file.txt",
+              "+++ b/file.txt",
+              "@@ -0,0 +1 @@",
+              "+start",
+              "@@ -1,0 +3 @@",
+              "+middle",
+              "@@ -2,0 +5 @@",
+              "+end",
+            ].join("\n"),
+          },
+        },
+        context,
+      );
+
+      expect(await fs.readFile(path.join(workspace, "file.txt"), "utf8"))
+        .toBe("start\na\nmiddle\nb\nend\n");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("rejects writes when files change between prepare and commit", async () => {
     const workspace = await makeTempDir("coding-tools-write-race-");
     try {
@@ -1018,7 +1060,9 @@ describe("application tools", () => {
     const outside = await makeTempDir("coding-tools-symlink-race-outside-");
     try {
       const parentPath = path.join(workspace, "created");
-      const outsideTargetPath = path.join(outside, "file.ts");
+      const targetPath = path.join(workspace, "created", "nested", "file.ts");
+      const outsideCreatedDirectory = path.join(outside, "nested");
+      const outsideTargetPath = path.join(outsideCreatedDirectory, "file.ts");
       const readState = new FileReadStateStore();
       const registry = new InMemoryToolRegistry([
         ...createWorkspaceTools(),
@@ -1026,18 +1070,26 @@ describe("application tools", () => {
       ]);
       const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
 
-      const originalMkdir = fs.mkdir.bind(fs);
-      const mkdirSpy = vi.spyOn(fs, "mkdir").mockImplementation((async (
-        ...args: Parameters<typeof fs.mkdir>
+      const originalStat = fs.stat.bind(fs);
+      let replacedParent = false;
+      const statSpy = vi.spyOn(fs, "stat").mockImplementation((async (
+        ...args: Parameters<typeof fs.stat>
       ) => {
-        const result = await originalMkdir(...args);
-        const target = args[0];
-        if (typeof target === "string" && path.resolve(target) === parentPath) {
-          await fs.rm(parentPath, { recursive: true, force: true });
-          await fs.symlink(outside, parentPath);
+        try {
+          return await originalStat(...args);
+        } catch (error) {
+          const target = args[0];
+          if (
+            !replacedParent &&
+            typeof target === "string" &&
+            path.resolve(target) === targetPath
+          ) {
+            replacedParent = true;
+            await fs.symlink(outside, parentPath);
+          }
+          throw error;
         }
-        return result;
-      }) as typeof fs.mkdir);
+      }) as typeof fs.stat);
       try {
         await expect(
           registry.execute(
@@ -1045,17 +1097,18 @@ describe("application tools", () => {
               id: "call-write-symlink-race",
               name: "write_file",
               arguments: {
-                path: "created/file.ts",
+                path: "created/nested/file.ts",
                 content: "created\n",
               },
             },
             context,
           ),
-        ).rejects.toThrow("Path escapes workspace: created/file.ts");
+        ).rejects.toThrow("Path escapes workspace: created/nested/file.ts");
       } finally {
-        mkdirSpy.mockRestore();
+        statSpy.mockRestore();
       }
 
+      await expect(fs.access(outsideCreatedDirectory)).rejects.toThrow();
       await expect(fs.access(outsideTargetPath)).rejects.toThrow();
     } finally {
       await removeTempDir(workspace);
@@ -1174,6 +1227,71 @@ describe("application tools", () => {
           context,
         ),
       ).rejects.toThrow("Path escapes workspace: ../outside.ts");
+
+      await fs.writeFile(path.join(workspace, "src", "renamed.ts"), "const value = 1;\n", "utf8");
+      await registry.execute(
+        { id: "call-read-renamed", name: "read_file", arguments: { path: "src/renamed.ts" } },
+        context,
+      );
+      await expect(
+        registry.execute(
+          {
+            id: "call-path-change",
+            name: "apply_patch",
+            arguments: {
+              patch: [
+                "--- a/src/index.ts",
+                "+++ b/src/renamed.ts",
+                "@@ -1 +1 @@",
+                "-const value = 1;",
+                "+const value = 2;",
+              ].join("\n"),
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("apply_patch does not support renaming or copying files.");
+      expect(await fs.readFile(path.join(workspace, "src", "renamed.ts"), "utf8"))
+        .toBe("const value = 1;\n");
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-rename-metadata",
+            name: "apply_patch",
+            arguments: {
+              patch: [
+                "diff --git a/src/index.ts b/src/renamed.ts",
+                "similarity index 100%",
+                "rename from src/index.ts",
+                "rename to src/renamed.ts",
+                "--- a/src/index.ts",
+                "+++ b/src/renamed.ts",
+              ].join("\n"),
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("apply_patch does not support renaming or copying files.");
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-copy-metadata",
+            name: "apply_patch",
+            arguments: {
+              patch: [
+                "diff --git a/src/index.ts b/src/copied.ts",
+                "copy from src/index.ts",
+                "copy to src/copied.ts",
+                "--- a/src/index.ts",
+                "+++ b/src/copied.ts",
+              ].join("\n"),
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("apply_patch does not support renaming or copying files.");
     } finally {
       await removeTempDir(workspace);
     }
@@ -1504,6 +1622,31 @@ describe("application tools", () => {
       expect(truncated.stderrBytes).toBe(40000);
       expect(truncated.stdoutTruncated).toBe(true);
       expect(truncated.stderrTruncated).toBe(true);
+
+      const unicodeTruncated = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "call-unicode-truncate",
+              name: "run_command",
+              arguments: {
+                command: nodeCommand(
+                  "process.stdout.write('x'.repeat(32767) + '你');",
+                ),
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as {
+        stdout: string;
+        stdoutBytes: number;
+        stdoutTruncated: boolean;
+      };
+      expect(unicodeTruncated.stdout).toBe("x".repeat(32767));
+      expect(unicodeTruncated.stdout).not.toContain("\uFFFD");
+      expect(unicodeTruncated.stdoutBytes).toBe(32770);
+      expect(unicodeTruncated.stdoutTruncated).toBe(true);
     } finally {
       await removeTempDir(workspace);
       await removeTempDir(outside);

@@ -111,10 +111,11 @@ Important semantics:
   follows visible thread activity.
 - `index.json` writes use an index queue.
 - JSON writes use temp file + fsync + rename.
-- JSONL appends use fsync.
-- Malformed JSONL lines are warned and skipped during replay. This includes
-  lines that parse as JSON but fail the shared `Item` / `RuntimeEvent` shape
-  guards.
+- JSONL appends validate `Item` / `RuntimeEvent` shape with the shared contract
+  guards before writing, then use fsync.
+- Malformed historical JSONL lines are warned and skipped during replay. This
+  includes lines that parse as JSON but fail the shared `Item` / `RuntimeEvent`
+  shape guards.
 
 ## Goal Model
 

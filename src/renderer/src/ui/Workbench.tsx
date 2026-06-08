@@ -4,6 +4,9 @@ import {
   getActiveThreadInFlightTurn,
   getThreadInFlightTurn,
   useWorkbench,
+  type WriteRecentEdit,
+  type WriteSelectionState,
+  type WriteWorkspaceState,
   type WorkbenchRoute,
 } from "./store/WorkbenchContext";
 import { Sidebar } from "./components/sidebar/Sidebar";
@@ -25,6 +28,8 @@ import type {
 } from "../../../shared/agent-contracts";
 
 const SIDEBAR_KEYBOARD_STEP = 16;
+const WRITE_CONTEXT_SNIPPET_CHARS = 1800;
+const WRITE_CONTEXT_RECENT_EDIT_LIMIT = 5;
 
 export function Workbench(): ReactElement {
   const { t } = useTranslation();
@@ -239,6 +244,7 @@ export function Workbench(): ReactElement {
         mode,
       );
       if (latestForWorkspace) {
+        activeThreadIdRef.current = latestForWorkspace.id;
         await selectThreadById(latestForWorkspace.id);
         return true;
       }
@@ -467,6 +473,90 @@ export function Workbench(): ReactElement {
     t,
   ]);
 
+  const onSendWriteAssistant = useCallback(
+    async (
+      draftText: string,
+      writeState: WriteWorkspaceState,
+    ): Promise<boolean> => {
+      if (!draftText.trim()) return false;
+      if (state.activeThread?.mode === "write" && activeThreadArchived) {
+        actions.setError(t("threads.sendBlockedArchived"));
+        return false;
+      }
+      if (sendInProgressRef.current) {
+        return false;
+      }
+
+      sendInProgressRef.current = true;
+      actions.setError(null);
+      try {
+        const workspace =
+          writeState.workspace || workspaceRootRef.current || state.workspaceRoot;
+        if (!workspace) {
+          const selected = await ensureWorkspaceRoot();
+          if (!selected) return false;
+        }
+        const resolvedWorkspace =
+          writeState.workspace || workspaceRootRef.current || state.workspaceRoot;
+        if (!resolvedWorkspace) return false;
+        const sendPayload = buildWriteAssistantSendPayload(draftText, {
+          ...writeState,
+          workspace: resolvedWorkspace,
+        });
+        if (!sendPayload) return false;
+
+        let threadId =
+          state.activeThread?.mode === "write" && state.activeThread.status !== "archived"
+            ? state.activeThreadId
+            : null;
+        if (!threadId) {
+          if (!await selectOrCreateThreadForWorkspace(resolvedWorkspace, "write")) {
+            return false;
+          }
+          threadId = activeThreadIdRef.current;
+        }
+        if (!threadId) return false;
+
+        const result = await window.agentApi.turns.start({
+          threadId,
+          text: sendPayload.text,
+          displayText: sendPayload.displayText,
+          model: state.composer.model,
+          modelProfileId:
+            state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
+          reasoningEffort:
+            state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
+          attachmentIds: [],
+          mode: "agent",
+          goalMode: false,
+        });
+        if (!result.ok) {
+          actions.setError(result.message);
+          return false;
+        }
+        actions.turnStarted(result.value);
+        return true;
+      } finally {
+        sendInProgressRef.current = false;
+      }
+    },
+    [
+      activeThreadArchived,
+      actions,
+      ensureWorkspaceRoot,
+      selectOrCreateThreadForWorkspace,
+      state.activeThread,
+      state.activeThreadId,
+      state.composer.model,
+      state.composer.modelProfileId,
+      state.composer.reasoningEffort,
+      state.modelConfig.model_reasoning_effort,
+      state.modelProfiles,
+      state.workspaceRoot,
+      t,
+    ],
+  );
+
   const onInterrupt = useCallback(async () => {
     if (!activeThreadInFlightTurn) return;
     const result = await window.agentApi.turns.interrupt(activeThreadInFlightTurn.id);
@@ -574,6 +664,9 @@ export function Workbench(): ReactElement {
             onWorkspaceSelected={(workspace) =>
               selectOrCreateThreadForWorkspace(workspace, "write")
             }
+            onAssistantSend={onSendWriteAssistant}
+            onAssistantInterrupt={() => void onInterrupt()}
+            onApprove={onApprove}
           />
         ) : (
           <section className="ds-chat-stage">
@@ -688,4 +781,89 @@ export function buildComposerSendPayload(
     displayText: attachmentOnlyText,
     threadTitle: attachmentOnlyText,
   };
+}
+
+export function buildWriteAssistantSendPayload(
+  draftText: string,
+  writeState: WriteWorkspaceState,
+): { text: string; displayText: string; threadTitle: string } | null {
+  const prompt = draftText.trim();
+  if (!prompt) return null;
+
+  const selection = clampWriteSelection(writeState.selection, writeState.content);
+  const selectedText = writeState.content.slice(selection.start, selection.end);
+  const cursorContext = getWriteCursorContext(
+    writeState.content,
+    selection,
+    WRITE_CONTEXT_SNIPPET_CHARS,
+  );
+  const recentEdits = writeState.recentEdits
+    .slice(0, WRITE_CONTEXT_RECENT_EDIT_LIMIT)
+    .map(formatWriteRecentEditForPrompt);
+
+  const context = {
+    kind: "write:assistant-context",
+    workspace: writeState.workspace,
+    activeFile: writeState.activeFile,
+    dirty: writeState.dirty,
+    previewMode: writeState.previewMode,
+    selection: {
+      start: selection.start,
+      end: selection.end,
+      selectedLength: selectedText.length,
+      text: selectedText,
+    },
+    cursorContext,
+    recentEdits,
+    memoryEvidence: writeState.memoryState.evidence.map((item) => ({
+      path: item.path,
+      start: item.start,
+      end: item.end,
+      score: item.score,
+      snippet: item.snippet,
+    })),
+  };
+
+  return {
+    text: [
+      "You are in Write mode. Use the structured context to answer as a writing assistant.",
+      "Do not assume coding tools are available. If proposing document changes, describe the change before asking the user to apply it.",
+      "",
+      "<write_context>",
+      JSON.stringify(context, null, 2),
+      "</write_context>",
+      "",
+      "<user_request>",
+      prompt,
+      "</user_request>",
+    ].join("\n"),
+    displayText: prompt,
+    threadTitle: prompt,
+  };
+}
+
+export function getWriteCursorContext(
+  content: string,
+  selection: WriteSelectionState,
+  maxChars = WRITE_CONTEXT_SNIPPET_CHARS,
+): { before: string; after: string } {
+  const cursor = clampWriteSelection(selection, content);
+  const half = Math.max(0, Math.floor(maxChars / 2));
+  return {
+    before: content.slice(Math.max(0, cursor.start - half), cursor.start),
+    after: content.slice(cursor.end, Math.min(content.length, cursor.end + half)),
+  };
+}
+
+function clampWriteSelection(
+  selection: WriteSelectionState,
+  content: string,
+): WriteSelectionState {
+  const start = Math.min(Math.max(0, selection.start), content.length);
+  const end = Math.min(Math.max(start, selection.end), content.length);
+  return { start, end, direction: selection.direction };
+}
+
+function formatWriteRecentEditForPrompt(edit: WriteRecentEdit): string {
+  return `${edit.filePath} @ ${edit.editedAt}: ${edit.summary}`;
 }

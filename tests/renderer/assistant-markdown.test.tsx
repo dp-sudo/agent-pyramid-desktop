@@ -4,6 +4,7 @@ import {
   AssistantMarkdown,
   closeDanglingCodeFence,
   extractCodeText,
+  normalizeMarkdownImageSrc,
   normalizeMarkdownHref,
 } from "../../src/renderer/src/ui/components/chat/AssistantMarkdown";
 
@@ -70,5 +71,17 @@ describe("AssistantMarkdown", () => {
     expect(html).not.toContain("javascript:alert");
     expect(html).toContain("bad and");
     expect(html).toContain("href=\"https://example.com/\"");
+  });
+
+  it("allows resolved markdown images only through safe image sources", () => {
+    expect(
+      normalizeMarkdownImageSrc("local.png", () => "data:image/png;base64,abc"),
+    ).toBe("data:image/png;base64,abc");
+    expect(
+      normalizeMarkdownImageSrc("local.png", () => "javascript:alert(1)"),
+    ).toBeNull();
+    expect(
+      normalizeMarkdownImageSrc("local.png", () => "file:///tmp/local.png"),
+    ).toBeNull();
   });
 });

@@ -13,6 +13,8 @@
     "preview": "electron-vite preview"
   },
   "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.0",
+    "codemirror": "^6.0.2",
     "i18next": "^24.2.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

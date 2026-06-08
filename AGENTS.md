@@ -46,28 +46,6 @@ Verification_Strategy: "如何验证本次改动"
 
 ---
 
-## 3. 参考资料边界：本仓库不包含 DeepSeek GUI 源码
-
-本项目不携带 DeepSeek GUI 源码副本。DeepSeek GUI 只允许作为仓库外只读设计学习参考，不属于本项目源码、依赖、实现依据或构建输入。
-
-本项目真实源码与项目文档位于：
-
-- `src/main/`
-- `src/preload/`
-- `src/renderer/`
-- `src/shared/`
-- `tests/`
-- `docs/`
-- 根目录 `package.json`、`package-lock.json`、`electron.vite.config.ts`、`tsconfig.json`、`tsconfig.node.json`、`tsconfig.test.json`、`vitest.config.ts`
-- `openspec/`（如存在；当前仓库未创建该目录）
-
-严格规则：
-
-- **不得**将仓库外 DeepSeek GUI 参考源码纳入构建、运行、测试、打包、发布流程。
-- **不得**在 `package.json`、`tsconfig.json`、Vite / Electron / eslint / vitest / tailwind 等配置中新增对 DeepSeek GUI 参考源码路径的引用。
-- **不得**在 `docs/agent-development.md` 或其他项目文档中把 DeepSeek GUI 参考源码列为依赖、来源或实现依据。
-- 如需借鉴设计，必须在 `src/` 下独立实现，不得直接 import、link、copy 或 build 参考源码下的任何文件。
-
 本规则对人类协作者与 LLM Agent（包括本仓库内置 Agent 运行框架）一律生效；任何把外部参考源码接入实现链路的行为都视为越界。
 
 ### 3.1 外部设计学习参考源码
@@ -390,7 +368,7 @@ UI 改动必须遵守 `docs/ui-design.md` 和当前 CSS token 体系。
 - 新增或变更字段、接口、状态、枚举、路径或返回值时，同步检查所有调用方、类型定义和测试是否需要一起更新。
 - 同一个业务概念只允许有一个权威来源，不散落为多个字面量。
 - 状态码、节点名、阈值等多处引用的值，提取为常量、枚举或配置项。
-- 优先使用 `rg` / `rg --files` 搜索。默认只搜索本仓库真实源码与文档；若任务明确要求参考 DeepSeek GUI，只能只读查看仓库外 `/mnt/f/cc_src/DeepSeek`。
+- 优先使用 `rg` / `rg --files` 搜索。默认只搜索本仓库真实源码与文档；若任务明确要求参考 DeepSeek GUI、claude code，只能只读查看仓库外 `/mnt/f/cc_src/DeepSeek`、'F:\cc_src\claude code'。
 
 ### 11.3 新旧逻辑划界
 
@@ -564,7 +542,6 @@ PR 需说明：
 - [ ] 如果涉及接口/类型变更，所有调用方和测试是否已同步更新？
 - [ ] 函数、API handler、工具、协议转换、持久化、安全边界等重要机制是否已有准确注释？已有注释是否仍然与代码一致？
 - [ ] 如果涉及 Agent、LLM、工具、IPC、持久化、UI 或 i18n，是否已同步更新 `docs/agent-development.md`？
-- [ ] 是否避免了把仓库外 DeepSeek GUI 参考路径写入依赖、构建引用或实现依据？
 
 ---
 

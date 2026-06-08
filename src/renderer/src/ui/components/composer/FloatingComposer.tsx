@@ -5,6 +5,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent as ReactClipboardEvent,
   type ReactElement,
+  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -20,6 +21,23 @@ interface FloatingComposerProps {
   onSend: (text: string) => Promise<boolean>;
   onInterrupt: () => void;
   disabled?: boolean;
+}
+
+interface ComposerInputSurfaceProps {
+  value: string;
+  onChange(value: string): void;
+  onSend(text: string): Promise<boolean>;
+  onInterrupt?: () => void;
+  onSendPendingChange?(pending: boolean): void;
+  placeholder: string;
+  disabled?: boolean;
+  runtimeBusy?: boolean;
+  attachmentCount?: number;
+  beforeInput?: ReactNode;
+  toolbarLeft?: ReactNode;
+  toolbarBadges?: ReactNode;
+  inputId?: string;
+  variant?: "code" | "write";
 }
 
 const COMPOSER_IMAGE_MIME_TYPES = new Set([
@@ -60,12 +78,6 @@ export function FloatingComposer({
   const attachmentRemovalDisabled = isAttachmentRemovalDisabled({
     disabled: Boolean(disabled),
     runtimeBusy,
-    sendPending,
-  });
-  const sendDisabled = !canSubmitComposerDraft({
-    text: draftText,
-    attachmentCount: state.composer.attachmentIds.length,
-    disabled: Boolean(disabled),
     sendPending,
   });
 
@@ -132,42 +144,12 @@ export function FloatingComposer({
       void removeAttachment(attachmentIdToRemove);
       return;
     }
-
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      if (!runtimeBusy && !sendDisabled) {
-        void sendDraft();
-      }
-    }
   }
 
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>): void {
     const files = getClipboardImageFiles(event.clipboardData.items);
     if (files.length === 0) return;
     void addImageFiles(files, "paste");
-  }
-
-  async function sendDraft(): Promise<void> {
-    const text = draftText.trim();
-    if (
-      !canSubmitComposerDraft({
-        text,
-        attachmentCount: state.composer.attachmentIds.length,
-        disabled: Boolean(disabled),
-        sendPending,
-      })
-    ) {
-      return;
-    }
-    setSendPending(true);
-    try {
-      const sent = await onSend(text);
-      if (sent) {
-        setDraftText("");
-      }
-    } finally {
-      setSendPending(false);
-    }
   }
 
   async function handleImageSelected(event: ChangeEvent<HTMLInputElement>): Promise<void> {
@@ -244,8 +226,38 @@ export function FloatingComposer({
     setPickerOpen(false);
   }
 
+  const attachmentStrip = state.composer.attachments.length > 0 ? (
+    <div className="ds-composer-attachments">
+      {state.composer.attachments.map((attachment) => (
+        <div
+          key={attachment.id}
+          className="ds-composer-attachment"
+          title={`${attachment.name} · ${formatBytes(attachment.size)}`}
+        >
+          {getAttachmentThumbnailSrc(attachment) ? (
+            <img src={getAttachmentThumbnailSrc(attachment)} alt={attachment.name} />
+          ) : (
+            <span className="ds-composer-attachment-fallback">
+              {attachment.name}
+            </span>
+          )}
+          <button
+            type="button"
+            className="ds-composer-attachment-remove"
+            onClick={() => void removeAttachment(attachment.id)}
+            disabled={attachmentRemovalDisabled}
+            title={t("composer.removeAttachment")}
+            aria-label={t("composer.removeAttachment")}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
   return (
-    <div ref={shellRef} className="ds-composer-shell" style={{ width: "100%" }}>
+    <div ref={shellRef} style={{ width: "100%" }}>
       <input
         ref={fileInputRef}
         type="file"
@@ -254,57 +266,22 @@ export function FloatingComposer({
         hidden
         onChange={(event) => void handleImageSelected(event)}
       />
-      {state.composer.attachments.length > 0 ? (
-        <div className="ds-composer-attachments">
-          {state.composer.attachments.map((attachment) => (
-            <div
-              key={attachment.id}
-              className="ds-composer-attachment"
-              title={`${attachment.name} · ${formatBytes(attachment.size)}`}
-            >
-              {getAttachmentThumbnailSrc(attachment) ? (
-                <img src={getAttachmentThumbnailSrc(attachment)} alt={attachment.name} />
-              ) : (
-                <span className="ds-composer-attachment-fallback">
-                  {attachment.name}
-                </span>
-              )}
-              <button
-                type="button"
-                className="ds-composer-attachment-remove"
-                onClick={() => void removeAttachment(attachment.id)}
-                disabled={attachmentRemovalDisabled}
-                title={t("composer.removeAttachment")}
-                aria-label={t("composer.removeAttachment")}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      <textarea
+      <ComposerInputSurface
         value={draftText}
-        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
-          const nextText = event.target.value;
+        onChange={(nextText) => {
           setDraftText(nextText);
           actions.setComposerText(nextText);
         }}
-        onKeyDown={handleKeyDown}
-        onPaste={handlePaste}
+        onSend={onSend}
+        onInterrupt={onInterrupt}
+        onSendPendingChange={setSendPending}
         placeholder={t("composer.placeholder")}
         disabled={disabled}
-      />
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "6px 10px 10px",
-          borderTop: "1px solid var(--ds-border-muted)",
-        }}
-      >
-        <div className="ds-composer-toolbar-left">
+        runtimeBusy={runtimeBusy}
+        attachmentCount={state.composer.attachmentIds.length}
+        beforeInput={attachmentStrip}
+        toolbarLeft={
+          <>
           <button
             type="button"
             className="ds-composer-tool-button"
@@ -378,21 +355,118 @@ export function FloatingComposer({
               onSelectReasoningEffort={actions.setComposerReasoningEffort}
             />
           ) : null}
-        </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          </>
+        }
+        toolbarBadges={
+          <>
           {state.composer.mode === "plan" ? (
             <span className="ds-composer-mode-chip">{t("composer.planMode")}</span>
           ) : null}
           {state.composer.goalMode ? (
             <span className="ds-composer-mode-chip">{t("composer.goalMode")}</span>
           ) : null}
-          {runtimeBusy ? (
+          </>
+        }
+        onKeyDownExtra={handleKeyDown}
+        onPaste={handlePaste}
+      />
+    </div>
+  );
+}
+
+export function ComposerInputSurface({
+  value,
+  onChange,
+  onSend,
+  onInterrupt,
+  onSendPendingChange,
+  placeholder,
+  disabled,
+  runtimeBusy = false,
+  attachmentCount = 0,
+  beforeInput,
+  toolbarLeft,
+  toolbarBadges,
+  inputId,
+  variant = "code",
+  onKeyDownExtra,
+  onPaste,
+}: ComposerInputSurfaceProps & {
+  onKeyDownExtra?: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onPaste?: (event: ReactClipboardEvent<HTMLTextAreaElement>) => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  const [sendPending, setSendPending] = useState(false);
+  const sendDisabled = !canSubmitComposerDraft({
+    text: value,
+    attachmentCount,
+    disabled: Boolean(disabled),
+    sendPending,
+  });
+
+  async function sendDraft(): Promise<void> {
+    const text = value.trim();
+    if (
+      !canSubmitComposerDraft({
+        text,
+        attachmentCount,
+        disabled: Boolean(disabled),
+        sendPending,
+      })
+    ) {
+      return;
+    }
+    setSendPending(true);
+    onSendPendingChange?.(true);
+    try {
+      const sent = await onSend(text);
+      if (sent) {
+        onChange("");
+      }
+    } finally {
+      setSendPending(false);
+      onSendPendingChange?.(false);
+    }
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
+    onKeyDownExtra?.(event);
+    if (event.defaultPrevented) return;
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (!runtimeBusy && !sendDisabled) {
+        void sendDraft();
+      }
+    }
+  }
+
+  return (
+    <div className={`ds-composer-shell is-${variant}`}>
+      {beforeInput}
+      <textarea
+        id={inputId}
+        value={value}
+        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
+          onChange(event.target.value);
+        }}
+        onKeyDown={handleKeyDown}
+        onPaste={onPaste}
+        placeholder={placeholder}
+        disabled={disabled}
+      />
+      <div
+        className="ds-composer-toolbar"
+      >
+        <div className="ds-composer-toolbar-left">{toolbarLeft}</div>
+        <div className="ds-composer-toolbar-right">
+          {toolbarBadges}
+          {runtimeBusy && onInterrupt ? (
             <Pill onClick={onInterrupt}>{t("composer.interrupt")}</Pill>
           ) : (
             <Pill
               onClick={() => void sendDraft()}
               accent
-              disabled={sendDisabled}
+              disabled={sendDisabled || runtimeBusy}
             >
               {sendPending ? t("composer.sending") : t("composer.send")}
             </Pill>

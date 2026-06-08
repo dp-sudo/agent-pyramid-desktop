@@ -228,5 +228,18 @@ describe("minimax protocol type helpers", () => {
         content: [{ type: "tool_use", id: "tool-2", input: {} }],
       }),
     ).toThrow("Anthropic tool_use 0 is missing a tool name.");
+
+    expect(() =>
+      parseAnthropicToolCalls({
+        content: [
+          {
+            type: "tool_use",
+            id: "tool-3",
+            name: "create_plan",
+            input: [],
+          },
+        ],
+      }),
+    ).toThrow('Anthropic tool input for "create_plan" must be a JSON object.');
   });
 });

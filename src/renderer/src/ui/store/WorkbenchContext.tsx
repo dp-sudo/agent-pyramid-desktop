@@ -27,10 +27,93 @@ import type {
   ThreadRecord,
   ThreadSummary,
   TurnRecord,
+  WriteFileEntry,
+  WriteInlineEditAction,
+  WriteMediaReference,
+  WriteMemoryEvidence,
+  WriteTreeNode,
+  WriteWatchResponse,
 } from "../../../../shared/agent-contracts";
 
 export type WorkbenchRoute = "code" | "write" | "settings";
 export type RightPanelMode = "changes" | "todo" | "plan" | "file" | null;
+export type WriteSaveStatus = "idle" | "loading" | "saving" | "saved" | "error";
+export type WritePreviewMode = "source" | "split" | "preview";
+export type WriteCompletionStatus = "idle" | "pending" | "ready" | "error";
+
+export interface WriteSelectionState {
+  start: number;
+  end: number;
+  direction: "none" | "forward" | "backward";
+}
+
+export interface WriteRecentEdit {
+  id: string;
+  filePath: string;
+  editedAt: string;
+  start: number;
+  end: number;
+  beforeLength: number;
+  afterLength: number;
+  summary: string;
+}
+
+export interface WriteCompletionState {
+  requestId: number;
+  status: WriteCompletionStatus;
+  text: string;
+  score: number;
+  truncated: boolean;
+  error: string | null;
+}
+
+export interface WritePendingInlineEdit {
+  id: string;
+  action: WriteInlineEditAction;
+  before: string;
+  after: string;
+}
+
+export interface WriteMemoryState {
+  query: string;
+  loading: boolean;
+  error: string | null;
+  evidence: WriteMemoryEvidence[];
+  expanded: boolean;
+}
+
+export interface WriteLifecycleState {
+  tree: WriteTreeNode[];
+  media: WriteMediaReference[];
+  watch: WriteWatchResponse | null;
+  readonly: boolean;
+  readonlyReason: string | null;
+  exportMarkdown: string | null;
+  exportName: string | null;
+}
+
+export interface WriteWorkspaceState {
+  workspace: string;
+  files: WriteFileEntry[];
+  activeFile: string | null;
+  content: string;
+  savedContent: string;
+  dirty: boolean;
+  saving: boolean;
+  error: string | null;
+  status: WriteSaveStatus;
+  selection: WriteSelectionState;
+  previewMode: WritePreviewMode;
+  assistantOpen: boolean;
+  assistantDraft: string;
+  recentEdits: WriteRecentEdit[];
+  completionState: WriteCompletionState;
+  pendingInlineEdit: WritePendingInlineEdit | null;
+  memoryState: WriteMemoryState;
+  lifecycleState: WriteLifecycleState;
+  listLoading: boolean;
+  search: string;
+}
 
 export interface ComposerAttachment extends AttachmentRecord {
   previewUrl?: string;
@@ -62,6 +145,7 @@ export interface WorkbenchState {
   inFlightTurnsByThreadId: Record<string, TurnRecord>;
   rightPanelMode: RightPanelMode;
   composer: ComposerState;
+  writeWorkspace: WriteWorkspaceState;
   errorMessage: string | null;
   leftSidebarWidth: number;
   rightSidebarWidth: number;
@@ -69,14 +153,77 @@ export interface WorkbenchState {
 }
 
 const initialBasicPreferences = loadBasicPreferences();
+const initialWorkspaceRoot = initialBasicPreferences.restoreLastWorkspaceOnStartup
+  ? loadLastWorkspaceRoot()
+  : "";
+
+export const INITIAL_WRITE_SELECTION: WriteSelectionState = {
+  start: 0,
+  end: 0,
+  direction: "none",
+};
+
+export function createInitialWriteMemoryState(): WriteMemoryState {
+  return {
+    query: "",
+    loading: false,
+    error: null,
+    evidence: [],
+    expanded: false,
+  };
+}
+
+export function createInitialWriteLifecycleState(): WriteLifecycleState {
+  return {
+    tree: [],
+    media: [],
+    watch: null,
+    readonly: false,
+    readonlyReason: null,
+    exportMarkdown: null,
+    exportName: null,
+  };
+}
+
+export function createInitialWriteWorkspaceState(
+  workspace = "",
+): WriteWorkspaceState {
+  return withWriteDerivedState({
+    workspace,
+    files: [],
+    activeFile: null,
+    content: "",
+    savedContent: "",
+    dirty: false,
+    saving: false,
+    error: null,
+    status: "idle",
+    selection: INITIAL_WRITE_SELECTION,
+    previewMode: "source",
+    assistantOpen: true,
+    assistantDraft: "",
+    recentEdits: [],
+    completionState: {
+      requestId: 0,
+      status: "idle",
+      text: "",
+      score: 0,
+      truncated: false,
+      error: null,
+    },
+    pendingInlineEdit: null,
+    memoryState: createInitialWriteMemoryState(),
+    lifecycleState: createInitialWriteLifecycleState(),
+    listLoading: false,
+    search: "",
+  });
+}
 
 export const INITIAL_STATE: WorkbenchState = {
   route: initialBasicPreferences.defaultStartupView,
   modelConfig: DEFAULT_MODEL_CONFIG,
   modelProfiles: null,
-  workspaceRoot: initialBasicPreferences.restoreLastWorkspaceOnStartup
-    ? loadLastWorkspaceRoot()
-    : "",
+  workspaceRoot: initialWorkspaceRoot,
   showArchivedThreads: initialBasicPreferences.showArchivedThreadsByDefault,
   threads: [],
   activeThread: null,
@@ -94,6 +241,7 @@ export const INITIAL_STATE: WorkbenchState = {
     attachmentIds: [],
     attachments: [],
   },
+  writeWorkspace: createInitialWriteWorkspaceState(initialWorkspaceRoot),
   errorMessage: null,
   leftSidebarWidth: initialBasicPreferences.rememberLeftSidebarWidth
     ? initialBasicPreferences.leftSidebarWidth
@@ -137,6 +285,80 @@ function updateThreadSummaryActivity(
   return next.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
+function withWriteDerivedState(state: WriteWorkspaceState): WriteWorkspaceState {
+  return {
+    ...state,
+    dirty: state.content !== state.savedContent,
+    saving: state.status === "saving",
+  };
+}
+
+function normalizeWriteSelection(selection: WriteSelectionState): WriteSelectionState {
+  const start = normalizeSelectionOffset(selection.start);
+  const end = normalizeSelectionOffset(selection.end);
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end),
+    direction: selection.direction,
+  };
+}
+
+function normalizeSelectionOffset(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function createWriteRecentEdit(input: {
+  previousContent: string;
+  nextContent: string;
+  filePath: string | null;
+  editedAt: string;
+}): WriteRecentEdit | null {
+  if (!input.filePath || input.previousContent === input.nextContent) return null;
+
+  const start = getCommonPrefixLength(input.previousContent, input.nextContent);
+  const suffix = getCommonSuffixLength(
+    input.previousContent,
+    input.nextContent,
+    start,
+  );
+  const previousEnd = input.previousContent.length - suffix;
+  const nextEnd = input.nextContent.length - suffix;
+  const beforeLength = Math.max(0, previousEnd - start);
+  const afterLength = Math.max(0, nextEnd - start);
+
+  return {
+    id: `${input.filePath}:${input.editedAt}:${start}:${beforeLength}:${afterLength}`,
+    filePath: input.filePath,
+    editedAt: input.editedAt,
+    start,
+    end: nextEnd,
+    beforeLength,
+    afterLength,
+    summary: `Edited ${beforeLength} chars into ${afterLength} chars near ${start}.`,
+  };
+}
+
+function getCommonPrefixLength(left: string, right: string): number {
+  const limit = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < limit && left[index] === right[index]) {
+    index += 1;
+  }
+  return index;
+}
+
+function getCommonSuffixLength(left: string, right: string, prefixLength: number): number {
+  const maxSuffix = Math.min(left.length, right.length) - prefixLength;
+  let suffix = 0;
+  while (
+    suffix < maxSuffix &&
+    left[left.length - 1 - suffix] === right[right.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  return suffix;
+}
+
 export type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
   | { type: "setModelConfig"; config: ModelConfig }
@@ -164,6 +386,30 @@ export type Action =
   | { type: "addComposerAttachment"; attachment: ComposerAttachment }
   | { type: "removeComposerAttachment"; attachmentId: string }
   | { type: "clearComposerAttachments" }
+  | { type: "setWriteWorkspace"; workspace: string }
+  | { type: "setWriteFiles"; files: WriteFileEntry[] }
+  | { type: "setWriteListLoading"; listLoading: boolean }
+  | { type: "setWriteSearch"; search: string }
+  | { type: "clearWriteFileStateForWorkspace"; workspace: string }
+  | {
+      type: "openWriteFile";
+      path: string;
+      content: string;
+      readonly?: boolean;
+      readonlyReason?: string | null;
+    }
+  | { type: "editWriteDocument"; content: string; editedAt: string }
+  | { type: "markWriteSaved"; content: string }
+  | { type: "setWriteStatus"; status: WriteSaveStatus }
+  | { type: "setWriteError"; message: string | null }
+  | { type: "setWriteSelection"; selection: WriteSelectionState }
+  | { type: "setWritePreviewMode"; previewMode: WritePreviewMode }
+  | { type: "setWriteAssistantOpen"; open: boolean }
+  | { type: "setWriteAssistantDraft"; text: string }
+  | { type: "setWriteCompletionState"; completionState: WriteCompletionState }
+  | { type: "setWritePendingInlineEdit"; pendingInlineEdit: WritePendingInlineEdit | null }
+  | { type: "setWriteMemoryState"; memoryState: WriteMemoryState }
+  | { type: "setWriteLifecycleState"; lifecycleState: WriteLifecycleState }
   | { type: "openRightPanel"; mode: Exclude<RightPanelMode, null> }
   | { type: "closeRightPanel" }
   | { type: "setError"; message: string | null }
@@ -268,6 +514,12 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
         activeThread: action.thread,
         activeThreadId: action.thread.id,
         workspaceRoot: action.thread.workspace || state.workspaceRoot,
+        writeWorkspace: action.thread.mode === "write"
+          ? withWriteDerivedState({
+              ...state.writeWorkspace,
+              workspace: action.thread.workspace || state.writeWorkspace.workspace,
+            })
+          : state.writeWorkspace,
         items: action.items,
         activeTurnId: state.inFlightTurnsByThreadId[action.thread.id]?.id ?? null,
       };
@@ -370,6 +622,215 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       return {
         ...state,
         composer: { ...state.composer, attachmentIds: [], attachments: [] },
+      };
+    case "setWriteWorkspace":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          workspace: action.workspace,
+        }),
+      };
+    case "setWriteFiles":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          files: action.files,
+        }),
+      };
+    case "setWriteListLoading":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          listLoading: action.listLoading,
+        }),
+      };
+    case "setWriteSearch":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          search: action.search,
+        }),
+      };
+    case "clearWriteFileStateForWorkspace":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          workspace: action.workspace,
+          files: [],
+          activeFile: null,
+          content: "",
+          savedContent: "",
+          error: null,
+          status: "loading",
+          selection: INITIAL_WRITE_SELECTION,
+          recentEdits: [],
+          pendingInlineEdit: null,
+          memoryState: createInitialWriteMemoryState(),
+          lifecycleState: createInitialWriteLifecycleState(),
+          completionState: {
+            ...state.writeWorkspace.completionState,
+            requestId: state.writeWorkspace.completionState.requestId + 1,
+            status: "idle",
+            text: "",
+            score: 0,
+            truncated: false,
+            error: null,
+          },
+        }),
+      };
+    case "openWriteFile":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          activeFile: action.path,
+          content: action.content,
+          savedContent: action.content,
+          error: null,
+          status: "idle",
+          selection: INITIAL_WRITE_SELECTION,
+          recentEdits: [],
+          pendingInlineEdit: null,
+          memoryState: createInitialWriteMemoryState(),
+          lifecycleState: {
+            ...createInitialWriteLifecycleState(),
+            readonly: Boolean(action.readonly),
+            readonlyReason: action.readonlyReason ?? null,
+          },
+          completionState: {
+            ...state.writeWorkspace.completionState,
+            requestId: state.writeWorkspace.completionState.requestId + 1,
+            status: "idle",
+            text: "",
+            score: 0,
+            truncated: false,
+            error: null,
+          },
+        }),
+      };
+    case "editWriteDocument": {
+      const recentEdit = createWriteRecentEdit({
+        previousContent: state.writeWorkspace.content,
+        nextContent: action.content,
+        filePath: state.writeWorkspace.activeFile,
+        editedAt: action.editedAt,
+      });
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          content: action.content,
+          recentEdits: recentEdit
+            ? [recentEdit, ...state.writeWorkspace.recentEdits].slice(0, 12)
+            : state.writeWorkspace.recentEdits,
+          pendingInlineEdit: null,
+          completionState: {
+            ...state.writeWorkspace.completionState,
+            requestId: state.writeWorkspace.completionState.requestId + 1,
+            status: "idle",
+            text: "",
+            score: 0,
+            truncated: false,
+            error: null,
+          },
+        }),
+      };
+    }
+    case "markWriteSaved":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          savedContent: action.content,
+          error: null,
+          status: state.writeWorkspace.content === action.content ? "saved" : "saving",
+        }),
+      };
+    case "setWriteStatus":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          status: action.status,
+        }),
+      };
+    case "setWriteError":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          error: action.message,
+          ...(action.message ? { status: "error" as const } : {}),
+        }),
+      };
+    case "setWriteSelection":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          selection: normalizeWriteSelection(action.selection),
+        }),
+      };
+    case "setWritePreviewMode":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          previewMode: action.previewMode,
+        }),
+      };
+    case "setWriteAssistantOpen":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          assistantOpen: action.open,
+        }),
+      };
+    case "setWriteAssistantDraft":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          assistantDraft: action.text,
+        }),
+      };
+    case "setWriteCompletionState":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          completionState: action.completionState,
+        }),
+      };
+    case "setWritePendingInlineEdit":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          pendingInlineEdit: action.pendingInlineEdit,
+        }),
+      };
+    case "setWriteMemoryState":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          memoryState: action.memoryState,
+        }),
+      };
+    case "setWriteLifecycleState":
+      return {
+        ...state,
+        writeWorkspace: withWriteDerivedState({
+          ...state.writeWorkspace,
+          lifecycleState: action.lifecycleState,
+        }),
       };
     case "openRightPanel":
       return { ...state, rightPanelMode: action.mode };
@@ -501,6 +962,28 @@ export interface WorkbenchActions {
   addComposerAttachment(attachment: ComposerAttachment): void;
   removeComposerAttachment(attachmentId: string): void;
   clearComposerAttachments(): void;
+  setWriteWorkspace(workspace: string): void;
+  setWriteFiles(files: WriteFileEntry[]): void;
+  setWriteListLoading(listLoading: boolean): void;
+  setWriteSearch(search: string): void;
+  clearWriteFileStateForWorkspace(workspace: string): void;
+  openWriteFile(
+    path: string,
+    content: string,
+    options?: { readonly?: boolean; readonlyReason?: string | null },
+  ): void;
+  editWriteDocument(content: string, editedAt?: string): void;
+  markWriteSaved(content: string): void;
+  setWriteStatus(status: WriteSaveStatus): void;
+  setWriteError(message: string | null): void;
+  setWriteSelection(selection: WriteSelectionState): void;
+  setWritePreviewMode(previewMode: WritePreviewMode): void;
+  setWriteAssistantOpen(open: boolean): void;
+  setWriteAssistantDraft(text: string): void;
+  setWriteCompletionState(completionState: WriteCompletionState): void;
+  setWritePendingInlineEdit(pendingInlineEdit: WritePendingInlineEdit | null): void;
+  setWriteMemoryState(memoryState: WriteMemoryState): void;
+  setWriteLifecycleState(lifecycleState: WriteLifecycleState): void;
   openRightPanel(mode: Exclude<RightPanelMode, null>): void;
   closeRightPanel(): void;
   setError(message: string | null): void;
@@ -553,6 +1036,42 @@ export function WorkbenchProvider({ children }: { children: ReactNode }): ReactE
       removeComposerAttachment: (attachmentId) =>
         dispatch({ type: "removeComposerAttachment", attachmentId }),
       clearComposerAttachments: () => dispatch({ type: "clearComposerAttachments" }),
+      setWriteWorkspace: (workspace) => dispatch({ type: "setWriteWorkspace", workspace }),
+      setWriteFiles: (files) => dispatch({ type: "setWriteFiles", files }),
+      setWriteListLoading: (listLoading) =>
+        dispatch({ type: "setWriteListLoading", listLoading }),
+      setWriteSearch: (search) => dispatch({ type: "setWriteSearch", search }),
+      clearWriteFileStateForWorkspace: (workspace) =>
+        dispatch({ type: "clearWriteFileStateForWorkspace", workspace }),
+      openWriteFile: (path, content, options) =>
+        dispatch({
+          type: "openWriteFile",
+          path,
+          content,
+          readonly: options?.readonly,
+          readonlyReason: options?.readonlyReason,
+        }),
+      editWriteDocument: (content, editedAt = new Date().toISOString()) =>
+        dispatch({ type: "editWriteDocument", content, editedAt }),
+      markWriteSaved: (content) => dispatch({ type: "markWriteSaved", content }),
+      setWriteStatus: (status) => dispatch({ type: "setWriteStatus", status }),
+      setWriteError: (message) => dispatch({ type: "setWriteError", message }),
+      setWriteSelection: (selection) =>
+        dispatch({ type: "setWriteSelection", selection }),
+      setWritePreviewMode: (previewMode) =>
+        dispatch({ type: "setWritePreviewMode", previewMode }),
+      setWriteAssistantOpen: (open) =>
+        dispatch({ type: "setWriteAssistantOpen", open }),
+      setWriteAssistantDraft: (text) =>
+        dispatch({ type: "setWriteAssistantDraft", text }),
+      setWriteCompletionState: (completionState) =>
+        dispatch({ type: "setWriteCompletionState", completionState }),
+      setWritePendingInlineEdit: (pendingInlineEdit) =>
+        dispatch({ type: "setWritePendingInlineEdit", pendingInlineEdit }),
+      setWriteMemoryState: (memoryState) =>
+        dispatch({ type: "setWriteMemoryState", memoryState }),
+      setWriteLifecycleState: (lifecycleState) =>
+        dispatch({ type: "setWriteLifecycleState", lifecycleState }),
       openRightPanel: (mode) => dispatch({ type: "openRightPanel", mode }),
       closeRightPanel: () => dispatch({ type: "closeRightPanel" }),
       setError: (message) => dispatch({ type: "setError", message }),

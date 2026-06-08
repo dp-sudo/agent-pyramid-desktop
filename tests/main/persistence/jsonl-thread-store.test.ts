@@ -107,6 +107,36 @@ describe("JsonlThreadStore", () => {
     expect(warn).toHaveBeenCalledTimes(3);
   });
 
+  it("rejects invalid item and event records before writing JSONL", async () => {
+    const thread = await store.createThread({
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const invalidItem = {
+      kind: "assistant",
+      id: "bad-item",
+      threadId: thread.id,
+      turnId: "turn-1",
+      createdAt: "2026-06-07T00:00:00.000Z",
+    } as unknown as Item;
+    const invalidEvent = {
+      kind: "turn_completed",
+      threadId: thread.id,
+      turnId: "turn-1",
+      status: "completed",
+    } as unknown as RuntimeEvent;
+
+    await expect(store.appendItem(thread.id, invalidItem))
+      .rejects.toThrow("Item does not match the persisted JSONL contract.");
+    await expect(store.appendEvent(thread.id, invalidEvent))
+      .rejects.toThrow("Runtime event does not match the persisted JSONL contract.");
+
+    const messagePath = path.join(userDataDir, "threads", thread.id, "messages.jsonl");
+    const eventPath = path.join(userDataDir, "threads", thread.id, "events.jsonl");
+    await expect(fs.readFile(messagePath, "utf8")).resolves.toBe("");
+    await expect(fs.readFile(eventPath, "utf8")).resolves.toBe("");
+  });
+
   it("updates thread activity time and index order when appending items", async () => {
     const older = await store.createThread({
       title: "Older",

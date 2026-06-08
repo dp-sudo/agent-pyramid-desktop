@@ -170,6 +170,9 @@ export class JsonlThreadStore {
   /** 2.5 appendItem / appendEvent with per-thread mutex + fsync. */
   async appendItem(threadId: string, item: Item): Promise<void> {
     assertSafeId(threadId, "Thread id");
+    if (!isItem(item)) {
+      throw new Error("Item does not match the persisted JSONL contract.");
+    }
     return this.serialized(threadId, async () => {
       await this.appendJsonl(this.messagesPath(threadId), item);
       await this.touchThreadActivity(threadId, item.createdAt);
@@ -178,6 +181,9 @@ export class JsonlThreadStore {
 
   async appendEvent(threadId: string, event: RuntimeEvent): Promise<void> {
     assertSafeId(threadId, "Thread id");
+    if (!isRuntimeEvent(event)) {
+      throw new Error("Runtime event does not match the persisted JSONL contract.");
+    }
     return this.serialized(threadId, async () => {
       await this.appendJsonl(this.eventsPath(threadId), event);
     });

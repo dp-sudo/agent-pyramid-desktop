@@ -63,6 +63,7 @@ Important UI state:
 | `inFlightTurnsByThreadId` | Tracks running turns per thread, enabling background sessions without blocking the active composer. |
 | `rightPanelMode` | Inspector panel mode or closed state. |
 | `composer` | Draft text, model, reasoning effort, mode, goal mode, attachments. |
+| `writeWorkspace` | Write route authority for workspace, active file, content, dirty/save/error state, selection, preview mode, assistant draft, recent edits, and inline completion state. |
 | `errorMessage` | Visible workbench error toast. |
 | `leftSidebarWidth`, `rightSidebarWidth` | Resizable panel dimensions. |
 | `basicPreferences` | Theme/startup/session/sidebar/inspector defaults. |
@@ -420,12 +421,14 @@ Implementation entry: `Workbench` when `state.route === "write"`.
 flowchart LR
   Sidebar["Write Sidebar"]
   Editor["Markdown Editor"]
+  Assistant["Write Assistant"]
   Ghost["Inline completion ghost"]
   Status["Save/status bar"]
 
   Sidebar --> Editor
   Editor --> Ghost
   Editor --> Status
+  Editor --> Assistant
 ```
 
 Top-level:
@@ -443,16 +446,25 @@ Purpose:
 - Pick/open workspace and select or create a `mode: "write"` thread for that
   workspace before file listing starts; if thread selection fails, the Write
   file list/editor state is not applied to that workspace.
-- Refresh markdown file list.
-- Show active workspace.
+- Show a dedicated writing workspace block with primary open action, compact
+  refresh action, and a shortened active workspace path with full path in the
+  title.
+- Refresh markdown file list without mixing refresh into file lifecycle actions.
 - Search markdown files.
 - Display file list and list states.
+- Keep file lifecycle controls scoped: `New` is the primary file action, while
+  rename/delete appear only after a file is selected.
 
 Key classes:
 
 - `ds-write-route-actions`
+- `ds-write-sidebar`
+- `ds-write-workspace-panel`
+- `ds-write-workspace-heading`
+- `ds-write-workspace-path`
+- `ds-write-workspace-hint`
 - `ds-pill`
-- `ds-sidebar-workspace`
+- `ds-write-file-actions`
 - `ds-write-search`
 - `ds-write-search-clear`
 - `ds-sidebar-list`
@@ -474,28 +486,57 @@ File row attributes:
 - Active file: `is-active`.
 - Title includes path and formatted file meta.
 - Meta format: `formatWriteFileMeta()` => size + modified date.
+- Directory scans keep the workspace root strict, but skip unreadable or
+  disappearing child paths (`EACCES`, `ENOENT`, `ENOTDIR`, `EPERM`) with a
+  console warning instead of failing the whole Write workspace. Skipped
+  directory names include hidden directories, `DeepSeek`, `__test_logs__`,
+  `.pytest_cache`, build outputs, cache/log/temp folders, and dependencies.
 
 ### Editor Area
 
 Purpose:
 
 - Edit markdown content.
+- Switch between source editing, split source/preview, and rendered preview
+  modes without moving document state out of `state.writeWorkspace`.
+- Render markdown preview through the same sanitized ReactMarkdown/GFM surface
+  used for assistant messages, with Write-local media references resolved only
+  to safe image `data:` previews.
 - Autosave changed file content.
 - Request simple inline markdown completion.
 - Accept completion with Tab, dismiss with Escape.
+- Keep document commands in the editor toolbar and reserve the footer for
+  document state plus cursor/selection telemetry.
 
 Key classes:
 
+- `ds-write-main`
 - `ds-write-editor`
+- `ds-write-document-bar`
+- `ds-write-document-title`
+- `ds-write-document-actions`
+- `ds-write-view-toggle`
 - `ds-write-editor-frame`
+- `ds-write-source-pane`
+- `ds-write-codemirror`
+- `ds-write-preview-pane`
+- `ds-write-preview-document`
 - `ds-write-ghost`
 - `ds-write-status`
+- `ds-write-status-message`
+- `ds-write-context-meter`
 
 Behavior constants:
 
 - Autosave delay: `800ms`.
 - Completion delay: `650ms`.
 - Completion requires at least `10` trailing content characters.
+- Markdown editing is backed by CodeMirror 6. CodeMirror document and
+  selection updates are adapted back into `state.writeWorkspace`, which remains
+  the authoritative Write state.
+- Preview mode keeps the CodeMirror instance mounted but visually hides the
+  source pane, so selection, autosave, local completion, and inline edit state
+  are not reset by view switching.
 - Opening another file or refreshing/switching workspace first flushes the
   current dirty file through `write.put`; if that save fails, navigation stays
   on the current file and surfaces the error.
@@ -508,8 +549,12 @@ Behavior constants:
   paths (`.md`, `.mdx`, `.markdown`), matching the file list.
 - `write.get` returns only strict UTF-8 Markdown content; invalid local bytes
   surface as a visible load error instead of replacement-character text.
-- Editing content or accepting inline completion only updates local Write
-  document state. It does not overwrite global `composer.text`.
+- Editing content or accepting inline completion only updates
+  `state.writeWorkspace`. It does not overwrite global `composer.text`.
+- Selection is tracked in `state.writeWorkspace.selection`; local completion
+  requests send prefix and suffix around the current cursor instead of assuming
+  the cursor is always at the end of the file.
+- Accepted completion is inserted at the current cursor or selection end.
 
 Save state:
 
@@ -527,6 +572,66 @@ Save button disabled when:
 - No workspace root.
 - Status is `loading` or `saving`.
 - Content equals saved content.
+- `Check changes`, `Export`, and `Save` live in `ds-write-document-actions`;
+  `ds-write-status` does not render command buttons.
+
+### Write Assistant
+
+Purpose:
+
+- Send explicit writing prompts through a `mode: "write"` thread.
+- Keep assistant draft and document content separate from the global Code
+  composer.
+- Inject scoped writing context into the model-facing request while showing only
+  the user's prompt in the timeline.
+
+Key classes:
+
+- `ds-write-assistant`
+- `ds-write-assistant-resizer`
+- `ds-write-assistant-header`
+- `ds-write-context-strip`
+- `ds-write-assistant-timeline`
+- `ds-write-assistant-composer`
+- `ds-composer-shell`
+
+Context payload:
+
+- Built by `buildWriteAssistantSendPayload()`.
+- Uses `displayText` for the visible user prompt.
+- Injects a structured `write:assistant-context` block into `TurnStartRequest.text`.
+- Includes workspace, active file, dirty flag, preview mode, selection, selected
+  text, cursor-near snippets, and recent edit summaries.
+- Does not grant Code tools; Write threads still use runtime tool access policy
+  to hide and reject Code-only tools.
+- The prompt input reuses the shared `ComposerInputSurface` shell used by the
+  Code composer, including rounded composer chrome, textarea behavior,
+  Enter-to-send, send pending state, send button, and interrupt behavior. Write
+  binds it to `state.writeWorkspace.assistantDraft`.
+- Write reuses the Code composer model picker for quick model / reasoning
+  effort selection, but supplies only Write-specific tool actions after that:
+  memory evidence and action parsing. It does not expose Code-only attachment,
+  plan, or goal controls.
+- The assistant panel width uses `state.rightSidebarWidth` and the same clamp
+  range as the right inspector (`280..760`). Its boundary is draggable and
+  keyboard accessible via the `ds-write-assistant-resizer` separator.
+- The assistant header exposes a Write action parse command. It sends the latest
+  assistant message to `write.action`; valid `write:inline-edit` actions create
+  `state.writeWorkspace.pendingInlineEdit` instead of mutating the document.
+- The assistant header owns assistant panel controls such as hide and stop; the
+  editor footer only shows a restore button when the assistant is hidden.
+- Pending inline edits render an inline diff review below the editor kernel.
+  Apply re-checks that the original scoped text still matches the current
+  document before replacing it; cancel clears the pending edit.
+- The context strip includes a writing memory evidence toggle. The expanded
+  panel shows the latest local retrieval query, hit count, source files, scores,
+  and snippets from `write.memory`. Assistant sends refresh this evidence before
+  building `write:assistant-context`.
+- The left rail renders `write.tree` nodes, with file lifecycle controls for
+  create, rename, and delete. The editor document toolbar exposes export and
+  external change checks. The lifecycle panel shows read-only large-file state, media
+  reference summaries, local image previews, export previews/downloads, and
+  watch-change warnings.
 
 ## Settings Page
 
@@ -743,9 +848,9 @@ Cross-route coupling:
 - Code and Write share `workspaceRoot` and left sidebar width.
 - Code and Write share the thread list state, but route actions prefer threads
   whose `ThreadRecord.mode` matches the active route.
-- Write document text is isolated from global composer draft state. Assistant
-  prompts must come from explicit composer input, not implicit full-document
-  mirroring.
+- Write document text and assistant draft live in `state.writeWorkspace`, not
+  global composer draft state. Assistant prompts must come from explicit Write
+  assistant input, not implicit full-document mirroring.
 - Settings model profile changes update `modelConfig`, `modelProfiles`, and
   composer model selection.
 - Basic settings can change startup route, inspector default, sidebar width

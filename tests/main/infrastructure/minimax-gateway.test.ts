@@ -506,6 +506,39 @@ describe("MiniMaxGateway", () => {
     }).rejects.toThrow("Anthropic streamed tool call tool-1 is missing a tool name.");
   });
 
+  it("rejects streamed Anthropic-compatible tool calls with non-object input", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool-1","name":"update_goal","input":[]}}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    await expect(async () => {
+      for await (const _chunk of new MiniMaxGateway().stream({
+        ...baseRequest,
+        protocol: "anthropic-compatible",
+        baseUrl: "https://provider.example.test/anthropic",
+      })) {
+        void _chunk;
+      }
+    }).rejects.toThrow('Anthropic tool input for "update_goal" must be a JSON object.');
+  });
+
   it("keeps reading Anthropic-compatible streams after stop_reason to capture usage-only frames", async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {

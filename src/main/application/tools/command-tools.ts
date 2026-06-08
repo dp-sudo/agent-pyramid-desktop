@@ -8,7 +8,7 @@ import {
   resolveWorkspacePathForAccess,
   toWorkspaceRelative,
 } from "./workspace-policy.js";
-import { assertUtf8TextBuffer } from "./text-file.js";
+import { assertUtf8TextBuffer, decodeUtf8TextPrefix } from "./text-file.js";
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const MIN_COMMAND_TIMEOUT_MS = 100;
@@ -452,10 +452,12 @@ function createOutputCollector(): {
       storedBytes += buffer.length;
     },
     finish() {
+      const stored = Buffer.concat(chunks, storedBytes);
+      const decoded = decodeUtf8TextPrefix(stored, "command output", "Command output");
       return {
-        text: Buffer.concat(chunks, storedBytes).toString("utf8"),
+        text: decoded.content,
         bytes,
-        truncated,
+        truncated: truncated || decoded.bytesDecoded < storedBytes,
       };
     },
   };

@@ -69,6 +69,35 @@
 
 ## 变更记录
 
+### 2026-06-09 - Write 文档预览与助手边界优化
+
+- 优化 Write 中心文档区域：新增编辑 / 分栏 / 预览切换，预览复用聊天区 `AssistantMarkdown` 的 ReactMarkdown + GFM + 安全链接/图片/代码块/表格渲染机制，改善长 Markdown 文档阅读排版；本地媒体引用只通过 Write media evidence 解析到安全图片 `data:` 预览。
+- 保持 Write 编辑内核稳定：预览模式不会卸载 CodeMirror，文档内容、selection、autosave、本地补全和 pending inline edit 继续由 `WriteWorkspaceState` 承载。
+- 优化 Write 助手右侧边界：助手宽度改为 `state.rightSidebarWidth` 控制，复用右侧面板 `280..760` clamp 范围，支持拖拽和键盘调宽。
+- 补齐写作助手模型快速切换：Write 助手输入框复用 Code composer 的模型 / 推理强度选择器，但工具栏只暴露 `model`、`memory`、`action`，不暴露 Code-only 附件、plan、goal 或命令类工具。
+- 验证方式：新增 renderer helper 与 Markdown 安全解析回归覆盖；完整验证命令见本次实现结果。
+
+### 2026-06-09 - Write 工作台 UI 分层与扫描容错
+
+- 修复 Write 工作区目录扫描的权限噪声：`write.list` / `write.tree` 保持根工作区错误可见，但对子目录 `EACCES`、`ENOENT`、`ENOTDIR`、`EPERM` 进行可追踪跳过，避免类似 `EPERM: operation not permitted, scandir ... __test_logs__/pytest` 的内部错误阻断整个写作工作台。
+- 扩展 Write skipped directory 策略，默认跳过隐藏目录、`DeepSeek`、`__test_logs__`、`.pytest_cache`、构建输出、缓存/日志/临时目录和依赖目录，降低写作文件树扫到工程副产物的概率。
+- 优化 Write 左侧栏信息架构：路由切换、工作区选择/刷新、当前工作区路径、文件动作、搜索和目录树分层展示；`新建` 为主文件动作，`重命名/删除` 只在选中文件后出现。
+- 优化编辑器区域：新增文档工具栏承载文件名、保存状态、检查变更、导出和保存；底部状态栏只展示保存/错误/只读/光标/选区状态，不再混放命令按钮。
+- 优化写作助手面板边界：隐藏/停止助手属于助手标题栏；编辑器区域只在助手隐藏时显示恢复入口。写作助手继续复用 `ComposerInputSurface`，但保持 Write 专属 memory/action 工具栏与 Code 工具隔离。
+- 验证方式：新增 `write-handlers` 与 `write-workspace-view` 回归覆盖；完整验证命令见本次实现结果。
+
+### 2026-06-09 - Write 工作台状态模型与助手上下文
+
+- 新增 renderer 侧 `WriteWorkspaceState`，统一承载 Write workspace、active file、content/savedContent、dirty/saving/error、selection、previewMode、assistantDraft、recentEdits 与 completionState；Markdown 正文和写作助手草稿继续与全局 Code composer 隔离。
+- 重构 `WriteWorkspaceView` 使用 `state.writeWorkspace` 作为权威状态，保留现有 `write.list/get/put/complete` IPC 文件服务；本地补全现在按当前 cursor/selection suffix 请求并在光标处插入。
+- 新增 Write 助手面板：显式助手输入通过 `mode: "write"` thread 发送，`displayText` 只展示用户请求，模型输入注入结构化 `write:assistant-context`，包含 active file、dirty 状态、选区、光标附近片段和最近编辑摘要；输入框复用 Code composer 的 `ComposerInputSurface` 完整 shell 与发送/中断机制，但绑定到 `writeWorkspace.assistantDraft`，工具栏只暴露 Write 专属 memory/action，不暴露 Code 的附件、plan、goal 控件。
+- 将 Write Markdown 编辑器从 textarea 替换为 CodeMirror 6，CodeMirror 文档和选区变化继续回写 `WriteWorkspaceState`，为后续 inline edit/diff/RAG 机制提供稳定编辑器内核。
+- 新增 `write:action` IPC 合同，解析并校验 `write:inline-complete`、`write:inline-edit` 与 `write:assistant-context` JSON action；该边界不调用 Code 工具、不写文件。`WriteWorkspaceState.pendingInlineEdit` 承载待确认编辑，UI 先展示 inline diff，应用前重新校验当前文档 scope 与 `originalText` 一致。
+- 新增 `write:memory` IPC 与 `WriteWorkspaceState.memoryState`：主进程在允许的 Markdown 文件中执行本地检索，返回可观察 evidence（source path、range、score、snippet）；写作助手面板可展开查看命中，发送助手消息前会刷新 evidence 并注入同一份 `write:assistant-context`。
+- 新增 Write 文件生命周期 IPC：`write.tree/create/rename/delete/export/media/watch`。目录树、创建、重命名、删除、导出下载、媒体引用证据与本地图片预览、active file 外部变更轮询检测和大文件只读保护均复用 Write path policy，不接入 Code 工具或命令执行。
+- 新增 OpenSpec 变更 `deepen-write-workspace` 记录写作机制路线；当前 change 任务已实现完成，后续可在独立 change 中继续增强实时 watcher、导出格式和媒体预览渲染。
+- 验证方式：新增 renderer helper 测试覆盖 Write assistant payload、cursor context、selection-aware completion；完整验证命令见本次实现结果。
+
 ### 2026-06-09 - Code/Write 工作台与 tool 权限隔离
 
 - 扩展 `AgentRuntime` tool access policy：默认在 `mode: "write"` 线程中隐藏并拒绝 `edit_file`、`write_file`、`apply_patch`、`rollback_file`、`run_command`、`diagnose_workspace`、`diagnose_file`，强制 tool call 会在 approval/execution 前记录 failed `ToolItem` 和 `runtime_error(code: "tool_not_found")`。
@@ -86,7 +115,8 @@
 - 修复中断状态机竞态：`AgentRuntime.interruptTurn()` 会先把 active running tool item 写为 failed/interrupted 并阻止后台 tool settle 覆盖该状态，再发出 interrupted 终态，避免 replay 或 UI 看到 turn 已结束但工具仍停在 running。
 - 清理未实现的跨进程预留字段：移除 `TurnInterruptOptions.force`、SSE `streamId/sinceIndex` 和 `WriteCompleteRequest.bypassCache`，让 shared contract 与当前 live-only SSE、本地 Markdown completion 和统一 interrupt 行为一致。
 - 清理 approval IPC 契约：移除未被 runtime/UI 读取或持久化的 `ApprovalRespondRequest.reason`，避免调用方误以为 allow/deny 原因会被写入审计记录。
-- 修复 LLM gateway 工具调用解析：OpenAI-compatible 与 Anthropic-compatible 的非流式/流式 tool call 缺少工具名时现在抛出明确 provider response 错误，不再生成空工具名或在流式路径静默丢弃工具调用。
+- 修复 LLM gateway 工具调用解析：OpenAI-compatible 与 Anthropic-compatible 的非流式/流式 tool call 缺少工具名时现在抛出明确 provider response 错误；Anthropic `tool_use.input` 也必须是 JSON object，不再把数组/null 等坏 provider 参数传入工具层。
+- 加固 JSONL 写入边界：`JsonlThreadStore.appendItem()` / `appendEvent()` 会在写入前使用 shared contract guard 校验 `Item` / `RuntimeEvent` 最小形状，坏记录不再先污染 JSONL 后等 replay 跳过。
 - 修复 Write 模式打开文件竞态：`WriteWorkspaceView` 现在对 `write.get` 响应做请求序号、workspace 和 path 校验，避免连续点击文件时慢返回的旧内容覆盖当前 active file。
 - 修复 Write 模式 workspace 切换失败污染：切换 workspace 会在 `write.list` 返回前立即清空旧文件列表和 active file，避免新 workspaceRoot 下保留旧 workspace 的相对路径和编辑内容。
 - 修复线程活动时间投影：`JsonlThreadStore.appendItem()` 现在在消息追加后维护 `ThreadRecord.updatedAt` 和 `ThreadSummary.updatedAt`，renderer 的 `turn_started` 投影也会即时前移侧栏 summary，避免新消息后列表排序和时间仍停留在创建或手动更新时刻。

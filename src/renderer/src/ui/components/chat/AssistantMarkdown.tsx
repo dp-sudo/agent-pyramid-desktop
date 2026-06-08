@@ -14,20 +14,31 @@ import remarkGfm from "remark-gfm";
 interface AssistantMarkdownProps {
   text: string;
   streaming?: boolean;
+  imageSrcResolver?: (src: string) => string | null;
 }
 
-export function AssistantMarkdown({ text, streaming }: AssistantMarkdownProps): ReactElement {
+export function AssistantMarkdown({
+  text,
+  streaming,
+  imageSrcResolver,
+}: AssistantMarkdownProps): ReactElement {
   const renderText = streaming ? closeDanglingCodeFence(text) : text;
   return (
     <div className={`ds-markdown ${streaming ? "ds-shiny-markdown" : ""}`}>
-      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
+      <ReactMarkdown
+        components={createMarkdownComponents(imageSrcResolver)}
+        remarkPlugins={[remarkGfm]}
+      >
         {renderText}
       </ReactMarkdown>
     </div>
   );
 }
 
-const markdownComponents: Components = {
+function createMarkdownComponents(
+  imageSrcResolver?: (src: string) => string | null,
+): Components {
+  return {
   a({ node: _node, href, children, ...props }) {
     const safeHref = normalizeMarkdownHref(href);
     if (!safeHref) return <>{children}</>;
@@ -54,7 +65,7 @@ const markdownComponents: Components = {
     return <hr {...props} className="ds-markdown-divider" />;
   },
   img({ node: _node, alt, src, ...props }) {
-    const safeSrc = normalizeMarkdownImageSrc(src);
+    const safeSrc = normalizeMarkdownImageSrc(src, imageSrcResolver);
     if (!safeSrc) return null;
     return (
       <span className="ds-markdown-image-frame">
@@ -80,7 +91,8 @@ const markdownComponents: Components = {
       </div>
     );
   },
-};
+  };
+}
 
 type CodeElementProps = ComponentPropsWithoutRef<"code"> & {
   className?: string;
@@ -169,10 +181,15 @@ export function normalizeMarkdownHref(href: string | undefined): string | null {
   }
 }
 
-function normalizeMarkdownImageSrc(src: string | undefined): string | null {
+export function normalizeMarkdownImageSrc(
+  src: string | undefined,
+  resolver?: (src: string) => string | null,
+): string | null {
   if (!src) return null;
   const trimmed = src.trim();
   if (!trimmed) return null;
+  const resolved = resolver?.(trimmed);
+  if (resolved && isSafeResolvedImageSrc(resolved)) return resolved;
   try {
     const url = new URL(trimmed);
     if (url.protocol === "http:" || url.protocol === "https:") return trimmed;
@@ -181,6 +198,17 @@ function normalizeMarkdownImageSrc(src: string | undefined): string | null {
   } catch (_error) {
     void _error;
     return null;
+  }
+}
+
+function isSafeResolvedImageSrc(value: string): boolean {
+  if (isSafeImageDataUrl(value)) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (_error) {
+    void _error;
+    return false;
   }
 }
 

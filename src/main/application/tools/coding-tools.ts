@@ -385,6 +385,7 @@ async function commitPreparedChange(change: PreparedFileChange): Promise<void> {
     await fs.rm(change.filePath, { force: true });
     return;
   }
+  await assertPreparedChangePathStillAllowed(change, "write");
   await fs.mkdir(path.dirname(change.filePath), { recursive: true });
   await assertPreparedChangePathStillAllowed(change, "write");
   await assertPreparedChangeStillFresh(change);
@@ -711,7 +712,7 @@ function applyHunks(
 
   for (const hunk of hunks) {
     assertHunkCounts(hunk, relativePath);
-    const hunkStartIndex = Math.max(0, hunk.oldStart - 1);
+    const hunkStartIndex = resolveHunkStartIndex(hunk);
     if (hunkStartIndex < originalIndex) {
       throw new Error(`apply_patch hunks overlap in ${relativePath}.`);
     }
@@ -746,6 +747,12 @@ function applyHunks(
 
   nextLines.push(...originalLines.slice(originalIndex));
   return joinLineRecords(nextLines, relativePath);
+}
+
+function resolveHunkStartIndex(hunk: ParsedPatchHunk): number {
+  // Unified diff zero-count hunks insert after oldStart lines; normal hunks
+  // replace starting at oldStart. This keeps @@ -1,0 +2 @@ after line 1.
+  return hunk.oldCount === 0 ? hunk.oldStart : Math.max(0, hunk.oldStart - 1);
 }
 
 function assertHunkCounts(hunk: ParsedPatchHunk, relativePath: string): void {

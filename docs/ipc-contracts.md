@@ -197,14 +197,23 @@ Notes:
 | Channel | Preload Method | Request | Success Value | Error Codes |
 | --- | --- | --- | --- | --- |
 | `write:list` | `write.list(request)` | `WriteListRequest` | `WriteFileEntry[]` | `WRITE_LIST_FAILED` |
-| `write:get` | `write.get(request)` | `WriteGetRequest` | `{ path; content }` | `WRITE_GET_FAILED` |
+| `write:get` | `write.get(request)` | `WriteGetRequest` | `WriteGetResponse` | `WRITE_GET_FAILED` |
 | `write:put` | `write.put(request)` | `WritePutRequest` | `{ path; bytes }` | `WRITE_PUT_FAILED` |
 | `write:complete` | `write.complete(request)` | `WriteCompleteRequest` | `WriteCompleteResponse` | `WRITE_COMPLETE_FAILED` |
+| `write:action` | `write.action(request)` | `WriteActionRequest` | `WriteActionResponse` | `WRITE_ACTION_FAILED` |
+| `write:memory` | `write.memory(request)` | `WriteMemoryRequest` | `WriteMemoryResponse` | `WRITE_MEMORY_FAILED` |
+| `write:tree` | `write.tree(request)` | `WriteListRequest` | `WriteTreeNode[]` | `WRITE_TREE_FAILED` |
+| `write:create` | `write.create(request)` | `WriteCreateRequest` | `WriteFileMutationResponse` | `WRITE_CREATE_FAILED` |
+| `write:rename` | `write.rename(request)` | `WriteRenameRequest` | `WriteFileMutationResponse` | `WRITE_RENAME_FAILED` |
+| `write:delete` | `write.delete(request)` | `WriteDeleteRequest` | `{ path }` | `WRITE_DELETE_FAILED` |
+| `write:export` | `write.export(request)` | `WriteExportRequest` | `WriteExportResponse` | `WRITE_EXPORT_FAILED` |
+| `write:media` | `write.media(request)` | `WriteMediaRequest` | `WriteMediaResponse` | `WRITE_MEDIA_FAILED` |
+| `write:watch` | `write.watch(request)` | `WriteWatchRequest` | `WriteWatchResponse` | `WRITE_WATCH_FAILED` |
 
 Notes:
 
-- `write.get` reads Markdown as strict UTF-8 and fails instead of returning replacement characters for invalid bytes.
-- `write.put` performs a plain UTF-8 file write after workspace path validation.
+- `write.get` reads Markdown as strict UTF-8 and fails instead of returning replacement characters for invalid bytes. Files larger than the Write large-file threshold return `readonly: true`, empty editable content, and a reason.
+- `write.put` performs a plain UTF-8 file write after workspace path validation and rejects large read-only Markdown targets.
 
 - Write `workspace` must be an absolute path.
 - Write file paths are workspace-relative.
@@ -212,6 +221,19 @@ Notes:
 - Access uses workspace path checks and realpath checks to prevent path escape.
 - Skipped directories include dot directories, `DeepSeek`, `dist`, `node_modules`, and `out`.
 - Inline complete is currently local Markdown pattern completion, not an LLM request.
+- `write.action` parses model or caller JSON into dedicated Write actions:
+  `write:inline-complete`, `write:inline-edit`, or `write:assistant-context`.
+  It validates path and edit scope metadata but does not write files or invoke
+  Code tools. Renderer inline edits must still be confirmed and re-check the
+  current document scope before applying.
+- `write.memory` performs local Markdown-only retrieval and returns observable
+  evidence snippets with source file, range, score, and snippet text. The
+  renderer may display the evidence and inject the same visible snippets into
+  Write assistant context; this retrieval is not exposed as a Code tool.
+- `write.tree/create/rename/delete/export/media/watch` provide Write file
+  lifecycle services. Create, rename, delete, get, put, export, and watch stay
+  Markdown-only; `write.media` extracts Markdown image references and reports
+  whether local targets exist without reading or embedding binary media.
 
 ### Model Config
 

@@ -273,20 +273,41 @@ Approval policy currently implemented in runtime:
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
 - All remaining non-read-only tools require approval.
 
-Workspace tools require an absolute thread workspace path before resolving file paths. `read_file`, `search_files`, `edit_file`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the file no longer matches the latest agent-written content. `run_command` is also treated as destructive because arbitrary shell commands can modify files or run workspace scripts; it requests approval even when `approvalPolicy: "auto"` is set.
+Workspace tools require an absolute thread workspace path before resolving file paths. `read_file`, `search_files`, `edit_file`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Write commits also re-check path policy before and after creating missing parent directories, so a parent path replaced with an external symlink cannot receive files or implicit directories. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the file no longer matches the latest agent-written content. `run_command` is also treated as destructive because arbitrary shell commands can modify files or run workspace scripts; it requests approval even when `approvalPolicy: "auto"` is set.
 
-`apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written. A patch may include multiple hunks for one file under a single file header, but duplicate file sections for the same resolved target are rejected so successful writes and failure rollback both have one authoritative pre-write snapshot per file. The parser treats `\ No newline at end of file` as part of the neighboring hunk line, so patches cannot silently add or remove the final newline. Existing lines keep their original LF or CRLF endings; added lines use the local file ending around the insertion point, falling back to LF for new files.
+`apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written. A patch may include multiple hunks for one file under a single file header, but duplicate file sections for the same resolved target are rejected so successful writes and failure rollback both have one authoritative pre-write snapshot per file. Rename/copy/path-change patch sections are rejected explicitly; supported updates must keep the same old/new path, while creates must use `/dev/null` as the old path. The parser treats `\ No newline at end of file` as part of the neighboring hunk line, so patches cannot silently add or remove the final newline. Existing lines keep their original LF or CRLF endings; added lines use the local file ending around the insertion point, falling back to LF for new files.
 
 File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; it is not replayed from JSONL after restart.
 
-`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions.
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; truncated stdout/stderr text is cut only at complete UTF-8 character boundaries. Non-zero exit codes are returned as command results rather than runtime exceptions.
 
 `diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
 
 Write-mode Markdown file operations remain renderer-invoked IPC services under
 `window.agentApi.write.*`. They are not exposed to the model as coding tools;
-future Write AI actions should add Write-specific contracts or tools instead
-of reusing Code write/command tools.
+Write AI actions use `write:action` to parse dedicated `write:inline-complete`,
+`write:inline-edit`, and `write:assistant-context` payloads instead of reusing
+Code write/command tools. `write:action` validates the action path and inline
+edit scope metadata but never writes files. The renderer displays inline edit
+diffs first and re-checks that the current document slice still matches
+`scope.originalText` before applying the replacement.
+
+Write memory uses `write:memory` as a renderer-invoked local retrieval service.
+It scans allowed Markdown files with the same Write path policy, returns scored
+evidence snippets, and keeps the evidence visible in the Write assistant panel.
+Assistant sends refresh this evidence and include the same snippets in
+`write:assistant-context`, so retrieval is inspectable instead of hidden prompt
+injection.
+
+Write file lifecycle uses dedicated renderer-invoked IPC services:
+`write:tree`, `write:create`, `write:rename`, `write:delete`, `write:export`,
+`write:media`, and `write:watch`. These services reuse the Write workspace path
+policy and stay outside the model tool registry. Large Markdown files are
+listed but opened as read-only editor documents; the renderer disables editing
+and save for those files. `write:watch` is polled by the active Write document
+to surface external size/mtime changes, while `write:media` exposes Markdown
+image reference evidence and small local image data URLs for preview. Export
+returns Markdown and the renderer starts a local download from that response.
 
 ## Tool Budget
 
@@ -415,7 +436,11 @@ Renderer event handling:
 
 State storage:
 
-- `WorkbenchContext.tsx` stores current active-thread `items`, `inFlightTurnsByThreadId`, `activeTurnId`, active thread and composer state.
+- `WorkbenchContext.tsx` stores current active-thread `items`, `inFlightTurnsByThreadId`, `activeTurnId`, active thread, Code composer state, and the dedicated `writeWorkspace` state.
+- Write assistant turns reuse the shared composer input surface for prompt entry
+  and pending/interrupt behavior, but bind it to `writeWorkspace.assistantDraft`
+  rather than global Code composer state.
+- Write assistant turns use `TurnStartRequest.displayText` for the visible user prompt while `TurnStartRequest.text` carries a structured `write:assistant-context` block with active file, selection, cursor-near snippets, and recent edits. This keeps Write document content out of the global composer while still giving the Write thread scoped writing context.
 - `appendItem` and `updateItem` both upsert by item id.
 
 ## Runtime Event Types
