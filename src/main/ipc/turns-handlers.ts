@@ -6,7 +6,6 @@ import {
 } from "../../shared/ipc.js";
 import type {
   TurnStartRequest,
-  TurnInterruptOptions,
   IpcResult,
   TurnRecord,
   Item,
@@ -31,7 +30,7 @@ export function registerTurnHandlers(
 
   ipcMain.handle(
     TURN_INTERRUPT_CHANNEL,
-    async (_event, turnId: string, _options?: TurnInterruptOptions) => {
+    async (_event, turnId: string) => {
       try {
         await runtime.interruptTurn(turnId);
         return ok({ turnId });

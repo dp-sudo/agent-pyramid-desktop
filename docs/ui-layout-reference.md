@@ -268,11 +268,16 @@ Component: `AssistantMarkdown`.
 Renderer:
 
 - Uses `react-markdown` and `remark-gfm`.
-- External `http(s)` links get `target="_blank"` and `rel="noreferrer"`.
+- Streaming text temporarily closes a dangling triple-backtick code fence so
+  partial model output still renders as a code block while the turn is live.
+- Links are normalized before render. `http(s)` links get `target="_blank"` and
+  `rel="noreferrer"`; page anchors stay in-renderer; relative/local/unsafe
+  protocols render as plain text instead of clickable anchors.
 - Code blocks are wrapped in `ds-code-block`.
 - Code language header is extracted from `language-*` class.
 - Tables are wrapped in `ds-markdown-table-wrap`.
-- Images are wrapped in `ds-markdown-image-frame`.
+- Images are wrapped in `ds-markdown-image-frame`; only `http(s)` and supported
+  image `data:` URLs are rendered.
 - Task-list checkboxes use `ds-markdown-task-checkbox` and are disabled.
 
 Key classes:
@@ -295,6 +300,8 @@ Purpose:
 - Edit and send prompt text.
 - Interrupt in-flight turn.
 - Add image attachments.
+- Paste image attachments directly from the clipboard.
+- Preview image attachments as thumbnails with an overlaid remove button.
 - Toggle plan mode and goal mode.
 - Select model profile and reasoning effort.
 
@@ -303,6 +310,8 @@ Key classes:
 - `ds-composer-shell`
 - `ds-composer-attachments`
 - `ds-composer-attachment`
+- `ds-composer-attachment-remove`
+- `ds-composer-attachment-fallback`
 - `ds-composer-toolbar-left`
 - `ds-composer-tool-button`
 - `ds-composer-popover`
@@ -314,11 +323,16 @@ States:
 - `sendPending`: local send guard.
 - `runtimeBusy`: derived from the active thread's entry in
   `state.inFlightTurnsByThreadId`.
-- `attachments`: local display records; authoritative ids live in
-  `state.composer.attachmentIds`.
+- `attachments`: thumbnail display records in `state.composer.attachments`;
+  authoritative ids live in `state.composer.attachmentIds`.
 - Attachment removal is disabled while a send is pending or the active thread is
   running, so runtime attachment reads cannot race with composer cleanup.
 - `menuOpen`, `pickerOpen`: popovers close on outside pointer down or Escape.
+- Clipboard paste filters to PNG/JPEG/WebP/GIF files, creates the same
+  renderer attachment records as the picker path, and keeps normal text paste
+  behavior when clipboard text is present.
+- Backspace/Delete removes the newest attachment only when the textarea is empty
+  and removal is not disabled.
 
 Send behavior:
 
@@ -475,6 +489,11 @@ Behavior constants:
 - Opening another file or refreshing/switching workspace first flushes the
   current dirty file through `write.put`; if that save fails, navigation stays
   on the current file and surfaces the error.
+- Switching workspace clears the previous workspace file list and active file
+  immediately, so a failed list request cannot leave stale file-relative state
+  under the new workspace root.
+- Open-file responses are request-id guarded, so a slower `write.get` response
+  from an earlier click cannot overwrite the later active file.
 - `write.get`, `write.put`, and inline completion only accept Markdown file
   paths (`.md`, `.mdx`, `.markdown`), matching the file list.
 
@@ -586,6 +605,10 @@ State sink:
 
 Profiles:
 
+- Profiles load through `modelConfig.listProfiles()` when Settings mounts.
+- Profile loading is not tied to locale/theme preference changes; changing
+  basic settings must not refresh the active model form or overwrite unsaved
+  profile edits.
 - Add MiniMax profile.
 - Add DeepSeek profile.
 - Add custom profile.

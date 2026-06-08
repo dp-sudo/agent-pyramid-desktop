@@ -14,7 +14,11 @@ import { AttachmentStore } from "../../../src/main/persistence/attachment-store"
 import { JsonlThreadStore } from "../../../src/main/persistence/index";
 import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
 import type { LlmWorkerPool } from "../../../src/main/infrastructure/llm-worker/worker-pool";
-import type { ApprovalRespondRequest, RuntimeEvent } from "../../../src/shared/agent-contracts";
+import type {
+  ApprovalRespondRequest,
+  Item,
+  RuntimeEvent,
+} from "../../../src/shared/agent-contracts";
 import { DEFAULT_MODEL_CONFIG } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
@@ -216,7 +220,7 @@ describe("AgentRuntime", () => {
       },
     });
 
-    const replayed = [];
+    const replayed: Item[] = [];
     for await (const item of store.replayItems(thread.id)) {
       replayed.push(item);
     }
@@ -1642,6 +1646,70 @@ describe("AgentRuntime", () => {
     ).rejects.toThrow("RUNTIME_THREAD_ARCHIVED");
   });
 
+  it("rejects invalid goal statuses at the runtime update boundary", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const runtime = createRuntime();
+    const invalidUpdate = { status: "paused" } as unknown as Parameters<
+      AgentRuntime["updateThreadGoal"]
+    >[1];
+
+    await expect(runtime.updateThreadGoal(thread.id, invalidUpdate)).rejects.toThrow(
+      "Goal status must be active, complete, or blocked.",
+    );
+    expect((await store.getThread(thread.id))?.goal).toBeUndefined();
+  });
+
+  it("rejects malformed turn start fields before starting the turn", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const runtime = createRuntime();
+    const invalidRequests: Array<{
+      request: unknown;
+      message: string;
+    }> = [
+      {
+        request: { threadId: thread.id },
+        message: "Turn text is required.",
+      },
+      {
+        request: { threadId: thread.id, text: "Run", mode: "planning" },
+        message: "Turn mode must be agent or plan.",
+      },
+      {
+        request: { threadId: thread.id, text: "Run", reasoningEffort: "max" },
+        message: "Turn reasoningEffort is invalid.",
+      },
+      {
+        request: { threadId: thread.id, text: "Run", attachmentIds: [42] },
+        message: "Turn attachmentIds must be a string array.",
+      },
+      {
+        request: { threadId: thread.id, text: "Run", goalMode: "false" },
+        message: "Turn goalMode must be a boolean.",
+      },
+    ];
+
+    for (const item of invalidRequests) {
+      await expect(
+        runtime.startTurn(item.request as Parameters<AgentRuntime["startTurn"]>[0]),
+      ).rejects.toThrow(item.message);
+    }
+    expect(runtime.isThreadInFlight(thread.id)).toBe(false);
+    expect(fakePool.requests).toHaveLength(0);
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(replayed).toEqual([]);
+  });
+
   it("compresses oversized historical tool results only in model requests", async () => {
     const thread = await store.createThread({
       title: "Runtime",
@@ -2037,7 +2105,7 @@ describe("AgentRuntime", () => {
     );
 
     expect(fakePool.canceledThreads).toEqual([thread.id]);
-    expect(events.find((event) => event.kind === "item_updated")).toMatchObject({
+    expect(events.find((event) => event.kind === "item_updated" && event.item.kind === "approval")).toMatchObject({
       kind: "item_updated",
       item: expect.objectContaining({ kind: "approval", decision: "deny" }),
     });
@@ -2166,6 +2234,11 @@ describe("AgentRuntime", () => {
         }),
       ]),
     );
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(replayed.some((item) => item.kind === "assistant")).toBe(false);
     appendItem.mockRestore();
   });
 
@@ -2219,7 +2292,7 @@ describe("AgentRuntime", () => {
     );
     await waitFor(() => !runtime.isThreadInFlight(thread.id));
 
-    expect(events.find((event) => event.kind === "item_updated")).toMatchObject({
+    expect(events.find((event) => event.kind === "item_updated" && event.item.kind === "approval")).toMatchObject({
       kind: "item_updated",
       item: expect.objectContaining({ kind: "approval", decision: "deny" }),
     });

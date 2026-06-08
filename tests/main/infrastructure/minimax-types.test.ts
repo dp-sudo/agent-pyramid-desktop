@@ -188,6 +188,18 @@ describe("minimax protocol type helpers", () => {
         ],
       }),
     ).toThrow('Failed to parse arguments for tool "bad"');
+
+    expect(() =>
+      parseOpenAiToolCalls({
+        choices: [
+          {
+            message: {
+              tool_calls: [{ function: { arguments: "{}" } }],
+            },
+          },
+        ],
+      }),
+    ).toThrow("OpenAI tool call 0 is missing a tool name.");
   });
 
   it("parses Anthropic tool_use content blocks", () => {
@@ -210,5 +222,11 @@ describe("minimax protocol type helpers", () => {
         arguments: { steps: [{ title: "Read", status: "pending" }] },
       },
     ]);
+
+    expect(() =>
+      parseAnthropicToolCalls({
+        content: [{ type: "tool_use", id: "tool-2", input: {} }],
+      }),
+    ).toThrow("Anthropic tool_use 0 is missing a tool name.");
   });
 });

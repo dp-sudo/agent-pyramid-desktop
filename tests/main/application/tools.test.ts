@@ -93,6 +93,23 @@ describe("application tools", () => {
       .rejects.toThrow("sample tool requires a string field named text.");
   });
 
+  it("keeps diagnose_file schema aligned with the language service implementation", () => {
+    const diagnoseFile = createCommandTools()
+      .find((tool) => tool.definition.name === "diagnose_file");
+
+    expect(diagnoseFile?.definition.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+        },
+      },
+      required: ["path"],
+    });
+    expect(Object.keys(diagnoseFile?.definition.inputSchema.properties ?? {}))
+      .toEqual(["path"]);
+  });
+
   it("normalizes create_plan input into visible plan payloads", async () => {
     const content = await createPlanTool.execute(
       {
@@ -182,6 +199,13 @@ describe("application tools", () => {
       await fs.symlink(outside, path.join(workspace, "linked-outside"));
       const registry = new InMemoryToolRegistry(createWorkspaceTools());
       const readState = new FileReadStateStore();
+
+      await expect(
+        registry.execute(
+          { id: "call-relative-workspace", name: "list_files", arguments: { path: "." } },
+          { threadId: "thread-1", turnId: "turn-1", workspace: "relative-workspace" },
+        ),
+      ).rejects.toThrow("Workspace path must be absolute.");
 
       const listed = JSON.parse(
         (

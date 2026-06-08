@@ -1,20 +1,44 @@
-import { useEffect, useRef, useState, type ChangeEvent, type ReactElement } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
+  type ReactElement,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   getActiveThreadInFlightTurn,
   useWorkbench,
+  type ComposerAttachment,
 } from "../../store/WorkbenchContext";
 import { Pill } from "../primitives/Pill";
 import { FloatingComposerModelPicker } from "./FloatingComposerModelPicker";
-import type {
-  AttachmentRecord,
-  ModelConfigProfile,
-} from "../../../../../shared/agent-contracts";
+import type { ModelConfigProfile } from "../../../../../shared/agent-contracts";
 
 interface FloatingComposerProps {
   onSend: (text: string) => Promise<boolean>;
   onInterrupt: () => void;
   disabled?: boolean;
+}
+
+const COMPOSER_IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+const COMPOSER_IMAGE_ACCEPT = Array.from(COMPOSER_IMAGE_MIME_TYPES).join(",");
+
+export interface ComposerImageFile {
+  file: File;
+  mimeType: string;
+}
+
+interface ClipboardImageItemLike {
+  kind: string;
+  type: string;
+  getAsFile(): File | null;
 }
 
 export function FloatingComposer({
@@ -27,11 +51,11 @@ export function FloatingComposer({
   const runtimeBusy = getActiveThreadInFlightTurn(state) !== null;
   const shellRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const trackedPreviewUrlsRef = useRef(new Set<string>());
   const [draftText, setDraftText] = useState(state.composer.text);
   const [sendPending, setSendPending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
   const attachmentRemovalDisabled = isAttachmentRemovalDisabled({
     disabled: Boolean(disabled),
     runtimeBusy,
@@ -49,10 +73,21 @@ export function FloatingComposer({
   }, [state.composer.text]);
 
   useEffect(() => {
-    if (state.composer.attachmentIds.length === 0 && attachments.length > 0) {
-      setAttachments([]);
+    const currentPreviewUrls = new Set(
+      state.composer.attachments
+        .map((attachment) => attachment.previewUrl)
+        .filter(isBlobPreviewUrl),
+    );
+    for (const previewUrl of currentPreviewUrls) {
+      trackedPreviewUrlsRef.current.add(previewUrl);
     }
-  }, [attachments.length, state.composer.attachmentIds.length]);
+    for (const previewUrl of Array.from(trackedPreviewUrlsRef.current)) {
+      if (!currentPreviewUrls.has(previewUrl)) {
+        revokeTrackedPreviewUrl(previewUrl);
+        trackedPreviewUrlsRef.current.delete(previewUrl);
+      }
+    }
+  }, [state.composer.attachments]);
 
   useEffect(() => {
     if (!menuOpen && !pickerOpen) return undefined;
@@ -85,12 +120,30 @@ export function FloatingComposer({
   }, [menuOpen, pickerOpen]);
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
+    const attachmentIdToRemove = getDeleteShortcutAttachmentId({
+      key: event.key,
+      text: event.currentTarget.value,
+      attachments: state.composer.attachments,
+      removalDisabled: attachmentRemovalDisabled,
+    });
+    if (attachmentIdToRemove) {
+      event.preventDefault();
+      void removeAttachment(attachmentIdToRemove);
+      return;
+    }
+
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       if (!runtimeBusy && !sendDisabled) {
         void sendDraft();
       }
     }
+  }
+
+  function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>): void {
+    const files = getClipboardImageFiles(event.clipboardData.items);
+    if (files.length === 0) return;
+    void addImageFiles(files, "paste");
   }
 
   async function sendDraft(): Promise<void> {
@@ -119,36 +172,59 @@ export function FloatingComposer({
   async function handleImageSelected(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    for (const file of files) {
+    const imageFiles = files.map(toComposerImageFile).filter(isComposerImageFile);
+    if (imageFiles.length !== files.length) {
+      actions.setError(t("composer.unsupportedImage"));
+    }
+    await addImageFiles(imageFiles, "picker");
+    setMenuOpen(false);
+  }
+
+  async function addImageFiles(
+    files: ComposerImageFile[],
+    source: "picker" | "paste",
+  ): Promise<void> {
+    if (files.length === 0) return;
+    if (disabled || runtimeBusy || sendPending) {
+      actions.setError(t("composer.attachmentAddBlocked"));
+      return;
+    }
+
+    for (const [index, imageFile] of files.entries()) {
+      const previewUrl = createPreviewUrl(imageFile.file);
       try {
-        const dataBase64 = await readFileAsBase64(file);
+        const dataBase64 = await readFileAsBase64(imageFile.file);
         const result = await window.agentApi.attachments.create({
-          name: file.name,
-          mimeType: file.type,
+          name: getComposerImageAttachmentName(imageFile.file, index, source),
+          mimeType: imageFile.mimeType,
           dataBase64,
         });
         if (!result.ok) {
+          revokeTrackedPreviewUrl(previewUrl);
           actions.setError(result.message);
           continue;
         }
-        actions.addComposerAttachment(result.value.id);
-        setAttachments((current) => [...current, result.value]);
+        actions.addComposerAttachment(
+          previewUrl ? { ...result.value, previewUrl } : result.value,
+        );
       } catch (error) {
+        revokeTrackedPreviewUrl(previewUrl);
         actions.setError(error instanceof Error ? error.message : String(error));
       }
     }
-    setMenuOpen(false);
   }
 
   async function removeAttachment(id: string): Promise<void> {
     if (attachmentRemovalDisabled) return;
+    const attachment = state.composer.attachments.find((item) => item.id === id);
     const result = await window.agentApi.attachments.delete(id);
     if (!result.ok) {
       actions.setError(result.message);
       return;
     }
+    revokeTrackedPreviewUrl(attachment?.previewUrl);
+    if (attachment?.previewUrl) trackedPreviewUrlsRef.current.delete(attachment.previewUrl);
     actions.removeComposerAttachment(id);
-    setAttachments((current) => current.filter((item) => item.id !== id));
   }
 
   function handleSelectModel(profile: ModelConfigProfile): void {
@@ -162,35 +238,52 @@ export function FloatingComposer({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
+        accept={COMPOSER_IMAGE_ACCEPT}
         multiple
         hidden
         onChange={(event) => void handleImageSelected(event)}
       />
-      <textarea
-        value={draftText}
-        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setDraftText(event.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={t("composer.placeholder")}
-        disabled={disabled}
-      />
-      {attachments.length > 0 ? (
+      {state.composer.attachments.length > 0 ? (
         <div className="ds-composer-attachments">
-          {attachments.map((attachment) => (
-            <button
+          {state.composer.attachments.map((attachment) => (
+            <div
               key={attachment.id}
-              type="button"
               className="ds-composer-attachment"
-              onClick={() => void removeAttachment(attachment.id)}
-              disabled={attachmentRemovalDisabled}
-              title={t("composer.removeAttachment")}
+              title={`${attachment.name} · ${formatBytes(attachment.size)}`}
             >
-              <span>{attachment.name}</span>
-              <span>{formatBytes(attachment.size)}</span>
-            </button>
+              {attachment.previewUrl ? (
+                <img src={attachment.previewUrl} alt={attachment.name} />
+              ) : (
+                <span className="ds-composer-attachment-fallback">
+                  {attachment.name}
+                </span>
+              )}
+              <button
+                type="button"
+                className="ds-composer-attachment-remove"
+                onClick={() => void removeAttachment(attachment.id)}
+                disabled={attachmentRemovalDisabled}
+                title={t("composer.removeAttachment")}
+                aria-label={t("composer.removeAttachment")}
+              >
+                ×
+              </button>
+            </div>
           ))}
         </div>
       ) : null}
+      <textarea
+        value={draftText}
+        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
+          const nextText = event.target.value;
+          setDraftText(nextText);
+          actions.setComposerText(nextText);
+        }}
+        onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
+        placeholder={t("composer.placeholder")}
+        disabled={disabled}
+      />
       <div
         style={{
           display: "flex",
@@ -299,6 +392,23 @@ export function FloatingComposer({
   );
 }
 
+function createPreviewUrl(file: File): string | undefined {
+  if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+    return undefined;
+  }
+  return URL.createObjectURL(file);
+}
+
+function isBlobPreviewUrl(value: string | undefined): value is string {
+  return typeof value === "string" && value.startsWith("blob:");
+}
+
+function revokeTrackedPreviewUrl(previewUrl: string | undefined): void {
+  if (!isBlobPreviewUrl(previewUrl)) return;
+  if (typeof URL === "undefined" || typeof URL.revokeObjectURL !== "function") return;
+  URL.revokeObjectURL(previewUrl);
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -321,6 +431,53 @@ function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 102.4) / 10} KB`;
   return `${Math.round(value / 1024 / 102.4) / 10} MB`;
+}
+
+export function normalizeSupportedComposerImageMimeType(
+  mimeType: string,
+): string | null {
+  const normalized = mimeType.trim().toLowerCase();
+  return COMPOSER_IMAGE_MIME_TYPES.has(normalized) ? normalized : null;
+}
+
+export function toComposerImageFile(file: File): ComposerImageFile | null {
+  const mimeType = normalizeSupportedComposerImageMimeType(file.type);
+  return mimeType ? { file, mimeType } : null;
+}
+
+export function getClipboardImageFiles(
+  items: Iterable<ClipboardImageItemLike>,
+): ComposerImageFile[] {
+  const files: ComposerImageFile[] = [];
+  for (const item of items) {
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    const mimeType = normalizeSupportedComposerImageMimeType(file.type || item.type);
+    if (mimeType) {
+      files.push({ file, mimeType });
+    }
+  }
+  return files;
+}
+
+export function getComposerImageAttachmentName(
+  file: Pick<File, "name" | "type">,
+  index: number,
+  source: "picker" | "paste",
+): string {
+  const safeName = file.name.trim().split(/[/\\]/).pop()?.trim();
+  if (safeName) return safeName.slice(0, 180);
+  const extension = getImageExtension(file.type);
+  const prefix = source === "paste" ? "pasted-image" : "image";
+  return `${prefix}-${index + 1}.${extension}`;
+}
+
+function getImageExtension(mimeType: string): string {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/webp") return "webp";
+  if (mimeType === "image/gif") return "gif";
+  return "png";
 }
 
 export function canSubmitComposerDraft({
@@ -347,4 +504,27 @@ export function isAttachmentRemovalDisabled({
   sendPending: boolean;
 }): boolean {
   return disabled || runtimeBusy || sendPending;
+}
+
+export function getDeleteShortcutAttachmentId({
+  key,
+  text,
+  attachments,
+  removalDisabled,
+}: {
+  key: string;
+  text: string;
+  attachments: ComposerAttachment[];
+  removalDisabled: boolean;
+}): string | null {
+  if (removalDisabled) return null;
+  if (key !== "Backspace" && key !== "Delete") return null;
+  if (text.length > 0) return null;
+  return attachments.at(-1)?.id ?? null;
+}
+
+function isComposerImageFile(
+  value: ComposerImageFile | null,
+): value is ComposerImageFile {
+  return value !== null;
 }

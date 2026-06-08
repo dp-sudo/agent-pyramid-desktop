@@ -194,7 +194,7 @@ export function SettingsView(): ReactElement {
     void (async () => {
       if (!window.agentApi) {
         setSaveState("error");
-        setError(t("settings.preloadMissing"));
+        setError(i18n.t("settings.preloadMissing"));
         return;
       }
       const result = await window.agentApi.modelConfig.listProfiles();
@@ -210,7 +210,7 @@ export function SettingsView(): ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [actions, t]);
+  }, [actions]);
 
   function applyProfilesState(state: ModelConfigProfilesState): void {
     const active = findActiveProfile(state);

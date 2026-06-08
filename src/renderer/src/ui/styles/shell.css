@@ -621,10 +621,9 @@ textarea {
 }
 
 .ds-composer-attachments {
-  padding: 0 10px 10px;
+  padding: 12px 12px 0;
 }
 
-.ds-composer-attachment,
 .ds-message-attachments span,
 .ds-composer-mode-chip {
   display: inline-flex;
@@ -639,7 +638,71 @@ textarea {
 }
 
 .ds-composer-attachment {
+  position: relative;
+  display: inline-flex;
+  width: 78px;
+  height: 78px;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-card);
+  box-shadow: var(--ds-shadow-card-soft);
+}
+
+.ds-composer-attachment img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: calc(var(--ds-radius-md) - 1px);
+  object-fit: cover;
+}
+
+.ds-composer-attachment-fallback {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  padding: 6px;
+  text-align: center;
+  word-break: break-word;
+}
+
+.ds-composer-attachment-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ds-surface-elevated);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-text);
+  color: var(--ds-bg-canvas);
   cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  box-shadow: var(--ds-shadow-card-soft);
+}
+
+.ds-composer-attachment-remove:hover,
+.ds-composer-attachment-remove:focus-visible {
+  background: var(--ds-danger);
+  color: #ffffff;
+  outline: none;
+}
+
+.ds-composer-attachment-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .ds-composer-mode-chip {

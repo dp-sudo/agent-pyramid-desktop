@@ -90,7 +90,8 @@ Important behavior:
 
 - `turns.start()` does not wait for the LLM response to finish.
 - The synchronous return is an in-flight `TurnRecord`.
-- The visible timeline receives the user item through `item_appended`.
+- The visible timeline receives the user item through `item_appended`; the
+  persisted thread/index `updatedAt` is advanced by the item timestamp.
 - Later assistant text, reasoning, tools, completion and failure arrive through runtime events.
 
 ## Start Preconditions
@@ -108,6 +109,10 @@ Failure mapping:
 - Same-thread concurrency throws `RUNTIME_TURN_BUSY`; `turns-handlers.ts` maps it to IPC error code `RUNTIME_TURN_BUSY`.
 - Other start failures are returned as `TURN_START_FAILED`.
 - Archived thread currently throws `RUNTIME_THREAD_ARCHIVED`; IPC maps it to `TURN_START_FAILED` with that message.
+- `AgentRuntime.startTurn()` validates public request field shapes before model
+  profile resolution or item append: `text` must be string, `mode` must be
+  `agent | plan`, `reasoningEffort` must be a supported effort,
+  `attachmentIds` must be `string[]`, and `goalMode` must be boolean.
 
 ## Turn Record Construction
 
@@ -261,7 +266,7 @@ Approval policy currently implemented in runtime:
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
 - All remaining non-read-only tools require approval.
 
-`edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, and restores files already written in the same patch if a later write fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the file no longer matches the latest agent-written content. `run_command` is also treated as destructive because arbitrary shell commands can modify files or run workspace scripts; it requests approval even when `approvalPolicy: "auto"` is set.
+Workspace tools require an absolute thread workspace path before resolving file paths. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, and restores files already written in the same patch if a later write fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the file no longer matches the latest agent-written content. `run_command` is also treated as destructive because arbitrary shell commands can modify files or run workspace scripts; it requests approval even when `approvalPolicy: "auto"` is set.
 
 `apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written. A patch may include multiple hunks for one file under a single file header, but duplicate file sections for the same resolved target are rejected so successful writes and failure rollback both have one authoritative pre-write snapshot per file.
 
@@ -328,11 +333,12 @@ sequenceDiagram
   participant Store as JsonlThreadStore
   participant Bus as RuntimeEventBus
 
-  UI->>IPC: turns.interrupt(turnId, { force: true })
+  UI->>IPC: turns.interrupt(turnId)
   IPC->>RT: interruptTurn(turnId)
   RT->>RT: set status = interrupted
-  RT->>RT: deny pending approvals
   RT->>RT: abort active tool controllers
+  RT->>Store: append failed ToolItem for running tools
+  RT->>RT: deny pending approvals
   RT->>Pool: cancel(threadId)
   RT->>Store: append warning SystemItem
   RT->>Bus: item_appended(SystemItem)
@@ -343,8 +349,11 @@ sequenceDiagram
 
 Notes:
 
-- `force` exists in the IPC type but runtime currently cancels via worker pool regardless of option value.
-- If stream content already arrived, runtime persists interrupted assistant output with `truncated: true`.
+- Running tools are finalized before the interrupted terminal event so replay and UI state do not leave a tool stuck in `running`.
+- If stream content already arrived, runtime persists interrupted assistant output
+  with `truncated: true`; if the worker returns normally after cancellation,
+  runtime still ignores the final response and keeps the interrupted terminal
+  state.
 
 ## Turn Completion And Failure
 
@@ -382,7 +391,8 @@ process confirms the operation.
 
 Renderer event handling:
 
-- `turn_started`: `actions.turnStarted(event.turn)` keyed by `event.threadId`
+- `turn_started`: `actions.turnStarted(event.turn)` keyed by `event.threadId`;
+  the current window also advances the matching thread summary activity time
 - `item_appended`: append only when the event belongs to the active thread
 - `item_updated`: update only when the event belongs to the active thread
 - `turn_completed`: `actions.turnEnded(event.threadId, event.status)`

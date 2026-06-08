@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from "electron";
+import { ipcMain } from "electron";
 import {
   SSE_SUBSCRIBE_CHANNEL,
   SSE_UNSUBSCRIBE_CHANNEL,
@@ -14,7 +14,6 @@ import { RuntimeEventBus } from "../event-bus.js";
 
 interface Subscription {
   threadId: string;
-  streamId?: string;
   unsubscribe: () => void;
 }
 
@@ -45,7 +44,6 @@ export function registerSseHandlers(bus: RuntimeEventBus): void {
         });
         bucket.threads.set(threadId, {
           threadId,
-          ...(request.streamId ? { streamId: request.streamId } : {}),
           unsubscribe,
         });
 
@@ -71,12 +69,6 @@ export function registerSseHandlers(bus: RuntimeEventBus): void {
     },
   );
 
-  // Best-effort cleanup when any window closes.
-  BrowserWindow.getAllWindows().forEach((window) => {
-    onWebContentsDestroyed(window.webContents, () => {
-      disposeWebContentsSubscriptions(window.webContents.id);
-    });
-  });
 }
 
 interface DestroyableWebContents {

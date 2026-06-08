@@ -22,6 +22,7 @@ export function WriteWorkspaceView(): ReactElement {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const completionRequestId = useRef(0);
   const listRequestId = useRef(0);
+  const openFileRequestId = useRef(0);
   const activePathRef = useRef<string | null>(null);
   const workspaceRootRef = useRef("");
   const contentRef = useRef("");
@@ -59,6 +60,19 @@ export function WriteWorkspaceView(): ReactElement {
     const requestId = listRequestId.current + 1;
     listRequestId.current = requestId;
     const switchingWorkspace = workspace !== state.workspaceRoot;
+    if (switchingWorkspace) {
+      openFileRequestId.current += 1;
+      // A workspace boundary invalidates all file-relative state even if listing fails.
+      const clearedState = getWriteWorkspaceSwitchState();
+      setFiles(clearedState.files);
+      activePathRef.current = clearedState.activePath;
+      contentRef.current = clearedState.content;
+      savedContentRef.current = clearedState.savedContent;
+      setActivePath(clearedState.activePath);
+      setContent(clearedState.content);
+      setSavedContent(clearedState.savedContent);
+      setCompletion(clearedState.completion);
+    }
     setListLoading(true);
     setStatus("loading");
     try {
@@ -66,12 +80,6 @@ export function WriteWorkspaceView(): ReactElement {
       if (requestId !== listRequestId.current) return;
       if (result.ok) {
         setFiles(result.value);
-        if (switchingWorkspace) {
-          setActivePath(null);
-          setContent("");
-          setSavedContent("");
-          setCompletion("");
-        }
         setStatus("idle");
         setErrorMessage(null);
       } else {
@@ -98,11 +106,25 @@ export function WriteWorkspaceView(): ReactElement {
   }
 
   async function openFile(path: string): Promise<void> {
-    if (!state.workspaceRoot) return;
+    const workspace = state.workspaceRoot;
+    if (!workspace) return;
     if (path === activePathRef.current) return;
     if (!(await saveCurrentFileBeforeSwitch())) return;
+    const requestId = openFileRequestId.current + 1;
+    openFileRequestId.current = requestId;
     setStatus("loading");
-    const result = await window.agentApi.write.get({ workspace: state.workspaceRoot, path });
+    const result = await window.agentApi.write.get({ workspace, path });
+    // Protect the user's latest open-file intent: IPC responses can resolve out of order.
+    if (!shouldApplyWriteOpenResult({
+      requestId,
+      latestRequestId: openFileRequestId.current,
+      requestedWorkspace: workspace,
+      currentWorkspace: workspaceRootRef.current,
+      requestedPath: path,
+      returnedPath: result.ok ? result.value.path : undefined,
+    })) {
+      return;
+    }
     if (result.ok) {
       activePathRef.current = path;
       contentRef.current = result.value.content;
@@ -442,6 +464,37 @@ export function shouldSaveWriteFileBeforeSwitch(input: {
   savedContent: string;
 }): boolean {
   return Boolean(input.activePath && input.workspaceRoot && input.content !== input.savedContent);
+}
+
+export function shouldApplyWriteOpenResult(input: {
+  requestId: number;
+  latestRequestId: number;
+  requestedWorkspace: string;
+  currentWorkspace: string;
+  requestedPath: string;
+  returnedPath?: string;
+}): boolean {
+  return (
+    input.requestId === input.latestRequestId &&
+    input.requestedWorkspace === input.currentWorkspace &&
+    (input.returnedPath === undefined || input.returnedPath === input.requestedPath)
+  );
+}
+
+export function getWriteWorkspaceSwitchState(): {
+  files: WriteFileEntry[];
+  activePath: null;
+  content: string;
+  savedContent: string;
+  completion: string;
+} {
+  return {
+    files: [],
+    activePath: null,
+    content: "",
+    savedContent: "",
+    completion: "",
+  };
 }
 
 export type WriteListState = "loading" | "no-workspace" | "empty" | "empty-search" | "ready";

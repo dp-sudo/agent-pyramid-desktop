@@ -181,12 +181,13 @@ export function parseOpenAiToolCalls(response: OpenAiChatResponse): AgentToolCal
   const calls = response.choices?.[0]?.message?.tool_calls ?? [];
 
   return calls.map((call, index) => {
+    const name = requiredToolName(call.function?.name, `OpenAI tool call ${index}`);
     const rawArguments = call.function?.arguments ?? "{}";
-    const parsedArguments = parseToolArguments(rawArguments, call.function?.name ?? `tool_${index}`);
+    const parsedArguments = parseToolArguments(rawArguments, name);
 
     return {
       id: call.id ?? `tool_call_${index}`,
-      name: call.function?.name ?? "",
+      name,
       arguments: parsedArguments
     };
   });
@@ -197,11 +198,14 @@ export function parseAnthropicToolCalls(response: AnthropicMessageResponse): Age
 
   return blocks
     .filter((block) => block.type === "tool_use")
-    .map((block, index) => ({
-      id: block.id ?? `tool_call_${index}`,
-      name: block.name ?? "",
-      arguments: block.input ?? {}
-    }));
+    .map((block, index) => {
+      const name = requiredToolName(block.name, `Anthropic tool_use ${index}`);
+      return {
+        id: block.id ?? `tool_call_${index}`,
+        name,
+        arguments: block.input ?? {}
+      };
+    });
 }
 
 function parseToolArguments(raw: string, toolName: string): Record<string, unknown> {
@@ -217,6 +221,13 @@ function parseToolArguments(raw: string, toolName: string): Record<string, unkno
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse arguments for tool "${toolName}": ${reason}`);
   }
+}
+
+function requiredToolName(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} is missing a tool name.`);
+  }
+  return value;
 }
 
 type OpenAiUsageFields = NonNullable<OpenAiChatResponse["usage"]>;

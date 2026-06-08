@@ -164,14 +164,6 @@ export const diagnoseFileTool: AgentTool = {
           type: "string",
           description: "Workspace-relative file path to diagnose.",
         },
-        cwd: {
-          type: "string",
-          description: "Workspace-relative directory to run diagnostics from. Defaults to the workspace root.",
-        },
-        timeout_ms: {
-          type: "number",
-          description: "Maximum runtime in milliseconds. Defaults to 30000, maximum 120000.",
-        },
       },
       required: ["path"],
     },

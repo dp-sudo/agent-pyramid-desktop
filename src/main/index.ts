@@ -158,11 +158,13 @@ app.whenReady().then(async () => {
     await modelConfigStore.init();
   } catch (error) {
     console.error("[main] persistence init failed:", error);
+    throw error;
   }
   try {
     await pool.start();
   } catch (error) {
     console.error("[main] worker pool start failed:", error);
+    throw error;
   }
 
   registerThreadHandlers(store, runtime);

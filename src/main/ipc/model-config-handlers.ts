@@ -51,7 +51,7 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
     MODEL_CONFIG_PROFILES_CREATE_CHANNEL,
     async (_event, request: ModelConfigProfileCreateRequest) => {
       try {
-        return ok(await store.createProfile(request));
+        return ok(await store.createProfile(parseModelConfigProfileCreateRequest(request)));
       } catch (error) {
         return err("MODEL_CONFIG_PROFILES_CREATE_FAILED", messageOf(error));
       }
@@ -90,6 +90,31 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
       }
     },
   );
+}
+
+// IPC profile creation crosses from renderer to main; reject truthy non-booleans
+// before they can change the active profile selection.
+export function parseModelConfigProfileCreateRequest(
+  request: unknown,
+): ModelConfigProfileCreateRequest {
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    throw new Error("Model config profile create request must be an object.");
+  }
+  const value = request as Record<string, unknown>;
+  if (typeof value.name !== "string" || !value.name.trim()) {
+    throw new Error("Model config profile name is required.");
+  }
+  if (!value.config || typeof value.config !== "object" || Array.isArray(value.config)) {
+    throw new Error("Model config profile config must be an object.");
+  }
+  if (value.activate !== undefined && typeof value.activate !== "boolean") {
+    throw new Error("Model config profile activate must be a boolean.");
+  }
+  return {
+    name: value.name,
+    config: value.config as ModelConfigUpdate,
+    ...(value.activate !== undefined ? { activate: value.activate } : {}),
+  };
 }
 
 function messageOf(error: unknown): string {

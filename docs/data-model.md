@@ -101,12 +101,20 @@ Important semantics:
 
 - Thread ids must be UUIDs.
 - `JsonlThreadStore.createThread()` defaults `status` to `active`.
+- `ThreadRecord.workspace` must be an absolute path; create rejects relative workspace input before writing `thread.json` or `index.json`.
 - Missing `status` in old thread records is normalized to `active`.
+- Thread list filters validate `includeArchived` and `archivedOnly` as booleans
+  before applying status visibility rules.
 - Same-thread writes are serialized with a per-thread mutex.
+- Appending an `Item` updates `ThreadRecord.updatedAt` and the matching
+  `ThreadSummary.updatedAt` when the item timestamp is newer, so list sorting
+  follows visible thread activity.
 - `index.json` writes use an index queue.
 - JSON writes use temp file + fsync + rename.
 - JSONL appends use fsync.
-- Malformed JSONL lines are warned and skipped during replay.
+- Malformed JSONL lines are warned and skipped during replay. This includes
+  lines that parse as JSON but fail the shared `Item` / `RuntimeEvent` shape
+  guards.
 
 ## Goal Model
 
@@ -153,6 +161,9 @@ Fields:
 - `mode`
 - `goalMode`
 - `usage`
+
+`goalMode` is optional but must be boolean when present. JSONL runtime event
+replay rejects `turn_started.turn` records where `goalMode` has another shape.
 
 `TurnStatus` values:
 
@@ -330,6 +341,8 @@ Key semantics:
 - `ModelConfigStore.listProfiles()` returns all profiles.
 - Store normalizes older single-config files into profile state.
 - At least one profile must remain.
+- Profile creation treats `activate` as a strict boolean; non-boolean values are
+  rejected instead of being interpreted by truthiness.
 - `model_auto_compact_token_limit <= model_context_window`.
 - `max_tokens < model_context_window`.
 - `OPENAI_API_KEY` is a generic field name; provider fallback may use environment variables in the gateway/runtime path.

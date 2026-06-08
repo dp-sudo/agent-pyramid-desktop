@@ -146,6 +146,8 @@
     "sending": "Sending…",
     "reasoningEffort": "Reasoning",
     "removeAttachment": "Remove attachment",
+    "unsupportedImage": "Only PNG, JPEG, WebP, and GIF images can be attached.",
+    "attachmentAddBlocked": "Wait for the current turn to finish before adding images.",
     "attachmentOnlyMessageSingle": "Please analyze the attached image.",
     "attachmentOnlyMessageMultiple": "Please analyze the attached images."
   },

@@ -228,7 +228,7 @@ Two workbenches plus settings:
   sub-navigation for the active category, constrained detail column, card
   groups, row controls, secret input, immediate local preferences, and status
   feedback.
-- **Composer attachments** —— Code composer supports text+image and image-only turns; image-only sends use a visible localized prompt as the timeline text and thread title, while empty drafts without attachments remain disabled.
+- **Composer attachments** —— Code composer supports text+image and image-only turns; image-only sends use a visible localized prompt as the timeline text and thread title, while empty drafts without attachments remain disabled. Image attachments can be selected or pasted from the clipboard, render as compact thumbnails inside the composer, and expose an overlaid remove control for quick deletion.
 
 ## 2. Layout grammar
 
@@ -268,6 +268,7 @@ Topbar exposes the Right Inspector modes as a segmented control for Changes / To
 
 - Assistant 最终回答按 Markdown 文档渲染，不再放进高对比卡片；段落、列表、链接、任务列表、图片、分隔线、表格和代码块必须使用 `ds-markdown` 规则，并保持在中心内容列内可换行或横向滚动。
 - 代码块使用 `ds-code-block` 包裹，语言标签或默认代码标签显示在顶部栏，并提供复制按钮与失败反馈；宽表格使用 `ds-markdown-table-wrap` 包裹，避免模型输出撑破中心列。
+- 流式 Markdown 必须能容忍模型尚未输出完整代码围栏；未闭合的三反引号代码块在渲染层临时闭合，避免 live 输出退化成普通段落。Markdown 链接和图片地址必须先经过渲染端白名单规范化；不安全协议不得生成可点击链接或可加载图片。
 - 每个 turn 内先显示用户输入，再显示可折叠 `ds-work-process`。推理、工具调用、过程性 assistant 文本放入该区域，当前运行中的 turn 默认展开；用户手动展开或折叠后，流式更新不得重置该选择。
 - 时间线在用户接近底部时自动跟随流式输出；用户上滑阅读旧内容时不得抢滚动，只有回到底部后恢复自动跟随。
 - 工具过程使用 `ds-process-entry`：summary 显示本地化工具动作和状态，detail 展示参数与结果；失败状态使用 danger token，成功状态使用 success token。

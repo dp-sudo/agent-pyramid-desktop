@@ -146,6 +146,8 @@
     "sending": "发送中…",
     "reasoningEffort": "推理",
     "removeAttachment": "移除附件",
+    "unsupportedImage": "仅支持添加 PNG、JPEG、WebP 和 GIF 图片。",
+    "attachmentAddBlocked": "请等待当前对话完成后再添加图片。",
     "attachmentOnlyMessageSingle": "请分析这张附件图片。",
     "attachmentOnlyMessageMultiple": "请分析这些附件图片。"
   },

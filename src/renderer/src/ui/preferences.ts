@@ -59,7 +59,7 @@ export function saveBasicPreferences(
 
 export function loadLastWorkspaceRoot(): string {
   if (typeof window === "undefined") return "";
-  return window.localStorage.getItem(LAST_WORKSPACE_STORAGE_KEY) ?? "";
+  return window.localStorage.getItem(LAST_WORKSPACE_STORAGE_KEY)?.trim() ?? "";
 }
 
 export function saveLastWorkspaceRoot(workspaceRoot: string): void {

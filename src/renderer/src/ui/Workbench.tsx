@@ -16,7 +16,11 @@ import {
   LEFT_SIDEBAR_MAX_WIDTH,
   LEFT_SIDEBAR_MIN_WIDTH,
 } from "./preferences";
-import type { IpcResult, ThreadRecord } from "../../../shared/agent-contracts";
+import type {
+  IpcResult,
+  RuntimeErrorEvent,
+  ThreadRecord,
+} from "../../../shared/agent-contracts";
 
 const SIDEBAR_KEYBOARD_STEP = 16;
 
@@ -79,6 +83,12 @@ export function Workbench(): ReactElement {
       ? E
       : never): void => {
       const threadId = activeThreadIdRef.current;
+      if (event.kind === "runtime_error") {
+        if (isGlobalRuntimeErrorEvent(event) || event.threadId === threadId) {
+          actions.setError(event.message);
+        }
+        return;
+      }
       if (!threadId || !("threadId" in event)) return;
       const isActiveThreadEvent = event.threadId === threadId;
       if (event.kind === "turn_started") {
@@ -88,16 +98,12 @@ export function Workbench(): ReactElement {
       } else if (event.kind === "item_updated" && isActiveThreadEvent) {
         actions.updateItem(event.item);
       } else if (event.kind === "turn_completed") {
-        if (event.status !== "in-flight") {
-          actions.turnEnded(event.threadId, event.status);
-        }
+        actions.turnEnded(event.threadId, event.status);
       } else if (event.kind === "tool_budget_reached") {
         // The timeline receives the persisted warning item; continuation status is not a UI error.
       } else if (event.kind === "turn_failed") {
         actions.turnEnded(event.threadId, "failed");
         if (isActiveThreadEvent) actions.setError(event.message);
-      } else if (event.kind === "runtime_error") {
-        if (!event.threadId || isActiveThreadEvent) actions.setError(event.message);
       } else if (
         event.kind === "goal_updated" &&
         state.activeThread &&
@@ -447,7 +453,7 @@ export function Workbench(): ReactElement {
 
   const onInterrupt = useCallback(async () => {
     if (!activeThreadInFlightTurn) return;
-    const result = await window.agentApi.turns.interrupt(activeThreadInFlightTurn.id, { force: true });
+    const result = await window.agentApi.turns.interrupt(activeThreadInFlightTurn.id);
     if (result.ok) {
       actions.setError(null);
     } else {
@@ -476,7 +482,7 @@ export function Workbench(): ReactElement {
 
   return (
     <>
-      {!state.route || state.route === "code" ? (
+      {state.route === "code" ? (
         <div
           className="ds-sidebar"
           style={{ width: state.leftSidebarWidth, flex: `0 0 ${state.leftSidebarWidth}px` }}
@@ -500,7 +506,7 @@ export function Workbench(): ReactElement {
           />
         </div>
       ) : null}
-      {!state.route || state.route === "code" ? (
+      {state.route === "code" ? (
         <div
           className="ds-workbench-divider"
           role="separator"
@@ -594,6 +600,10 @@ export function shouldUnsubscribeRemovedThread(
   threadId: string,
 ): boolean {
   return subscribedThreadIds.has(threadId);
+}
+
+export function isGlobalRuntimeErrorEvent(event: RuntimeErrorEvent): boolean {
+  return event.kind === "runtime_error" && !event.threadId;
 }
 
 export function clampSidebarWidth(width: number): number {

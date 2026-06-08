@@ -322,6 +322,35 @@ describe("MiniMaxGateway", () => {
     ]);
   });
 
+  it("rejects streamed OpenAI-compatible tool calls without tool names", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"arguments":"{}"}}]}}]}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    await expect(async () => {
+      for await (const _chunk of new MiniMaxGateway().stream(baseRequest)) {
+        void _chunk;
+      }
+    }).rejects.toThrow("OpenAI streamed tool call call-1 is missing a tool name.");
+  });
+
   it("converts Anthropic-compatible tool messages and streams tool calls", async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -438,6 +467,43 @@ describe("MiniMaxGateway", () => {
       },
       { kind: "completed", stopReason: "tool_calls" },
     ]);
+  });
+
+  it("rejects streamed Anthropic-compatible tool calls without tool names", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool-1"}}',
+              "",
+              'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}',
+              "",
+              'data: {"type":"content_block_stop","index":0}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    await expect(async () => {
+      for await (const _chunk of new MiniMaxGateway().stream({
+        ...baseRequest,
+        protocol: "anthropic-compatible",
+        baseUrl: "https://provider.example.test/anthropic",
+      })) {
+        void _chunk;
+      }
+    }).rejects.toThrow("Anthropic streamed tool call tool-1 is missing a tool name.");
   });
 
   it("keeps reading Anthropic-compatible streams after stop_reason to capture usage-only frames", async () => {

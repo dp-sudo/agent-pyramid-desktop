@@ -68,6 +68,22 @@
 
 ## 变更记录
 
+### 2026-06-08 — 首轮维护审查修复
+
+- 修复主进程启动关键初始化失败路径：`src/main/index.ts` 在持久化 stores 或 LLM worker pool 初始化失败时记录错误并重新抛出，阻止继续注册半可用 IPC handler 或创建工作台窗口。
+- 加固线程 workspace 契约：`JsonlThreadStore.createThread()` 现在要求 `workspace` 为绝对路径，避免相对路径被写入 `ThreadRecord.workspace` 后在工具层按进程 cwd 隐式解析，保持持久化数据、UI 展示和 workspace realpath 边界一致。
+- 加固 workspace 文件访问入口：workspace tools 与 Write 模式 IPC 现在同样拒绝相对 workspace，防止坏 IPC 数据或损坏 thread 记录绕过创建入口后被按主进程 cwd 隐式解析。
+- 修复中断状态机竞态：`AgentRuntime.interruptTurn()` 会先把 active running tool item 写为 failed/interrupted 并阻止后台 tool settle 覆盖该状态，再发出 interrupted 终态，避免 replay 或 UI 看到 turn 已结束但工具仍停在 running。
+- 清理未实现的跨进程预留字段：移除 `TurnInterruptOptions.force`、SSE `streamId/sinceIndex` 和 `WriteCompleteRequest.bypassCache`，让 shared contract 与当前 live-only SSE、本地 Markdown completion 和统一 interrupt 行为一致。
+- 清理 approval IPC 契约：移除未被 runtime/UI 读取或持久化的 `ApprovalRespondRequest.reason`，避免调用方误以为 allow/deny 原因会被写入审计记录。
+- 修复 LLM gateway 工具调用解析：OpenAI-compatible 与 Anthropic-compatible 的非流式/流式 tool call 缺少工具名时现在抛出明确 provider response 错误，不再生成空工具名或在流式路径静默丢弃工具调用。
+- 修复 Write 模式打开文件竞态：`WriteWorkspaceView` 现在对 `write.get` 响应做请求序号、workspace 和 path 校验，避免连续点击文件时慢返回的旧内容覆盖当前 active file。
+- 修复 Write 模式 workspace 切换失败污染：切换 workspace 会在 `write.list` 返回前立即清空旧文件列表和 active file，避免新 workspaceRoot 下保留旧 workspace 的相对路径和编辑内容。
+- 修复线程活动时间投影：`JsonlThreadStore.appendItem()` 现在在消息追加后维护 `ThreadRecord.updatedAt` 和 `ThreadSummary.updatedAt`，renderer 的 `turn_started` 投影也会即时前移侧栏 summary，避免新消息后列表排序和时间仍停留在创建或手动更新时刻。
+- 修复中断后 worker 正常返回竞态：`AgentRuntime.runTurn()` 在 `pool.chat` 正常返回后会先检查 interrupted 状态，保留中断前 partial stream 并忽略最终 response，避免用户已中断的 turn 又写入正常 assistant 输出。
+- 清理 RightInspector 冗余类型出口：删除无仓库内消费者的 `Item` re-export 和旧 tree-shaking 注释，组件继续直接使用 shared contract 类型。
+- 验证方式：新增持久化、workspace tool、Write IPC 测试覆盖相对 workspace 拒绝；扩展 AgentRuntime 中断测试覆盖 active tool 最终状态；完整验证命令见本次维护结果。
+
 ### 2026-06-08 — coding-agent 文件写入能力首批落地
 
 - 扩展工具契约：`AgentTool` 支持 `metadata` 与 `preview()`，`AgentToolResult` 支持 `displayResult`，`ToolRegistry` 支持按名称取工具；runtime 在 approval 前可生成结构化预览，并把模型可读结果和 UI 展示结果分离。
@@ -329,7 +345,7 @@
 - 修复 FloatingComposer 附件-only 发送：当 composer 有图片附件但文本为空时，发送按钮和 Enter 提交会使用本地化默认提示创建 turn，并把 `displayText`、新 thread 标题与 LLM 输入文本保持一致；真正空白且无附件的草稿仍不可发送。
 - 修复模型选择器高亮：当多个 profile 使用同一 model 字符串时，Composer 优先按 `modelProfileId` 高亮唯一档案，避免多 profile 同时显示为选中。
 - 修复模型 profile 状态同步：`WorkbenchContext` 会在 active profile 真实切换或当前 profile 被删除时同步 composer 到新 active profile；普通 profile 列表刷新会保留用户当前有效选择，并刷新该 profile 的最新模型和 reasoning 配置，避免 `model` 文本与 `modelProfileId` 错位。
-- 优化大模型输出 Markdown 渲染：`AssistantMarkdown` 继续使用 `react-markdown` + `remark-gfm`，但新增链接、代码块、表格、任务列表、图片和分隔线的稳定容器/样式映射，长代码和宽表格在中心内容列内横向滚动，外链打开新窗口。
+- 优化大模型输出 Markdown 渲染：`AssistantMarkdown` 继续使用 `react-markdown` + `remark-gfm`，但新增链接、代码块、表格、任务列表、图片和分隔线的稳定容器/样式映射，长代码和宽表格在中心内容列内横向滚动，外链打开新窗口；流式未闭合三反引号代码围栏会在渲染层临时闭合，链接和图片地址会按 renderer/main 一致的安全边界规范化，不安全协议降级为纯文本或不渲染图片。
 - 优化代码块交互：Assistant Markdown 代码块顶部栏显示语言或默认代码标签，并提供复制按钮；剪贴板不可用或写入失败时显示失败反馈，不影响消息渲染。
 - 优化流式输出滚动：`MessageTimeline` 在用户停留于底部附近时自动跟随最新 `item_updated` / `item_appended` 内容；用户上滑阅读旧内容后停止抢滚动，回到底部后恢复跟随。
 - 优化工作过程展开状态：`MessageTimeline` 仍默认展开当前运行 turn 的 work process，但会按 turnId 保留用户手动展开/折叠选择，避免流式更新时重置阅读状态。
@@ -341,10 +357,13 @@
 - 优化 approval 交互：审批按钮点击后进入本地提交中状态并禁用 allow/deny，避免 IPC 返回或事件更新前重复提交；approval 参数 JSON 使用固定样式与滚动区域展示。
 - 优化 Settings 模型档案交互：删除 profile 改为卡片内行内确认态，提供确认/取消和删除中反馈，避免单击误删模型配置。
 - 加固 Settings 未保存修改保护：模型档案表单处于 dirty 状态时会阻止激活、创建、复制、删除 profile 和返回工作台，并显示保存提示；保存按钮在 idle/saved/loading/saving 时禁用，避免无变更保存。
+- 修复 Settings profile 加载依赖：模型档案只在设置页挂载时从 `modelConfig.listProfiles()` 初始加载，不随语言/主题等基础偏好切换重拉，避免覆盖当前未保存的模型表单。
 - 扩展 Settings 基础设置：新增“基础设置”大类，并完整提供“外观与语言 / 启动与布局 / 会话与工作区”三组偏好；这些偏好选择后立即生效并保存到渲染端 localStorage，不复用大模型配置保存状态。
 - 修复附件存储输入校验：`AttachmentStore` 现在严格校验 `dataBase64`，非法 base64 不会被 `Buffer.from(..., "base64")` 宽松解码后保存为损坏附件。
 - 修复附件创建失败副产物：`AttachmentStore.create()` 在附件二进制写入后如果索引更新失败，会删除刚创建的 `.bin` 文件并原样抛出错误，避免留下孤儿附件。
 - 修复 composer 附件删除竞态：发送中或当前 active thread 运行中会禁用附件删除，避免用户在 runtime 读取附件前删除 blob 导致 turn 读取缺失。
+- 优化 composer 图片交互：对话框支持从剪贴板直接粘贴 PNG/JPEG/WebP/GIF 图片，图片会在 composer 内以缩略图预览展示；缩略图右上角悬浮删除按钮和空输入框 Backspace/Delete 都会走同一条附件删除 IPC，发送中或 active turn 运行中继续禁用删除。
+- 修复 composer 附件可见状态脱节：`WorkbenchContext` 的 composer state 同时保存 `attachmentIds` 与缩略图展示记录，避免路由/组件重挂载后仍有待发送附件 id 但 UI 无法显示和删除。
 - 加固本地持久化 ID 边界：`JsonlThreadStore` 和 `AttachmentStore` 在解析 thread / attachment 本地路径前校验 UUID，阻止 renderer 或损坏数据传入 `../` 之类路径片段访问、写入或删除持久化目录外文件。
 - 加固线程持久化输入校验：`JsonlThreadStore.createThread/listThreads/updateThread` 现在会在写入或过滤前校验 workspace、mode、relation、status、approvalPolicy、sandboxMode、goal 等运行时输入，避免坏 IPC 数据写入 index/thread JSON。
 - 修复线程创建失败副产物：`JsonlThreadStore.createThread()` 在新线程目录和 JSONL 文件创建后，如果索引写入失败，会删除本次新建线程目录并原样抛出错误，避免留下未索引线程数据。
@@ -382,4 +401,15 @@
 - 清理静态分析发现的死引用：移除未使用的 React import、store 构造参数属性和 write handler 未使用参数。
 - 修复中断状态机边缘情况：用户中断已经写入 `interrupted` 终态后，后台 partial stream 持久化失败只发出可追踪 `runtime_error(code: "persistence_error")`，不会再把同一 turn 覆盖为 `failed`。
 - 修复模型配置迁移兼容性：读取旧单配置或旧 profiles 状态时，过大的 `model_auto_compact_token_limit` 会被收敛到 `model_context_window`，与旧 `max_tokens` 收敛策略一致；用户主动保存新配置仍保持严格校验。
+- 修复渲染端 last workspace 偏好边界：`agent-pyramid.lastWorkspaceRoot` 读取时会 trim，空白脏数据会被视为无工作区，避免启动恢复后绕过目录选择并把无效 workspace 传给 IPC。
+- 清理工具 schema 旧参数：`diagnose_file` 只使用 TypeScript Language Service 对单文件诊断，工具定义不再暴露未实现的 `cwd` / `timeout_ms`。
+- 清理 renderer 旧状态逻辑：删除无调用方的 `resetItems` reducer action，并移除 `Workbench` 中不可达的空 route 兼容判断。
+- 加固 JSONL replay 边界：`JsonlThreadStore.replayItems()` / `replayEvents()` 会在 JSON parse 后使用 shared contract guard 校验最小形状，解析成功但缺少必需字段的坏记录会 warning 并跳过，不再进入 runtime 或 renderer。
+- 清理 SSE handler 死分支：删除注册时扫描既有 `BrowserWindow` 的空跑 cleanup，SSE 订阅继续在实际 `event.sender` 订阅创建时绑定 destroyed cleanup。
+- 修复 workspace picker 异常成功：Electron 目录选择器若返回未取消但没有路径，现在通过 `WORKSPACE_PICK_DIRECTORY_FAILED` 暴露错误，不再返回 `ok({ canceled:false,path:null })`。
+- 加固 goal 更新入口：`AgentRuntime.updateThreadGoal()` 复用 shared contract 的 `isThreadGoalStatus()` 校验状态，非法 status 会明确失败，避免 IPC 或内部调用绕过工具输入校验写入坏 goal 状态。
+- 加固 goal IPC 边界：`goals.update` 现在先解析未知 renderer payload，`clear` 必须是 boolean 且只有 `true` 会清除目标，避免 `"false"` 等 truthy 畸形值被误解释为清除。
+- 加固模型 profile 创建边界：`modelConfig.createProfile` IPC 和 `ModelConfigStore.createProfile()` 服务层现在都会拒绝非 boolean `activate`，避免 `"false"` 等 truthy 畸形值激活新 profile。
+- 加固 turn start 边界：`AgentRuntime.startTurn()` 现在会在写入 item / turn 前校验公开请求字段形状，包括 `text`、`mode`、`reasoningEffort`、`attachmentIds` 和 `goalMode`；shared runtime event guard 也会拒绝 `turn_started.turn.goalMode` 的坏形状，避免畸形 IPC payload 污染持久化或改变工具暴露逻辑。
+- 加固 thread list 过滤边界：`JsonlThreadStore.listThreads()` 现在要求 `includeArchived` / `archivedOnly` 是 boolean，避免 `"false"` 等 truthy 畸形值返回误导性的归档线程结果。
 - 验证方式：`npm run typecheck`、`npm run test`、`npm run build`。

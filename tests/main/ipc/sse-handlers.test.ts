@@ -25,15 +25,11 @@ const electronMock = vi.hoisted(() => {
         handlers.set(channel, handler);
       }),
     },
-    BrowserWindow: {
-      getAllWindows: vi.fn(() => []),
-    },
   };
 });
 
 vi.mock("electron", () => ({
   ipcMain: electronMock.ipcMain,
-  BrowserWindow: electronMock.BrowserWindow,
 }));
 
 class FakeWebContents extends EventEmitter {

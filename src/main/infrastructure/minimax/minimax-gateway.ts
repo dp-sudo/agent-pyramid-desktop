@@ -313,11 +313,11 @@ class OpenAiToolCallAccumulator {
   completeAll(): AgentToolCall[] {
     const calls: AgentToolCall[] = [];
     for (const pending of this.pending.values()) {
-      if (!pending.name) continue;
+      const name = requiredStreamToolName(pending.name, `OpenAI streamed tool call ${pending.id}`);
       calls.push({
         id: pending.id,
-        name: pending.name,
-        arguments: parseToolArguments(pending.argumentsText || "{}", pending.name)
+        name,
+        arguments: parseToolArguments(pending.argumentsText || "{}", name)
       });
     }
     this.pending.clear();
@@ -369,12 +369,13 @@ class AnthropicToolCallAccumulator {
 
   complete(index: number): AgentToolCall | null {
     const pending = this.pendingByIndex.get(index);
-    if (!pending || !pending.name) return null;
+    if (!pending) return null;
+    const name = requiredStreamToolName(pending.name, `Anthropic streamed tool call ${pending.id}`);
     this.pendingByIndex.delete(index);
     return {
       id: pending.id,
-      name: pending.name,
-      arguments: parseToolArguments(pending.argumentsText || "{}", pending.name)
+      name,
+      arguments: parseToolArguments(pending.argumentsText || "{}", name)
     };
   }
 
@@ -991,4 +992,11 @@ function parseToolArguments(raw: string, toolName: string): Record<string, unkno
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse arguments for tool "${toolName}": ${reason}`);
   }
+}
+
+function requiredStreamToolName(value: string | undefined, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} is missing a tool name.`);
+  }
+  return value;
 }

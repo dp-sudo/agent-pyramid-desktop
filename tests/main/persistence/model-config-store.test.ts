@@ -86,6 +86,26 @@ describe("ModelConfigStore", () => {
     expect(afterDelete.profiles.map((profile) => profile.id)).toEqual(["default"]);
   });
 
+  it("rejects non-boolean profile activation at the store boundary", async () => {
+    const invalidRequest = {
+      name: "DeepSeek",
+      activate: "false",
+      config: {
+        model_provide: "DeepSeek",
+        model: "deepseek-v4-flash",
+        base_url: "https://api.deepseek.com",
+        OPENAI_API_KEY: "",
+      },
+    } as unknown as Parameters<ModelConfigStore["createProfile"]>[0];
+
+    await expect(store.createProfile(invalidRequest)).rejects.toThrow(
+      "activate must be a boolean.",
+    );
+    const profiles = await store.listProfiles();
+    expect(profiles.activeProfileId).toBe("default");
+    expect(profiles.profiles).toHaveLength(1);
+  });
+
   it("normalizes a legacy single-config file into profile state", async () => {
     const legacyConfig: ModelConfig = {
       ...DEFAULT_MODEL_CONFIG,

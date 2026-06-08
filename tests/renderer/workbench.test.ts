@@ -5,6 +5,7 @@ import {
   clampSidebarWidth,
   formatInitialLoadErrors,
   getNextSidebarWidth,
+  isGlobalRuntimeErrorEvent,
   shouldUnsubscribeRemovedThread,
 } from "../../src/renderer/src/ui/Workbench";
 
@@ -61,6 +62,25 @@ describe("Workbench", () => {
 
     expect(shouldUnsubscribeRemovedThread(subscribed, "thread-1")).toBe(true);
     expect(shouldUnsubscribeRemovedThread(subscribed, "thread-3")).toBe(false);
+  });
+
+  it("identifies runtime errors that are not scoped to a subscribed thread", () => {
+    expect(
+      isGlobalRuntimeErrorEvent({
+        kind: "runtime_error",
+        code: "internal",
+        message: "Global failure",
+      }),
+    ).toBe(true);
+
+    expect(
+      isGlobalRuntimeErrorEvent({
+        kind: "runtime_error",
+        threadId: "thread-1",
+        code: "internal",
+        message: "Thread failure",
+      }),
+    ).toBe(false);
   });
 });
 

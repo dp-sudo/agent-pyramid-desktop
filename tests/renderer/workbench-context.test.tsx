@@ -126,6 +126,58 @@ describe("WorkbenchContext reducer", () => {
     });
   });
 
+  it("moves an active thread summary forward when a turn starts", () => {
+    const selectedThread = thread({
+      id: "thread-1",
+      updatedAt: "2026-06-07T00:00:00.000Z",
+    });
+    const selected = reducer(
+      {
+        ...INITIAL_STATE,
+        threads: [
+          {
+            id: "thread-2",
+            title: "Newer",
+            workspace: "/workspace",
+            status: "active",
+            relation: "primary",
+            mode: "code",
+            updatedAt: "2026-06-08T00:00:00.000Z",
+          },
+          {
+            id: "thread-1",
+            title: "Older",
+            workspace: "/workspace",
+            status: "active",
+            relation: "primary",
+            mode: "code",
+            updatedAt: "2026-06-07T00:00:00.000Z",
+          },
+        ],
+      },
+      {
+        type: "selectThread",
+        thread: selectedThread,
+        items: [],
+      },
+    );
+
+    const next = reducer(selected, {
+      type: "turnStarted",
+      turn: turn({
+        threadId: "thread-1",
+        startedAt: "2026-06-09T00:00:00.000Z",
+      }),
+    });
+
+    expect(next.activeThread?.updatedAt).toBe("2026-06-09T00:00:00.000Z");
+    expect(next.threads.map((threadSummary) => threadSummary.id)).toEqual([
+      "thread-1",
+      "thread-2",
+    ]);
+    expect(next.threads[0].updatedAt).toBe("2026-06-09T00:00:00.000Z");
+  });
+
   it("upserts appended and updated items by id", () => {
     const userItem: UserItem = {
       kind: "user",
@@ -292,13 +344,21 @@ describe("WorkbenchContext reducer", () => {
   });
 
   it("deduplicates composer attachments and removes them by id", () => {
+    const attachment = {
+      id: "attachment-1",
+      name: "image.png",
+      mimeType: "image/png",
+      size: 12,
+      createdAt: "2026-06-08T00:00:00.000Z",
+      previewUrl: "blob:attachment-1",
+    };
     const withOne = reducer(INITIAL_STATE, {
       type: "addComposerAttachment",
-      attachmentId: "attachment-1",
+      attachment,
     });
     const duplicate = reducer(withOne, {
       type: "addComposerAttachment",
-      attachmentId: "attachment-1",
+      attachment,
     });
     const removed = reducer(duplicate, {
       type: "removeComposerAttachment",
@@ -306,7 +366,9 @@ describe("WorkbenchContext reducer", () => {
     });
 
     expect(duplicate.composer.attachmentIds).toEqual(["attachment-1"]);
+    expect(duplicate.composer.attachments).toEqual([attachment]);
     expect(removed.composer.attachmentIds).toEqual([]);
+    expect(removed.composer.attachments).toEqual([]);
   });
 
   it("updates thread list and panel state independently", () => {

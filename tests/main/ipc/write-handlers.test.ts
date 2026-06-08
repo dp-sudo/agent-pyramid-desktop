@@ -43,6 +43,9 @@ describe("write handlers helpers", () => {
       expect(resolveWritePath(workspace, "docs/guide.md")).toBe(
         path.join(workspace, "docs", "guide.md"),
       );
+      expect(() => resolveWritePath("relative-workspace", "docs/guide.md")).toThrow(
+        "Workspace path must be absolute.",
+      );
       expect(() => resolveWritePath(workspace, "../outside.md")).toThrow(
         "Path escapes workspace: ../outside.md",
       );

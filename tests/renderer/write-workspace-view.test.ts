@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   formatWriteFileMeta,
+  getWriteWorkspaceSwitchState,
   getWriteListState,
+  shouldApplyWriteOpenResult,
   shouldDisableWriteSave,
   shouldSaveWriteFileBeforeSwitch,
 } from "../../src/renderer/src/ui/components/write/WriteWorkspaceView";
@@ -83,6 +85,54 @@ describe("WriteWorkspaceView helpers", () => {
       content: "draft",
       savedContent: "",
     })).toBe(false);
+  });
+
+  it("applies only the latest open-file response for the same workspace and path", () => {
+    expect(shouldApplyWriteOpenResult({
+      requestId: 2,
+      latestRequestId: 2,
+      requestedWorkspace: "/workspace",
+      currentWorkspace: "/workspace",
+      requestedPath: "notes.md",
+      returnedPath: "notes.md",
+    })).toBe(true);
+
+    expect(shouldApplyWriteOpenResult({
+      requestId: 1,
+      latestRequestId: 2,
+      requestedWorkspace: "/workspace",
+      currentWorkspace: "/workspace",
+      requestedPath: "first.md",
+      returnedPath: "first.md",
+    })).toBe(false);
+
+    expect(shouldApplyWriteOpenResult({
+      requestId: 2,
+      latestRequestId: 2,
+      requestedWorkspace: "/workspace-a",
+      currentWorkspace: "/workspace-b",
+      requestedPath: "notes.md",
+      returnedPath: "notes.md",
+    })).toBe(false);
+
+    expect(shouldApplyWriteOpenResult({
+      requestId: 2,
+      latestRequestId: 2,
+      requestedWorkspace: "/workspace",
+      currentWorkspace: "/workspace",
+      requestedPath: "notes.md",
+      returnedPath: "other.md",
+    })).toBe(false);
+  });
+
+  it("clears file-specific state when switching workspace", () => {
+    expect(getWriteWorkspaceSwitchState()).toEqual({
+      files: [],
+      activePath: null,
+      content: "",
+      savedContent: "",
+      completion: "",
+    });
   });
 
   it("derives file list empty states from workspace, search, and loading status", () => {

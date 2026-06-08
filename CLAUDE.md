@@ -41,14 +41,28 @@ renderer React
 
 There is one Agent runtime path: `src/main/application/agent-runtime.ts`. Do not reintroduce old single-run IPC or orchestration paths.
 
+## Key Architecture Patterns
+
+The whole codebase rests on a small set of non-obvious invariants. New code that fights any of them is wrong.
+
+- **Fire-and-forget turn + typed event stream.** `turns.start()` returns an in-flight `TurnRecord` within milliseconds. All subsequent text, reasoning, tool updates and terminal state arrive as `RuntimeEvent` values pushed over `SSE_PUSH_CHANNEL`. The renderer never blocks on an LLM call.
+- **Append-only timeline, dedupe by id.** `messages.jsonl` is append-only. The same item id appearing multiple times means an update, not a duplicate. `AgentRuntime.collectHistory()` and renderer replays dedupe by id and keep the latest row. Do not rewrite old rows; do not break this dedupe contract.
+- **Discriminated unions + type guards, no zod.** Cross-process payloads are tagged unions (`kind` on `Item`, `kind` on `RuntimeEvent`). `isItem` / `isRuntimeEvent` in `src/shared/agent-contracts.ts` are the runtime boundary checks. New payload shapes must update the type and the guard together.
+- **Single typed `AgentRuntime` as the only authority.** Main process owns the turn state machine, tool loop, approval gate and persistence. Renderer state is a projection, never a source of truth. There is no second runtime path.
+- **Worker isolation by `threadId` affinity.** `LlmWorkerPool` pins a thread to one worker; the worker owns its own `AbortController`; `runtime.interruptTurn()` and the `cancel(threadId)` path collapse into a single AbortSignal reaching the provider fetch.
+- **`IpcResult<T>` everywhere, never throw across IPC.** Every renderer-invoked handler returns `{ok:true,value}` or `{ok:false,code,message}`. Runtime events are an additional notification channel, not a replacement.
+
 ## Commands
 
 - `npm install` - install dependencies.
-- `npm run dev` - start Electron + Vite renderer dev environment.
-- `npm run build` - build main, preload and renderer into `out/`.
-- `npm run typecheck` - type-check renderer, node and test TypeScript configs.
-- `npm run test` - run Vitest.
-- `npm run preview` - run the production build.
+- `npm run dev` - start Electron + Vite renderer dev environment. Sets `ELECTRON_RENDERER_URL` for the main process; Vite serves the renderer with HMR and Electron auto-attaches DevTools.
+- `npm run build` - build main, preload and renderer into `out/`. The main bundle has **two** rollup entries (`index` and `llm-worker`); the worker entry is loaded at runtime by `LlmWorkerPool`.
+- `npm run typecheck` - runs `tsc --noEmit` against three projects in sequence: `tsconfig.json` (renderer), `tsconfig.node.json` (main + preload), `tsconfig.test.json` (tests).
+- `npm run test` - run Vitest once and exit.
+- `npm run preview` - run the production build of the packaged app.
+- `npx vitest` (no `run`) - Vitest watch mode for local iteration.
+- `npm test -- <path>` - run a single test file, e.g. `npm test -- tests/main/application/agent-runtime.test.ts`.
+- `npm test -- -t "<name>"` - filter by test name substring across all files.
 
 For code changes, the default validation gate is:
 
@@ -77,6 +91,7 @@ Worker threads:
 - `worker-pool.ts` keeps `threadId -> worker` affinity and supports cancel.
 - `worker.ts` instantiates `MiniMaxGateway` and streams typed worker messages back to main.
 - Worker protocol is defined in `protocol.ts`.
+- The worker has its **own** rollup entry (`llm-worker` in `electron.vite.config.ts`); it is loaded as a separate `node:worker_threads` `Worker` and shares no module state with the main bundle.
 
 Preload:
 
@@ -256,6 +271,8 @@ Adding IPC requires updating:
 - `tests/main/persistence/` - thread, attachment and model config stores.
 - `tests/renderer/` - renderer reducer, components and timeline helpers.
 - `tests/helpers/temp-dir.ts` - temporary directory helper.
+
+Vitest config (`vitest.config.ts`) sets `environment: "node"`, scans `tests/**/*.test.ts` and `.test.tsx`, and excludes `DeepSeek/`, `node_modules/`, `out/`. Persistence tests construct a `JsonlThreadStore` against the temp dir helper, never against the real Electron `userData` path.
 
 Run targeted tests while iterating, then the full validation gate for code changes.
 

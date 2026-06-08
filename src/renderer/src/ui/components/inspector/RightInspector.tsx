@@ -164,9 +164,6 @@ function FilePanel(): ReactElement {
   return <div className="ds-inspector-empty">{t("inspector.fileEmpty")}</div>;
 }
 
-// Keep Item import non-tree-shaken in case external callers reference it.
-export type { Item };
-
 export function clampRightInspectorWidth(width: number): number {
   return Math.min(RIGHT_INSPECTOR_MAX_WIDTH, Math.max(RIGHT_INSPECTOR_MIN_WIDTH, width));
 }

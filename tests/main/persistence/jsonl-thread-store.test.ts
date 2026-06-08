@@ -78,10 +78,19 @@ describe("JsonlThreadStore", () => {
     await store.appendItem(thread.id, item);
     await fs.appendFile(
       path.join(userDataDir, "threads", thread.id, "messages.jsonl"),
-      "{not-json}\n",
+      [
+        "{not-json}",
+        JSON.stringify({ kind: "assistant", id: "missing-required-fields" }),
+        "",
+      ].join("\n"),
       "utf8",
     );
     await store.appendEvent(thread.id, event);
+    await fs.appendFile(
+      path.join(userDataDir, "threads", thread.id, "events.jsonl"),
+      `${JSON.stringify({ kind: "turn_completed", threadId: thread.id })}\n`,
+      "utf8",
+    );
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const items: Item[] = [];
@@ -95,7 +104,39 @@ describe("JsonlThreadStore", () => {
 
     expect(items).toEqual([item]);
     expect(events).toEqual([event]);
-    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledTimes(3);
+  });
+
+  it("updates thread activity time and index order when appending items", async () => {
+    const older = await store.createThread({
+      title: "Older",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const newer = await store.createThread({
+      title: "Newer",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const item: Item = {
+      kind: "user",
+      id: "item-activity",
+      threadId: older.id,
+      turnId: "turn-activity",
+      text: "activity",
+      createdAt: "2099-01-01T00:00:00.000Z",
+    };
+
+    await store.appendItem(older.id, item);
+
+    const updated = await store.getThread(older.id);
+    const listed = await store.listThreads();
+    expect(updated?.updatedAt).toBe(item.createdAt);
+    expect(listed[0]).toMatchObject({
+      id: older.id,
+      updatedAt: item.createdAt,
+    });
+    expect(listed.map((thread) => thread.id)).toEqual([older.id, newer.id]);
   });
 
   it("serializes concurrent appends for the same thread", async () => {
@@ -155,6 +196,13 @@ describe("JsonlThreadStore", () => {
 
     await expect(
       store.createThread({
+        workspace: "relative/workspace",
+        mode: "code",
+      }),
+    ).rejects.toThrow("workspace must be an absolute path.");
+
+    await expect(
+      store.createThread({
         workspace: "/workspace",
         mode: "invalid" as "code",
       }),
@@ -162,6 +210,10 @@ describe("JsonlThreadStore", () => {
 
     await expect(store.listThreads({ include: ["primary", "invalid" as "side"] }))
       .rejects.toThrow("include is invalid.");
+    await expect(store.listThreads({ includeArchived: "false" as unknown as boolean }))
+      .rejects.toThrow("includeArchived must be a boolean.");
+    await expect(store.listThreads({ archivedOnly: "true" as unknown as boolean }))
+      .rejects.toThrow("archivedOnly must be a boolean.");
 
     const thread = await store.createThread({
       workspace: "/workspace",

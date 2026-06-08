@@ -89,14 +89,15 @@ Notes:
 
 - `thread:update` blocks archiving an in-flight thread.
 - `thread:delete` blocks deleting an in-flight thread.
-- `JsonlThreadStore` validates thread ids and patch fields.
+- `JsonlThreadStore` validates thread ids, patch fields, and boolean list
+  filters such as `includeArchived` / `archivedOnly`.
 
 ### Turns
 
 | Channel | Preload Method | Request | Success Value | Error Codes |
 | --- | --- | --- | --- | --- |
 | `turn:start` | `turns.start(request)` | `TurnStartRequest` | `TurnRecord` | `RUNTIME_TURN_BUSY`, `TURN_START_FAILED` |
-| `turn:interrupt` | `turns.interrupt(turnId, options?)` | `string`, `TurnInterruptOptions?` | `{ turnId: string }` | `TURN_INTERRUPT_FAILED` |
+| `turn:interrupt` | `turns.interrupt(turnId)` | `string` | `{ turnId: string }` | `TURN_INTERRUPT_FAILED` |
 | `turn:get` | `turns.get(threadId)` | `string` | `{ threadId: string; items: Item[] }` | `TURN_GET_FAILED` |
 
 Notes:
@@ -104,6 +105,10 @@ Notes:
 - `turn:start` returns while the turn is still running.
 - Completion and streamed output are delivered through SSE runtime events.
 - `turn:get` replays JSONL and dedupes by item id, keeping the latest version.
+- `turn:start` validates request field shapes before a turn is created:
+  `text` must be string, `mode` must be `agent | plan`, `reasoningEffort` must
+  be supported, `attachmentIds` must be `string[]`, and `goalMode` must be
+  boolean.
 
 ### SSE Runtime Events
 
@@ -119,7 +124,7 @@ Notes:
   Re-subscribing the same thread replaces that thread's existing subscription
   without dropping other subscribed threads.
 - New subscribe drops the previous subscription for the same `webContents`.
-- `streamId` and `sinceIndex` exist in the request type, but current handler does not replay historical events.
+- Subscriptions are live-only; the current handler does not replay historical events.
 
 ### Approvals
 
@@ -140,7 +145,10 @@ Notes:
 
 Notes:
 
-- `request.clear` maps to `goal: null`.
+- `request.clear === true` maps to `goal: null`; non-boolean `clear` values return
+  `GOAL_UPDATE_FAILED` instead of using JavaScript truthiness.
+- Handler validates `threadId`, `goal`, `status` and `summary` before calling
+  runtime; `status` must be `active`, `complete` or `blocked`.
 - Runtime emits `goal_updated` after persistence succeeds.
 - Archived threads cannot update goals through runtime.
 
@@ -180,6 +188,9 @@ Notes:
 
 - Main process owns the Electron directory picker.
 - Response is `{ canceled, path }`.
+- Canceled selection returns `ok({ canceled: true, path: null })`; a non-canceled
+  picker result without a selected path is treated as
+  `WORKSPACE_PICK_DIRECTORY_FAILED`.
 
 ### Write Mode
 
@@ -194,6 +205,7 @@ Notes:
 
 - `write.put` performs a plain UTF-8 file write after workspace path validation.
 
+- Write `workspace` must be an absolute path.
 - Write file paths are workspace-relative.
 - Write file paths must target `.md`, `.mdx`, or `.markdown` files.
 - Access uses workspace path checks and realpath checks to prevent path escape.
@@ -217,6 +229,9 @@ Notes:
 - Store always keeps at least one profile.
 - `ModelConfigStore.get()` returns only the active profile config.
 - Runtime resolves a turn profile by explicit id, model match, active profile, then first profile.
+- Profile creation validates `activate` as a strict boolean; non-boolean truthy
+  values return `MODEL_CONFIG_PROFILES_CREATE_FAILED` and cannot change the active
+  profile.
 
 ## Runtime Event Push Contract
 

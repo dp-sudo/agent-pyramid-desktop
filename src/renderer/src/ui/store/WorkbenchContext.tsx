@@ -18,10 +18,12 @@ import {
   type WorkbenchBasicPreferences,
 } from "../preferences";
 import type {
+  AttachmentRecord,
   Item,
   ModelConfig,
   ModelConfigProfilesState,
   ModelReasoningEffort,
+  TerminalTurnStatus,
   ThreadRecord,
   ThreadSummary,
   TurnRecord,
@@ -29,6 +31,10 @@ import type {
 
 export type WorkbenchRoute = "code" | "write" | "settings";
 export type RightPanelMode = "changes" | "todo" | "plan" | "file" | null;
+
+export interface ComposerAttachment extends AttachmentRecord {
+  previewUrl?: string;
+}
 
 export interface ComposerState {
   text: string;
@@ -38,6 +44,7 @@ export interface ComposerState {
   mode: "agent" | "plan";
   goalMode: boolean;
   attachmentIds: string[];
+  attachments: ComposerAttachment[];
 }
 
 export interface WorkbenchState {
@@ -84,6 +91,7 @@ export const INITIAL_STATE: WorkbenchState = {
     mode: "agent",
     goalMode: false,
     attachmentIds: [],
+    attachments: [],
   },
   errorMessage: null,
   leftSidebarWidth: initialBasicPreferences.rememberLeftSidebarWidth
@@ -103,6 +111,31 @@ function upsertItem(items: Item[], item: Item): Item[] {
   return next;
 }
 
+function updateThreadActivity(
+  thread: ThreadRecord,
+  timestamp: string,
+): ThreadRecord {
+  if (Date.parse(timestamp) <= Date.parse(thread.updatedAt)) return thread;
+  return { ...thread, updatedAt: timestamp };
+}
+
+function updateThreadSummaryActivity(
+  threads: ThreadSummary[],
+  threadId: string,
+  timestamp: string,
+): ThreadSummary[] {
+  let changed = false;
+  const next = threads.map((thread) => {
+    if (thread.id !== threadId || Date.parse(timestamp) <= Date.parse(thread.updatedAt)) {
+      return thread;
+    }
+    changed = true;
+    return { ...thread, updatedAt: timestamp };
+  });
+  if (!changed) return threads;
+  return next.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
 export type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
   | { type: "setModelConfig"; config: ModelConfig }
@@ -116,19 +149,18 @@ export type Action =
   | { type: "deselectThread" }
   | { type: "appendItem"; item: Item }
   | { type: "updateItem"; item: Item }
-  | { type: "resetItems"; items: Item[] }
   | { type: "turnStarted"; turn: TurnRecord }
   | {
       type: "turnEnded";
       threadId: string;
-      status: Exclude<TurnRecord["status"], "in-flight">;
+      status: TerminalTurnStatus;
     }
   | { type: "setComposerText"; text: string }
   | { type: "setComposerModel"; model: string; modelProfileId?: string }
   | { type: "setComposerReasoningEffort"; reasoningEffort: ModelReasoningEffort }
   | { type: "setComposerMode"; mode: "agent" | "plan" }
   | { type: "setComposerGoalMode"; enabled: boolean }
-  | { type: "addComposerAttachment"; attachmentId: string }
+  | { type: "addComposerAttachment"; attachment: ComposerAttachment }
   | { type: "removeComposerAttachment"; attachmentId: string }
   | { type: "clearComposerAttachments" }
   | { type: "openRightPanel"; mode: Exclude<RightPanelMode, null> }
@@ -256,12 +288,18 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       return { ...state, items: upsertItem(state.items, action.item) };
     case "updateItem":
       return { ...state, items: upsertItem(state.items, action.item) };
-    case "resetItems":
-      return { ...state, items: action.items };
     case "turnStarted":
       return {
         ...state,
         activeTurnId: state.activeThreadId === action.turn.threadId ? action.turn.id : state.activeTurnId,
+        activeThread: state.activeThread?.id === action.turn.threadId
+          ? updateThreadActivity(state.activeThread, action.turn.startedAt)
+          : state.activeThread,
+        threads: updateThreadSummaryActivity(
+          state.threads,
+          action.turn.threadId,
+          action.turn.startedAt,
+        ),
         inFlightTurnsByThreadId: {
           ...state.inFlightTurnsByThreadId,
           [action.turn.threadId]: {
@@ -296,16 +334,24 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       return { ...state, composer: { ...state.composer, mode: action.mode } };
     case "setComposerGoalMode":
       return { ...state, composer: { ...state.composer, goalMode: action.enabled } };
-    case "addComposerAttachment":
+    case "addComposerAttachment": {
+      const hasAttachmentId = state.composer.attachmentIds.includes(action.attachment.id);
+      const hasAttachmentRecord = state.composer.attachments.some(
+        (attachment) => attachment.id === action.attachment.id,
+      );
       return {
         ...state,
         composer: {
           ...state.composer,
-          attachmentIds: state.composer.attachmentIds.includes(action.attachmentId)
+          attachmentIds: hasAttachmentId
             ? state.composer.attachmentIds
-            : [...state.composer.attachmentIds, action.attachmentId],
+            : [...state.composer.attachmentIds, action.attachment.id],
+          attachments: hasAttachmentRecord
+            ? state.composer.attachments
+            : [...state.composer.attachments, action.attachment],
         },
       };
+    }
     case "removeComposerAttachment":
       return {
         ...state,
@@ -314,10 +360,16 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
           attachmentIds: state.composer.attachmentIds.filter(
             (id) => id !== action.attachmentId,
           ),
+          attachments: state.composer.attachments.filter(
+            (attachment) => attachment.id !== action.attachmentId,
+          ),
         },
       };
     case "clearComposerAttachments":
-      return { ...state, composer: { ...state.composer, attachmentIds: [] } };
+      return {
+        ...state,
+        composer: { ...state.composer, attachmentIds: [], attachments: [] },
+      };
     case "openRightPanel":
       return { ...state, rightPanelMode: action.mode };
     case "closeRightPanel":
@@ -438,14 +490,14 @@ export interface WorkbenchActions {
   turnStarted(turn: TurnRecord): void;
   turnEnded(
     threadId: string,
-    status: Exclude<TurnRecord["status"], "in-flight">,
+    status: TerminalTurnStatus,
   ): void;
   setComposerText(text: string): void;
   setComposerModel(model: string, modelProfileId?: string): void;
   setComposerReasoningEffort(reasoningEffort: ModelReasoningEffort): void;
   setComposerMode(mode: "agent" | "plan"): void;
   setComposerGoalMode(enabled: boolean): void;
-  addComposerAttachment(attachmentId: string): void;
+  addComposerAttachment(attachment: ComposerAttachment): void;
   removeComposerAttachment(attachmentId: string): void;
   clearComposerAttachments(): void;
   openRightPanel(mode: Exclude<RightPanelMode, null>): void;
@@ -495,8 +547,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }): ReactE
       setComposerMode: (mode) => dispatch({ type: "setComposerMode", mode }),
       setComposerGoalMode: (enabled) =>
         dispatch({ type: "setComposerGoalMode", enabled }),
-      addComposerAttachment: (attachmentId) =>
-        dispatch({ type: "addComposerAttachment", attachmentId }),
+      addComposerAttachment: (attachment) =>
+        dispatch({ type: "addComposerAttachment", attachment }),
       removeComposerAttachment: (attachmentId) =>
         dispatch({ type: "removeComposerAttachment", attachmentId }),
       clearComposerAttachments: () => dispatch({ type: "clearComposerAttachments" }),

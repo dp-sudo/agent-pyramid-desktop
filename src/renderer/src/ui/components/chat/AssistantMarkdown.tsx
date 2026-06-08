@@ -17,10 +17,11 @@ interface AssistantMarkdownProps {
 }
 
 export function AssistantMarkdown({ text, streaming }: AssistantMarkdownProps): ReactElement {
+  const renderText = streaming ? closeDanglingCodeFence(text) : text;
   return (
     <div className={`ds-markdown ${streaming ? "ds-shiny-markdown" : ""}`}>
       <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
-        {text}
+        {renderText}
       </ReactMarkdown>
     </div>
   );
@@ -28,11 +29,13 @@ export function AssistantMarkdown({ text, streaming }: AssistantMarkdownProps): 
 
 const markdownComponents: Components = {
   a({ node: _node, href, children, ...props }) {
-    const external = isExternalHref(href);
+    const safeHref = normalizeMarkdownHref(href);
+    if (!safeHref) return <>{children}</>;
+    const external = isExternalHref(safeHref);
     return (
       <a
         {...props}
-        href={href}
+        href={safeHref}
         rel={external ? "noreferrer" : undefined}
         target={external ? "_blank" : undefined}
       >
@@ -51,10 +54,11 @@ const markdownComponents: Components = {
     return <hr {...props} className="ds-markdown-divider" />;
   },
   img({ node: _node, alt, src, ...props }) {
-    if (!src) return null;
+    const safeSrc = normalizeMarkdownImageSrc(src);
+    if (!safeSrc) return null;
     return (
       <span className="ds-markdown-image-frame">
-        <img {...props} alt={alt ?? ""} loading="lazy" src={src} />
+        <img {...props} alt={alt ?? ""} loading="lazy" src={safeSrc} />
       </span>
     );
   },
@@ -149,4 +153,45 @@ export function extractCodeText(node: ReactNode): string {
 
 function isExternalHref(href: string | undefined): boolean {
   return href?.startsWith("http://") === true || href?.startsWith("https://") === true;
+}
+
+export function normalizeMarkdownHref(href: string | undefined): string | null {
+  if (!href) return null;
+  const trimmed = href.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("#")) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch (_error) {
+    void _error;
+    return null;
+  }
+}
+
+function normalizeMarkdownImageSrc(src: string | undefined): string | null {
+  if (!src) return null;
+  const trimmed = src.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol === "http:" || url.protocol === "https:") return trimmed;
+    if (url.protocol === "data:" && isSafeImageDataUrl(trimmed)) return trimmed;
+    return null;
+  } catch (_error) {
+    void _error;
+    return null;
+  }
+}
+
+function isSafeImageDataUrl(value: string): boolean {
+  return /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(value);
+}
+
+export function closeDanglingCodeFence(text: string): string {
+  const fenceCount = text
+    .split("\n")
+    .filter((line) => /^\s*```/.test(line))
+    .length;
+  return fenceCount % 2 === 1 ? `${text}\n\`\`\`` : text;
 }

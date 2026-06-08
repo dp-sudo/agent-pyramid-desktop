@@ -62,6 +62,9 @@ export function resolveWorkspaceRoot(workspace: string): string {
   if (!workspace.trim()) {
     throw new Error("Workspace path is required.");
   }
+  if (!path.isAbsolute(workspace.trim())) {
+    throw new Error("Workspace path must be absolute.");
+  }
   return path.resolve(workspace);
 }
 

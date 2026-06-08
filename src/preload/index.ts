@@ -14,7 +14,6 @@ import type {
   ThreadRecord,
   ThreadSummary,
   ThreadUpdatePatch,
-  TurnInterruptOptions,
   TurnRecord,
   TurnStartRequest,
   WriteCompleteRequest,
@@ -106,11 +105,8 @@ const turns = {
       IpcResult<TurnRecord>
     >;
   },
-  interrupt(
-    turnId: string,
-    options?: TurnInterruptOptions,
-  ): Promise<IpcResult<{ turnId: string }>> {
-    return ipcRenderer.invoke(TURN_INTERRUPT_CHANNEL, turnId, options) as Promise<
+  interrupt(turnId: string): Promise<IpcResult<{ turnId: string }>> {
+    return ipcRenderer.invoke(TURN_INTERRUPT_CHANNEL, turnId) as Promise<
       IpcResult<{ turnId: string }>
     >;
   },

@@ -32,10 +32,13 @@ import type {
   ToolItem,
   TurnRecord,
   TurnStartRequest,
+  TurnMode,
   PlanItem,
   PlanStep,
+  TerminalTurnStatus,
   UserItem,
 } from "../../shared/agent-contracts.js";
+import { isModelReasoningEffort, isThreadGoalStatus } from "../../shared/agent-contracts.js";
 
 interface RuntimeDeps {
   store: JsonlThreadStore;
@@ -55,6 +58,16 @@ interface PendingApproval {
   preview?: ApprovalItem["preview"];
   resolve: (decision: "allow" | "deny") => void | Promise<void>;
 }
+
+interface ActiveToolExecution {
+  item: ToolItem;
+  controller?: AbortController;
+  finalizedByInterrupt: boolean;
+}
+
+type NormalizedTurnStartRequest = Omit<TurnStartRequest, "attachmentIds"> & {
+  attachmentIds: string[];
+};
 
 const SYSTEM_PROMPT = [
   "You are the runtime assistant in the Agent Pyramid desktop app.",
@@ -110,7 +123,7 @@ const MAX_PROGRESSIVE_COMPACTION_PASSES = 24;
 export class AgentRuntime {
   private readonly inFlight = new Map<string, TurnRecord>(); // turnId -> record
   private readonly pendingApprovals = new Map<string, PendingApproval>();
-  private readonly activeToolControllers = new Map<string, Set<AbortController>>();
+  private readonly activeToolExecutions = new Map<string, Set<ActiveToolExecution>>();
   private readonly readState = new FileReadStateStore();
   private readonly fileHistory = new FileHistoryStore();
 
@@ -123,31 +136,32 @@ export class AgentRuntime {
   }
 
   async startTurn(request: TurnStartRequest): Promise<TurnRecord> {
-    const thread = await this.deps.store.getThread(request.threadId);
-    if (!thread) throw new Error(`Thread ${request.threadId} not found`);
+    const normalizedRequest = normalizeTurnStartRequest(request);
+    const thread = await this.deps.store.getThread(normalizedRequest.threadId);
+    if (!thread) throw new Error(`Thread ${normalizedRequest.threadId} not found`);
     if (thread.status === "archived") {
       throw new Error("RUNTIME_THREAD_ARCHIVED");
     }
 
-    if (this.isThreadInFlight(request.threadId)) {
+    if (this.isThreadInFlight(normalizedRequest.threadId)) {
       throw new Error("RUNTIME_TURN_BUSY");
     }
     const modelProfiles = await this.deps.modelConfigStore.listProfiles();
-    const selectedProfile = this.resolveModelProfile(modelProfiles, request);
+    const selectedProfile = this.resolveModelProfile(modelProfiles, normalizedRequest);
     const modelConfig = selectedProfile.config;
-    const attachmentIds = request.attachmentIds ?? [];
+    const attachmentIds = normalizedRequest.attachmentIds;
     const attachments = await this.resolveAttachmentRecords(attachmentIds);
 
     const turn: TurnRecord = {
       id: randomUUID(),
-      threadId: request.threadId,
+      threadId: normalizedRequest.threadId,
       status: "in-flight",
       startedAt: new Date().toISOString(),
       model: modelConfig.model,
-      reasoningEffort: request.reasoningEffort ?? modelConfig.model_reasoning_effort,
+      reasoningEffort: normalizedRequest.reasoningEffort ?? modelConfig.model_reasoning_effort,
       modelProfileId: selectedProfile.id,
-      mode: request.mode ?? "agent",
-      goalMode: request.goalMode ?? Boolean(thread.goal && thread.goal.status === "active"),
+      mode: normalizedRequest.mode ?? "agent",
+      goalMode: normalizedRequest.goalMode ?? Boolean(thread.goal && thread.goal.status === "active"),
     };
     this.inFlight.set(turn.id, turn);
 
@@ -157,8 +171,8 @@ export class AgentRuntime {
       id: randomUUID(),
       threadId: turn.threadId,
       turnId: turn.id,
-      text: request.text,
-      ...(request.displayText ? { displayText: request.displayText } : {}),
+      text: normalizedRequest.text,
+      ...(normalizedRequest.displayText ? { displayText: normalizedRequest.displayText } : {}),
       ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
       ...(attachments.length > 0 ? { attachments } : {}),
       createdAt: new Date().toISOString(),
@@ -193,7 +207,7 @@ export class AgentRuntime {
     }
 
     // Run the loop in the background; return the turn record immediately.
-    void this.runTurn(turn, thread, request.text, attachmentIds, modelConfig);
+    void this.runTurn(turn, thread, normalizedRequest.text, attachmentIds, modelConfig);
     return turn;
   }
 
@@ -201,8 +215,8 @@ export class AgentRuntime {
     const turn = this.inFlight.get(turnId);
     if (!turn) return;
     turn.status = "interrupted";
-    this.resolvePendingApprovalsForTurn(turnId, "deny");
-    this.abortActiveToolsForTurn(turnId);
+    await this.interruptActiveToolExecutionsForTurn(turn);
+    await this.resolvePendingApprovalsForTurn(turnId, "deny");
     this.deps.pool.cancel(turn.threadId);
     const item: SystemItem = {
       kind: "system",
@@ -257,6 +271,9 @@ export class AgentRuntime {
       summary?: string;
     },
   ): Promise<ThreadRecord> {
+    if (update.status !== undefined && !isThreadGoalStatus(update.status)) {
+      throw new Error("Goal status must be active, complete, or blocked.");
+    }
     const thread = await this.deps.store.getThread(threadId);
     if (!thread) throw new Error(`Thread ${threadId} not found`);
     if (thread.status === "archived") {
@@ -353,6 +370,10 @@ export class AgentRuntime {
           return;
         }
 
+        if (turn.status === "interrupted") {
+          await this.persistInterruptedStream(turn, streamState);
+          return;
+        }
         const assistantText = await this.persistModelOutput(turn, response, streamState);
         if (turn.status !== "in-flight") {
           return;
@@ -725,6 +746,7 @@ export class AgentRuntime {
       createdAt: new Date().toISOString(),
     };
     await this.deps.store.appendItem(turn.threadId, toolItem);
+    const activeExecution = this.registerActiveToolExecution(turn.id, toolItem);
     this.deps.bus.emit("item_appended", {
       kind: "item_appended",
       threadId: turn.threadId,
@@ -737,6 +759,7 @@ export class AgentRuntime {
       toolItem.result = { message: `Tool "${call.name}" is not available in this turn.` };
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
+      this.unregisterActiveToolExecution(turn.id, activeExecution);
       this.deps.bus.emit("runtime_error", {
         kind: "runtime_error",
         threadId: turn.threadId,
@@ -760,6 +783,7 @@ export class AgentRuntime {
       };
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
+      this.unregisterActiveToolExecution(turn.id, activeExecution);
       return {
         toolCallId: call.id,
         name: call.name,
@@ -775,6 +799,7 @@ export class AgentRuntime {
           toolItem.result = { denied: true };
           await this.deps.store.appendItem(turn.threadId, toolItem);
           this.emitToolItemUpdated(turn, toolItem);
+          this.unregisterActiveToolExecution(turn.id, activeExecution);
           return {
             toolCallId: call.id,
             name: call.name,
@@ -783,7 +808,8 @@ export class AgentRuntime {
         }
       }
 
-      const controller = this.registerActiveToolController(turn.id);
+      const controller = new AbortController();
+      activeExecution.controller = controller;
       let content: AgentToolResult;
       try {
         content = await this.deps.registry.execute(call, {
@@ -795,17 +821,34 @@ export class AgentRuntime {
           fileHistory: this.fileHistory,
         });
       } finally {
-        this.unregisterActiveToolController(turn.id, controller);
+        activeExecution.controller = undefined;
+      }
+      if (activeExecution.finalizedByInterrupt) {
+        this.unregisterActiveToolExecution(turn.id, activeExecution);
+        return {
+          toolCallId: call.id,
+          name: call.name,
+          content: JSON.stringify(toolItem.result ?? { message: interruptedToolMessage(call.name) }),
+        };
       }
       toolItem.status = "completed";
       toolItem.result = content.displayResult ?? content;
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
+      this.unregisterActiveToolExecution(turn.id, activeExecution);
       if (call.name === "create_plan") {
         await this.appendPlanItem(turn, content.content);
       }
       return content;
     } catch (error) {
+      if (activeExecution.finalizedByInterrupt) {
+        this.unregisterActiveToolExecution(turn.id, activeExecution);
+        return {
+          toolCallId: call.id,
+          name: call.name,
+          content: JSON.stringify(toolItem.result ?? { message: interruptedToolMessage(call.name) }),
+        };
+      }
       const message = error instanceof Error ? error.message : String(error);
       toolItem.status = "failed";
       toolItem.result = {
@@ -813,6 +856,7 @@ export class AgentRuntime {
       };
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
+      this.unregisterActiveToolExecution(turn.id, activeExecution);
       if (turn.status !== "interrupted") {
         this.deps.bus.emit("runtime_error", {
           kind: "runtime_error",
@@ -994,40 +1038,69 @@ export class AgentRuntime {
     return isApprovalPreview(preview) ? preview : undefined;
   }
 
-  private registerActiveToolController(turnId: string): AbortController {
-    const controller = new AbortController();
-    const controllers = this.activeToolControllers.get(turnId) ?? new Set<AbortController>();
-    controllers.add(controller);
-    this.activeToolControllers.set(turnId, controllers);
-    return controller;
+  private registerActiveToolExecution(
+    turnId: string,
+    item: ToolItem,
+  ): ActiveToolExecution {
+    const execution: ActiveToolExecution = {
+      item,
+      finalizedByInterrupt: false,
+    };
+    const executions =
+      this.activeToolExecutions.get(turnId) ?? new Set<ActiveToolExecution>();
+    executions.add(execution);
+    this.activeToolExecutions.set(turnId, executions);
+    return execution;
   }
 
-  private unregisterActiveToolController(turnId: string, controller: AbortController): void {
-    const controllers = this.activeToolControllers.get(turnId);
-    if (!controllers) return;
-    controllers.delete(controller);
-    if (controllers.size === 0) {
-      this.activeToolControllers.delete(turnId);
+  private unregisterActiveToolExecution(
+    turnId: string,
+    execution: ActiveToolExecution,
+  ): void {
+    const executions = this.activeToolExecutions.get(turnId);
+    if (!executions) return;
+    executions.delete(execution);
+    if (executions.size === 0) {
+      this.activeToolExecutions.delete(turnId);
     }
   }
 
-  private abortActiveToolsForTurn(turnId: string): void {
-    const controllers = this.activeToolControllers.get(turnId);
-    if (!controllers) return;
-    for (const controller of controllers) {
-      controller.abort();
+  private async interruptActiveToolExecutionsForTurn(turn: TurnRecord): Promise<void> {
+    const executions = this.activeToolExecutions.get(turn.id);
+    if (!executions) return;
+    for (const execution of executions) {
+      execution.controller?.abort();
+      if (execution.item.status !== "running") continue;
+      execution.finalizedByInterrupt = true;
+      execution.item.status = "failed";
+      execution.item.result = { message: interruptedToolMessage(execution.item.name) };
+      try {
+        await this.deps.store.appendItem(turn.threadId, execution.item);
+      } catch (error) {
+        this.deps.bus.emit("runtime_error", {
+          kind: "runtime_error",
+          threadId: turn.threadId,
+          turnId: turn.id,
+          code: "persistence_error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      this.emitToolItemUpdated(turn, execution.item);
     }
   }
 
-  private resolvePendingApprovalsForTurn(
+  private async resolvePendingApprovalsForTurn(
     turnId: string,
     decision: "allow" | "deny",
-  ): void {
+  ): Promise<void> {
+    const pendingForTurn = [...this.pendingApprovals].filter(
+      ([, pending]) => pending.turnId === turnId,
+    );
     for (const [approvalId, pending] of this.pendingApprovals) {
       if (pending.turnId !== turnId) continue;
-      pending.resolve(decision);
       this.pendingApprovals.delete(approvalId);
     }
+    await Promise.all(pendingForTurn.map(([, pending]) => pending.resolve(decision)));
   }
 
   private async collectHistory(
@@ -1228,7 +1301,7 @@ export class AgentRuntime {
 
   private async markTurnStatus(
     turn: TurnRecord,
-    status: TurnRecord["status"],
+    status: TerminalTurnStatus,
   ): Promise<void> {
     turn.status = status;
     turn.completedAt = new Date().toISOString();
@@ -1290,6 +1363,78 @@ function parsePlanStep(value: unknown, index: number): PlanStep {
     title: raw.title.trim(),
     status,
   };
+}
+
+function interruptedToolMessage(toolName: string): string {
+  return toolName === "run_command" ? "Command was interrupted." : "Tool was interrupted.";
+}
+
+function normalizeTurnStartRequest(request: unknown): NormalizedTurnStartRequest {
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    throw new Error("Turn start request must be an object.");
+  }
+  const value = request as Record<string, unknown>;
+  const threadId = requiredString(value.threadId, "Turn threadId is required.");
+  const text = requiredString(value.text, "Turn text is required.");
+  const displayText = optionalString(value.displayText, "Turn displayText must be a string.");
+  const model = optionalString(value.model, "Turn model must be a string.");
+  const modelProfileId = optionalString(
+    value.modelProfileId,
+    "Turn modelProfileId must be a string.",
+  );
+  const reasoningEffort = resolveTurnReasoningEffort(value.reasoningEffort);
+  const mode = resolveTurnMode(value.mode);
+  const goalMode = resolveTurnGoalMode(value.goalMode);
+  return {
+    threadId,
+    text,
+    ...(displayText !== undefined ? { displayText } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(modelProfileId !== undefined ? { modelProfileId } : {}),
+    ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+    attachmentIds: resolveTurnAttachmentIds(value.attachmentIds),
+    ...(mode !== undefined ? { mode } : {}),
+    ...(goalMode !== undefined ? { goalMode } : {}),
+  };
+}
+
+function requiredString(value: unknown, message: string): string {
+  if (typeof value !== "string") throw new Error(message);
+  return value;
+}
+
+function optionalString(value: unknown, message: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(message);
+  return value;
+}
+
+function resolveTurnReasoningEffort(
+  value: unknown,
+): TurnRecord["reasoningEffort"] | undefined {
+  if (value === undefined) return undefined;
+  if (isModelReasoningEffort(value)) return value;
+  throw new Error("Turn reasoningEffort is invalid.");
+}
+
+function resolveTurnMode(value: unknown): TurnMode | undefined {
+  if (value === undefined) return undefined;
+  if (value === "agent" || value === "plan") return value;
+  throw new Error("Turn mode must be agent or plan.");
+}
+
+function resolveTurnGoalMode(value: unknown): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "boolean") return value;
+  throw new Error("Turn goalMode must be a boolean.");
+}
+
+function resolveTurnAttachmentIds(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new Error("Turn attachmentIds must be a string array.");
+  }
+  return value;
 }
 
 function isApprovalPreview(value: unknown): value is ApprovalItem["preview"] {

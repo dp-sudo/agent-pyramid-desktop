@@ -179,6 +179,7 @@ export type TurnStatus =
   | "failed"
   | "interrupted"
   | "needs_continuation";
+export type TerminalTurnStatus = Exclude<TurnStatus, "in-flight">;
 export type TurnMode = "agent" | "plan";
 
 export interface TokenUsage {
@@ -389,7 +390,7 @@ export interface TurnCompletedEvent {
   kind: "turn_completed";
   threadId: string;
   turnId: string;
-  status: TurnStatus;
+  status: TerminalTurnStatus;
   completedAt: string;
   usage?: TurnRecord["usage"];
 }
@@ -487,11 +488,6 @@ export interface TurnStartRequest {
   goalMode?: boolean;
 }
 
-export interface TurnInterruptOptions {
-  /** If true, force-stop the worker even if mid-HTTP-request. */
-  force?: boolean;
-}
-
 // ============================================================================
 // Approval
 // ============================================================================
@@ -499,8 +495,6 @@ export interface TurnInterruptOptions {
 export interface ApprovalRespondRequest {
   approvalId: string;
   decision: "allow" | "deny";
-  /** Optional reason recorded in the audit trail. */
-  reason?: string;
 }
 
 // ============================================================================
@@ -509,15 +503,10 @@ export interface ApprovalRespondRequest {
 
 export interface SseSubscribeRequest {
   threadId: string;
-  /** Optional client-generated stream id; surfaced in events for correlation. */
-  streamId?: string;
-  /** Resume from this event index. */
-  sinceIndex?: number;
 }
 
 export interface SseUnsubscribeRequest {
   threadId: string;
-  streamId?: string;
 }
 
 // ============================================================================
@@ -594,8 +583,6 @@ export interface WriteCompleteRequest {
   prefix: string;
   /** Text after the cursor. */
   suffix: string;
-  /** Force a fresh completion (skip local cache). */
-  bypassCache?: boolean;
 }
 
 export interface WriteCompleteResponse {
@@ -662,15 +649,106 @@ const RUNTIME_EVENT_KINDS: RuntimeEventKind[] = [
 export function isItem(value: unknown): value is Item {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  return typeof v.kind === "string" && ITEM_KINDS.includes(v.kind as ItemKind);
+  if (!hasBaseItemFields(v) || !ITEM_KINDS.includes(v.kind as ItemKind)) return false;
+  switch (v.kind) {
+    case "user":
+      return hasString(v, "turnId") &&
+        hasString(v, "text") &&
+        isOptionalString(v.displayText) &&
+        isOptionalStringArray(v.attachmentIds);
+    case "assistant":
+      return hasString(v, "turnId") &&
+        hasString(v, "text") &&
+        isOptionalBoolean(v.truncated);
+    case "reasoning":
+      return hasString(v, "turnId") && hasString(v, "text");
+    case "tool":
+      return hasString(v, "turnId") &&
+        hasString(v, "toolCallId") &&
+        hasString(v, "name") &&
+        isRecord(v.args) &&
+        isToolStatus(v.status);
+    case "compaction":
+      return hasString(v, "turnId") &&
+        hasString(v, "summary") &&
+        isFiniteNumber(v.replacedItemCount);
+    case "approval":
+      return hasString(v, "turnId") &&
+        hasString(v, "approvalId") &&
+        hasString(v, "toolName") &&
+        isRecord(v.args) &&
+        isOptionalApprovalDecision(v.decision) &&
+        isOptionalString(v.resolvedAt);
+    case "user_input":
+      return hasString(v, "turnId") &&
+        hasString(v, "question") &&
+        isOptionalStringArray(v.options) &&
+        isOptionalString(v.answer);
+    case "plan":
+      return hasString(v, "turnId") &&
+        isOptionalString(v.title) &&
+        Array.isArray(v.steps) &&
+        v.steps.every(isPlanStep);
+    case "system":
+      return isOptionalString(v.turnId) &&
+        hasString(v, "text") &&
+        isSystemLevel(v.level);
+    default:
+      return false;
+  }
 }
 
 export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  return (
-    typeof v.kind === "string" && RUNTIME_EVENT_KINDS.includes(v.kind as RuntimeEventKind)
-  );
+  if (typeof v.kind !== "string" || !RUNTIME_EVENT_KINDS.includes(v.kind as RuntimeEventKind)) {
+    return false;
+  }
+  switch (v.kind) {
+    case "turn_started":
+      return hasString(v, "threadId") &&
+        hasString(v, "turnId") &&
+        hasString(v, "startedAt") &&
+        isTurnRecord(v.turn);
+    case "turn_completed":
+      return hasString(v, "threadId") &&
+        hasString(v, "turnId") &&
+        isTerminalTurnStatus(v.status) &&
+        hasString(v, "completedAt");
+    case "turn_failed":
+      return hasString(v, "threadId") &&
+        hasString(v, "turnId") &&
+        hasString(v, "message") &&
+        hasString(v, "failedAt");
+    case "item_appended":
+    case "item_updated":
+      return hasString(v, "threadId") &&
+        hasString(v, "turnId") &&
+        isItem(v.item);
+    case "approval_requested":
+      return hasString(v, "threadId") &&
+        hasString(v, "turnId") &&
+        hasString(v, "approvalId") &&
+        hasString(v, "toolName") &&
+        isRecord(v.args);
+    case "tool_budget_reached":
+      return hasString(v, "threadId") &&
+        hasString(v, "turnId") &&
+        isFiniteNumber(v.maxToolRounds) &&
+        isFiniteNumber(v.attemptedToolCalls) &&
+        hasString(v, "message") &&
+        hasString(v, "reachedAt");
+    case "goal_updated":
+      return hasString(v, "threadId") &&
+        (v.goal === undefined || isThreadGoal(v.goal));
+    case "runtime_error":
+      return isOptionalString(v.threadId) &&
+        isOptionalString(v.turnId) &&
+        isRuntimeErrorCode(v.code) &&
+        hasString(v, "message");
+    default:
+      return false;
+  }
 }
 
 export function isThreadRecord(value: unknown): value is ThreadRecord {
@@ -686,4 +764,116 @@ export function isThreadRecord(value: unknown): value is ThreadRecord {
     typeof v.createdAt === "string" &&
     typeof v.updatedAt === "string"
   );
+}
+
+function hasBaseItemFields(value: Record<string, unknown>): boolean {
+  return hasString(value, "kind") &&
+    hasString(value, "id") &&
+    hasString(value, "threadId") &&
+    hasString(value, "createdAt");
+}
+
+function isTurnRecord(value: unknown): value is TurnRecord {
+  if (!isRecord(value)) return false;
+  return hasString(value, "id") &&
+    hasString(value, "threadId") &&
+    isTurnStatus(value.status) &&
+    hasString(value, "startedAt") &&
+    hasString(value, "model") &&
+    (value.reasoningEffort === undefined || isModelReasoningEffort(value.reasoningEffort)) &&
+    hasString(value, "mode") &&
+    (value.mode === "agent" || value.mode === "plan") &&
+    isOptionalBoolean(value.goalMode);
+}
+
+function isThreadGoal(value: unknown): value is ThreadGoal {
+  if (!isRecord(value)) return false;
+  return hasString(value, "text") &&
+    isThreadGoalStatus(value.status) &&
+    hasString(value, "createdAt") &&
+    hasString(value, "updatedAt") &&
+    isOptionalString(value.completedAt) &&
+    isOptionalString(value.blockedAt) &&
+    isOptionalString(value.summary);
+}
+
+function isPlanStep(value: unknown): value is PlanStep {
+  if (!isRecord(value)) return false;
+  return hasString(value, "id") &&
+    hasString(value, "title") &&
+    isPlanStepStatus(value.status);
+}
+
+function hasString(value: Record<string, unknown>, key: string): boolean {
+  return typeof value[key] === "string";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isOptionalStringArray(value: unknown): boolean {
+  return value === undefined ||
+    (Array.isArray(value) && value.every((item) => typeof item === "string"));
+}
+
+function isTurnStatus(value: unknown): value is TurnStatus {
+  return value === "in-flight" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "interrupted" ||
+    value === "needs_continuation";
+}
+
+function isTerminalTurnStatus(value: unknown): value is TerminalTurnStatus {
+  return value === "completed" ||
+    value === "failed" ||
+    value === "interrupted" ||
+    value === "needs_continuation";
+}
+
+export function isThreadGoalStatus(value: unknown): value is ThreadGoalStatus {
+  return value === "active" || value === "complete" || value === "blocked";
+}
+
+function isToolStatus(value: unknown): value is ToolItem["status"] {
+  return value === "pending" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed";
+}
+
+function isOptionalApprovalDecision(value: unknown): boolean {
+  return value === undefined || value === "allow" || value === "deny";
+}
+
+function isPlanStepStatus(value: unknown): value is PlanStepStatus {
+  return value === "pending" || value === "in_progress" || value === "completed";
+}
+
+function isSystemLevel(value: unknown): value is SystemItem["level"] {
+  return value === "info" || value === "warn" || value === "error";
+}
+
+function isRuntimeErrorCode(value: unknown): value is RuntimeErrorEvent["code"] {
+  return value === "worker_crashed" ||
+    value === "worker_timeout" ||
+    value === "schema_invalid" ||
+    value === "tool_not_found" ||
+    value === "tool_failed" ||
+    value === "approval_timeout" ||
+    value === "persistence_error" ||
+    value === "internal";
 }

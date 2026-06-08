@@ -14,6 +14,10 @@ import type {
   ThreadSummary,
   ThreadUpdatePatch,
 } from "../../shared/agent-contracts.js";
+import {
+  isItem,
+  isRuntimeEvent,
+} from "../../shared/agent-contracts.js";
 
 const THREADS_DIRNAME = "threads";
 const INDEX_FILENAME = "index.json";
@@ -82,7 +86,7 @@ export class JsonlThreadStore {
   async createThread(input: ThreadCreateInput): Promise<ThreadRecord> {
     await this.init();
     const title = optionalTrimmedString(input.title, "title") || "New thread";
-    const workspace = requiredTrimmedString(input.workspace, "workspace");
+    const workspace = requiredAbsolutePath(input.workspace, "workspace");
     const mode = assertEnum(input.mode, THREAD_MODES, "mode");
     const relation =
       input.relation === undefined
@@ -146,13 +150,15 @@ export class JsonlThreadStore {
     const mode =
       filter.mode === undefined ? undefined : assertEnum(filter.mode, THREAD_MODES, "mode");
     const search = optionalTrimmedString(filter.search, "search").toLowerCase();
+    const includeArchived = optionalBoolean(filter.includeArchived, "includeArchived");
+    const archivedOnly = optionalBoolean(filter.archivedOnly, "archivedOnly");
     return all
       .filter((row) => include.includes(row.relation))
       .filter((row) => (mode ? row.mode === mode : true))
       .filter((row) => {
         const status = row.status ?? "active";
-        if (filter.archivedOnly) return status === "archived";
-        if (filter.includeArchived) return true;
+        if (archivedOnly) return status === "archived";
+        if (includeArchived) return true;
         return status !== "archived";
       })
       .filter((row) =>
@@ -166,6 +172,7 @@ export class JsonlThreadStore {
     assertSafeId(threadId, "Thread id");
     return this.serialized(threadId, async () => {
       await this.appendJsonl(this.messagesPath(threadId), item);
+      await this.touchThreadActivity(threadId, item.createdAt);
     });
   }
 
@@ -179,12 +186,16 @@ export class JsonlThreadStore {
   /** 2.6 replay: readline-based, skips malformed lines. */
   async *replayItems(threadId: string): AsyncIterable<Item> {
     assertSafeId(threadId, "Thread id");
-    yield* this.replayJsonl<Item>(this.messagesPath(threadId), "messages");
+    yield* this.replayJsonl<Item>(this.messagesPath(threadId), "messages", isItem);
   }
 
   async *replayEvents(threadId: string): AsyncIterable<RuntimeEvent> {
     assertSafeId(threadId, "Thread id");
-    yield* this.replayJsonl<RuntimeEvent>(this.eventsPath(threadId), "events");
+    yield* this.replayJsonl<RuntimeEvent>(
+      this.eventsPath(threadId),
+      "events",
+      isRuntimeEvent,
+    );
   }
 
   /** 2.7 updateThread: atomic write + index update. */
@@ -272,6 +283,20 @@ export class JsonlThreadStore {
     };
   }
 
+  private async touchThreadActivity(threadId: string, timestamp: string): Promise<void> {
+    const current = await this.getThread(threadId);
+    if (!current) {
+      throw new Error(`Thread ${threadId} not found`);
+    }
+    const updatedAt = Date.parse(timestamp) > Date.parse(current.updatedAt)
+      ? timestamp
+      : current.updatedAt;
+    if (updatedAt === current.updatedAt) return;
+    const next: ThreadRecord = { ...current, updatedAt };
+    await this.atomicWriteJson(this.threadPath(threadId), next);
+    await this.replaceInIndex(this.toSummary(next));
+  }
+
   private threadDir(id: string): string {
     return path.join(this.threadsDir, assertSafeId(id, "Thread id"));
   }
@@ -334,6 +359,7 @@ export class JsonlThreadStore {
   private async *replayJsonl<T>(
     target: string,
     label: "messages" | "events",
+    validate: (value: unknown) => value is T,
   ): AsyncIterable<T> {
     if (!existsSync(target)) return;
     const stream = createReadStream(target, { encoding: "utf8" });
@@ -345,7 +371,11 @@ export class JsonlThreadStore {
         const trimmed = line.trim();
         if (!trimmed) continue;
         try {
-          yield JSON.parse(trimmed) as T;
+          const parsed = JSON.parse(trimmed) as unknown;
+          if (!validate(parsed)) {
+            throw new Error(`Invalid ${label} JSONL record shape.`);
+          }
+          yield parsed;
         } catch (error) {
           console.warn(
             `[persistence] skipped malformed ${label} line ${lineNo} in ${target}:`,
@@ -403,12 +433,28 @@ function requiredTrimmedString(value: unknown, field: string): string {
   return value.trim();
 }
 
+function requiredAbsolutePath(value: unknown, field: string): string {
+  const trimmed = requiredTrimmedString(value, field);
+  if (!path.isAbsolute(trimmed)) {
+    throw new Error(`${field} must be an absolute path.`);
+  }
+  return trimmed;
+}
+
 function optionalTrimmedString(value: unknown, field: string): string {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") {
     throw new Error(`${field} must be a string.`);
   }
   return value.trim();
+}
+
+function optionalBoolean(value: unknown, field: string): boolean {
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") {
+    throw new Error(`${field} must be a boolean.`);
+  }
+  return value;
 }
 
 function normalizeRelationFilter(value: unknown): ThreadRelation[] {

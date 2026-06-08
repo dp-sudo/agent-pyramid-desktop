@@ -100,6 +100,7 @@ export class ModelConfigStore {
     return this.serialized(async () => {
       const state = await this.readState();
       const name = assertNonEmptyString(request.name, "name");
+      const activate = normalizeProfileActivate(request.activate);
       const now = new Date().toISOString();
       const profile: ModelConfigProfile = {
         id: randomUUID(),
@@ -112,7 +113,7 @@ export class ModelConfigStore {
         updatedAt: now,
       };
       const next: ModelConfigProfilesState = {
-        activeProfileId: request.activate ? profile.id : state.activeProfileId,
+        activeProfileId: activate ? profile.id : state.activeProfileId,
         profiles: [...state.profiles, profile],
       };
       await this.atomicWriteJson(next);
@@ -406,6 +407,12 @@ function assertNonEmptyString(value: unknown, field: string): string {
     throw new Error(`${field} is required.`);
   }
   return value.trim();
+}
+
+function normalizeProfileActivate(value: unknown): boolean {
+  if (value === undefined) return false;
+  if (typeof value === "boolean") return value;
+  throw new Error("activate must be a boolean.");
 }
 
 function assertPositiveInteger(value: unknown, field: string): number {

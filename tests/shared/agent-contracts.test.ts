@@ -10,6 +10,7 @@ import {
   DEFAULT_MODEL_CONFIG,
   err,
   isAgentAutonomyLevel,
+  isItem,
   isModelReasoningEffort,
   isRuntimeEvent,
   ok,
@@ -90,5 +91,46 @@ describe("shared agent contracts", () => {
         reachedAt: "2026-06-08T00:00:00.000Z",
       }),
     ).toBe(true);
+  });
+
+  it("rejects records that only have a known kind but miss required fields", () => {
+    expect(isItem({ kind: "assistant", id: "item-1" })).toBe(false);
+    expect(
+      isItem({
+        kind: "assistant",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "Hello",
+        createdAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(isRuntimeEvent({ kind: "turn_completed", threadId: "thread-1" })).toBe(false);
+    expect(
+      isRuntimeEvent({
+        kind: "turn_completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "in-flight",
+        completedAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeEvent({
+        kind: "turn_started",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        startedAt: "2026-06-08T00:00:00.000Z",
+        turn: {
+          id: "turn-1",
+          threadId: "thread-1",
+          status: "in-flight",
+          startedAt: "2026-06-08T00:00:00.000Z",
+          model: "MiniMax-M3",
+          mode: "agent",
+          goalMode: "false",
+        },
+      }),
+    ).toBe(false);
   });
 });
