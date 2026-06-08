@@ -5,7 +5,7 @@ import type {
   UserItem,
 } from "../../../../../shared/agent-contracts";
 
-export type TimelineProcessItem = Exclude<Item, UserItem>;
+type TimelineProcessItem = Exclude<Item, UserItem>;
 
 export interface TimelineTurn {
   id: string;

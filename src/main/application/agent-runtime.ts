@@ -1537,8 +1537,8 @@ function isApprovalPreview(value: unknown): value is ApprovalItem["preview"] {
     return (
       Array.isArray(preview.files) &&
       preview.files.every(isFileDiffPreview) &&
-      typeof preview.added === "number" &&
-      typeof preview.removed === "number"
+      isNonNegativeInteger(preview.added) &&
+      isNonNegativeInteger(preview.removed)
     );
   }
   return isFileDiffPreview(preview);
@@ -1549,10 +1549,24 @@ function isFileDiffPreview(preview: Record<string, unknown>): boolean {
     preview.kind === "file_diff" &&
     typeof preview.path === "string" &&
     (preview.operation === "create" || preview.operation === "update" || preview.operation === "delete") &&
-    typeof preview.added === "number" &&
-    typeof preview.removed === "number" &&
-    Array.isArray(preview.lines)
+    isNonNegativeInteger(preview.added) &&
+    isNonNegativeInteger(preview.removed) &&
+    Array.isArray(preview.lines) &&
+    preview.lines.every(isFileDiffLine)
   );
+}
+
+function isFileDiffLine(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const line = value as Record<string, unknown>;
+  return (
+    (line.type === "context" || line.type === "added" || line.type === "removed") &&
+    typeof line.text === "string"
+  );
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0;
 }
 
 function prepareMessagesForRequest(

@@ -6,8 +6,6 @@ import {
 } from "../../shared/ipc.js";
 import type {
   TurnStartRequest,
-  IpcResult,
-  TurnRecord,
   Item,
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
@@ -57,5 +55,3 @@ export function registerTurnHandlers(
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-export type TurnStartResult = IpcResult<TurnRecord>;

@@ -677,6 +677,7 @@ export function isItem(value: unknown): value is Item {
         hasString(v, "approvalId") &&
         hasString(v, "toolName") &&
         isRecord(v.args) &&
+        isOptionalApprovalPreview(v.preview) &&
         isOptionalApprovalDecision(v.decision) &&
         isOptionalString(v.resolvedAt);
     case "user_input":
@@ -730,7 +731,8 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
         hasString(v, "turnId") &&
         hasString(v, "approvalId") &&
         hasString(v, "toolName") &&
-        isRecord(v.args);
+        isRecord(v.args) &&
+        isOptionalApprovalPreview(v.preview);
     case "tool_budget_reached":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
@@ -857,6 +859,48 @@ function isToolStatus(value: unknown): value is ToolItem["status"] {
 
 function isOptionalApprovalDecision(value: unknown): boolean {
   return value === undefined || value === "allow" || value === "deny";
+}
+
+function isOptionalApprovalPreview(value: unknown): value is ApprovalPreview | undefined {
+  return value === undefined || isApprovalPreview(value);
+}
+
+function isApprovalPreview(value: unknown): value is ApprovalPreview {
+  if (!isRecord(value)) return false;
+  if (value.kind === "file_diff") return isFileDiffPreview(value);
+  if (value.kind !== "multi_file_diff") return false;
+  return Array.isArray(value.files) &&
+    value.files.every(isFileDiffPreview) &&
+    isNonNegativeInteger(value.added) &&
+    isNonNegativeInteger(value.removed);
+}
+
+function isFileDiffPreview(value: unknown): value is FileDiffPreview {
+  if (!isRecord(value)) return false;
+  return value.kind === "file_diff" &&
+    hasString(value, "path") &&
+    isFileDiffOperation(value.operation) &&
+    isNonNegativeInteger(value.added) &&
+    isNonNegativeInteger(value.removed) &&
+    Array.isArray(value.lines) &&
+    value.lines.every(isFileDiffLine);
+}
+
+function isFileDiffLine(value: unknown): value is FileDiffLine {
+  if (!isRecord(value)) return false;
+  return isFileDiffLineType(value.type) && hasString(value, "text");
+}
+
+function isFileDiffOperation(value: unknown): value is FileDiffPreview["operation"] {
+  return value === "create" || value === "update" || value === "delete";
+}
+
+function isFileDiffLineType(value: unknown): value is FileDiffLine["type"] {
+  return value === "context" || value === "added" || value === "removed";
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0;
 }
 
 function isPlanStepStatus(value: unknown): value is PlanStepStatus {

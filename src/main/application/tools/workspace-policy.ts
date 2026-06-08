@@ -58,7 +58,7 @@ export function requireWorkspace(context: AgentToolContext): string {
   return resolveWorkspaceRoot(context.workspace);
 }
 
-export function resolveWorkspaceRoot(workspace: string): string {
+function resolveWorkspaceRoot(workspace: string): string {
   if (!workspace.trim()) {
     throw new Error("Workspace path is required.");
   }
@@ -76,7 +76,7 @@ export function shouldSkipEntry(name: string): boolean {
   return isSkippedSegment(name);
 }
 
-export function assertAllowedWorkspacePath(
+function assertAllowedWorkspacePath(
   root: string,
   resolved: string,
   relativePath: string,
@@ -89,7 +89,7 @@ export function assertAllowedWorkspacePath(
   }
 }
 
-export function assertWithinWorkspace(root: string, resolved: string, relativePath: string): void {
+function assertWithinWorkspace(root: string, resolved: string, relativePath: string): void {
   if (resolved !== root && !resolved.startsWith(root + path.sep)) {
     throw new Error(`Path escapes workspace: ${relativePath}`);
   }

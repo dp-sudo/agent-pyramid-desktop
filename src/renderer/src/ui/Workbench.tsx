@@ -459,6 +459,7 @@ export function Workbench(): ReactElement {
     state.composer,
     state.modelConfig,
     state.modelProfiles,
+    state.route,
     activeThreadArchived,
     actions,
     ensureWorkspaceRoot,

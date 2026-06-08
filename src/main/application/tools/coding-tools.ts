@@ -11,12 +11,12 @@ import { decodeUtf8TextBuffer } from "./text-file.js";
 
 const MAX_EDIT_FILE_BYTES = 1_000_000;
 
-export interface FileDiffLine {
+interface FileDiffLine {
   type: "context" | "added" | "removed";
   text: string;
 }
 
-export interface FileDiffPreview {
+interface FileDiffPreview {
   kind: "file_diff";
   path: string;
   operation: "create" | "update" | "delete";
@@ -25,14 +25,14 @@ export interface FileDiffPreview {
   lines: FileDiffLine[];
 }
 
-export interface MultiFileDiffPreview {
+interface MultiFileDiffPreview {
   kind: "multi_file_diff";
   files: FileDiffPreview[];
   added: number;
   removed: number;
 }
 
-export interface FileChangeResult {
+interface FileChangeResult {
   path: string;
   operation: "create" | "update" | "delete";
   bytes: number;
@@ -42,7 +42,7 @@ export interface FileChangeResult {
   diff: FileDiffPreview;
 }
 
-export interface PatchApplyResult {
+interface PatchApplyResult {
   files: FileChangeResult[];
   added: number;
   removed: number;
@@ -53,7 +53,7 @@ export function createCodingTools(): AgentTool[] {
   return [editFileTool, writeFileTool, applyPatchTool, rollbackFileTool];
 }
 
-export const editFileTool: AgentTool = {
+const editFileTool: AgentTool = {
   metadata: {
     category: "workspace",
     isDestructive: true,
@@ -96,7 +96,7 @@ export const editFileTool: AgentTool = {
   },
 };
 
-export const writeFileTool: AgentTool = {
+const writeFileTool: AgentTool = {
   metadata: {
     category: "workspace",
     isDestructive: true,
@@ -139,7 +139,7 @@ export const writeFileTool: AgentTool = {
   },
 };
 
-export const applyPatchTool: AgentTool = {
+const applyPatchTool: AgentTool = {
   metadata: {
     category: "workspace",
     isDestructive: true,
@@ -170,7 +170,7 @@ export const applyPatchTool: AgentTool = {
   },
 };
 
-export const rollbackFileTool: AgentTool = {
+const rollbackFileTool: AgentTool = {
   metadata: {
     category: "workspace",
     isDestructive: true,

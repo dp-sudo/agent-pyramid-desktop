@@ -17,7 +17,7 @@ const MAX_COMMAND_BYTES = 4_096;
 const MAX_OUTPUT_BYTES = 32 * 1024;
 const KILL_GRACE_MS = 1_000;
 
-export interface CommandRunResult {
+interface CommandRunResult {
   command: string;
   cwd: string;
   exitCode: number | null;
@@ -32,7 +32,7 @@ export interface CommandRunResult {
   stderrTruncated: boolean;
 }
 
-export interface WorkspaceDiagnostic {
+interface WorkspaceDiagnostic {
   path: string;
   line: number;
   column: number;
@@ -42,7 +42,7 @@ export interface WorkspaceDiagnostic {
   source: "typecheck" | "language_service";
 }
 
-export interface DiagnoseWorkspaceResult {
+interface DiagnoseWorkspaceResult {
   command: string;
   cwd: string;
   exitCode: number | null;
@@ -55,7 +55,7 @@ export interface DiagnoseWorkspaceResult {
   rawOutput: string;
 }
 
-export interface DiagnoseFileResult extends DiagnoseWorkspaceResult {
+interface DiagnoseFileResult extends DiagnoseWorkspaceResult {
   path: string;
 }
 
@@ -63,7 +63,7 @@ export function createCommandTools(): AgentTool[] {
   return [runCommandTool, diagnoseWorkspaceTool, diagnoseFileTool];
 }
 
-export const runCommandTool: AgentTool = {
+const runCommandTool: AgentTool = {
   /**
    * Shell-backed commands are treated as destructive because cwd sandboxing
    * constrains where the process starts, not what the shell can do.
@@ -101,7 +101,7 @@ export const runCommandTool: AgentTool = {
   },
 };
 
-export const diagnoseWorkspaceTool: AgentTool = {
+const diagnoseWorkspaceTool: AgentTool = {
   /**
    * Workspace diagnostics may execute package scripts, so they use the same
    * approval boundary as command execution instead of read-only bypass.
@@ -148,7 +148,7 @@ export const diagnoseWorkspaceTool: AgentTool = {
   },
 };
 
-export const diagnoseFileTool: AgentTool = {
+const diagnoseFileTool: AgentTool = {
   metadata: {
     category: "command",
     isReadOnly: true,

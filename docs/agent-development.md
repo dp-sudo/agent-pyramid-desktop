@@ -201,7 +201,7 @@
 - 新建 `src/renderer/src/ui/styles/tokens.css`：`--ds-*` 变量全表（light + dark），作为本项目统一设计 token 命名空间。
 - 新建 `src/renderer/src/ui/styles/shell.css`：三段式布局 + divider + composer + chat blocks + inspector + write editor 容器类。
 - 新建 `src/renderer/src/ui/store/WorkbenchContext.tsx`：`useReducer` 模拟 store，state 包含 `route / activeThreadId / threads / items / inFlightTurnsByThreadId / rightPanelMode / composer / leftSidebarWidth / rightSidebarWidth / basicPreferences`。
-- 新建 4 个 primitives：`Pill / IconButton / Chip / KbdHint`。
+- 新建基础 primitive；当前保留并使用的是 `Pill`，早期未接入调用方的 `IconButton / Chip / KbdHint` 已清理。
 - 新建 4 个组件子目录：`sidebar/`、`topbar/`、`composer/`、`chat/`、`inspector/`、`write/`。
 - 新建 `AppShell.tsx` + `Workbench.tsx` + `SettingsView.tsx`：三段式骨架 + 拖拽 + SSE 订阅 + IPC 调用。
 - 重写 `src/renderer/src/main.tsx`：移除 `import './styles.css'`，改为 `import './ui/styles/{tokens,shell}.css'`，挂载 `WorkbenchProvider + AppShell`。
@@ -425,4 +425,5 @@
 - 加固模型 profile 创建边界：`modelConfig.createProfile` IPC 和 `ModelConfigStore.createProfile()` 服务层现在都会拒绝非 boolean `activate`，避免 `"false"` 等 truthy 畸形值激活新 profile。
 - 加固 turn start 边界：`AgentRuntime.startTurn()` 现在会在写入 item / turn 前校验公开请求字段形状，包括 `text`、`mode`、`reasoningEffort`、`attachmentIds` 和 `goalMode`；shared runtime event guard 也会拒绝 `turn_started.turn.goalMode` 的坏形状，避免畸形 IPC payload 污染持久化或改变工具暴露逻辑。
 - 加固 thread list 过滤边界：`JsonlThreadStore.listThreads()` 现在要求 `includeArchived` / `archivedOnly` 是 boolean，避免 `"false"` 等 truthy 畸形值返回误导性的归档线程结果。
+- 加固 approval preview 契约：shared contract guard 和 `AgentRuntime` 本地 preview 过滤现在会校验 diff preview 的文件、行、操作与非负整数计数形状，畸形工具预览不会进入 approval item / event。
 - 验证方式：`npm run typecheck`、`npm run test`、`npm run build`。

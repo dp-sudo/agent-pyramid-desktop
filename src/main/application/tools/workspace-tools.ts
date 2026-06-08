@@ -20,7 +20,7 @@ const DEFAULT_READ_LIMIT_BYTES = 80_000;
 const MAX_READ_LIMIT_BYTES = 240_000;
 const MAX_SEARCH_FILE_BYTES = 1_000_000;
 
-export const listFilesTool: AgentTool = {
+const listFilesTool: AgentTool = {
   metadata: {
     isReadOnly: true,
     category: "workspace",
@@ -83,7 +83,7 @@ export const listFilesTool: AgentTool = {
   },
 };
 
-export const readFileTool: AgentTool = {
+const readFileTool: AgentTool = {
   metadata: {
     isReadOnly: true,
     category: "workspace",
@@ -173,7 +173,7 @@ export const readFileTool: AgentTool = {
   },
 };
 
-export const searchFilesTool: AgentTool = {
+const searchFilesTool: AgentTool = {
   metadata: {
     isReadOnly: true,
     category: "workspace",

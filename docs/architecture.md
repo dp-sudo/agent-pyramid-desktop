@@ -132,7 +132,7 @@ flowchart TD
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool(1)"]
   Registry["InMemoryToolRegistry"]
-  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateGoalTools()"]
+  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateGoalTools()"]
   Runtime["AgentRuntime"]
   Handlers["register*Handlers()"]
   Window["BrowserWindow"]

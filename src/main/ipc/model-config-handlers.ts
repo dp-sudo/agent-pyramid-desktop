@@ -9,13 +9,9 @@ import {
   MODEL_CONFIG_UPDATE_CHANNEL,
 } from "../../shared/ipc.js";
 import type {
-  IpcResult,
-  ModelConfig,
-  ModelConfigProfile,
   ModelConfigProfileActivateRequest,
   ModelConfigProfileCreateRequest,
   ModelConfigProfileDeleteRequest,
-  ModelConfigProfilesState,
   ModelConfigProfileUpdateRequest,
   ModelConfigUpdate,
 } from "../../shared/agent-contracts.js";
@@ -120,7 +116,3 @@ export function parseModelConfigProfileCreateRequest(
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-export type ModelConfigResult = IpcResult<ModelConfig>;
-export type ModelConfigProfilesResult = IpcResult<ModelConfigProfilesState>;
-export type ModelConfigProfileResult = IpcResult<ModelConfigProfile>;

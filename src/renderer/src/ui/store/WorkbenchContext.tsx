@@ -577,11 +577,11 @@ export function useWorkbench(): WorkbenchContextValue {
   return ctx;
 }
 
-export function useWorkbenchActions(): WorkbenchActions {
+function useWorkbenchActions(): WorkbenchActions {
   return useWorkbench().actions;
 }
 
 // Convenience for component code that only needs the current active thread id.
-export function useActiveThreadId(): string | null {
+function useActiveThreadId(): string | null {
   return useWorkbench().state.activeThreadId;
 }

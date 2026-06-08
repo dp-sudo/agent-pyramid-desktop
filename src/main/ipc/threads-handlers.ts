@@ -11,7 +11,6 @@ import type {
   ThreadCreateInput,
   ThreadListFilter,
   ThreadUpdatePatch,
-  IpcResult,
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
@@ -96,5 +95,3 @@ export function registerThreadHandlers(store: JsonlThreadStore, runtime?: AgentR
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-export type ThreadListResult = IpcResult<Awaited<ReturnType<JsonlThreadStore["listThreads"]>>>;

@@ -150,14 +150,14 @@ function clampNumber(
     : fallback;
 }
 
-export function isThemePreference(value: unknown): value is ThemePreference {
+function isThemePreference(value: unknown): value is ThemePreference {
   return value === "light" || value === "dark";
 }
 
-export function isDefaultStartupView(value: unknown): value is DefaultStartupView {
+function isDefaultStartupView(value: unknown): value is DefaultStartupView {
   return value === "code" || value === "write";
 }
 
-export function isDefaultInspectorMode(value: unknown): value is DefaultInspectorMode {
+function isDefaultInspectorMode(value: unknown): value is DefaultInspectorMode {
   return value === null || value === "changes" || value === "todo" || value === "plan";
 }

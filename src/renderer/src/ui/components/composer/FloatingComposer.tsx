@@ -507,7 +507,7 @@ export function normalizeSupportedComposerImageMimeType(
   return COMPOSER_IMAGE_MIME_TYPES.has(normalized) ? normalized : null;
 }
 
-export function toComposerImageFile(file: File): ComposerImageFile | null {
+function toComposerImageFile(file: File): ComposerImageFile | null {
   const mimeType = normalizeSupportedComposerImageMimeType(file.type);
   return mimeType ? { file, mimeType } : null;
 }

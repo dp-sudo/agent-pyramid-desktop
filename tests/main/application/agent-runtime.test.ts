@@ -998,6 +998,69 @@ describe("AgentRuntime", () => {
     }
   });
 
+  it("drops malformed approval preview lines before emitting approval events", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "edit_file",
+          description: "Edit a file",
+          inputSchema: { type: "object" },
+        },
+        async preview() {
+          return {
+            kind: "file_diff",
+            path: "src/index.ts",
+            operation: "update",
+            added: 1,
+            removed: 1,
+            lines: [{ type: "added", text: 123 }],
+          };
+        },
+        async execute() {
+          return "executed";
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-edit", name: "edit_file", arguments: {} }],
+        raw: {},
+      },
+      {
+        text: "Denied.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    const runtime = createRuntime(registry);
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Needs approval",
+    });
+    await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+
+    const approval = events.find((event) => event.kind === "approval_requested");
+    expect(approval).toMatchObject({
+      kind: "approval_requested",
+      toolName: "edit_file",
+    });
+    if (!approval || approval.kind !== "approval_requested") {
+      throw new Error("Expected approval request.");
+    }
+    expect(approval.preview).toBeUndefined();
+    runtime.respondApproval({ approvalId: approval.approvalId, decision: "deny" });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+  });
+
   it("requests approval with a diff preview for rollback_file", async () => {
     const workspace = await makeTempDir("runtime-rollback-file-");
     try {

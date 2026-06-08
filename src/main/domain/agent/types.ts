@@ -4,14 +4,12 @@ import type {
   TokenUsage,
 } from "../../../shared/agent-contracts";
 
-export type AgentRole = "system" | "user" | "assistant" | "tool";
-
 export type AgentContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; mimeType: string; dataBase64: string };
 
 export interface AgentMessage {
-  role: AgentRole;
+  role: "system" | "user" | "assistant" | "tool";
   content: string | AgentContentBlock[];
   toolCallId?: string;
   toolCalls?: AgentToolCall[];

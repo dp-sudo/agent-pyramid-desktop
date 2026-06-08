@@ -93,6 +93,104 @@ describe("shared agent contracts", () => {
     ).toBe(true);
   });
 
+  it("validates approval preview shapes on items and events", () => {
+    const preview = {
+      kind: "file_diff",
+      path: "src/index.ts",
+      operation: "update",
+      added: 1,
+      removed: 1,
+      lines: [
+        { type: "removed", text: "old" },
+        { type: "added", text: "new" },
+      ],
+    };
+    expect(
+      isItem({
+        kind: "approval",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        approvalId: "approval-1",
+        toolName: "edit_file",
+        args: {},
+        preview,
+        createdAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      isRuntimeEvent({
+        kind: "approval_requested",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        approvalId: "approval-1",
+        toolName: "edit_file",
+        args: {},
+        preview,
+      }),
+    ).toBe(true);
+    expect(
+      isItem({
+        kind: "approval",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        approvalId: "approval-1",
+        toolName: "edit_file",
+        args: {},
+        preview: { kind: "file_diff", path: "src/index.ts" },
+        createdAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeEvent({
+        kind: "approval_requested",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        approvalId: "approval-1",
+        toolName: "edit_file",
+        args: {},
+        preview: { kind: "multi_file_diff", files: [{ kind: "file_diff" }] },
+      }),
+    ).toBe(false);
+    expect(
+      isItem({
+        kind: "approval",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        approvalId: "approval-1",
+        toolName: "edit_file",
+        args: {},
+        preview: {
+          kind: "file_diff",
+          path: "src/index.ts",
+          operation: "update",
+          added: -1,
+          removed: 0,
+          lines: [],
+        },
+        createdAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeEvent({
+        kind: "approval_requested",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        approvalId: "approval-1",
+        toolName: "apply_patch",
+        args: {},
+        preview: {
+          kind: "multi_file_diff",
+          files: [],
+          added: 1.5,
+          removed: 0,
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("rejects records that only have a known kind but miss required fields", () => {
     expect(isItem({ kind: "assistant", id: "item-1" })).toBe(false);
     expect(
