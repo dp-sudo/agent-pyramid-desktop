@@ -1,11 +1,15 @@
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench, type RightPanelMode } from "../../store/WorkbenchContext";
+import {
+  getActiveThreadInFlightTurn,
+  useWorkbench,
+  type RightPanelMode,
+} from "../../store/WorkbenchContext";
 
 export function WorkbenchTopBar(): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
-  const isBusy = state.inFlightTurn !== null;
+  const isBusy = getActiveThreadInFlightTurn(state) !== null;
   const inspectorModes: Array<Exclude<RightPanelMode, null | "file">> = [
     "changes",
     "todo",

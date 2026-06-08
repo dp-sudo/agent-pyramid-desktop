@@ -6,7 +6,10 @@ export interface FileReadState {
   mtimeMs: number;
   size: number;
   sha256: string;
+  fullSha256?: string;
   truncated: boolean;
+  offsetBytes?: number;
+  bytesRead?: number;
 }
 
 const DEFAULT_MAX_ENTRIES = 100;

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../../store/WorkbenchContext";
+import {
+  getActiveThreadInFlightTurn,
+  useWorkbench,
+} from "../../store/WorkbenchContext";
 import { Pill } from "../primitives/Pill";
 import { FloatingComposerModelPicker } from "./FloatingComposerModelPicker";
 import type {
@@ -21,7 +24,7 @@ export function FloatingComposer({
 }: FloatingComposerProps): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
-  const runtimeBusy = state.inFlightTurn !== null;
+  const runtimeBusy = getActiveThreadInFlightTurn(state) !== null;
   const shellRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [draftText, setDraftText] = useState(state.composer.text);

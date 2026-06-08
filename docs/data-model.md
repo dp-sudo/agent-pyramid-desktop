@@ -354,7 +354,7 @@ Important state:
 - `activeThreadId`
 - `activeTurnId`
 - `items`
-- `inFlightTurn`
+- `inFlightTurnsByThreadId`
 - `rightPanelMode`
 - `composer`
 - `errorMessage`
@@ -453,4 +453,3 @@ For documentation-only updates:
 ```bash
 git diff --check -- docs/data-model.md
 ```
-

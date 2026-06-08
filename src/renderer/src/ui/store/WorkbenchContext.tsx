@@ -51,7 +51,7 @@ export interface WorkbenchState {
   activeThreadId: string | null;
   activeTurnId: string | null;
   items: Item[];
-  inFlightTurn: TurnRecord | null;
+  inFlightTurnsByThreadId: Record<string, TurnRecord>;
   rightPanelMode: RightPanelMode;
   composer: ComposerState;
   errorMessage: string | null;
@@ -75,7 +75,7 @@ export const INITIAL_STATE: WorkbenchState = {
   activeThreadId: null,
   activeTurnId: null,
   items: [],
-  inFlightTurn: null,
+  inFlightTurnsByThreadId: {},
   rightPanelMode: initialBasicPreferences.defaultInspectorMode,
   composer: {
     text: "",
@@ -118,7 +118,11 @@ export type Action =
   | { type: "updateItem"; item: Item }
   | { type: "resetItems"; items: Item[] }
   | { type: "turnStarted"; turn: TurnRecord }
-  | { type: "turnEnded"; status: Exclude<TurnRecord["status"], "in-flight"> }
+  | {
+      type: "turnEnded";
+      threadId: string;
+      status: Exclude<TurnRecord["status"], "in-flight">;
+    }
   | { type: "setComposerText"; text: string }
   | { type: "setComposerModel"; model: string; modelProfileId?: string }
   | { type: "setComposerReasoningEffort"; reasoningEffort: ModelReasoningEffort }
@@ -216,7 +220,7 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
               activeThreadId: null,
               activeTurnId: null,
               items: [],
-              inFlightTurn: null,
+              inFlightTurnsByThreadId: omitRecordKey(state.inFlightTurnsByThreadId, action.id),
               rightPanelMode: null,
             }
           : {}),
@@ -232,8 +236,7 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
         activeThreadId: action.thread.id,
         workspaceRoot: action.thread.workspace || state.workspaceRoot,
         items: action.items,
-        inFlightTurn: null,
-        activeTurnId: null,
+        activeTurnId: state.inFlightTurnsByThreadId[action.thread.id]?.id ?? null,
       };
     case "deselectThread":
       return {
@@ -258,13 +261,20 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
     case "turnStarted":
       return {
         ...state,
-        activeTurnId: action.turn.id,
-        inFlightTurn: action.turn,
+        activeTurnId: state.activeThreadId === action.turn.threadId ? action.turn.id : state.activeTurnId,
+        inFlightTurnsByThreadId: {
+          ...state.inFlightTurnsByThreadId,
+          [action.turn.threadId]: {
+            ...state.inFlightTurnsByThreadId[action.turn.threadId],
+            ...action.turn,
+          },
+        },
       };
     case "turnEnded":
       return {
         ...state,
-        inFlightTurn: null,
+        activeTurnId: state.activeThreadId === action.threadId ? null : state.activeTurnId,
+        inFlightTurnsByThreadId: omitRecordKey(state.inFlightTurnsByThreadId, action.threadId),
       };
     case "setComposerText":
       return { ...state, composer: { ...state.composer, text: action.text } };
@@ -390,6 +400,28 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
   }
 }
 
+function omitRecordKey<T>(
+  record: Record<string, T>,
+  key: string,
+): Record<string, T> {
+  if (!(key in record)) return record;
+  const { [key]: _removed, ...rest } = record;
+  void _removed;
+  return rest;
+}
+
+export function getThreadInFlightTurn(
+  state: WorkbenchState,
+  threadId: string | null,
+): TurnRecord | null {
+  if (!threadId) return null;
+  return state.inFlightTurnsByThreadId[threadId] ?? null;
+}
+
+export function getActiveThreadInFlightTurn(state: WorkbenchState): TurnRecord | null {
+  return getThreadInFlightTurn(state, state.activeThreadId);
+}
+
 export interface WorkbenchActions {
   setRoute(route: WorkbenchRoute): void;
   setModelConfig(config: ModelConfig): void;
@@ -404,7 +436,10 @@ export interface WorkbenchActions {
   appendItem(item: Item): void;
   updateItem(item: Item): void;
   turnStarted(turn: TurnRecord): void;
-  turnEnded(status: Exclude<TurnRecord["status"], "in-flight">): void;
+  turnEnded(
+    threadId: string,
+    status: Exclude<TurnRecord["status"], "in-flight">,
+  ): void;
   setComposerText(text: string): void;
   setComposerModel(model: string, modelProfileId?: string): void;
   setComposerReasoningEffort(reasoningEffort: ModelReasoningEffort): void;
@@ -451,7 +486,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }): ReactE
       appendItem: (item) => dispatch({ type: "appendItem", item }),
       updateItem: (item) => dispatch({ type: "updateItem", item }),
       turnStarted: (turn) => dispatch({ type: "turnStarted", turn }),
-      turnEnded: (status) => dispatch({ type: "turnEnded", status }),
+      turnEnded: (threadId, status) => dispatch({ type: "turnEnded", threadId, status }),
       setComposerText: (text) => dispatch({ type: "setComposerText", text }),
       setComposerModel: (model, modelProfileId) =>
         dispatch({ type: "setComposerModel", model, modelProfileId }),

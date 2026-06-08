@@ -647,6 +647,47 @@ textarea {
   color: var(--ds-accent);
 }
 
+.ds-pending-approval-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-elevated);
+  box-shadow: var(--ds-shadow-composer);
+  padding: 10px;
+}
+
+.ds-pending-approval-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  font-weight: 650;
+}
+
+.ds-pending-approval-title span:last-child {
+  display: inline-flex;
+  min-width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-warning-soft);
+  color: var(--ds-text-muted);
+  font-family: var(--ds-font-mono);
+}
+
+.ds-pending-approval-list {
+  display: grid;
+  max-height: min(42vh, 420px);
+  overflow: auto;
+  gap: 10px;
+}
+
 /* ---------- Chat blocks ---------- */
 .ds-message-timeline {
   flex: 1 1 auto;

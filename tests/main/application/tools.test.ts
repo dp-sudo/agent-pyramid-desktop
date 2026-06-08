@@ -203,11 +203,22 @@ describe("application tools", () => {
             { threadId: "thread-1", turnId: "turn-1", workspace, readState },
           )
         ).content,
-      ) as { path: string; content: string; sha256: string; mtimeMs: number };
+      ) as {
+        path: string;
+        content: string;
+        sha256: string;
+        fullSha256: string;
+        offsetBytes: number;
+        bytesRead: number;
+        mtimeMs: number;
+      };
       expect(read).toMatchObject({
         path: "src/index.ts",
         content: "export const marker = 1;\n",
         sha256: createHash("sha256").update("export const marker = 1;\n").digest("hex"),
+        fullSha256: createHash("sha256").update("export const marker = 1;\n").digest("hex"),
+        offsetBytes: 0,
+        bytesRead: Buffer.byteLength("export const marker = 1;\n", "utf8"),
       });
       expect(read.mtimeMs).toBeGreaterThan(0);
       expect(readState.get(path.join(workspace, "src", "index.ts"))?.content)
@@ -220,11 +231,45 @@ describe("application tools", () => {
             { threadId: "thread-1", turnId: "turn-1", workspace },
           )
         ).content,
-      ) as { content: string; bytes: number; truncated: boolean };
+      ) as {
+        content: string;
+        bytes: number;
+        fullSha256: string;
+        offsetBytes: number;
+        bytesRead: number;
+        truncated: boolean;
+      };
       expect(truncated).toMatchObject({
         content: "abc",
         bytes: 6,
+        fullSha256: createHash("sha256").update("abcdef").digest("hex"),
+        offsetBytes: 0,
+        bytesRead: 3,
         truncated: true,
+      });
+
+      const ranged = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "call-read-range",
+              name: "read_file",
+              arguments: { path: "src/large.txt", offset_bytes: 3, max_bytes: 3 },
+            },
+            { threadId: "thread-1", turnId: "turn-1", workspace },
+          )
+        ).content,
+      ) as {
+        content: string;
+        offsetBytes: number;
+        bytesRead: number;
+        truncated: boolean;
+      };
+      expect(ranged).toMatchObject({
+        content: "def",
+        offsetBytes: 3,
+        bytesRead: 3,
+        truncated: false,
       });
 
       const searched = JSON.parse(
@@ -419,6 +464,94 @@ describe("application tools", () => {
     }
   });
 
+  it("allows exact edits after ranged reads using the full file hash", async () => {
+    const workspace = await makeTempDir("coding-tools-ranged-read-");
+    try {
+      await fs.writeFile(path.join(workspace, "file.ts"), "alpha\nbeta\ngamma\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+
+      const partialRead = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "call-read-range",
+              name: "read_file",
+              arguments: { path: "file.ts", max_bytes: 5 },
+            },
+            context,
+          )
+        ).content,
+      ) as { truncated: boolean; fullSha256: string };
+      expect(partialRead).toMatchObject({
+        truncated: true,
+        fullSha256: createHash("sha256").update("alpha\nbeta\ngamma\n").digest("hex"),
+      });
+
+      await registry.execute(
+        {
+          id: "call-edit-after-range",
+          name: "edit_file",
+          arguments: {
+            path: "file.ts",
+            old_string: "beta",
+            new_string: "BETA",
+          },
+        },
+        context,
+      );
+
+      expect(await fs.readFile(path.join(workspace, "file.ts"), "utf8"))
+        .toBe("alpha\nBETA\ngamma\n");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects edits after ranged reads when the full file hash is stale", async () => {
+    const workspace = await makeTempDir("coding-tools-ranged-read-stale-");
+    try {
+      await fs.writeFile(path.join(workspace, "file.ts"), "alpha\nbeta\ngamma\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+
+      await registry.execute(
+        {
+          id: "call-read-range",
+          name: "read_file",
+          arguments: { path: "file.ts", max_bytes: 5 },
+        },
+        context,
+      );
+      await fs.writeFile(path.join(workspace, "file.ts"), "alpha\nexternal\ngamma\n", "utf8");
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-edit-stale-range",
+            name: "edit_file",
+            arguments: {
+              path: "file.ts",
+              old_string: "external",
+              new_string: "next",
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("File has been modified since it was read.");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("applies unified diff patches after dry-run validation", async () => {
     const workspace = await makeTempDir("apply-patch-tools-");
     try {
@@ -476,6 +609,52 @@ describe("application tools", () => {
           ],
         },
       });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("applies patches after ranged reads when the full file hash is fresh", async () => {
+    const workspace = await makeTempDir("apply-patch-ranged-read-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "alpha\nbeta\ngamma\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        {
+          id: "call-read-range",
+          name: "read_file",
+          arguments: { path: "src/index.ts", max_bytes: 5 },
+        },
+        context,
+      );
+
+      await registry.execute(
+        {
+          id: "call-patch-range",
+          name: "apply_patch",
+          arguments: {
+            patch: [
+              "--- a/src/index.ts",
+              "+++ b/src/index.ts",
+              "@@ -1,3 +1,3 @@",
+              " alpha",
+              "-beta",
+              "+BETA",
+              " gamma",
+            ].join("\n"),
+          },
+        },
+        context,
+      );
+
+      expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
+        .toBe("alpha\nBETA\ngamma\n");
     } finally {
       await removeTempDir(workspace);
     }

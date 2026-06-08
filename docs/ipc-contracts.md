@@ -115,7 +115,9 @@ Notes:
 
 Notes:
 
-- One `webContents` has one active subscription at a time.
+- One `webContents` can keep multiple thread subscriptions at the same time.
+  Re-subscribing the same thread replaces that thread's existing subscription
+  without dropping other subscribed threads.
 - New subscribe drops the previous subscription for the same `webContents`.
 - `streamId` and `sinceIndex` exist in the request type, but current handler does not replay historical events.
 
@@ -296,4 +298,3 @@ git diff --check -- docs/ipc-contracts.md
 ```
 
 Also verify all referenced channel constants and methods still exist with `rg`.
-

@@ -118,6 +118,7 @@
   "approvals": {
     "allow": "允许",
     "deny": "拒绝",
+    "pendingTitle": "待审批",
     "submitting": "提交中…",
     "diff": {
       "create": "新建",

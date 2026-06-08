@@ -310,6 +310,11 @@ sequenceDiagram
 
 Pending approvals are held in memory in `AgentRuntime.pendingApprovals`. They are not resumed across app restart.
 
+Approval items remain in the timeline for auditability. Renderer also shows
+the active thread's unresolved approvals in a composer-adjacent pending
+approval panel, reusing the same diff preview and allow/deny controls so users
+do not have to scroll the timeline to unblock a turn.
+
 Interrupting a turn denies pending approvals for that turn and aborts active tool controllers. Command tools receive the abort signal and terminate the child process/process group before the turn is marked interrupted.
 
 ## Interrupt Lifecycle
@@ -366,21 +371,25 @@ Failure behavior:
 
 ## Renderer Event Consumption
 
-`Workbench.tsx` keeps an active thread subscription through `window.agentApi.sse.subscribe({ threadId })`.
+`Workbench.tsx` keeps SSE subscriptions for every thread opened in the window.
+Switching sessions does not unsubscribe the previous thread, so background
+turns can still complete, fail, or request approval without leaving renderer
+state stale.
 
 Renderer event handling:
 
-- `item_appended`: `actions.appendItem(event.item)`
-- `item_updated`: `actions.updateItem(event.item)`
-- `turn_completed`: `actions.turnEnded(event.status)`
-- `turn_failed`: `actions.turnEnded("failed")` and visible error
-- `runtime_error`: visible error
+- `turn_started`: `actions.turnStarted(turn)` keyed by `event.threadId`
+- `item_appended`: append only when the event belongs to the active thread
+- `item_updated`: update only when the event belongs to the active thread
+- `turn_completed`: `actions.turnEnded(event.threadId, event.status)`
+- `turn_failed`: `actions.turnEnded(event.threadId, "failed")`; visible error only for the active thread
+- `runtime_error`: visible error only for global errors or the active thread
 - `goal_updated`: update active thread goal
 - `tool_budget_reached`: no UI error; warning item appears in timeline
 
 State storage:
 
-- `WorkbenchContext.tsx` stores current `items`, `inFlightTurn`, `activeTurnId`, active thread and composer state.
+- `WorkbenchContext.tsx` stores current active-thread `items`, `inFlightTurnsByThreadId`, `activeTurnId`, active thread and composer state.
 - `appendItem` and `updateItem` both upsert by item id.
 
 ## Runtime Event Types

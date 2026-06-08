@@ -13,39 +13,39 @@ import { err, ok } from "../../shared/agent-contracts.js";
 import { RuntimeEventBus } from "../event-bus.js";
 
 interface Subscription {
-  webContentsId: number;
   threadId: string;
   streamId?: string;
   unsubscribe: () => void;
-  cleanup: () => void;
 }
 
-const subscriptions = new Map<number, Subscription>(); // webContentsId -> subscription
+interface WebContentsSubscriptions {
+  cleanup: () => void;
+  threads: Map<string, Subscription>;
+}
+
+const subscriptions = new Map<number, WebContentsSubscriptions>(); // webContentsId -> thread subscriptions
 
 export function registerSseHandlers(bus: RuntimeEventBus): void {
   ipcMain.handle(
     SSE_SUBSCRIBE_CHANNEL,
     async (event, request: SseSubscribeRequest) => {
       const webContents = event.sender;
-      // Drop any existing subscription for this webContents.
-      disposeSubscription(webContents.id);
+      const bucket = ensureWebContentsSubscriptions(webContents);
+      const existing = bucket.threads.get(request.threadId);
+      if (existing) {
+        existing.unsubscribe();
+        bucket.threads.delete(request.threadId);
+      }
 
       const unsubscribe = bus.onThread(request.threadId, (evt: RuntimeEvent) => {
         if (webContents.isDestroyed()) return;
         webContents.send(SSE_PUSH_CHANNEL, evt);
       });
-      const cleanup = onWebContentsDestroyed(webContents, () => {
-        disposeSubscription(webContents.id);
-      });
-
-      const sub: Subscription = {
-        webContentsId: webContents.id,
+      bucket.threads.set(request.threadId, {
         threadId: request.threadId,
         ...(request.streamId ? { streamId: request.streamId } : {}),
         unsubscribe,
-        cleanup,
-      };
-      subscriptions.set(webContents.id, sub);
+      });
 
       return ok({ subscribed: request.threadId });
     },
@@ -54,9 +54,7 @@ export function registerSseHandlers(bus: RuntimeEventBus): void {
   ipcMain.handle(
     SSE_UNSUBSCRIBE_CHANNEL,
     async (event, request: SseUnsubscribeRequest) => {
-      const sub = subscriptions.get(event.sender.id);
-      if (sub && sub.threadId === request.threadId) {
-        disposeSubscription(event.sender.id);
+      if (disposeThreadSubscription(event.sender.id, request.threadId)) {
         return ok({ unsubscribed: true });
       }
       return err("SSE_NOT_SUBSCRIBED", "No active subscription for this thread");
@@ -66,7 +64,7 @@ export function registerSseHandlers(bus: RuntimeEventBus): void {
   // Best-effort cleanup when any window closes.
   BrowserWindow.getAllWindows().forEach((window) => {
     onWebContentsDestroyed(window.webContents, () => {
-      disposeSubscription(window.webContents.id);
+      disposeWebContentsSubscriptions(window.webContents.id);
     });
   });
 }
@@ -85,16 +83,49 @@ function onWebContentsDestroyed(
   return () => webContents.off("destroyed", listener);
 }
 
-function disposeSubscription(webContentsId: number): void {
-  const sub = subscriptions.get(webContentsId);
-  if (!sub) return;
+function ensureWebContentsSubscriptions(
+  webContents: DestroyableWebContents & {
+    isDestroyed(): boolean;
+    send(channel: string, event: RuntimeEvent): void;
+  },
+): WebContentsSubscriptions {
+  const existing = subscriptions.get(webContents.id);
+  if (existing) return existing;
+  const bucket: WebContentsSubscriptions = {
+    cleanup: onWebContentsDestroyed(webContents, () => {
+      disposeWebContentsSubscriptions(webContents.id);
+    }),
+    threads: new Map<string, Subscription>(),
+  };
+  subscriptions.set(webContents.id, bucket);
+  return bucket;
+}
+
+function disposeThreadSubscription(webContentsId: number, threadId: string): boolean {
+  const bucket = subscriptions.get(webContentsId);
+  const sub = bucket?.threads.get(threadId);
+  if (!bucket || !sub) return false;
   sub.unsubscribe();
-  sub.cleanup();
+  bucket.threads.delete(threadId);
+  if (bucket.threads.size === 0) {
+    bucket.cleanup();
+    subscriptions.delete(webContentsId);
+  }
+  return true;
+}
+
+function disposeWebContentsSubscriptions(webContentsId: number): void {
+  const bucket = subscriptions.get(webContentsId);
+  if (!bucket) return;
+  for (const sub of bucket.threads.values()) {
+    sub.unsubscribe();
+  }
+  bucket.cleanup();
   subscriptions.delete(webContentsId);
 }
 
 export function __resetSseSubscriptionsForTests(): void {
   for (const webContentsId of subscriptions.keys()) {
-    disposeSubscription(webContentsId);
+    disposeWebContentsSubscriptions(webContentsId);
   }
 }

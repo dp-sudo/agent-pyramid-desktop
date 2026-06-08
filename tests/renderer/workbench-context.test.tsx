@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  getActiveThreadInFlightTurn,
+  getThreadInFlightTurn,
   INITIAL_STATE,
   reducer,
   type WorkbenchState,
@@ -56,9 +58,72 @@ describe("WorkbenchContext reducer", () => {
     expect(removed.activeThread).toBeNull();
     expect(removed.activeThreadId).toBeNull();
     expect(removed.activeTurnId).toBeNull();
-    expect(removed.inFlightTurn).toBeNull();
+    expect(getThreadInFlightTurn(removed, "thread-1")).toBeNull();
     expect(removed.items).toEqual([]);
     expect(removed.rightPanelMode).toBeNull();
+  });
+
+  it("tracks in-flight turns per thread while switching sessions", () => {
+    const selected = reducer(INITIAL_STATE, {
+      type: "selectThread",
+      thread: thread({ id: "thread-1" }),
+      items: [],
+    });
+    const firstRunning = reducer(selected, {
+      type: "turnStarted",
+      turn: turn({ id: "turn-1", threadId: "thread-1" }),
+    });
+    const switched = reducer(firstRunning, {
+      type: "selectThread",
+      thread: thread({ id: "thread-2" }),
+      items: [],
+    });
+    const secondRunning = reducer(switched, {
+      type: "turnStarted",
+      turn: turn({ id: "turn-2", threadId: "thread-2" }),
+    });
+
+    expect(getThreadInFlightTurn(secondRunning, "thread-1")?.id).toBe("turn-1");
+    expect(getActiveThreadInFlightTurn(secondRunning)?.id).toBe("turn-2");
+
+    const firstEnded = reducer(secondRunning, {
+      type: "turnEnded",
+      threadId: "thread-1",
+      status: "completed",
+    });
+
+    expect(getThreadInFlightTurn(firstEnded, "thread-1")).toBeNull();
+    expect(getActiveThreadInFlightTurn(firstEnded)?.id).toBe("turn-2");
+  });
+
+  it("keeps existing turn metadata when a lighter turn_started event is merged", () => {
+    const selected = reducer(INITIAL_STATE, {
+      type: "selectThread",
+      thread: thread({ id: "thread-1" }),
+      items: [],
+    });
+    const fullTurn = reducer(selected, {
+      type: "turnStarted",
+      turn: turn({
+        id: "turn-1",
+        threadId: "thread-1",
+        modelProfileId: "profile-1",
+        reasoningEffort: "high",
+      }),
+    });
+    const merged = reducer(fullTurn, {
+      type: "turnStarted",
+      turn: turn({
+        id: "turn-1",
+        threadId: "thread-1",
+      }),
+    });
+
+    expect(getActiveThreadInFlightTurn(merged)).toMatchObject({
+      id: "turn-1",
+      modelProfileId: "profile-1",
+      reasoningEffort: "high",
+    });
   });
 
   it("upserts appended and updated items by id", () => {

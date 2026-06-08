@@ -328,7 +328,10 @@ async function writePreparedChange(
       mtimeMs: stat.mtimeMs,
       size: stat.size,
       sha256: contentHash,
+      fullSha256: contentHash,
       truncated: false,
+      offsetBytes: 0,
+      bytesRead: stat.size,
     });
   } else {
     context.readState?.delete(filePath);
@@ -621,10 +624,17 @@ function assertFreshRead(
   if (!readState) {
     throw new Error("Read the file with read_file before attempting to edit or overwrite it.");
   }
-  if (readState.truncated) {
-    throw new Error("The last read_file result was truncated. Read the complete file before writing.");
+  const currentSha = sha256(content);
+  if (readState.fullSha256) {
+    if (currentSha !== readState.fullSha256) {
+      throw new Error("File has been modified since it was read. Read it again before writing.");
+    }
+    return;
   }
-  if (sha256(content) !== readState.sha256) {
+  if (readState.truncated) {
+    throw new Error("The last read_file result was truncated and has no full file hash. Read the file again before writing.");
+  }
+  if (currentSha !== readState.sha256) {
     throw new Error("File has been modified since it was read. Read it again before writing.");
   }
 }

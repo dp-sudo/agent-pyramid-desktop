@@ -47,7 +47,10 @@ export interface AgentToolContext {
       mtimeMs: number;
       size: number;
       sha256: string;
+      fullSha256?: string;
       truncated: boolean;
+      offsetBytes?: number;
+      bytesRead?: number;
     } | undefined;
     set(
       filePath: string,
@@ -56,7 +59,10 @@ export interface AgentToolContext {
         mtimeMs: number;
         size: number;
         sha256: string;
+        fullSha256?: string;
         truncated: boolean;
+        offsetBytes?: number;
+        bytesRead?: number;
       },
     ): void;
     delete(filePath: string): void;

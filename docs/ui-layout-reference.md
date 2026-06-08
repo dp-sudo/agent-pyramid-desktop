@@ -60,7 +60,7 @@ Important UI state:
 | `threads` | Sidebar thread summaries. |
 | `activeThread`, `activeThreadId` | Selected code thread. |
 | `items` | Timeline items for selected thread. |
-| `inFlightTurn` | Enables running state, interrupt button, live process expansion. |
+| `inFlightTurnsByThreadId` | Tracks running turns per thread, enabling background sessions without blocking the active composer. |
 | `rightPanelMode` | Inspector panel mode or closed state. |
 | `composer` | Draft text, model, reasoning effort, mode, goal mode, attachments. |
 | `errorMessage` | Visible workbench error toast. |
@@ -257,6 +257,9 @@ Approval behavior:
 - Buttons only render when `item.decision === undefined` and an approve handler
   exists.
 - Pending decision disables further response until the handler returns.
+- Unresolved approvals for the active thread also appear in a composer-adjacent
+  pending approval panel, while the timeline block remains as the durable audit
+  record.
 
 ### Assistant Markdown
 
@@ -309,7 +312,8 @@ Key classes:
 States:
 
 - `sendPending`: local send guard.
-- `runtimeBusy`: derived from `state.inFlightTurn`.
+- `runtimeBusy`: derived from the active thread's entry in
+  `state.inFlightTurnsByThreadId`.
 - `attachments`: local display records; authoritative ids live in
   `state.composer.attachmentIds`.
 - `menuOpen`, `pickerOpen`: popovers close on outside pointer down or Escape.

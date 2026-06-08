@@ -365,8 +365,8 @@ Important state slices:
 
 - `route`: `code | write | settings`.
 - `modelConfig` and `modelProfiles`.
-- `workspaceRoot`, `threads`, `activeThread`, `items`.
-- `inFlightTurn`, `activeTurnId`.
+- `workspaceRoot`, `threads`, `activeThread`, active-thread `items`.
+- `inFlightTurnsByThreadId`, `activeTurnId`.
 - `composer`: text, model, profile, reasoning effort, mode, goal mode,
   attachment ids.
 - `rightPanelMode`: `changes | todo | plan | file | null`.

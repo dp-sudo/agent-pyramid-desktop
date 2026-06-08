@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "./store/WorkbenchContext";
+import {
+  getActiveThreadInFlightTurn,
+  getThreadInFlightTurn,
+  useWorkbench,
+} from "./store/WorkbenchContext";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { WorkbenchTopBar } from "./components/topbar/WorkbenchTopBar";
 import { FloatingComposer } from "./components/composer/FloatingComposer";
 import { MessageTimeline } from "./components/chat/MessageTimeline";
+import { PendingApprovalPanel } from "./components/chat/PendingApprovalPanel";
 import { RightInspector } from "./components/inspector/RightInspector";
 import { WriteWorkspaceView } from "./components/write/WriteWorkspaceView";
 import {
@@ -22,7 +27,9 @@ export function Workbench(): ReactElement {
   const workspaceRootRef = useRef<string>(state.workspaceRoot);
   const selectThreadRequestRef = useRef(0);
   const sendInProgressRef = useRef(false);
+  const subscribedThreadIdsRef = useRef(new Set<string>());
   const activeThreadArchived = state.activeThread?.status === "archived";
+  const activeThreadInFlightTurn = getActiveThreadInFlightTurn(state);
 
   useEffect(() => {
     activeThreadIdRef.current = state.activeThreadId;
@@ -72,22 +79,32 @@ export function Workbench(): ReactElement {
       ? E
       : never): void => {
       const threadId = activeThreadIdRef.current;
-      if (!threadId || !("threadId" in event) || event.threadId !== threadId) return;
-      if (event.kind === "item_appended") {
+      if (!threadId || !("threadId" in event)) return;
+      const isActiveThreadEvent = event.threadId === threadId;
+      if (event.kind === "turn_started") {
+        actions.turnStarted({
+          id: event.turnId,
+          threadId: event.threadId,
+          status: "in-flight",
+          startedAt: event.startedAt,
+          model: state.modelConfig.model,
+          mode: state.composer.mode,
+        });
+      } else if (event.kind === "item_appended" && isActiveThreadEvent) {
         actions.appendItem(event.item);
-      } else if (event.kind === "item_updated") {
+      } else if (event.kind === "item_updated" && isActiveThreadEvent) {
         actions.updateItem(event.item);
       } else if (event.kind === "turn_completed") {
         if (event.status !== "in-flight") {
-          actions.turnEnded(event.status);
+          actions.turnEnded(event.threadId, event.status);
         }
       } else if (event.kind === "tool_budget_reached") {
         // The timeline receives the persisted warning item; continuation status is not a UI error.
       } else if (event.kind === "turn_failed") {
-        actions.turnEnded("failed");
-        actions.setError(event.message);
+        actions.turnEnded(event.threadId, "failed");
+        if (isActiveThreadEvent) actions.setError(event.message);
       } else if (event.kind === "runtime_error") {
-        actions.setError(event.message);
+        if (!event.threadId || isActiveThreadEvent) actions.setError(event.message);
       } else if (
         event.kind === "goal_updated" &&
         state.activeThread &&
@@ -99,7 +116,7 @@ export function Workbench(): ReactElement {
         });
       }
     },
-    [actions, state.activeThread],
+    [actions, state.activeThread, state.composer.mode, state.modelConfig.model],
   );
 
   useEffect(() => {
@@ -120,8 +137,12 @@ export function Workbench(): ReactElement {
 
   const subscribeThreadEvents = useCallback(
     async (threadId: string): Promise<boolean> => {
+      if (subscribedThreadIdsRef.current.has(threadId)) return true;
       const result = await window.agentApi.sse.subscribe({ threadId });
-      if (result.ok) return true;
+      if (result.ok) {
+        subscribedThreadIdsRef.current.add(threadId);
+        return true;
+      }
       actions.setError(result.message);
       return false;
     },
@@ -130,23 +151,22 @@ export function Workbench(): ReactElement {
 
   const unsubscribeThreadEvents = useCallback(
     async (threadId: string): Promise<void> => {
+      if (!subscribedThreadIdsRef.current.has(threadId)) return;
       const result = await window.agentApi.sse.unsubscribe({ threadId });
       if (!result.ok && result.code !== "SSE_NOT_SUBSCRIBED") {
         actions.setError(result.message);
       }
+      subscribedThreadIdsRef.current.delete(threadId);
     },
     [actions],
   );
 
-  // Subscribe the main process event bus to the active thread.
+  // Keep thread subscriptions alive after switching so background turns can
+  // complete, fail, or request approval without leaving renderer state stale.
   useEffect(() => {
     if (!state.activeThreadId) return;
-    const threadId = state.activeThreadId;
-    void subscribeThreadEvents(threadId);
-    return () => {
-      void unsubscribeThreadEvents(threadId);
-    };
-  }, [state.activeThreadId, subscribeThreadEvents, unsubscribeThreadEvents]);
+    void subscribeThreadEvents(state.activeThreadId);
+  }, [state.activeThreadId, subscribeThreadEvents]);
 
   const ensureWorkspaceRoot = useCallback(async (): Promise<string | null> => {
     const current = workspaceRootRef.current.trim();
@@ -265,7 +285,7 @@ export function Workbench(): ReactElement {
 
   const onDeleteThread = useCallback(
     async (id: string) => {
-      if (state.inFlightTurn?.threadId === id) {
+      if (getThreadInFlightTurn(state, id)) {
         actions.setError(t("threads.deleteBlockedRunning"));
         return;
       }
@@ -288,12 +308,12 @@ export function Workbench(): ReactElement {
       actions.setError(null);
       await refreshThreads();
     },
-    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, t, unsubscribeThreadEvents],
+    [actions, refreshThreads, state, t, unsubscribeThreadEvents],
   );
 
   const onArchiveThread = useCallback(
     async (id: string) => {
-      if (state.inFlightTurn?.threadId === id) {
+      if (getThreadInFlightTurn(state, id)) {
         actions.setError(t("threads.archiveBlockedRunning"));
         return;
       }
@@ -316,7 +336,7 @@ export function Workbench(): ReactElement {
       actions.setError(null);
       await refreshThreads();
     },
-    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, t, unsubscribeThreadEvents],
+    [actions, refreshThreads, state, t, unsubscribeThreadEvents],
   );
 
   const onRestoreThread = useCallback(
@@ -426,14 +446,14 @@ export function Workbench(): ReactElement {
   ]);
 
   const onInterrupt = useCallback(async () => {
-    if (!state.inFlightTurn) return;
-    const result = await window.agentApi.turns.interrupt(state.inFlightTurn.id, { force: true });
+    if (!activeThreadInFlightTurn) return;
+    const result = await window.agentApi.turns.interrupt(activeThreadInFlightTurn.id, { force: true });
     if (result.ok) {
       actions.setError(null);
     } else {
       actions.setError(result.message);
     }
-  }, [actions, state.inFlightTurn]);
+  }, [actions, activeThreadInFlightTurn]);
 
   const onApprove = useCallback(
     async (approvalId: string, decision: "allow" | "deny") => {
@@ -531,6 +551,7 @@ export function Workbench(): ReactElement {
                 <MessageTimeline onApprove={onApprove} />
                 <div style={{ padding: "0 0 12px", display: "flex", justifyContent: "center" }}>
                   <div style={{ width: "min(100%, 720px)" }}>
+                    <PendingApprovalPanel onApprove={onApprove} />
                     <FloatingComposer
                       onSend={onSend}
                       onInterrupt={() => void onInterrupt()}

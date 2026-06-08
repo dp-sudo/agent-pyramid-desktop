@@ -118,6 +118,7 @@
   "approvals": {
     "allow": "Allow",
     "deny": "Deny",
+    "pendingTitle": "Pending approval",
     "submitting": "Submitting…",
     "diff": {
       "create": "Create",

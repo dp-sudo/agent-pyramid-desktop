@@ -272,7 +272,7 @@ Topbar exposes the Right Inspector modes as a segmented control for Changes / To
 - 时间线在用户接近底部时自动跟随流式输出；用户上滑阅读旧内容时不得抢滚动，只有回到底部后恢复自动跟随。
 - 工具过程使用 `ds-process-entry`：summary 显示本地化工具动作和状态，detail 展示参数与结果；失败状态使用 danger token，成功状态使用 success token。
 - 计划项、系统提示和用户输入请求仍使用原有独立块，不混入 assistant 最终回答。
-- Approval 块使用 `ds-approval-*` 样式；allow/deny 点击后必须进入提交中状态并禁用双按钮，参数 JSON 限高滚动，避免长参数撑开时间线。
+- Approval 块使用 `ds-approval-*` 样式；allow/deny 点击后必须进入提交中状态并禁用双按钮，参数 JSON 限高滚动，避免长参数撑开时间线。当前会话未决审批还必须在 composer 上方显示 `ds-pending-approval-*` 浮层，复用同一 diff preview 和审批按钮。
 
 ## 7. Sidebar interactions
 

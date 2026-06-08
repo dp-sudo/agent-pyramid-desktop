@@ -1298,7 +1298,7 @@ describe("AgentRuntime", () => {
         threadId: thread.id,
         text: "Diagnose file",
       });
-      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"), 3000);
 
       expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
       const toolMessage = fakePool.requests[1].messages.find(

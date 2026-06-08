@@ -1,6 +1,9 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../../store/WorkbenchContext";
+import {
+  getActiveThreadInFlightTurn,
+  useWorkbench,
+} from "../../store/WorkbenchContext";
 import { ChatBlock } from "./ChatBlock";
 import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
 import { groupTimelineTurns } from "./timeline-model";
@@ -18,6 +21,7 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
   const stickToBottomRef = useRef(true);
   const [processOpenByTurnId, setProcessOpenByTurnId] = useState<Record<string, boolean>>({});
   const turns = useMemo(() => groupTimelineTurns(state.items), [state.items]);
+  const activeInFlightTurn = getActiveThreadInFlightTurn(state);
 
   useLayoutEffect(() => {
     const visibleTurnIds = new Set(turns.map((turn) => turn.id));
@@ -33,7 +37,7 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
     const element = scrollRef.current;
     if (!element || !stickToBottomRef.current) return;
     element.scrollTop = element.scrollHeight;
-  }, [state.items, state.inFlightTurn?.id]);
+  }, [state.items, activeInFlightTurn?.id]);
 
   function handleScroll(): void {
     const element = scrollRef.current;
@@ -65,12 +69,12 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
     <div ref={scrollRef} className="ds-message-timeline" onScroll={handleScroll}>
       <div className="ds-message-timeline-content">
         {turns.map((turn) => {
-          const isActiveTurn = state.inFlightTurn?.id === turn.id;
+          const isActiveTurn = activeInFlightTurn?.id === turn.id;
           const processCount = turn.processItems.length;
           const hasProcess = processCount > 0;
           const processOpen = isTimelineProcessOpen({
             turnId: turn.id,
-            activeTurnId: state.inFlightTurn?.id ?? null,
+            activeTurnId: activeInFlightTurn?.id ?? null,
             openByTurnId: processOpenByTurnId,
           });
           const processLabel =
@@ -109,7 +113,7 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
                         key={item.id}
                         item={item}
                         nested
-                        {...(item.turnId === state.inFlightTurn?.id ? { isLive: true } : {})}
+                        {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
                         {...(onApprove ? { onApprove } : {})}
                       />
                     ))}
@@ -121,7 +125,7 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
                 <ChatBlock
                   key={item.id}
                   item={item}
-                  {...(item.turnId === state.inFlightTurn?.id ? { isLive: true } : {})}
+                  {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
                   {...(onApprove ? { onApprove } : {})}
                 />
               ))}

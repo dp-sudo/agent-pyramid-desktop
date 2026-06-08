@@ -27,6 +27,7 @@
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
+- 修复多会话运行投影：renderer 以 `inFlightTurnsByThreadId` 追踪每个 thread 的运行中 turn，SSE 支持同一窗口多 thread 订阅；切换会话不再丢失后台完成、失败或审批事件，当前 thread 的未决审批会在 composer 上方显示即时处理面板。
 - 设置页采用两级导航：顶部切换设置大类，左侧切换当前大类下的小类，中间展示详细配置；当前“基础设置”大类承载外观与语言、启动与布局、会话与工作区偏好，“大模型设置”大类承载模型档案、连接信息、上下文和推理行为。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
 - 建立 Vitest 自动化测试体系：`vitest.config.ts`、`tsconfig.test.json`、`tests/`，覆盖共享契约、主进程持久化、模型配置、附件、工具、事件总线、LLM 网关、AgentRuntime 和渲染端 reducer。
@@ -168,7 +169,7 @@
 
 - 新建 `src/renderer/src/ui/styles/tokens.css`：`--ds-*` 变量全表（light + dark），作为本项目统一设计 token 命名空间。
 - 新建 `src/renderer/src/ui/styles/shell.css`：三段式布局 + divider + composer + chat blocks + inspector + write editor 容器类。
-- 新建 `src/renderer/src/ui/store/WorkbenchContext.tsx`：`useReducer` 模拟 store，state 包含 `route / activeThreadId / threads / items / inFlightTurn / rightPanelMode / composer / leftSidebarWidth / rightSidebarWidth / basicPreferences`。
+- 新建 `src/renderer/src/ui/store/WorkbenchContext.tsx`：`useReducer` 模拟 store，state 包含 `route / activeThreadId / threads / items / inFlightTurnsByThreadId / rightPanelMode / composer / leftSidebarWidth / rightSidebarWidth / basicPreferences`。
 - 新建 4 个 primitives：`Pill / IconButton / Chip / KbdHint`。
 - 新建 4 个组件子目录：`sidebar/`、`topbar/`、`composer/`、`chat/`、`inspector/`、`write/`。
 - 新建 `AppShell.tsx` + `Workbench.tsx` + `SettingsView.tsx`：三段式骨架 + 拖拽 + SSE 订阅 + IPC 调用。

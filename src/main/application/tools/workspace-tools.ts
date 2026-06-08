@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 import * as path from "node:path";
 import type { AgentTool } from "../../domain/agent/types";
@@ -98,6 +98,10 @@ export const readFileTool: AgentTool = {
           type: "number",
           description: "Maximum bytes to read. Defaults to 80000.",
         },
+        offset_bytes: {
+          type: "number",
+          description: "Byte offset to start reading from. Defaults to 0.",
+        },
       },
       required: ["path"],
     },
@@ -106,17 +110,21 @@ export const readFileTool: AgentTool = {
     const workspace = requireWorkspace(context);
     const relativePath = requiredString(input.path, "read_file requires a string path.");
     const maxBytes = numberInRange(input.max_bytes, 1, MAX_READ_LIMIT_BYTES, DEFAULT_READ_LIMIT_BYTES);
+    const offsetBytes = numberInRange(input.offset_bytes, 0, Number.MAX_SAFE_INTEGER, 0);
     const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) {
       throw new Error(`read_file path is not a file: ${relativePath}`);
     }
-    const readBytes = Math.min(maxBytes + 1, stat.size);
+    if (offsetBytes > stat.size) {
+      throw new Error(`read_file offset is beyond end of file: ${relativePath}`);
+    }
+    const readBytes = Math.min(maxBytes + 1, stat.size - offsetBytes);
     const buffer = Buffer.alloc(readBytes);
     const handle = await fs.open(filePath, "r");
     let bytesRead = 0;
     try {
-      const result = await handle.read(buffer, 0, readBytes, 0);
+      const result = await handle.read(buffer, 0, readBytes, offsetBytes);
       bytesRead = result.bytesRead;
     } finally {
       await handle.close();
@@ -124,21 +132,32 @@ export const readFileTool: AgentTool = {
     const sliced = buffer.subarray(0, Math.min(bytesRead, maxBytes));
     const content = sliced.toString("utf8");
     const sha256 = createHash("sha256").update(content).digest("hex");
+    const fileInspection = await inspectFile(filePath);
+    if (fileInspection.containsNul) {
+      throw new Error(`read_file path appears to be binary: ${relativePath}`);
+    }
+    const truncated = offsetBytes + bytesRead < stat.size || bytesRead > maxBytes;
     context.readState?.set(filePath, {
       content,
       mtimeMs: stat.mtimeMs,
       size: stat.size,
       sha256,
-      truncated: bytesRead > maxBytes || stat.size > maxBytes,
+      fullSha256: fileInspection.sha256,
+      truncated,
+      offsetBytes,
+      bytesRead: sliced.byteLength,
     });
     return JSON.stringify({
       path: toWorkspaceRelative(workspace, filePath),
       content,
       bytes: stat.size,
+      offsetBytes,
+      bytesRead: sliced.byteLength,
       modifiedAt: stat.mtime.toISOString(),
       mtimeMs: stat.mtimeMs,
       sha256,
-      truncated: bytesRead > maxBytes || stat.size > maxBytes,
+      fullSha256: fileInspection.sha256,
+      truncated,
     });
   },
 };
@@ -268,6 +287,19 @@ function requiredString(value: unknown, message: string): string {
     throw new Error(message);
   }
   return value.trim();
+}
+
+async function inspectFile(filePath: string): Promise<{ sha256: string; containsNul: boolean }> {
+  const hash = createHash("sha256");
+  let containsNul = false;
+  for await (const chunk of createReadStream(filePath)) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    hash.update(buffer);
+    if (!containsNul && buffer.includes(0)) {
+      containsNul = true;
+    }
+  }
+  return { sha256: hash.digest("hex"), containsNul };
 }
 
 function optionalString(value: unknown): string | undefined {

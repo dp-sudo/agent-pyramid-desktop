@@ -57,7 +57,7 @@ describe("sse handlers", () => {
     __resetSseSubscriptionsForTests();
   });
 
-  it("replaces webContents subscriptions without accumulating destroyed listeners", async () => {
+  it("keeps multiple thread subscriptions on one webContents", async () => {
     const bus = new RuntimeEventBus();
     registerSseHandlers(bus);
     const subscribe = electronMock.handlers.get(SSE_SUBSCRIBE_CHANNEL);
@@ -70,14 +70,21 @@ describe("sse handlers", () => {
     await subscribe({ sender }, { threadId: "thread-2" });
     expect(sender.listenerCount("destroyed")).toBe(1);
 
-    const event = {
+    const firstEvent = {
       kind: "turn_started" as const,
       threadId: "thread-1",
       turnId: "turn-1",
       startedAt: "2026-06-07T00:00:00.000Z",
     };
-    bus.emit(event.kind, event);
-    expect(sender.send).not.toHaveBeenCalled();
+    const secondEvent = {
+      kind: "turn_started" as const,
+      threadId: "thread-2",
+      turnId: "turn-2",
+      startedAt: "2026-06-07T00:00:00.000Z",
+    };
+    bus.emit(firstEvent.kind, firstEvent);
+    bus.emit(secondEvent.kind, secondEvent);
+    expect(sender.send).toHaveBeenCalledTimes(2);
   });
 
   it("removes destroyed listeners on unsubscribe", async () => {
@@ -95,5 +102,62 @@ describe("sse handlers", () => {
 
     expect(result).toEqual({ ok: true, value: { unsubscribed: true } });
     expect(sender.listenerCount("destroyed")).toBe(0);
+  });
+
+  it("unsubscribes one thread without dropping other thread subscriptions", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const subscribe = electronMock.handlers.get(SSE_SUBSCRIBE_CHANNEL);
+    const unsubscribe = electronMock.handlers.get(SSE_UNSUBSCRIBE_CHANNEL);
+    if (!subscribe || !unsubscribe) throw new Error("Expected SSE handlers.");
+
+    const sender = new FakeWebContents();
+    await subscribe({ sender }, { threadId: "thread-1" });
+    await subscribe({ sender }, { threadId: "thread-2" });
+    const result = await unsubscribe({ sender }, { threadId: "thread-1" });
+
+    expect(result).toEqual({ ok: true, value: { unsubscribed: true } });
+    expect(sender.listenerCount("destroyed")).toBe(1);
+
+    bus.emit("turn_started", {
+      kind: "turn_started",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      startedAt: "2026-06-07T00:00:00.000Z",
+    });
+    bus.emit("turn_started", {
+      kind: "turn_started",
+      threadId: "thread-2",
+      turnId: "turn-2",
+      startedAt: "2026-06-07T00:00:00.000Z",
+    });
+
+    expect(sender.send).toHaveBeenCalledOnce();
+    expect(sender.send.mock.calls[0]?.[1]).toMatchObject({ threadId: "thread-2" });
+  });
+
+  it("replaces only the same thread subscription when re-subscribed", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const subscribe = electronMock.handlers.get(SSE_SUBSCRIBE_CHANNEL);
+    const unsubscribe = electronMock.handlers.get(SSE_UNSUBSCRIBE_CHANNEL);
+    if (!subscribe || !unsubscribe) throw new Error("Expected SSE handlers.");
+
+    const sender = new FakeWebContents();
+    await subscribe({ sender }, { threadId: "thread-1" });
+    await subscribe({ sender }, { threadId: "thread-1" });
+
+    expect(sender.listenerCount("destroyed")).toBe(1);
+
+    bus.emit("turn_started", {
+      kind: "turn_started",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      startedAt: "2026-06-07T00:00:00.000Z",
+    });
+    expect(sender.send).toHaveBeenCalledOnce();
+
+    const result = await unsubscribe({ sender }, { threadId: "thread-1" });
+    expect(result).toEqual({ ok: true, value: { unsubscribed: true } });
   });
 });
