@@ -7,6 +7,7 @@ import {
   resolveWorkspacePathForAccess,
   toWorkspaceRelative,
 } from "./workspace-policy.js";
+import { decodeUtf8TextBuffer } from "./text-file.js";
 
 const MAX_EDIT_FILE_BYTES = 1_000_000;
 
@@ -201,6 +202,7 @@ export const rollbackFileTool: AgentTool = {
 };
 
 interface PreparedFileChange extends FileChangeResult {
+  workspace: string;
   filePath: string;
   nextContent: string;
   originalContent: string;
@@ -378,11 +380,44 @@ async function writePreparedChanges(
 
 async function commitPreparedChange(change: PreparedFileChange): Promise<void> {
   if (change.operation === "delete") {
+    await assertPreparedChangePathStillAllowed(change, "read");
+    await assertPreparedChangeStillFresh(change);
     await fs.rm(change.filePath, { force: true });
     return;
   }
   await fs.mkdir(path.dirname(change.filePath), { recursive: true });
+  await assertPreparedChangePathStillAllowed(change, "write");
+  await assertPreparedChangeStillFresh(change);
   await fs.writeFile(change.filePath, change.nextContent, "utf8");
+}
+
+async function assertPreparedChangePathStillAllowed(
+  change: PreparedFileChange,
+  access: "read" | "write",
+): Promise<void> {
+  const resolved = await resolveWorkspacePathForAccess(change.workspace, change.path, access);
+  if (path.resolve(resolved) !== path.resolve(change.filePath)) {
+    throw new Error(`Path changed before write: ${change.path}. Read it again before writing.`);
+  }
+}
+
+async function assertPreparedChangeStillFresh(change: PreparedFileChange): Promise<void> {
+  if (change.operation === "create") {
+    try {
+      await fs.lstat(change.filePath);
+    } catch (error) {
+      if (getErrorCode(error) === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+    throw new Error(`File changed before write: ${change.path}. Read it again before writing.`);
+  }
+
+  const current = await readCurrentTextOrMissing(change.filePath, change.path);
+  if (!current.exists || sha256(current.content) !== sha256(change.originalContent)) {
+    throw new Error(`File changed before write: ${change.path}. Read it again before writing.`);
+  }
 }
 
 function updateReadStateForCommittedChange(
@@ -496,11 +531,8 @@ async function readEditableTextFile(
     throw new Error(`File is too large to edit: ${relativePath}`);
   }
   const buffer = await fs.readFile(filePath);
-  if (buffer.includes(0)) {
-    throw new Error(`File appears to be binary: ${relativePath}`);
-  }
   return {
-    content: buffer.toString("utf8"),
+    content: decodeUtf8TextBuffer(buffer, relativePath, "File"),
     stat,
   };
 }
@@ -537,6 +569,7 @@ interface ParsedPatchHunk {
 interface ParsedPatchLine {
   type: "context" | "added" | "removed";
   text: string;
+  noNewlineAtEnd?: boolean;
 }
 
 function parseUnifiedDiff(patchText: string): ParsedPatchFile[] {
@@ -551,6 +584,9 @@ function parseUnifiedDiff(patchText: string): ParsedPatchFile[] {
     if (line.startsWith("diff --git ")) {
       index += 1;
       continue;
+    }
+    if (isUnsupportedPatchMetadata(line)) {
+      throw new Error("apply_patch does not support renaming or copying files.");
     }
     if (!line.startsWith("--- ")) {
       index += 1;
@@ -569,12 +605,18 @@ function parseUnifiedDiff(patchText: string): ParsedPatchFile[] {
     if (newPath === undefined) {
       throw new Error("apply_patch does not support deleting files.");
     }
+    if (oldPath !== undefined && oldPath !== newPath) {
+      throw new Error("apply_patch does not support renaming or copying files.");
+    }
     index += 1;
 
     const hunks: ParsedPatchHunk[] = [];
     while (index < lines.length) {
-      if (lines[index].startsWith("diff --git ") || lines[index].startsWith("--- ")) {
+      if (lines[index].startsWith("diff --git ") || isPatchFileHeaderAt(lines, index)) {
         break;
+      }
+      if (isUnsupportedPatchMetadata(lines[index])) {
+        throw new Error("apply_patch does not support renaming or copying files.");
       }
       if (!lines[index].startsWith("@@ ")) {
         index += 1;
@@ -585,10 +627,19 @@ function parseUnifiedDiff(patchText: string): ParsedPatchFile[] {
       const hunkLines: ParsedPatchLine[] = [];
       while (index < lines.length) {
         const hunkLine = lines[index];
-        if (hunkLine.startsWith("@@ ") || hunkLine.startsWith("diff --git ") || hunkLine.startsWith("--- ")) {
+        if (
+          hunkLine.startsWith("@@ ") ||
+          hunkLine.startsWith("diff --git ") ||
+          isPatchFileHeaderAt(lines, index)
+        ) {
           break;
         }
         if (hunkLine === "\\ No newline at end of file") {
+          const previous = hunkLines.at(-1);
+          if (!previous) {
+            throw new Error("apply_patch no-newline marker has no preceding hunk line.");
+          }
+          previous.noNewlineAtEnd = true;
           index += 1;
           continue;
         }
@@ -611,6 +662,17 @@ function parseUnifiedDiff(patchText: string): ParsedPatchFile[] {
     files.push({ oldPath, newPath, hunks });
   }
   return files;
+}
+
+function isUnsupportedPatchMetadata(line: string): boolean {
+  return line.startsWith("rename from ") ||
+    line.startsWith("rename to ") ||
+    line.startsWith("copy from ") ||
+    line.startsWith("copy to ");
+}
+
+function isPatchFileHeaderAt(lines: string[], index: number): boolean {
+  return lines[index].startsWith("--- ") && lines[index + 1]?.startsWith("+++ ");
 }
 
 function parsePatchPath(raw: string): string | undefined {
@@ -643,8 +705,8 @@ function applyHunks(
   hunks: ParsedPatchHunk[],
   relativePath: string,
 ): string {
-  const originalLines = splitLines(originalContent);
-  const nextLines: string[] = [];
+  const originalLines = splitLineRecords(originalContent);
+  const nextLines: TextLineRecord[] = [];
   let originalIndex = 0;
 
   for (const hunk of hunks) {
@@ -658,11 +720,21 @@ function applyHunks(
 
     for (const line of hunk.lines) {
       if (line.type === "added") {
-        nextLines.push(line.text);
+        nextLines.push({
+          text: line.text,
+          newline: line.noNewlineAtEnd
+            ? null
+            : resolveAddedLineEnding(originalLines, originalIndex, nextLines),
+        });
         continue;
       }
       const current = originalLines[originalIndex];
-      if (current !== line.text) {
+      const expectedMissingFinalNewline = Boolean(line.noNewlineAtEnd);
+      if (
+        !current ||
+        current.text !== line.text ||
+        (expectedMissingFinalNewline ? current.newline !== null : current.newline === null)
+      ) {
         throw new Error(`apply_patch hunk does not match ${relativePath}.`);
       }
       if (line.type === "context") {
@@ -673,7 +745,7 @@ function applyHunks(
   }
 
   nextLines.push(...originalLines.slice(originalIndex));
-  return withTrailingNewline(nextLines);
+  return joinLineRecords(nextLines, relativePath);
 }
 
 function assertHunkCounts(hunk: ParsedPatchHunk, relativePath: string): void {
@@ -682,10 +754,6 @@ function assertHunkCounts(hunk: ParsedPatchHunk, relativePath: string): void {
   if (removedOrContext !== hunk.oldCount || addedOrContext !== hunk.newCount) {
     throw new Error(`apply_patch hunk line counts do not match header in ${relativePath}.`);
   }
-}
-
-function withTrailingNewline(lines: string[]): string {
-  return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
 function assertFreshRead(
@@ -727,6 +795,7 @@ function buildPreparedChange(
     operation,
   );
   return {
+    workspace,
     filePath,
     nextContent,
     originalContent,
@@ -857,6 +926,83 @@ function toPatchToolResult(changes: PreparedFileChange[]): AgentToolResult {
     }),
     displayResult,
   };
+}
+
+type TextLineEnding = "\n" | "\r\n";
+
+interface TextLineRecord {
+  text: string;
+  newline: TextLineEnding | null;
+}
+
+/**
+ * Unified diff lines only tell us whether a line has a final newline, not
+ * which newline bytes were used. Keep existing per-line EOLs and choose a
+ * local/default EOL only for newly added lines.
+ */
+function splitLineRecords(content: string): TextLineRecord[] {
+  if (content.length === 0) return [];
+  const lines: TextLineRecord[] = [];
+  let start = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content[index] !== "\n") {
+      continue;
+    }
+    const hasCarriageReturn = index > start && content[index - 1] === "\r";
+    lines.push({
+      text: content.slice(start, hasCarriageReturn ? index - 1 : index),
+      newline: hasCarriageReturn ? "\r\n" : "\n",
+    });
+    start = index + 1;
+  }
+  if (start < content.length) {
+    lines.push({ text: content.slice(start), newline: null });
+  }
+  return lines;
+}
+
+function joinLineRecords(lines: TextLineRecord[], relativePath: string): string {
+  let content = "";
+  for (const [index, line] of lines.entries()) {
+    if (line.newline === null && index < lines.length - 1) {
+      throw new Error(`apply_patch no-newline marker is not at file end in ${relativePath}.`);
+    }
+    content += line.text;
+    if (line.newline !== null) {
+      content += line.newline;
+    }
+  }
+  return content;
+}
+
+function resolveAddedLineEnding(
+  originalLines: TextLineRecord[],
+  originalIndex: number,
+  nextLines: TextLineRecord[],
+): TextLineEnding {
+  return originalLines[originalIndex]?.newline ??
+    nextLines.at(-1)?.newline ??
+    inferDefaultLineEnding(originalLines);
+}
+
+function inferDefaultLineEnding(lines: TextLineRecord[]): TextLineEnding {
+  let lf = 0;
+  let crlf = 0;
+  let first: TextLineEnding | undefined;
+  for (const line of lines) {
+    if (line.newline === null) {
+      continue;
+    }
+    first ??= line.newline;
+    if (line.newline === "\r\n") {
+      crlf += 1;
+    } else {
+      lf += 1;
+    }
+  }
+  if (crlf > lf) return "\r\n";
+  if (lf > crlf) return "\n";
+  return first ?? "\n";
 }
 
 function splitLines(content: string): string[] {

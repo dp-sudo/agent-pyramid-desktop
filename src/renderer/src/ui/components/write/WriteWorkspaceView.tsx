@@ -8,7 +8,13 @@ const COMPLETION_DELAY_MS = 650;
 const COMPLETION_MIN_TRAILING_CHARS = 10;
 type WriteStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
-export function WriteWorkspaceView(): ReactElement {
+export interface WriteWorkspaceViewProps {
+  onWorkspaceSelected?: (workspace: string) => boolean | void | Promise<boolean | void>;
+}
+
+export function WriteWorkspaceView({
+  onWorkspaceSelected,
+}: WriteWorkspaceViewProps = {}): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
   const [files, setFiles] = useState<WriteFileEntry[]>([]);
@@ -45,6 +51,10 @@ export function WriteWorkspaceView(): ReactElement {
       return null;
     }
     if (result.value.canceled || !result.value.path) return null;
+    if (!await shouldUseSelectedWriteWorkspace(result.value.path, onWorkspaceSelected)) {
+      setStatus("error");
+      return null;
+    }
     actions.setWorkspaceRoot(result.value.path);
     return result.value.path;
   }
@@ -271,11 +281,10 @@ export function WriteWorkspaceView(): ReactElement {
   function handleEditorKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     if (event.key === "Tab" && completion) {
       event.preventDefault();
-      const nextContent = `${content}${completion}`;
-      contentRef.current = nextContent;
-      setContent(nextContent);
-      actions.setComposerText(nextContent);
-      setCompletion("");
+      const nextState = getWriteCompletionAcceptState(content, completion);
+      contentRef.current = nextState.content;
+      setContent(nextState.content);
+      setCompletion(nextState.completion);
       return;
     }
     if (event.key === "Escape" && completion) {
@@ -404,11 +413,10 @@ export function WriteWorkspaceView(): ReactElement {
           <textarea
             value={content}
             onChange={(event) => {
-              const nextContent = event.target.value;
-              contentRef.current = nextContent;
-              setContent(nextContent);
-              setCompletion("");
-              actions.setComposerText(nextContent);
+              const nextState = getWriteDocumentEditState(event.target.value);
+              contentRef.current = nextState.content;
+              setContent(nextState.content);
+              setCompletion(nextState.completion);
             }}
             onKeyDown={handleEditorKeyDown}
             placeholder={t("write.editorPlaceholder")}
@@ -481,6 +489,13 @@ export function shouldApplyWriteOpenResult(input: {
   );
 }
 
+export async function shouldUseSelectedWriteWorkspace(
+  workspace: string,
+  onWorkspaceSelected?: (workspace: string) => boolean | void | Promise<boolean | void>,
+): Promise<boolean> {
+  return (await onWorkspaceSelected?.(workspace)) !== false;
+}
+
 export function getWriteWorkspaceSwitchState(): {
   files: WriteFileEntry[];
   activePath: null;
@@ -513,6 +528,28 @@ export function getWriteListState(input: {
 
 export function formatWriteFileMeta(file: WriteFileEntry): string {
   return `${formatBytes(file.size)} · ${formatDate(file.modifiedAt)}`;
+}
+
+export interface WriteDocumentStateUpdate {
+  content: string;
+  completion: string;
+}
+
+export function getWriteDocumentEditState(nextContent: string): WriteDocumentStateUpdate {
+  return {
+    content: nextContent,
+    completion: "",
+  };
+}
+
+export function getWriteCompletionAcceptState(
+  content: string,
+  completion: string,
+): WriteDocumentStateUpdate {
+  return {
+    content: `${content}${completion}`,
+    completion: "",
+  };
 }
 
 function formatDate(value: string): string {

@@ -318,7 +318,8 @@
   },
   "routes": {
     "code": "Code",
-    "write": "Write"
+    "write": "Write",
+    "switchWorkbench": "Switch workbench"
   },
   "empty": {
     "title": "Start a new session",

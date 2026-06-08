@@ -47,6 +47,7 @@ interface RuntimeDeps {
   pool: LlmWorkerPool;
   bus: RuntimeEventBus;
   registry: ToolRegistry;
+  toolAccessPolicy?: ToolAccessPolicy;
 }
 
 interface PendingApproval {
@@ -68,6 +69,22 @@ interface ActiveToolExecution {
 type NormalizedTurnStartRequest = Omit<TurnStartRequest, "attachmentIds"> & {
   attachmentIds: string[];
 };
+
+export type ToolAccessDecision = "allow" | "deny" | "inherit";
+
+export interface ToolAccessPolicyInput {
+  name: string;
+  turn: TurnRecord;
+  thread: ThreadRecord;
+  definition?: AgentToolDefinition;
+}
+
+export type ToolAccessPolicy = (input: ToolAccessPolicyInput) => ToolAccessDecision;
+
+export interface ToolAccessPolicyConfig {
+  allowByMode?: Partial<Record<ThreadRecord["mode"], readonly string[]>>;
+  denyByMode?: Partial<Record<ThreadRecord["mode"], readonly string[]>>;
+}
 
 const SYSTEM_PROMPT = [
   "You are the runtime assistant in the Agent Pyramid desktop app.",
@@ -115,6 +132,63 @@ const MIN_PROGRESSIVE_COMPACTION_BYTES = 128;
 const TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4;
 const MIN_TEXT_COMPACTION_BYTES = 512;
 const MAX_PROGRESSIVE_COMPACTION_PASSES = 24;
+export const CODE_ONLY_TOOL_NAMES = [
+  "edit_file",
+  "write_file",
+  "apply_patch",
+  "rollback_file",
+  "run_command",
+  "diagnose_workspace",
+  "diagnose_file",
+] as const;
+const CODE_ONLY_TOOL_NAME_SET = new Set<string>(CODE_ONLY_TOOL_NAMES);
+const DEFAULT_TOOL_ACCESS_POLICY = createToolAccessPolicy({
+  denyByMode: {
+    write: CODE_ONLY_TOOL_NAMES,
+  },
+});
+
+export function isCodeOnlyToolName(name: string): boolean {
+  return CODE_ONLY_TOOL_NAME_SET.has(name);
+}
+
+export function createToolAccessPolicy(config: ToolAccessPolicyConfig): ToolAccessPolicy {
+  const allowByMode = toToolAccessSets(config.allowByMode);
+  const denyByMode = toToolAccessSets(config.denyByMode);
+  assertNoToolAccessConflicts(allowByMode, denyByMode);
+  return ({ name, thread }) => {
+    if (allowByMode[thread.mode]?.has(name)) return "allow";
+    if (denyByMode[thread.mode]?.has(name)) return "deny";
+    return "inherit";
+  };
+}
+
+function toToolAccessSets(
+  config: Partial<Record<ThreadRecord["mode"], readonly string[]>> | undefined,
+): Partial<Record<ThreadRecord["mode"], ReadonlySet<string>>> {
+  return {
+    ...(config?.code ? { code: new Set(config.code) } : {}),
+    ...(config?.write ? { write: new Set(config.write) } : {}),
+  };
+}
+
+function assertNoToolAccessConflicts(
+  allowByMode: Partial<Record<ThreadRecord["mode"], ReadonlySet<string>>>,
+  denyByMode: Partial<Record<ThreadRecord["mode"], ReadonlySet<string>>>,
+): void {
+  for (const mode of ["code", "write"] as const) {
+    const allow = allowByMode[mode];
+    const deny = denyByMode[mode];
+    if (!allow || !deny) {
+      continue;
+    }
+    for (const name of allow) {
+      if (deny.has(name)) {
+        throw new Error(`Tool access policy conflict for ${mode}:${name}.`);
+      }
+    }
+  }
+}
 
 /**
  * Multi-turn runtime. Holds per-turn state, orchestrates worker pool,
@@ -880,7 +954,7 @@ export class AgentRuntime {
   ): AgentToolDefinition[] {
     return this.deps.registry
       .listDefinitions()
-      .filter((definition) => this.isToolEnabledForTurn(definition.name, turn, thread));
+      .filter((definition) => this.isToolEnabledForTurn(definition.name, turn, thread, definition));
   }
 
   private isToolAvailableForTurn(
@@ -897,14 +971,33 @@ export class AgentRuntime {
     name: string,
     turn: TurnRecord,
     thread: ThreadRecord,
+    definition?: AgentToolDefinition,
   ): boolean {
     if (name === "create_plan") {
-      return turn.mode === "plan";
+      return turn.mode === "plan" &&
+        this.isToolAllowedByAccessPolicy(name, turn, thread, definition);
     }
     if (name === "update_goal") {
-      return Boolean(turn.goalMode || thread.goal?.status === "active");
+      return Boolean(turn.goalMode || thread.goal?.status === "active") &&
+        this.isToolAllowedByAccessPolicy(name, turn, thread, definition);
     }
-    return true;
+    return this.isToolAllowedByAccessPolicy(name, turn, thread, definition);
+  }
+
+  private isToolAllowedByAccessPolicy(
+    name: string,
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    definition?: AgentToolDefinition,
+  ): boolean {
+    // Tool access is a catalog-level policy, separate from approval/sandbox
+    // execution policy below. A caller can override individual mode/tool pairs
+    // while the default keeps Code-only tools out of Write threads.
+    const input = { name, turn, thread, ...(definition ? { definition } : {}) };
+    const configuredDecision = this.deps.toolAccessPolicy?.(input);
+    if (configuredDecision === "allow") return true;
+    if (configuredDecision === "deny") return false;
+    return DEFAULT_TOOL_ACCESS_POLICY(input) !== "deny";
   }
 
   private resolveToolPolicy(

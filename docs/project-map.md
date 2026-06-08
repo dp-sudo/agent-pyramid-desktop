@@ -131,7 +131,7 @@ flowchart TD
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool"]
   Registry["InMemoryToolRegistry"]
-  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateGoalTools()"]
+  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateGoalTools()"]
   Runtime["AgentRuntime"]
   Handlers["register*Handlers"]
   Window["BrowserWindow"]
@@ -166,7 +166,7 @@ flowchart TD
 | Start a turn | `src/renderer/src/ui/Workbench.tsx` | `src/preload/index.ts`、`src/main/ipc/turns-handlers.ts`、`src/main/application/agent-runtime.ts` |
 | Stream runtime events | `src/main/event-bus.ts` | `src/main/ipc/sse-handlers.ts`、`src/preload/index.ts`、`Workbench.tsx` |
 | Add or change IPC | `src/shared/ipc.ts` | `src/shared/agent-contracts.ts`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts` |
-| Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、`AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime.resolveToolPolicy()` |
+| Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、`AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime` tool access policy、`AgentRuntime.resolveToolPolicy()` |
 | Change thread data | `src/shared/agent-contracts.ts` | `src/main/persistence/index.ts`、IPC handlers、renderer state and tests |
 | Change model config | `src/shared/agent-contracts.ts` | `src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`SettingsView.tsx` |
 | Change attachments | `src/shared/agent-contracts.ts` | `src/main/persistence/attachment-store.ts`、`src/main/ipc/attachments-handlers.ts`、composer/runtime attachment injection |
@@ -183,10 +183,11 @@ flowchart TD
 - Tools are exposed to the model through `ToolRegistry.listDefinitions()`.
 - Tool execution goes through `ToolRegistry.execute()`; direct tool bypass is not part of the architecture.
 - Read-only workspace tools skip approval.
-- `edit_file` / `write_file` / `apply_patch` require approval and fresh read-state before writing existing files.
+- `edit_file` / `write_file` / `apply_patch` require approval, strict UTF-8 text, and fresh read-state before writing existing files.
 - `rollback_file` uses in-memory runtime file history to undo the latest agent write when the current file still matches that history entry.
 - `run_command` runs foreground workspace commands with timeout, output truncation, interrupt cancellation, and approval.
 - `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through command execution and therefore requires approval; `diagnose_file` uses TypeScript Language Service for file-level diagnostics and remains read-only.
+- Write threads use `AgentRuntime` tool access policy to hide and reject Code-only coding/command tools by default; policy overrides can allow or deny individual tool names per thread mode before approval/sandbox checks run.
 - `create_plan` is only available in plan mode.
 - `update_goal` is only available in goal mode or when a thread has an active goal.
 - Model configuration profiles are persisted by `ModelConfigStore`; runtime receives only the selected `ModelConfig`.

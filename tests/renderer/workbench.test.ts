@@ -3,10 +3,12 @@ import { err, ok } from "../../src/shared/agent-contracts";
 import {
   buildComposerSendPayload,
   clampSidebarWidth,
+  findLatestThreadForWorkspace,
   formatInitialLoadErrors,
   getNextSidebarWidth,
   isGlobalRuntimeErrorEvent,
   shouldUnsubscribeRemovedThread,
+  workbenchThreadModeForRoute,
 } from "../../src/renderer/src/ui/Workbench";
 
 describe("Workbench", () => {
@@ -82,7 +84,44 @@ describe("Workbench", () => {
       }),
     ).toBe(false);
   });
+
+  it("derives new thread mode from the active workbench route", () => {
+    expect(workbenchThreadModeForRoute("code")).toBe("code");
+    expect(workbenchThreadModeForRoute("write")).toBe("write");
+    expect(workbenchThreadModeForRoute("settings")).toBe("code");
+  });
+
+  it("prefers the latest active thread that matches workspace and route mode", () => {
+    const threads = [
+      makeThreadSummary("code-1", "/workspace", "code", "2026-06-08T08:00:00.000Z"),
+      makeThreadSummary("write-1", "/workspace", "write", "2026-06-08T09:00:00.000Z"),
+      makeThreadSummary("write-archived", "/workspace", "write", "2026-06-08T10:00:00.000Z", "archived"),
+      makeThreadSummary("write-other", "/other", "write", "2026-06-08T11:00:00.000Z"),
+    ];
+
+    expect(findLatestThreadForWorkspace(threads, "/workspace", "write")?.id).toBe("write-1");
+    expect(findLatestThreadForWorkspace(threads, "/workspace", "code")?.id).toBe("code-1");
+    expect(findLatestThreadForWorkspace(threads, "/missing", "write")).toBeNull();
+  });
 });
+
+function makeThreadSummary(
+  id: string,
+  workspace: string,
+  mode: "code" | "write",
+  updatedAt: string,
+  status: "active" | "archived" = "active",
+) {
+  return {
+    id,
+    title: id,
+    workspace,
+    status,
+    relation: "primary" as const,
+    mode,
+    updatedAt,
+  };
+}
 
 function testT(key: string): string {
   if (key === "composer.attachmentOnlyMessageSingle") {

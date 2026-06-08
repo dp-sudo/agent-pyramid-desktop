@@ -8,6 +8,11 @@ import {
   shouldSkipEntry,
   toWorkspaceRelative,
 } from "./workspace-policy.js";
+import {
+  createUtf8TextStreamValidator,
+  decodeUtf8TextBuffer,
+  decodeUtf8TextPrefix,
+} from "./text-file.js";
 
 const DEFAULT_LIST_LIMIT = 120;
 const DEFAULT_SEARCH_LIMIT = 80;
@@ -130,13 +135,19 @@ export const readFileTool: AgentTool = {
       await handle.close();
     }
     const sliced = buffer.subarray(0, Math.min(bytesRead, maxBytes));
-    const content = sliced.toString("utf8");
-    const sha256 = createHash("sha256").update(content).digest("hex");
-    const fileInspection = await inspectFile(filePath);
-    if (fileInspection.containsNul) {
-      throw new Error(`read_file path appears to be binary: ${relativePath}`);
-    }
     const truncated = offsetBytes + bytesRead < stat.size || bytesRead > maxBytes;
+    const decoded = truncated
+      ? decodeUtf8TextPrefix(sliced, relativePath, "read_file path")
+      : {
+          content: decodeUtf8TextBuffer(sliced, relativePath, "read_file path"),
+          bytesDecoded: sliced.byteLength,
+        };
+    if (sliced.byteLength > 0 && decoded.bytesDecoded === 0) {
+      throw new Error(`read_file max_bytes ended before a complete UTF-8 character: ${relativePath}`);
+    }
+    const content = decoded.content;
+    const sha256 = createHash("sha256").update(content).digest("hex");
+    const fileInspection = await inspectFile(filePath, relativePath);
     context.readState?.set(filePath, {
       content,
       mtimeMs: stat.mtimeMs,
@@ -145,14 +156,14 @@ export const readFileTool: AgentTool = {
       fullSha256: fileInspection.sha256,
       truncated,
       offsetBytes,
-      bytesRead: sliced.byteLength,
+      bytesRead: decoded.bytesDecoded,
     });
     return JSON.stringify({
       path: toWorkspaceRelative(workspace, filePath),
       content,
       bytes: stat.size,
       offsetBytes,
-      bytesRead: sliced.byteLength,
+      bytesRead: decoded.bytesDecoded,
       modifiedAt: stat.mtime.toISOString(),
       mtimeMs: stat.mtimeMs,
       sha256,
@@ -213,12 +224,17 @@ export const searchFilesTool: AgentTool = {
       if (!looksTextFile(filePath)) {
         return;
       }
-      const content = await fs.readFile(filePath, "utf8");
+      const relativeFilePath = toWorkspaceRelative(workspace, filePath);
+      const content = decodeUtf8TextBuffer(
+        await fs.readFile(filePath),
+        relativeFilePath,
+        "search_files path",
+      );
       const lines = content.split(/\r?\n/);
       for (const [index, line] of lines.entries()) {
         if (line.includes(query)) {
           results.push({
-            path: toWorkspaceRelative(workspace, filePath),
+            path: relativeFilePath,
             line: index + 1,
             text: line.trimEnd(),
           });
@@ -289,17 +305,19 @@ function requiredString(value: unknown, message: string): string {
   return value.trim();
 }
 
-async function inspectFile(filePath: string): Promise<{ sha256: string; containsNul: boolean }> {
+async function inspectFile(
+  filePath: string,
+  relativePath: string,
+): Promise<{ sha256: string }> {
   const hash = createHash("sha256");
-  let containsNul = false;
+  const textValidator = createUtf8TextStreamValidator(relativePath, "read_file path");
   for await (const chunk of createReadStream(filePath)) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     hash.update(buffer);
-    if (!containsNul && buffer.includes(0)) {
-      containsNul = true;
-    }
+    textValidator.push(buffer);
   }
-  return { sha256: hash.digest("hex"), containsNul };
+  textValidator.finish();
+  return { sha256: hash.digest("hex") };
 }
 
 function optionalString(value: unknown): string | undefined {

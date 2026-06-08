@@ -4,6 +4,7 @@ import {
   getActiveThreadInFlightTurn,
   getThreadInFlightTurn,
   useWorkbench,
+  type WorkbenchRoute,
 } from "./store/WorkbenchContext";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { WorkbenchTopBar } from "./components/topbar/WorkbenchTopBar";
@@ -20,6 +21,7 @@ import type {
   IpcResult,
   RuntimeErrorEvent,
   ThreadRecord,
+  ThreadSummary,
 } from "../../../shared/agent-contracts";
 
 const SIDEBAR_KEYBOARD_STEP = 16;
@@ -220,6 +222,51 @@ export function Workbench(): ReactElement {
     [onSelectThread],
   );
 
+  const selectOrCreateThreadForWorkspace = useCallback(
+    async (workspace: string, mode: ThreadRecord["mode"]): Promise<boolean> => {
+      const threadsResult = await window.agentApi.threads.list({
+        includeArchived: state.showArchivedThreads,
+      });
+      if (!threadsResult.ok) {
+        actions.setError(threadsResult.message);
+        return false;
+      }
+
+      actions.setThreads(threadsResult.value);
+      const latestForWorkspace = findLatestThreadForWorkspace(
+        threadsResult.value,
+        workspace,
+        mode,
+      );
+      if (latestForWorkspace) {
+        await selectThreadById(latestForWorkspace.id);
+        return true;
+      }
+
+      const created = await window.agentApi.threads.create({
+        title: "New thread",
+        workspace,
+        mode,
+      });
+      if (!created.ok) {
+        actions.setError(created.message);
+        return false;
+      }
+      activeThreadIdRef.current = created.value.id;
+      if (!await subscribeThreadEvents(created.value.id)) return false;
+      actions.selectThread(created.value as ThreadRecord, []);
+      void refreshThreads();
+      return true;
+    },
+    [
+      actions,
+      refreshThreads,
+      selectThreadById,
+      state.showArchivedThreads,
+      subscribeThreadEvents,
+    ],
+  );
+
   const onPickWorkspace = useCallback(async () => {
     const result = await window.agentApi.workspace.pickDirectory();
     if (!result.ok) {
@@ -233,40 +280,9 @@ export function Workbench(): ReactElement {
     actions.setWorkspaceRoot(workspace);
     actions.setError(null);
 
-    const threadsResult = await window.agentApi.threads.list({
-      includeArchived: state.showArchivedThreads,
-    });
-    if (!threadsResult.ok) {
-      actions.setError(threadsResult.message);
-      return;
-    }
-
-    actions.setThreads(threadsResult.value);
-    const latestForWorkspace = threadsResult.value.find(
-      (thread) =>
-        thread.mode === "code" &&
-        thread.workspace === workspace &&
-        thread.status !== "archived",
-    );
-    if (latestForWorkspace) {
-      await selectThreadById(latestForWorkspace.id);
-      return;
-    }
-
-    const created = await window.agentApi.threads.create({
-      title: "New thread",
-      workspace,
-      mode: "code",
-    });
-    if (!created.ok) {
-      actions.setError(created.message);
-      return;
-    }
-    activeThreadIdRef.current = created.value.id;
-    if (!await subscribeThreadEvents(created.value.id)) return;
-    actions.selectThread(created.value as ThreadRecord, []);
-    void refreshThreads();
-  }, [actions, refreshThreads, selectThreadById, state.showArchivedThreads, subscribeThreadEvents]);
+    const mode = workbenchThreadModeForRoute(state.route);
+    await selectOrCreateThreadForWorkspace(workspace, mode);
+  }, [actions, selectOrCreateThreadForWorkspace, state.route]);
 
   const onNewChat = useCallback(async () => {
     const workspace = await ensureWorkspaceRoot();
@@ -387,7 +403,7 @@ export function Workbench(): ReactElement {
         const threadResult = await window.agentApi.threads.create({
           title,
           workspace,
-          mode: "code",
+          mode: workbenchThreadModeForRoute(state.route),
         });
         if (!threadResult.ok) {
           actions.setError(threadResult.message);
@@ -477,6 +493,13 @@ export function Workbench(): ReactElement {
     actions.setRoute("settings");
   }, [actions]);
 
+  const onSwitchWorkbench = useCallback(
+    (route: "code" | "write") => {
+      actions.setRoute(route);
+    },
+    [actions],
+  );
+
   // ----- Sidebar for the Code route is the chat thread list.
   // ----- For the Write route, the workspace sidebar lives inside the view.
 
@@ -497,6 +520,7 @@ export function Workbench(): ReactElement {
             onArchiveThread={(id) => void onArchiveThread(id)}
             onRestoreThread={(id) => void onRestoreThread(id)}
             onOpenSettings={onOpenSettings}
+            onSwitchWorkbench={onSwitchWorkbench}
             workspaceRoot={state.workspaceRoot}
             showArchivedThreads={state.showArchivedThreads}
             confirmThreadDelete={state.basicPreferences.confirmThreadDelete}
@@ -546,7 +570,11 @@ export function Workbench(): ReactElement {
       ) : null}
       <main className="ds-stage-surface">
         {state.route === "write" ? (
-          <WriteWorkspaceView />
+          <WriteWorkspaceView
+            onWorkspaceSelected={(workspace) =>
+              selectOrCreateThreadForWorkspace(workspace, "write")
+            }
+          />
         ) : (
           <section className="ds-chat-stage">
             <div style={{ padding: 12 }}>
@@ -604,6 +632,23 @@ export function shouldUnsubscribeRemovedThread(
 
 export function isGlobalRuntimeErrorEvent(event: RuntimeErrorEvent): boolean {
   return event.kind === "runtime_error" && !event.threadId;
+}
+
+export function workbenchThreadModeForRoute(route: WorkbenchRoute): ThreadRecord["mode"] {
+  return route === "write" ? "write" : "code";
+}
+
+export function findLatestThreadForWorkspace(
+  threads: readonly ThreadSummary[],
+  workspace: string,
+  mode: ThreadRecord["mode"],
+): ThreadSummary | null {
+  return threads.find(
+    (thread) =>
+      thread.mode === mode &&
+      thread.workspace === workspace &&
+      thread.status !== "archived",
+  ) ?? null;
 }
 
 export function clampSidebarWidth(width: number): number {

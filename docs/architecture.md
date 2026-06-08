@@ -247,10 +247,11 @@ Tool availability is decided at the runtime boundary:
 - `list_files`, `read_file`, `search_files`: read-only workspace tools and do
   not require approval.
 - `edit_file`, `write_file`, `apply_patch`, `rollback_file`: workspace write tools that
-  require approval, fresh read-state for existing files, and workspace path
-  validation. `apply_patch` dry-runs all hunks before writing and can show a
-  multi-file diff preview. `rollback_file` restores the latest in-memory agent
-  file history entry only when current content still matches that entry.
+  require approval, strict UTF-8 text, fresh read-state for existing files, and
+  workspace path validation. `apply_patch` dry-runs all hunks before writing,
+  preserves no-newline-at-end markers, and can show a multi-file diff preview.
+  `rollback_file` restores the latest in-memory agent file history entry only
+  when current content still matches that entry.
 - `run_command`: foreground command tool that runs inside the workspace,
   returns stdout/stderr/exit status, requires approval, and is aborted when the
   turn is interrupted.

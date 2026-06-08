@@ -16,6 +16,7 @@ import type {
   WriteCompleteResponse,
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
+import { decodeUtf8TextBuffer } from "../application/tools/text-file.js";
 
 const MARKDOWN_EXT = [".md", ".mdx", ".markdown"];
 const SKIPPED_DIRECTORIES = new Set([
@@ -40,8 +41,7 @@ export function registerWriteHandlers(): void {
 
   ipcMain.handle(WRITE_GET_CHANNEL, async (_event, request: WriteGetRequest) => {
     try {
-      const fullPath = await resolveWritePathForAccess(request.workspace, request.path, "read");
-      const content = await fs.readFile(fullPath, "utf8");
+      const content = await readMarkdownFileContent(request.workspace, request.path);
       return ok({ path: request.path, content });
     } catch (error) {
       return err("WRITE_GET_FAILED", messageOf(error));
@@ -99,6 +99,18 @@ export async function resolveWritePathForAccess(
   assertWithinWorkspace(realRoot, realParent, relative);
   assertAllowedWorkspacePath(realRoot, realParent, relative);
   return resolved;
+}
+
+export async function readMarkdownFileContent(
+  workspace: string,
+  relativePath: string,
+): Promise<string> {
+  const fullPath = await resolveWritePathForAccess(workspace, relativePath, "read");
+  return decodeUtf8TextBuffer(
+    await fs.readFile(fullPath),
+    relativePath,
+    "write.get path",
+  );
 }
 
 export function completeMarkdownInline(request: WriteCompleteRequest): WriteCompleteResponse {

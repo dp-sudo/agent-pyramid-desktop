@@ -21,9 +21,10 @@
 - 建立 Agent 领域类型和端口接口：`src/main/domain/agent/`。
 - 建立多 turn Agent 编排器：`src/main/application/agent-runtime.ts`。
 - 建立工具注册机制：`src/main/application/tools/`。
-- 建立首批 coding agent 写入工具：`read_file` 会记录文件读状态；`edit_file` / `write_file` 使用共享 workspace 路径策略、读后未过期校验和结构化 diff preview，经 approval gate 后写入工作区文本文件；`apply_patch` 支持受限 unified diff dry-run、多文件 diff preview 和一次性提交；`rollback_file` 可回滚当前 app 会话内最近一次 agent 文件写入。
+- 建立首批 coding agent 写入工具：`read_file` 会记录文件读状态，`read_file` / `search_files` 都严格校验 UTF-8 文本；`edit_file` / `write_file` 使用共享 workspace 路径策略、读后未过期校验和结构化 diff preview，经 approval gate 后写入工作区文本文件；`apply_patch` 支持受限 unified diff dry-run、多文件 diff preview、`No newline at end of file` 语义保留和一次性提交；`rollback_file` 可回滚当前 app 会话内最近一次 agent 文件写入。
 - 建立首批命令执行工具：`run_command` 在 active workspace 内运行前台 shell 命令，支持 workspace-relative `cwd`、timeout、stdout/stderr 截断、结构化结果和 turn interrupt 取消。
 - 建立首批诊断工具：`diagnose_workspace` 在 active workspace 内运行 TypeScript/typecheck 并解析结构化错误；`diagnose_file` 使用 TypeScript Language Service 对单文件做语法/语义/建议诊断，用于编辑后的 workspace 级与文件级验证闭环。
+- 建立 Code/Write tool access 边界：`AgentRuntime` 默认在 Write threads 中隐藏并拒绝 Code-only 编码/命令工具，同时保留可注入的 per-mode tool access policy 以便单独允许或禁用指定工具。
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
@@ -41,7 +42,7 @@
 1. 领域层不依赖 MiniMax、Electron、React 或 HTTP 响应结构。
 2. LLM 接入统一通过 `LlmGateway`，供应商协议差异只存在于 `infrastructure`。
 3. Agent 编排器只处理运行流程，不直接拼接供应商请求体。
-4. 工具能力通过 `ToolRegistry` 接口注册、预览和执行，后续工具不得绕过注册机制；工具用 metadata 声明只读、破坏性和类别，runtime 基于 metadata、`approvalPolicy` 与 `sandboxMode` 做审批/拒绝决策。
+4. 工具能力通过 `ToolRegistry` 接口注册、预览和执行，后续工具不得绕过注册机制；runtime 先按 thread mode 与可配置 tool access policy 决定工具是否进入当前 turn catalog，再基于 metadata、`approvalPolicy` 与 `sandboxMode` 做审批/拒绝决策。
 5. 渲染层只通过 preload 暴露的安全 API 调用主进程，不直接访问 Node 能力。
 6. 界面语言和主题切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义；设置页“基础设置”直接调用渲染层 localStorage 偏好，不进入主进程运行时配置。
 7. 大模型运行时仍以 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为当前激活配置契约；持久层在外层维护 `ModelConfigProfilesState`（`activeProfileId + profiles[]`），`ModelConfigStore.get()` 只返回当前激活档案的 `ModelConfig`，避免 Agent 运行循环感知多档案 UI。
@@ -68,6 +69,15 @@
 
 ## 变更记录
 
+### 2026-06-09 - Code/Write 工作台与 tool 权限隔离
+
+- 扩展 `AgentRuntime` tool access policy：默认在 `mode: "write"` 线程中隐藏并拒绝 `edit_file`、`write_file`、`apply_patch`、`rollback_file`、`run_command`、`diagnose_workspace`、`diagnose_file`，强制 tool call 会在 approval/execution 前记录 failed `ToolItem` 和 `runtime_error(code: "tool_not_found")`。
+- 新增可配置权限入口：`createToolAccessPolicy()` 支持按 `code` / `write` mode 单独 allow 或 deny tool name；同一 mode/tool 同时 allow 与 deny 会在创建 policy 时失败；该层只控制 catalog/access，现有 approval 与 sandbox 策略仍在后续执行前生效。
+- 修复 Workbench 线程边界：发送路径按当前 route 创建 `mode: "code"` 或 `mode: "write"` thread；workspace 选择会优先选中同 workspace 且 mode 匹配的 active thread，Write route 选择工作区时会选择或创建 Write thread。
+- 修复 Write 编辑器状态越界：Markdown 文档编辑和 Tab 接受本地补全只更新 Write 本地文档状态，不再把全文写入全局 `composer.text`。
+- 补充回归测试覆盖 runtime 默认隔离、策略覆盖放行、Write 强制 Code-only tool call 拒绝、route-aware thread helper 和 Write 文档状态隔离。
+- 验证方式：`npm run typecheck`、目标 Vitest；完整验证命令见本次实现记录。
+
 ### 2026-06-08 — 首轮维护审查修复
 
 - 修复主进程启动关键初始化失败路径：`src/main/index.ts` 在持久化 stores 或 LLM worker pool 初始化失败时记录错误并重新抛出，阻止继续注册半可用 IPC handler 或创建工作台窗口。
@@ -88,7 +98,7 @@
 
 - 扩展工具契约：`AgentTool` 支持 `metadata` 与 `preview()`，`AgentToolResult` 支持 `displayResult`，`ToolRegistry` 支持按名称取工具；runtime 在 approval 前可生成结构化预览，并把模型可读结果和 UI 展示结果分离。
 - 新增共享 workspace 路径策略：`src/main/application/tools/workspace-policy.ts` 统一处理 lexical path、realpath、父目录 realpath、symlink 与 skipped path 校验，避免读写工具路径策略漂移。
-- 新增读状态：`FileReadStateStore` 记录 `read_file` 读取到的内容、mtime、size、sha256 与截断状态；`edit_file` / `write_file` 对现有文件要求先完整读取，且写前确认文件未被外部修改。
+- 新增读状态：`FileReadStateStore` 记录 `read_file` 读取到的内容、mtime、size、sha256 与截断状态；`read_file`、`search_files`、`edit_file` / `write_file` 和 `diagnose_file` 严格拒绝非法 UTF-8 文本，避免替换字符污染后续写入；`edit_file` / `write_file` 对现有文件要求先完整读取，且写前确认文件未被外部修改。
 - 新增 coding tools：`edit_file` 使用 `old_string/new_string/replace_all` 精确替换，默认要求唯一匹配；`write_file` 支持新建文件和显式 `overwrite: true` 覆盖现有文件；两者都返回结构化 file diff。
 - 强化 runtime policy：只读工具免审批；`create_plan` / `update_goal` 继续按模式免审批；`sandboxMode: read-only` 和 `approvalPolicy: never` 会拒绝写入类工具；需要审批的写入工具会在 approval item/event 上携带 diff preview。
 - 扩展 renderer：approval block 会展示文件 diff 预览；工具摘要识别 `edit_file` / `write_file`；中英文 i18n 同步新增写入工具和 diff 操作文案。
@@ -108,7 +118,7 @@
 ### 2026-06-08 — coding-agent 补丁应用能力落地
 
 - 扩展 `createCodingTools()`：新增 `apply_patch` 工具，输入为 `{ patch: string }`，支持常见 unified diff/git diff 的 `---` / `+++` 文件头和 `@@` hunk；当前范围限定为 create/update 文本文件，不支持删除、重命名和二进制 patch。
-- `apply_patch` 先解析并 dry-run 所有文件，要求更新现有文件前已通过 `read_file` 建立新鲜读状态；任一 hunk 不匹配、路径越界或目标不合法时，整批 patch 不写入任何文件。
+- `apply_patch` 先解析并 dry-run 所有文件，要求更新现有文件前已通过 `read_file` 建立新鲜读状态；任一 hunk 不匹配、路径越界或目标不合法时，整批 patch 不写入任何文件；补丁中的 `\ No newline at end of file` 标记会参与匹配和输出，避免误改文件末尾换行状态。
 - 扩展 approval preview：`ApprovalPreview` 新增 `multi_file_diff`，renderer approval block 复用现有 diff UI 展示多文件变更；工具摘要和中英文 i18n 识别 `apply_patch`。
 - `apply_patch` 继续走 runtime policy：作为 destructive workspace tool 默认需要审批，`sandboxMode: "read-only"` 和 `approvalPolicy: "never"` 会在执行前拒绝。
 - 当前已实现 TypeScript/typecheck 的 workspace 级诊断与 TypeScript Language Service 文件级诊断；常驻 LSP server、增量诊断和多语言诊断可后续增强。
@@ -126,7 +136,7 @@
 ### 2026-06-08 — coding-agent 诊断能力落地
 
 - 扩展 `createCommandTools()`：新增 `diagnose_workspace` / `diagnose_file` 工具。`diagnose_workspace` 会执行 workspace script/tsc，按命令工具进入 approval gate；`diagnose_file` 只使用 TypeScript Language Service 读取文件诊断，保持只读免审批。
-- `diagnose_workspace` 在 workspace 内优先运行 `npm run typecheck`；如果 package.json 没有 `scripts.typecheck`，fallback 到 `npx tsc --noEmit`。
+- `diagnose_workspace` 在 workspace 内优先运行 `npm run typecheck`；如果 package.json 没有 `scripts.typecheck`，fallback 到 `npx --no-install tsc --noEmit`，避免诊断工具隐式安装依赖。
 - `diagnose_file` 先校验目标文件在 workspace 内且是 UTF-8 文本文件，再用 TypeScript Language Service 读取 tsconfig 并返回目标文件的 syntactic/semantic/suggestion diagnostics，给模型提供更接近 IDE/LSP 的文件级入口。
 - `typescript` 从 devDependency 移为 runtime dependency，因为 main 进程工具在运行时直接使用 TypeScript Language Service API。
 - 工具返回 `path/line/column/code/severity/message/source` 结构化 diagnostics；`diagnose_workspace` 同时保留命令、退出码、timeout 和输出截断状态。
@@ -324,6 +334,7 @@
 - 修复 `write` IPC 文件服务：`write.list/get/put` 现在统一拒绝 `.git`、`.idea`、`.vscode`、`DeepSeek`、`dist`、`node_modules`、`out` 等非项目源码或构建目录，避免 Write 模式列出或写入第三方参考资料与构建产物。
 - 加固 `write.get/put` 路径边界：读写前会校验目标或最近存在父目录的 realpath 仍位于 workspace 内，防止工作区内符号链接指向外部文件后被读取或覆盖。
 - 修复 `write.list` 目录遍历错误处理：无法读取工作区或子目录时不再静默返回空结果，而是通过 `WRITE_LIST_FAILED` envelope 暴露可追踪错误。
+- 加固 `write.get` 文本边界：Markdown 读取改为严格 UTF-8 校验，非法字节通过 `WRITE_GET_FAILED` 暴露，不再以替换字符进入编辑器状态。
 - 完善 Write 模式基础交互：文件列表支持搜索过滤，编辑器按 800ms debounce 自动保存，`write.complete` 提供本地 Markdown 列表/引用续写建议，渲染端支持 650ms completion debounce、Tab 接受与 Escape 取消。
 - 修复 Write 模式文件服务职责边界：`write.get` / `write.put` / `write.complete` 现在和 `write.list` 一样只接受 `.md`、`.mdx`、`.markdown`，避免绕过 Markdown 文件列表读写任意 UTF-8 文件。
 - 修复 Write 模式自动保存竞态：同一文件保存请求串行化，保存中继续编辑会在前一轮完成后再写入最新内容，避免旧请求晚返回覆盖新内容。
@@ -362,8 +373,9 @@
 - 修复附件存储输入校验：`AttachmentStore` 现在严格校验 `dataBase64`，非法 base64 不会被 `Buffer.from(..., "base64")` 宽松解码后保存为损坏附件。
 - 修复附件创建失败副产物：`AttachmentStore.create()` 在附件二进制写入后如果索引更新失败，会删除刚创建的 `.bin` 文件并原样抛出错误，避免留下孤儿附件。
 - 修复 composer 附件删除竞态：发送中或当前 active thread 运行中会禁用附件删除，避免用户在 runtime 读取附件前删除 blob 导致 turn 读取缺失。
-- 优化 composer 图片交互：对话框支持从剪贴板直接粘贴 PNG/JPEG/WebP/GIF 图片，图片会在 composer 内以缩略图预览展示；缩略图右上角悬浮删除按钮和空输入框 Backspace/Delete 都会走同一条附件删除 IPC，发送中或 active turn 运行中继续禁用删除。
+- 优化 composer 图片交互：对话框支持从剪贴板直接粘贴 PNG/JPEG/WebP/GIF 图片，图片会在 renderer 生成 bounded thumbnail data URL 并在 composer 内以缩略图展示；缩略图右上角悬浮删除按钮和空输入框 Backspace/Delete 都会走同一条附件删除 IPC，发送中或 active turn 运行中继续禁用删除。
 - 修复 composer 附件可见状态脱节：`WorkbenchContext` 的 composer state 同时保存 `attachmentIds` 与缩略图展示记录，避免路由/组件重挂载后仍有待发送附件 id 但 UI 无法显示和删除。
+- 优化 Sidebar 底部工作台切换：原先只显示当前 `编码/写作` 状态的 footer 标签改为 Code/Write 快速切换控件，复用已有 `WorkbenchContext.actions.setRoute("code" | "write")`，设置入口继续保持独立按钮。
 - 加固本地持久化 ID 边界：`JsonlThreadStore` 和 `AttachmentStore` 在解析 thread / attachment 本地路径前校验 UUID，阻止 renderer 或损坏数据传入 `../` 之类路径片段访问、写入或删除持久化目录外文件。
 - 加固线程持久化输入校验：`JsonlThreadStore.createThread/listThreads/updateThread` 现在会在写入或过滤前校验 workspace、mode、relation、status、approvalPolicy、sandboxMode、goal 等运行时输入，避免坏 IPC 数据写入 index/thread JSON。
 - 修复线程创建失败副产物：`JsonlThreadStore.createThread()` 在新线程目录和 JSONL 文件创建后，如果索引写入失败，会删除本次新建线程目录并原样抛出错误，避免留下未索引线程数据。
@@ -379,6 +391,7 @@
 - 优化 AgentRuntime 自动工具预算：固定 6 轮硬限制升级为模型档案 `agent_autonomy` 三档策略（保守 12、平衡 32、深度 64），仍可通过 `AGENT_MAX_TOOL_ROUNDS` 覆盖；运行时会在预算后段提示模型收敛或避免重复失败工具，预算耗尽时会把最后一批未执行 tool call 记录为 failed tool result，发出 `tool_budget_reached`，并以 `needs_continuation` 结束当前 turn。
 - 修复 `apply_patch` 执行阶段部分提交风险：多文件 patch 在全部 hunk dry-run 后写入；若后续文件写入失败，会按本次已提交文件逆序恢复原内容/删除新建文件，且失败 patch 不写入 file history。
 - 修复 `apply_patch` 重复文件段边界：同一个 patch 内重复出现同一 resolved target 会被拒绝；同一文件的多段修改必须放在一个文件头下的多个 hunk，避免成功路径覆盖早先段落或失败回滚恢复到中间状态。
+- 修复 `apply_patch` hunk 解析边界：hunk 内删除的原文如果本身以 `--` 开头，diff 行会以 `---` 开头；parser 现在只有在 `---` 后紧跟 `+++` 文件头时才切换文件段，避免把合法删除行误判为新文件头。
 - 修复 Workbench SSE 订阅生命周期：删除或归档曾经打开过但当前不 active 的线程时，也会释放 renderer 保留的 thread subscription，避免后台事件订阅长期残留。
 - 修复 `diagnose_workspace` 子项目路径解析：当工具在 workspace 子目录 cwd 中运行 typecheck 时，TypeScript 相对诊断路径会从实际命令 cwd 解析，再转换为 workspace-relative 路径，避免 monorepo 子包错误被误报到根目录。
 - 清理未使用的 worker protocol helper、worker-pool 类型守卫和 main 入口的无消费者 gateway re-export。

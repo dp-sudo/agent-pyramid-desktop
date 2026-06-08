@@ -29,6 +29,7 @@ const COMPOSER_IMAGE_MIME_TYPES = new Set([
   "image/gif",
 ]);
 const COMPOSER_IMAGE_ACCEPT = Array.from(COMPOSER_IMAGE_MIME_TYPES).join(",");
+const COMPOSER_THUMBNAIL_MAX_EDGE = 192;
 
 export interface ComposerImageFile {
   file: File;
@@ -204,9 +205,19 @@ export function FloatingComposer({
           actions.setError(result.message);
           continue;
         }
-        actions.addComposerAttachment(
-          previewUrl ? { ...result.value, previewUrl } : result.value,
-        );
+        const thumbnailUrl = await createThumbnailUrl(
+          imageFile.file,
+          previewUrl,
+          COMPOSER_THUMBNAIL_MAX_EDGE,
+        ).catch(() => undefined);
+        if (thumbnailUrl) {
+          revokeTrackedPreviewUrl(previewUrl);
+        }
+        actions.addComposerAttachment({
+          ...result.value,
+          ...(!thumbnailUrl && previewUrl ? { previewUrl } : {}),
+          ...(thumbnailUrl ? { thumbnailUrl } : {}),
+        });
       } catch (error) {
         revokeTrackedPreviewUrl(previewUrl);
         actions.setError(error instanceof Error ? error.message : String(error));
@@ -251,8 +262,8 @@ export function FloatingComposer({
               className="ds-composer-attachment"
               title={`${attachment.name} · ${formatBytes(attachment.size)}`}
             >
-              {attachment.previewUrl ? (
-                <img src={attachment.previewUrl} alt={attachment.name} />
+              {getAttachmentThumbnailSrc(attachment) ? (
+                <img src={getAttachmentThumbnailSrc(attachment)} alt={attachment.name} />
               ) : (
                 <span className="ds-composer-attachment-fallback">
                   {attachment.name}
@@ -392,11 +403,67 @@ export function FloatingComposer({
   );
 }
 
+async function createThumbnailUrl(
+  file: File,
+  sourceUrl: string | undefined,
+  maxEdge: number,
+): Promise<string | undefined> {
+  if (
+    !sourceUrl ||
+    typeof document === "undefined" ||
+    typeof Image === "undefined"
+  ) {
+    return undefined;
+  }
+
+  const image = await loadImage(sourceUrl);
+  const size = getContainSize(image.naturalWidth, image.naturalHeight, maxEdge);
+  if (size.width <= 0 || size.height <= 0) return undefined;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const context = canvas.getContext("2d");
+  if (!context) return undefined;
+
+  context.drawImage(image, 0, 0, size.width, size.height);
+  const outputType = file.type === "image/jpeg" ? "image/jpeg" : "image/png";
+  return canvas.toDataURL(outputType, 0.86);
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to decode image thumbnail."));
+    image.src = src;
+  });
+}
+
 function createPreviewUrl(file: File): string | undefined {
   if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
     return undefined;
   }
   return URL.createObjectURL(file);
+}
+
+export function getContainSize(
+  width: number,
+  height: number,
+  maxEdge: number,
+): { width: number; height: number } {
+  if (width <= 0 || height <= 0 || maxEdge <= 0) return { width: 0, height: 0 };
+  const scale = Math.min(1, maxEdge / Math.max(width, height));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+export function getAttachmentThumbnailSrc(
+  attachment: Pick<ComposerAttachment, "thumbnailUrl" | "previewUrl">,
+): string | undefined {
+  return attachment.thumbnailUrl ?? attachment.previewUrl;
 }
 
 function isBlobPreviewUrl(value: string | undefined): value is string {

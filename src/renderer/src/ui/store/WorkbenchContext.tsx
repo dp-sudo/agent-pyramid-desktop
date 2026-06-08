@@ -34,6 +34,7 @@ export type RightPanelMode = "changes" | "todo" | "plan" | "file" | null;
 
 export interface ComposerAttachment extends AttachmentRecord {
   previewUrl?: string;
+  thumbnailUrl?: string;
 }
 
 export interface ComposerState {

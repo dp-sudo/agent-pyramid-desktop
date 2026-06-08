@@ -318,7 +318,8 @@
   },
   "routes": {
     "code": "编码",
-    "write": "写作"
+    "write": "写作",
+    "switchWorkbench": "切换工作台"
   },
   "empty": {
     "title": "开始新的会话",

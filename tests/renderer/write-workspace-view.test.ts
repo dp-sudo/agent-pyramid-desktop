@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   formatWriteFileMeta,
+  getWriteCompletionAcceptState,
+  getWriteDocumentEditState,
   getWriteWorkspaceSwitchState,
   getWriteListState,
   shouldApplyWriteOpenResult,
   shouldDisableWriteSave,
   shouldSaveWriteFileBeforeSwitch,
+  shouldUseSelectedWriteWorkspace,
 } from "../../src/renderer/src/ui/components/write/WriteWorkspaceView";
 
 describe("WriteWorkspaceView helpers", () => {
@@ -125,6 +128,19 @@ describe("WriteWorkspaceView helpers", () => {
     })).toBe(false);
   });
 
+  it("uses selected workspaces only when the thread selection gate allows it", async () => {
+    await expect(shouldUseSelectedWriteWorkspace("/workspace")).resolves.toBe(true);
+    await expect(
+      shouldUseSelectedWriteWorkspace("/workspace", () => undefined),
+    ).resolves.toBe(true);
+    await expect(
+      shouldUseSelectedWriteWorkspace("/workspace", async () => true),
+    ).resolves.toBe(true);
+    await expect(
+      shouldUseSelectedWriteWorkspace("/workspace", async () => false),
+    ).resolves.toBe(false);
+  });
+
   it("clears file-specific state when switching workspace", () => {
     expect(getWriteWorkspaceSwitchState()).toEqual({
       files: [],
@@ -175,5 +191,23 @@ describe("WriteWorkspaceView helpers", () => {
     });
 
     expect(meta).toContain("1.5 KB");
+  });
+
+  it("keeps document edits isolated from global composer state", () => {
+    const editState = getWriteDocumentEditState("draft body");
+    expect(editState).toEqual({
+      content: "draft body",
+      completion: "",
+    });
+    expect(editState).not.toHaveProperty("composerText");
+  });
+
+  it("accepts local completion without producing composer text", () => {
+    const nextState = getWriteCompletionAcceptState("draft", " body");
+    expect(nextState).toEqual({
+      content: "draft body",
+      completion: "",
+    });
+    expect(nextState).not.toHaveProperty("composerText");
   });
 });

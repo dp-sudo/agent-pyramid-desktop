@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   completeMarkdownInline,
   listMarkdownFiles,
+  readMarkdownFileContent,
   resolveWritePathForAccess,
   resolveWritePath,
 } from "../../../src/main/ipc/write-handlers";
@@ -75,6 +76,18 @@ describe("write handlers helpers", () => {
       expect(() => resolveWritePath(workspace, "src/index.ts")).toThrow(
         "Write service only supports Markdown files: src/index.ts",
       );
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects invalid UTF-8 markdown reads", async () => {
+    const workspace = await makeTempDir("write-invalid-utf8-");
+    try {
+      await fs.writeFile(path.join(workspace, "bad.md"), Buffer.from([0xff, 0xfe]));
+
+      await expect(readMarkdownFileContent(workspace, "bad.md"))
+        .rejects.toThrow("write.get path is not valid UTF-8: bad.md");
     } finally {
       await removeTempDir(workspace);
     }

@@ -8,6 +8,7 @@ import {
   resolveWorkspacePathForAccess,
   toWorkspaceRelative,
 } from "./workspace-policy.js";
+import { assertUtf8TextBuffer } from "./text-file.js";
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const MIN_COMMAND_TIMEOUT_MS = 100;
@@ -308,7 +309,7 @@ async function resolveDiagnosticCommand(cwdPath: string): Promise<string> {
       throw error;
     }
   }
-  return "npx tsc --noEmit";
+  return "npx --no-install tsc --noEmit";
 }
 
 interface StreamCapture {
@@ -656,9 +657,7 @@ function requiredPath(value: unknown, message: string): string {
 
 async function assertTextFile(filePath: string, relativePath: string): Promise<void> {
   const sample = await fs.readFile(filePath);
-  if (sample.includes(0)) {
-    throw new Error(`diagnose_file path appears to be binary: ${relativePath}`);
-  }
+  assertUtf8TextBuffer(sample, relativePath, "diagnose_file path");
 }
 
 function optionalString(value: unknown): string | undefined {

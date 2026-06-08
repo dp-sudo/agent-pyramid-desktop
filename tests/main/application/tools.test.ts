@@ -296,6 +296,35 @@ describe("application tools", () => {
         truncated: false,
       });
 
+      await fs.writeFile(path.join(workspace, "src", "unicode.txt"), "你a", "utf8");
+      await expect(
+        registry.execute(
+          {
+            id: "call-read-unicode-too-small",
+            name: "read_file",
+            arguments: { path: "src/unicode.txt", max_bytes: 2 },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ),
+      ).rejects.toThrow("read_file max_bytes ended before a complete UTF-8 character: src/unicode.txt");
+      const unicodeRead = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "call-read-unicode",
+              name: "read_file",
+              arguments: { path: "src/unicode.txt", max_bytes: 3 },
+            },
+            { threadId: "thread-1", turnId: "turn-1", workspace },
+          )
+        ).content,
+      ) as { content: string; bytesRead: number; truncated: boolean };
+      expect(unicodeRead).toMatchObject({
+        content: "你",
+        bytesRead: 3,
+        truncated: true,
+      });
+
       const searched = JSON.parse(
         (
           await registry.execute(
@@ -360,6 +389,28 @@ describe("application tools", () => {
           { threadId: "thread-1", turnId: "turn-1", workspace },
         ),
       ).rejects.toThrow("Path is skipped by workspace tool policy: DeepSeek/reference.ts");
+
+      await fs.writeFile(path.join(workspace, "src", "invalid-utf8.txt"), Buffer.from([0xff, 0xfe]));
+      await expect(
+        registry.execute(
+          {
+            id: "call-invalid-utf8",
+            name: "read_file",
+            arguments: { path: "src/invalid-utf8.txt" },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ),
+      ).rejects.toThrow("read_file path is not valid UTF-8: src/invalid-utf8.txt");
+      await expect(
+        registry.execute(
+          {
+            id: "call-search-invalid-utf8",
+            name: "search_files",
+            arguments: { query: "marker", path: "src/invalid-utf8.txt" },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ),
+      ).rejects.toThrow("search_files path is not valid UTF-8: src/invalid-utf8.txt");
     } finally {
       await removeTempDir(workspace);
       await removeTempDir(outside);
@@ -483,6 +534,24 @@ describe("application tools", () => {
           context,
         ),
       ).rejects.toThrow("File has been modified since it was read.");
+
+      await fs.writeFile(path.join(workspace, "invalid.txt"), Buffer.from([0xff, 0xfe]));
+      await expect(
+        registry.execute(
+          { id: "call-read-invalid", name: "read_file", arguments: { path: "invalid.txt" } },
+          context,
+        ),
+      ).rejects.toThrow("read_file path is not valid UTF-8: invalid.txt");
+      await expect(
+        registry.execute(
+          {
+            id: "call-overwrite-invalid",
+            name: "write_file",
+            arguments: { path: "invalid.txt", content: "next\n", overwrite: true },
+          },
+          context,
+        ),
+      ).rejects.toThrow("File is not valid UTF-8: invalid.txt");
     } finally {
       await removeTempDir(workspace);
     }
@@ -531,6 +600,48 @@ describe("application tools", () => {
 
       expect(await fs.readFile(path.join(workspace, "file.ts"), "utf8"))
         .toBe("alpha\nBETA\ngamma\n");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("keeps UTF-8 BOM bytes consistent between reads and edits", async () => {
+    const workspace = await makeTempDir("coding-tools-bom-");
+    try {
+      const bomContent = "\uFEFFconst value = 1;\n";
+      await fs.writeFile(path.join(workspace, "file.ts"), bomContent, "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+
+      const read = JSON.parse(
+        (
+          await registry.execute(
+            { id: "call-read-bom", name: "read_file", arguments: { path: "file.ts" } },
+            context,
+          )
+        ).content,
+      ) as { content: string; fullSha256: string };
+      expect(read.content).toBe(bomContent);
+      expect(read.fullSha256).toBe(createHash("sha256").update(bomContent).digest("hex"));
+
+      await registry.execute(
+        {
+          id: "call-edit-bom",
+          name: "edit_file",
+          arguments: {
+            path: "file.ts",
+            old_string: "const value = 1;",
+            new_string: "const value = 2;",
+          },
+        },
+        context,
+      );
+      expect(await fs.readFile(path.join(workspace, "file.ts"), "utf8"))
+        .toBe("\uFEFFconst value = 2;\n");
     } finally {
       await removeTempDir(workspace);
     }
@@ -681,6 +792,274 @@ describe("application tools", () => {
         .toBe("alpha\nBETA\ngamma\n");
     } finally {
       await removeTempDir(workspace);
+    }
+  });
+
+  it("preserves apply_patch no-newline-at-end markers", async () => {
+    const workspace = await makeTempDir("apply-patch-no-newline-");
+    try {
+      await fs.writeFile(path.join(workspace, "existing.txt"), "old", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "existing.txt" } },
+        context,
+      );
+
+      await registry.execute(
+        {
+          id: "call-patch-no-newline",
+          name: "apply_patch",
+          arguments: {
+            patch: [
+              "--- a/existing.txt",
+              "+++ b/existing.txt",
+              "@@ -1 +1 @@",
+              "-old",
+              "\\ No newline at end of file",
+              "+new",
+              "\\ No newline at end of file",
+              "--- /dev/null",
+              "+++ b/created.txt",
+              "@@ -0,0 +1 @@",
+              "+created",
+              "\\ No newline at end of file",
+            ].join("\n"),
+          },
+        },
+        context,
+      );
+
+      expect(await fs.readFile(path.join(workspace, "existing.txt"), "utf8"))
+        .toBe("new");
+      expect(await fs.readFile(path.join(workspace, "created.txt"), "utf8"))
+        .toBe("created");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects apply_patch hunks that omit required no-newline markers", async () => {
+    const workspace = await makeTempDir("apply-patch-missing-no-newline-");
+    try {
+      await fs.writeFile(path.join(workspace, "existing.txt"), "old", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "existing.txt" } },
+        context,
+      );
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-patch-missing-marker",
+            name: "apply_patch",
+            arguments: {
+              patch: [
+                "--- a/existing.txt",
+                "+++ b/existing.txt",
+                "@@ -1 +1 @@",
+                "-old",
+                "+new",
+              ].join("\n"),
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("apply_patch hunk does not match existing.txt.");
+      expect(await fs.readFile(path.join(workspace, "existing.txt"), "utf8"))
+        .toBe("old");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("does not treat removed hunk lines beginning with dashes as file headers", async () => {
+    const workspace = await makeTempDir("apply-patch-dash-lines-");
+    try {
+      await fs.writeFile(path.join(workspace, "flags.txt"), "-- old\nkeep\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "flags.txt" } },
+        context,
+      );
+
+      await registry.execute(
+        {
+          id: "call-patch-dash-line",
+          name: "apply_patch",
+          arguments: {
+            patch: [
+              "--- a/flags.txt",
+              "+++ b/flags.txt",
+              "@@ -1,2 +1,2 @@",
+              "--- old",
+              "+-- new",
+              " keep",
+            ].join("\n"),
+          },
+        },
+        context,
+      );
+
+      expect(await fs.readFile(path.join(workspace, "flags.txt"), "utf8"))
+        .toBe("-- new\nkeep\n");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("preserves CRLF line endings when applying patches", async () => {
+    const workspace = await makeTempDir("apply-patch-crlf-");
+    try {
+      await fs.writeFile(path.join(workspace, "windows.txt"), "alpha\r\nbeta\r\ngamma\r\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "windows.txt" } },
+        context,
+      );
+
+      await registry.execute(
+        {
+          id: "call-patch-crlf",
+          name: "apply_patch",
+          arguments: {
+            patch: [
+              "--- a/windows.txt",
+              "+++ b/windows.txt",
+              "@@ -1,3 +1,3 @@",
+              " alpha",
+              "-beta",
+              "+BETA",
+              " gamma",
+            ].join("\n"),
+          },
+        },
+        context,
+      );
+
+      expect(await fs.readFile(path.join(workspace, "windows.txt"), "utf8"))
+        .toBe("alpha\r\nBETA\r\ngamma\r\n");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects writes when files change between prepare and commit", async () => {
+    const workspace = await makeTempDir("coding-tools-write-race-");
+    try {
+      const targetPath = path.join(workspace, "file.ts");
+      await fs.writeFile(targetPath, "one\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "file.ts" } },
+        context,
+      );
+
+      const originalMkdir = fs.mkdir.bind(fs);
+      const mkdirSpy = vi.spyOn(fs, "mkdir").mockImplementation((async (
+        ...args: Parameters<typeof fs.mkdir>
+      ) => {
+        const result = await originalMkdir(...args);
+        await fs.writeFile(targetPath, "external\n", "utf8");
+        return result;
+      }) as typeof fs.mkdir);
+      try {
+        await expect(
+          registry.execute(
+            {
+              id: "call-edit-race",
+              name: "edit_file",
+              arguments: {
+                path: "file.ts",
+                old_string: "one",
+                new_string: "two",
+              },
+            },
+            context,
+          ),
+        ).rejects.toThrow("File changed before write: file.ts. Read it again before writing.");
+      } finally {
+        mkdirSpy.mockRestore();
+      }
+
+      expect(await fs.readFile(targetPath, "utf8")).toBe("external\n");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects creates when parent directories become symlinks before commit", async () => {
+    const workspace = await makeTempDir("coding-tools-symlink-race-");
+    const outside = await makeTempDir("coding-tools-symlink-race-outside-");
+    try {
+      const parentPath = path.join(workspace, "created");
+      const outsideTargetPath = path.join(outside, "file.ts");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+
+      const originalMkdir = fs.mkdir.bind(fs);
+      const mkdirSpy = vi.spyOn(fs, "mkdir").mockImplementation((async (
+        ...args: Parameters<typeof fs.mkdir>
+      ) => {
+        const result = await originalMkdir(...args);
+        const target = args[0];
+        if (typeof target === "string" && path.resolve(target) === parentPath) {
+          await fs.rm(parentPath, { recursive: true, force: true });
+          await fs.symlink(outside, parentPath);
+        }
+        return result;
+      }) as typeof fs.mkdir);
+      try {
+        await expect(
+          registry.execute(
+            {
+              id: "call-write-symlink-race",
+              name: "write_file",
+              arguments: {
+                path: "created/file.ts",
+                content: "created\n",
+              },
+            },
+            context,
+          ),
+        ).rejects.toThrow("Path escapes workspace: created/file.ts");
+      } finally {
+        mkdirSpy.mockRestore();
+      }
+
+      await expect(fs.access(outsideTargetPath)).rejects.toThrow();
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
     }
   });
 
@@ -1189,7 +1568,7 @@ describe("application tools", () => {
     }
   });
 
-  it("falls back to npx tsc diagnostics when package typecheck is unavailable", async () => {
+  it("falls back to local npx tsc diagnostics when package typecheck is unavailable", async () => {
     const workspace = await makeTempDir("diagnose-tools-fallback-");
     try {
       await fs.writeFile(
@@ -1223,7 +1602,7 @@ describe("application tools", () => {
         diagnostics: Array<{ path: string; code: string }>;
       };
 
-      expect(parsed.command).toBe("npx tsc --noEmit");
+      expect(parsed.command).toBe("npx --no-install tsc --noEmit");
       expect(parsed.diagnosticCount).toBeGreaterThan(0);
       expect(parsed.diagnostics[0]).toMatchObject({
         path: "src/index.ts",
@@ -1372,6 +1751,18 @@ describe("application tools", () => {
           context,
         ),
       ).rejects.toThrow("diagnose_file path is not a file: src");
+
+      await fs.writeFile(path.join(workspace, "src", "invalid.ts"), Buffer.from([0xff, 0xfe]));
+      await expect(
+        registry.execute(
+          {
+            id: "call-invalid-utf8",
+            name: "diagnose_file",
+            arguments: { path: "src/invalid.ts" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("diagnose_file path is not valid UTF-8: src/invalid.ts");
     } finally {
       await removeTempDir(workspace);
     }

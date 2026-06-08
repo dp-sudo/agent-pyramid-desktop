@@ -203,6 +203,7 @@ Notes:
 
 Notes:
 
+- `write.get` reads Markdown as strict UTF-8 and fails instead of returning replacement characters for invalid bytes.
 - `write.put` performs a plain UTF-8 file write after workspace path validation.
 
 - Write `workspace` must be an absolute path.

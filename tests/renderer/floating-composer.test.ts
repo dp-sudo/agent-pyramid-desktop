@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   canSubmitComposerDraft,
+  getAttachmentThumbnailSrc,
   getClipboardImageFiles,
   getComposerImageAttachmentName,
+  getContainSize,
   getDeleteShortcutAttachmentId,
   isAttachmentRemovalDisabled,
   normalizeSupportedComposerImageMimeType,
@@ -111,6 +113,24 @@ describe("FloatingComposer", () => {
     ).toBe("screen.webp");
   });
 
+  it("calculates contained thumbnail dimensions without upscaling", () => {
+    expect(getContainSize(4000, 2000, 192)).toEqual({ width: 192, height: 96 });
+    expect(getContainSize(120, 80, 192)).toEqual({ width: 120, height: 80 });
+    expect(getContainSize(0, 80, 192)).toEqual({ width: 0, height: 0 });
+  });
+
+  it("prefers generated thumbnails over fallback preview urls", () => {
+    expect(
+      getAttachmentThumbnailSrc({
+        thumbnailUrl: "data:image/png;base64,thumb",
+        previewUrl: "blob:original",
+      }),
+    ).toBe("data:image/png;base64,thumb");
+    expect(getAttachmentThumbnailSrc({ previewUrl: "blob:original" })).toBe(
+      "blob:original",
+    );
+  });
+
   it("maps empty-text Backspace/Delete to the newest removable attachment", () => {
     const attachments: ComposerAttachment[] = [
       attachment("attachment-1"),
@@ -163,6 +183,6 @@ function attachment(id: string): ComposerAttachment {
     mimeType: "image/png",
     size: 10,
     createdAt: "2026-06-09T00:00:00.000Z",
-    previewUrl: `blob:${id}`,
+    thumbnailUrl: `data:image/png;base64,${id}`,
   };
 }

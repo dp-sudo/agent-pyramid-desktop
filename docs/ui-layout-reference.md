@@ -137,6 +137,7 @@ Purpose:
 - Group threads by `workspace`.
 - Select, archive, restore, and delete threads.
 - Open Settings route.
+- Switch quickly between Code and Write workbenches.
 
 Key classes:
 
@@ -151,6 +152,8 @@ Key classes:
 - `ds-sidebar-row-actions`
 - `ds-sidebar-delete-confirm`
 - `ds-sidebar-footer`
+- `ds-sidebar-workbench-switch`
+- `ds-sidebar-workbench-button`
 
 Thread row attributes:
 
@@ -159,6 +162,8 @@ Thread row attributes:
 - Pending delete confirmation: `is-confirming-delete`.
 - Main button uses `aria-current="page"` when active.
 - Delete behavior depends on `basicPreferences.confirmThreadDelete`.
+- Footer workbench switch uses the existing `WorkbenchContext.actions.setRoute`
+  path for `code` / `write`; Settings remains a separate button.
 
 ### Topbar
 
@@ -324,13 +329,16 @@ States:
 - `runtimeBusy`: derived from the active thread's entry in
   `state.inFlightTurnsByThreadId`.
 - `attachments`: thumbnail display records in `state.composer.attachments`;
-  authoritative ids live in `state.composer.attachmentIds`.
+  generated thumbnail data URLs live on `thumbnailUrl`, with `previewUrl` used
+  only as an object-URL fallback when thumbnail generation fails. Authoritative
+  ids live in `state.composer.attachmentIds`.
 - Attachment removal is disabled while a send is pending or the active thread is
   running, so runtime attachment reads cannot race with composer cleanup.
 - `menuOpen`, `pickerOpen`: popovers close on outside pointer down or Escape.
 - Clipboard paste filters to PNG/JPEG/WebP/GIF files, creates the same
-  renderer attachment records as the picker path, and keeps normal text paste
-  behavior when clipboard text is present.
+  renderer attachment records as the picker path, generates a bounded thumbnail
+  for the composer preview, and keeps normal text paste behavior when clipboard
+  text is present.
 - Backspace/Delete removes the newest attachment only when the textarea is empty
   and removal is not disabled.
 
@@ -432,7 +440,9 @@ Purpose:
 
 - Navigate back to Code route.
 - Navigate to Settings.
-- Pick/open workspace.
+- Pick/open workspace and select or create a `mode: "write"` thread for that
+  workspace before file listing starts; if thread selection fails, the Write
+  file list/editor state is not applied to that workspace.
 - Refresh markdown file list.
 - Show active workspace.
 - Search markdown files.
@@ -496,6 +506,10 @@ Behavior constants:
   from an earlier click cannot overwrite the later active file.
 - `write.get`, `write.put`, and inline completion only accept Markdown file
   paths (`.md`, `.mdx`, `.markdown`), matching the file list.
+- `write.get` returns only strict UTF-8 Markdown content; invalid local bytes
+  surface as a visible load error instead of replacement-character text.
+- Editing content or accepting inline completion only updates local Write
+  document state. It does not overwrite global `composer.text`.
 
 Save state:
 
@@ -716,7 +730,7 @@ flowchart TD
   Code --> Composer
   Code --> ModelProfiles
   Write --> Workspace
-  Write --> Composer
+  Write --> Threads
   Settings --> Preferences
   Settings --> ModelProfiles
   Settings --> Code
@@ -727,8 +741,11 @@ flowchart TD
 Cross-route coupling:
 
 - Code and Write share `workspaceRoot` and left sidebar width.
-- Write editor mirrors content into `composer.text`, so switching back to Code
-  can reuse draft text.
+- Code and Write share the thread list state, but route actions prefer threads
+  whose `ThreadRecord.mode` matches the active route.
+- Write document text is isolated from global composer draft state. Assistant
+  prompts must come from explicit composer input, not implicit full-document
+  mirroring.
 - Settings model profile changes update `modelConfig`, `modelProfiles`, and
   composer model selection.
 - Basic settings can change startup route, inspector default, sidebar width

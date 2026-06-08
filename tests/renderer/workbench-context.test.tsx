@@ -350,7 +350,7 @@ describe("WorkbenchContext reducer", () => {
       mimeType: "image/png",
       size: 12,
       createdAt: "2026-06-08T00:00:00.000Z",
-      previewUrl: "blob:attachment-1",
+      thumbnailUrl: "data:image/png;base64,attachment-1",
     };
     const withOne = reducer(INITIAL_STATE, {
       type: "addComposerAttachment",

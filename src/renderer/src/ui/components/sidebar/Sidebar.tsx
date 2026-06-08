@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../../store/WorkbenchContext";
+import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
 import type { ThreadSummary } from "../../../../../shared/agent-contracts";
 
 interface SidebarProps {
@@ -13,6 +13,7 @@ interface SidebarProps {
   onArchiveThread: (id: string) => void;
   onRestoreThread: (id: string) => void;
   onOpenSettings: () => void;
+  onSwitchWorkbench: (route: Extract<WorkbenchRoute, "code" | "write">) => void;
   workspaceRoot: string;
   showArchivedThreads: boolean;
   confirmThreadDelete: boolean;
@@ -29,6 +30,7 @@ export function Sidebar({
   onArchiveThread,
   onRestoreThread,
   onOpenSettings,
+  onSwitchWorkbench,
   workspaceRoot,
   showArchivedThreads,
   confirmThreadDelete,
@@ -178,9 +180,27 @@ export function Sidebar({
         <button type="button" className="ds-pill" onClick={onOpenSettings}>
           {t("common.settings")}
         </button>
-        <span className="ds-pill" style={{ marginLeft: "auto", color: "var(--ds-text-faint)" }}>
-          {activeView === "code" ? t("routes.code") : t("routes.write")}
-        </span>
+        <div
+          className="ds-sidebar-workbench-switch"
+          role="group"
+          aria-label={t("routes.switchWorkbench")}
+        >
+          {getWorkbenchSwitchOptions(activeView).map((option) => (
+            <button
+              key={option.route}
+              type="button"
+              className={`ds-sidebar-workbench-button ${
+                option.active ? "is-active" : ""
+              }`}
+              aria-pressed={option.active}
+              onClick={() => {
+                if (!option.active) onSwitchWorkbench(option.route);
+              }}
+            >
+              {t(option.labelKey)}
+            </button>
+          ))}
+        </div>
       </div>
     </aside>
   );
@@ -223,4 +243,17 @@ export function getThreadDeleteClickMode(
   confirmThreadDelete: boolean,
 ): "confirm" | "delete" {
   return confirmThreadDelete ? "confirm" : "delete";
+}
+
+export function getWorkbenchSwitchOptions(
+  activeView: "code" | "write",
+): Array<{
+  route: Extract<WorkbenchRoute, "code" | "write">;
+  labelKey: "routes.code" | "routes.write";
+  active: boolean;
+}> {
+  return [
+    { route: "code", labelKey: "routes.code", active: activeView === "code" },
+    { route: "write", labelKey: "routes.write", active: activeView === "write" },
+  ];
 }
