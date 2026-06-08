@@ -110,7 +110,8 @@ export function summarizeToolItem(
 ): ToolDisplay {
   const path = readStringArg(item.args, "path") ?? readStringArg(item.args, "workspace");
   const query = readStringArg(item.args, "query");
-  const title = titleForTool(item.name, path, query, t);
+  const command = readStringArg(item.args, "command");
+  const title = titleForTool(item.name, { path, query, command }, t);
   const detail = formatToolDetail(item);
   return {
     title,
@@ -122,10 +123,14 @@ export function summarizeToolItem(
 
 function titleForTool(
   name: string,
-  path: string | undefined,
-  query: string | undefined,
+  args: {
+    path?: string;
+    query?: string;
+    command?: string;
+  },
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
+  const { path, query, command } = args;
   switch (name) {
     case "list_files":
       return path
@@ -147,6 +152,22 @@ function titleForTool(
       return path
         ? t("chat.tools.writeFilePath", { path })
         : t("chat.tools.writeFile");
+    case "apply_patch":
+      return t("chat.tools.applyPatch");
+    case "rollback_file":
+      return path
+        ? t("chat.tools.rollbackFilePath", { path })
+        : t("chat.tools.rollbackFile");
+    case "run_command":
+      return command
+        ? t("chat.tools.runCommandCommand", { command })
+        : t("chat.tools.runCommand");
+    case "diagnose_workspace":
+      return t("chat.tools.diagnoseWorkspace");
+    case "diagnose_file":
+      return path
+        ? t("chat.tools.diagnoseFilePath", { path })
+        : t("chat.tools.diagnoseFile");
     case "create_plan":
       return t("chat.tools.createPlan");
     case "update_goal":

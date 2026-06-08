@@ -220,6 +220,8 @@ flowchart LR
   InMemory["InMemoryToolRegistry"]
   Plan["create_plan"]
   Workspace["list_files\nread_file\nsearch_files"]
+  Coding["edit_file\nwrite_file\napply_patch\nrollback_file"]
+  Command["run_command\ndiagnose_workspace\ndiagnose_file"]
   Goal["update_goal"]
   Approval["Approval gate"]
 
@@ -227,9 +229,13 @@ flowchart LR
   Registry --> InMemory
   InMemory --> Plan
   InMemory --> Workspace
+  InMemory --> Coding
+  InMemory --> Command
   InMemory --> Goal
   Runtime --> Approval
   Approval -->|"skipped for read-only workspace tools"| Workspace
+  Approval -->|"diff preview for writes"| Coding
+  Approval -->|"default ask; auto can allow"| Command
   Approval -->|"skipped when mode-gated and available"| Plan
   Approval -->|"skipped when goal mode/active goal allows it"| Goal
 ```
@@ -240,6 +246,19 @@ Tool availability is decided at the runtime boundary:
 - `update_goal`: exposed in goal mode or active-goal threads.
 - `list_files`, `read_file`, `search_files`: read-only workspace tools and do
   not require approval.
+- `edit_file`, `write_file`, `apply_patch`, `rollback_file`: workspace write tools that
+  require approval, fresh read-state for existing files, and workspace path
+  validation. `apply_patch` dry-runs all hunks before writing and can show a
+  multi-file diff preview. `rollback_file` restores the latest in-memory agent
+  file history entry only when current content still matches that entry.
+- `run_command`: foreground command tool that runs inside the workspace,
+  returns stdout/stderr/exit status, requires approval, and is aborted when the
+  turn is interrupted.
+- `diagnose_workspace`: command-backed diagnostics tool that runs workspace
+  typecheck and requires approval because package scripts can execute shell
+  commands.
+- `diagnose_file`: read-only diagnostics tool that uses TypeScript Language
+  Service for one file and does not require approval.
 - Unknown or unavailable tool calls produce a visible `runtime_error` with
   `code: "tool_not_found"`.
 

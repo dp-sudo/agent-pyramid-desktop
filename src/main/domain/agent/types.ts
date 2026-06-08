@@ -40,6 +40,7 @@ export interface AgentToolContext {
   threadId: string;
   turnId: string;
   workspace?: string;
+  signal?: AbortSignal;
   readState?: {
     get(filePath: string): {
       content: string;
@@ -60,6 +61,50 @@ export interface AgentToolContext {
     ): void;
     delete(filePath: string): void;
     clear(): void;
+  };
+  fileHistory?: {
+    push(entry: {
+      threadId: string;
+      turnId: string;
+      toolName: string;
+      workspace: string;
+      filePath: string;
+      relativePath: string;
+      operation: "create" | "update" | "rollback";
+      beforeContent: string | null;
+      afterContent: string | null;
+      beforeSha256: string | null;
+      afterSha256: string | null;
+    }): {
+      id: string;
+      threadId: string;
+      turnId: string;
+      toolName: string;
+      workspace: string;
+      filePath: string;
+      relativePath: string;
+      operation: "create" | "update" | "rollback";
+      beforeContent: string | null;
+      afterContent: string | null;
+      beforeSha256: string | null;
+      afterSha256: string | null;
+      createdAt: string;
+    };
+    latest(filePath: string): {
+      id: string;
+      threadId: string;
+      turnId: string;
+      toolName: string;
+      workspace: string;
+      filePath: string;
+      relativePath: string;
+      operation: "create" | "update" | "rollback";
+      beforeContent: string | null;
+      afterContent: string | null;
+      beforeSha256: string | null;
+      afterSha256: string | null;
+      createdAt: string;
+    } | undefined;
   };
 }
 

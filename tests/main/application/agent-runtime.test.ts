@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../../../src/main/application/agent-runtime";
+import { createCommandTools } from "../../../src/main/application/tools/command-tools";
 import { createCodingTools } from "../../../src/main/application/tools/coding-tools";
 import { createPlanTool } from "../../../src/main/application/tools/create-plan-tool";
 import { createGoalTools } from "../../../src/main/application/tools/goal-tools";
@@ -19,6 +20,10 @@ import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
 const IMAGE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
+function nodeCommand(script: string): string {
+  return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`;
+}
 
 class FakePool {
   readonly requests: LlmRequest[] = [];
@@ -70,16 +75,33 @@ function finalItems<T extends { id: string }>(items: T[]): T[] {
 }
 
 async function waitFor(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs = 1000,
 ): Promise<void> {
   const startedAt = Date.now();
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error("Timed out waiting for condition.");
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch (error) {
+    if (hasNodeErrorCode(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+function hasNodeErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code;
 }
 
 describe("AgentRuntime", () => {
@@ -783,6 +805,206 @@ describe("AgentRuntime", () => {
     }
   });
 
+  it("requests approval with a multi-file diff preview for apply_patch", async () => {
+    const workspace = await makeTempDir("runtime-apply-patch-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value = 1;\n", "utf8");
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            { id: "call-read", name: "read_file", arguments: { path: "src/index.ts" } },
+          ],
+          raw: {},
+        },
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-patch",
+              name: "apply_patch",
+              arguments: {
+                patch: [
+                  "--- a/src/index.ts",
+                  "+++ b/src/index.ts",
+                  "@@ -1 +1 @@",
+                  "-const value = 1;",
+                  "+const value = 2;",
+                  "--- /dev/null",
+                  "+++ b/src/created.ts",
+                  "@@ -0,0 +1 @@",
+                  "+export const created = true;",
+                ].join("\n"),
+              },
+            },
+          ],
+          raw: {},
+        },
+        {
+          text: "Patch denied.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+      const runtime = createRuntime(registry);
+      await runtime.startTurn({
+        threadId: thread.id,
+        text: "Apply patch",
+      });
+      await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+
+      const approval = events.find((event) => event.kind === "approval_requested");
+      expect(approval).toMatchObject({
+        kind: "approval_requested",
+        toolName: "apply_patch",
+        preview: {
+          kind: "multi_file_diff",
+          added: 2,
+          removed: 1,
+          files: [
+            { path: "src/index.ts", operation: "update", added: 1, removed: 1 },
+            { path: "src/created.ts", operation: "create", added: 1, removed: 0 },
+          ],
+        },
+      });
+      if (!approval || approval.kind !== "approval_requested") {
+        throw new Error("Expected apply_patch approval request.");
+      }
+      runtime.respondApproval({ approvalId: approval.approvalId, decision: "deny" });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+      expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
+        .toBe("const value = 1;\n");
+      await expect(fs.access(path.join(workspace, "src", "created.ts")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("requests approval with a diff preview for rollback_file", async () => {
+    const workspace = await makeTempDir("runtime-rollback-file-");
+    try {
+      await fs.writeFile(path.join(workspace, "file.ts"), "one\n", "utf8");
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            { id: "call-read", name: "read_file", arguments: { path: "file.ts" } },
+          ],
+          raw: {},
+        },
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-edit",
+              name: "edit_file",
+              arguments: {
+                path: "file.ts",
+                old_string: "one",
+                new_string: "two",
+              },
+            },
+          ],
+          raw: {},
+        },
+        {
+          text: "Edited.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+      const runtime = createRuntime(registry);
+      await runtime.startTurn({
+        threadId: thread.id,
+        text: "Edit file",
+      });
+      await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+      const editApproval = events.find((event) => event.kind === "approval_requested");
+      if (!editApproval || editApproval.kind !== "approval_requested") {
+        throw new Error("Expected edit approval request.");
+      }
+      runtime.respondApproval({ approvalId: editApproval.approvalId, decision: "allow" });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+      expect(await fs.readFile(path.join(workspace, "file.ts"), "utf8")).toBe("two\n");
+
+      events.length = 0;
+      await store.updateThread(thread.id, { approvalPolicy: "on-request" });
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-rollback",
+              name: "rollback_file",
+              arguments: { path: "file.ts" },
+            },
+          ],
+          raw: {},
+        },
+        {
+          text: "Rollback denied.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+      await runtime.startTurn({
+        threadId: thread.id,
+        text: "Rollback file",
+      });
+      await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+
+      const approval = events.find((event) => event.kind === "approval_requested");
+      expect(approval).toMatchObject({
+        kind: "approval_requested",
+        toolName: "rollback_file",
+        preview: {
+          kind: "file_diff",
+          path: "file.ts",
+          operation: "update",
+          added: 1,
+          removed: 1,
+        },
+      });
+      if (!approval || approval.kind !== "approval_requested") {
+        throw new Error("Expected rollback approval request.");
+      }
+      runtime.respondApproval({ approvalId: approval.approvalId, decision: "deny" });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+      expect(await fs.readFile(path.join(workspace, "file.ts"), "utf8")).toBe("two\n");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("denies write tools in read-only sandbox mode before execution", async () => {
     const thread = await store.createThread({
       title: "Runtime",
@@ -841,6 +1063,325 @@ describe("AgentRuntime", () => {
       status: "failed",
       result: { denied: true },
     });
+  });
+
+  it("requests approval for run_command even in auto mode and returns output after approval", async () => {
+    const workspace = await makeTempDir("runtime-command-tools-");
+    try {
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      await store.updateThread(thread.id, { approvalPolicy: "auto" });
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-command",
+              name: "run_command",
+              arguments: {
+                command: nodeCommand("process.stdout.write('hello runtime');"),
+              },
+            },
+          ],
+          raw: {},
+        },
+        {
+          text: "Command finished.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+      const runtime = createRuntime(registry);
+      await runtime.startTurn({
+        threadId: thread.id,
+        text: "Run command",
+      });
+      await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+
+      const approval = events.find((event) => event.kind === "approval_requested");
+      expect(approval).toMatchObject({
+        kind: "approval_requested",
+        toolName: "run_command",
+        args: {
+          command: nodeCommand("process.stdout.write('hello runtime');"),
+        },
+      });
+      if (!approval || approval.kind !== "approval_requested") {
+        throw new Error("Expected command approval request.");
+      }
+      runtime.respondApproval({ approvalId: approval.approvalId, decision: "allow" });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+      expect(fakePool.requests).toHaveLength(2);
+      const toolMessage = fakePool.requests[1].messages.find(
+        (message) => message.role === "tool" && message.toolCallId === "call-command",
+      );
+      expect(toolMessage?.content).toContain("hello runtime");
+      const replayed = [];
+      for await (const item of store.replayItems(thread.id)) {
+        replayed.push(item);
+      }
+      expect(
+        finalItems(replayed).find((item) => item.kind === "tool" && item.name === "run_command"),
+      ).toMatchObject({
+        status: "completed",
+        result: {
+          cwd: ".",
+          exitCode: 0,
+          stdout: "hello runtime",
+          timedOut: false,
+        },
+      });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("requests approval for diagnose_workspace before running workspace scripts", async () => {
+    const workspace = await makeTempDir("runtime-diagnose-workspace-");
+    try {
+      await fs.writeFile(
+        path.join(workspace, "package.json"),
+        JSON.stringify({
+          scripts: {
+            typecheck: nodeCommand("process.stderr.write('src/index.ts(1,7): error TS2322: Type mismatch.\\n'); process.exit(2);"),
+          },
+        }),
+        "utf8",
+      );
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            { id: "call-diagnose", name: "diagnose_workspace", arguments: {} },
+          ],
+          raw: {},
+        },
+        {
+          text: "Diagnostics complete.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+
+      const runtime = createRuntime(registry);
+      await runtime.startTurn({
+        threadId: thread.id,
+        text: "Diagnose",
+      });
+      await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+
+      const approval = events.find((event) => event.kind === "approval_requested");
+      expect(approval).toMatchObject({
+        kind: "approval_requested",
+        toolName: "diagnose_workspace",
+      });
+      if (!approval || approval.kind !== "approval_requested") {
+        throw new Error("Expected diagnose_workspace approval request.");
+      }
+      runtime.respondApproval({ approvalId: approval.approvalId, decision: "allow" });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+      expect(fakePool.requests).toHaveLength(2);
+      const toolMessage = fakePool.requests[1].messages.find(
+        (message) => message.role === "tool" && message.toolCallId === "call-diagnose",
+      );
+      expect(toolMessage?.content).toContain("TS2322");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("denies diagnose_workspace when approval policy is never", async () => {
+    const workspace = await makeTempDir("runtime-diagnose-workspace-never-");
+    try {
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      await store.updateThread(thread.id, { approvalPolicy: "never" });
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            { id: "call-diagnose", name: "diagnose_workspace", arguments: {} },
+          ],
+          raw: {},
+        },
+        {
+          text: "Denied.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+
+      await createRuntime(registry).startTurn({
+        threadId: thread.id,
+        text: "Diagnose",
+      });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+      expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+      const replayed = [];
+      for await (const item of store.replayItems(thread.id)) {
+        replayed.push(item);
+      }
+      expect(
+        finalItems(replayed).find((item) => item.kind === "tool" && item.name === "diagnose_workspace"),
+      ).toMatchObject({
+        status: "failed",
+        result: { denied: true },
+      });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("runs diagnose_file without approval because it is read-only", async () => {
+    const workspace = await makeTempDir("runtime-diagnose-file-");
+    try {
+      await fs.writeFile(
+        path.join(workspace, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            noEmit: true,
+          },
+          include: ["src/**/*.ts"],
+        }),
+        "utf8",
+      );
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value: string = 1;\n", "utf8");
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            { id: "call-diagnose-file", name: "diagnose_file", arguments: { path: "src/index.ts" } },
+          ],
+          raw: {},
+        },
+        {
+          text: "File diagnostics complete.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+
+      await createRuntime(registry).startTurn({
+        threadId: thread.id,
+        text: "Diagnose file",
+      });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+      expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+      const toolMessage = fakePool.requests[1].messages.find(
+        (message) => message.role === "tool" && message.toolCallId === "call-diagnose-file",
+      );
+      expect(toolMessage?.content).toContain("src/index.ts");
+      expect(toolMessage?.content).toContain("TS2322");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("cancels an active run_command when the turn is interrupted", async () => {
+    const workspace = await makeTempDir("runtime-command-interrupt-");
+    try {
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      const startedPath = path.join(workspace, "started.txt");
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-command",
+              name: "run_command",
+              arguments: {
+                command: nodeCommand(
+                  "const fs = require('fs'); fs.writeFileSync('started.txt', '1'); setTimeout(() => undefined, 10000);",
+                ),
+                timeout_ms: 120000,
+              },
+            },
+          ],
+          raw: {},
+        },
+      ];
+      const runtime = createRuntime(registry);
+      const turn = await runtime.startTurn({
+        threadId: thread.id,
+        text: "Run long command",
+      });
+      await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+      const approval = events.find((event) => event.kind === "approval_requested");
+      if (!approval || approval.kind !== "approval_requested") {
+        throw new Error("Expected command approval request.");
+      }
+      runtime.respondApproval({ approvalId: approval.approvalId, decision: "allow" });
+      await waitFor(() => fileExists(startedPath));
+
+      await runtime.interruptTurn(turn.id);
+      await waitFor(() =>
+        events.some(
+          (event) => event.kind === "turn_completed" && event.status === "interrupted",
+        ),
+      );
+
+      expect(fakePool.canceledThreads).toEqual([thread.id]);
+      expect(events.some((event) => event.kind === "turn_failed")).toBe(false);
+      expect(
+        events.some(
+          (event) => event.kind === "runtime_error" && event.message.includes("Command was interrupted."),
+        ),
+      ).toBe(false);
+      const replayed = [];
+      for await (const item of store.replayItems(thread.id)) {
+        replayed.push(item);
+      }
+      expect(
+        finalItems(replayed).find((item) => item.kind === "tool" && item.name === "run_command"),
+      ).toMatchObject({
+        status: "failed",
+        result: {
+          message: "Command was interrupted.",
+        },
+      });
+    } finally {
+      await removeTempDir(workspace);
+    }
   });
 
   it("uses update_goal when goal mode is enabled and emits goal updates", async () => {

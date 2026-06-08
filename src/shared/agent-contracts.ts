@@ -282,13 +282,20 @@ export interface FileDiffLine {
 export interface FileDiffPreview {
   kind: "file_diff";
   path: string;
-  operation: "create" | "update";
+  operation: "create" | "update" | "delete";
   added: number;
   removed: number;
   lines: FileDiffLine[];
 }
 
-export type ApprovalPreview = FileDiffPreview;
+export interface MultiFileDiffPreview {
+  kind: "multi_file_diff";
+  files: FileDiffPreview[];
+  added: number;
+  removed: number;
+}
+
+export type ApprovalPreview = FileDiffPreview | MultiFileDiffPreview;
 
 export interface CompactionItem {
   kind: "compaction";

@@ -254,11 +254,22 @@ Tool availability:
 
 Approval policy currently implemented in runtime:
 
-- `list_files`, `read_file`, `search_files` skip approval.
+- Tools marked `metadata.isReadOnly` skip approval.
 - Enabled `create_plan` and `update_goal` skip approval.
-- Other tools require approval.
+- `sandboxMode: "read-only"` denies non-read-only tools before execution.
+- `approvalPolicy: "never"` denies non-read-only tools before execution.
+- `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
+- All remaining non-read-only tools require approval.
 
-The `ThreadRecord.approvalPolicy` field exists, but current runtime approval logic does not branch on all policy values. Treat this as a contract field with partial runtime enforcement before changing related behavior.
+`edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the file no longer matches the latest agent-written content. `run_command` is also treated as destructive because arbitrary shell commands can modify files or run workspace scripts; it requests approval even when `approvalPolicy: "auto"` is set.
+
+`apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written.
+
+File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; it is not replayed from JSONL after restart.
+
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions.
+
+`diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or `npx tsc`, it uses the command approval boundary instead of the read-only bypass. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
 
 ## Tool Budget
 
@@ -299,7 +310,7 @@ sequenceDiagram
 
 Pending approvals are held in memory in `AgentRuntime.pendingApprovals`. They are not resumed across app restart.
 
-Interrupting a turn denies pending approvals for that turn.
+Interrupting a turn denies pending approvals for that turn and aborts active tool controllers. Command tools receive the abort signal and terminate the child process/process group before the turn is marked interrupted.
 
 ## Interrupt Lifecycle
 
@@ -316,6 +327,7 @@ sequenceDiagram
   IPC->>RT: interruptTurn(turnId)
   RT->>RT: set status = interrupted
   RT->>RT: deny pending approvals
+  RT->>RT: abort active tool controllers
   RT->>Pool: cancel(threadId)
   RT->>Store: append warning SystemItem
   RT->>Bus: item_appended(SystemItem)
@@ -413,4 +425,3 @@ npm run typecheck
 npm run test
 npm run build
 ```
-

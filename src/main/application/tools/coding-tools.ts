@@ -18,15 +18,22 @@ export interface FileDiffLine {
 export interface FileDiffPreview {
   kind: "file_diff";
   path: string;
-  operation: "create" | "update";
+  operation: "create" | "update" | "delete";
   added: number;
   removed: number;
   lines: FileDiffLine[];
 }
 
+export interface MultiFileDiffPreview {
+  kind: "multi_file_diff";
+  files: FileDiffPreview[];
+  added: number;
+  removed: number;
+}
+
 export interface FileChangeResult {
   path: string;
-  operation: "create" | "update";
+  operation: "create" | "update" | "delete";
   bytes: number;
   modifiedAt: string;
   mtimeMs: number;
@@ -34,8 +41,15 @@ export interface FileChangeResult {
   diff: FileDiffPreview;
 }
 
+export interface PatchApplyResult {
+  files: FileChangeResult[];
+  added: number;
+  removed: number;
+  diff: MultiFileDiffPreview;
+}
+
 export function createCodingTools(): AgentTool[] {
-  return [editFileTool, writeFileTool];
+  return [editFileTool, writeFileTool, applyPatchTool, rollbackFileTool];
 }
 
 export const editFileTool: AgentTool = {
@@ -76,7 +90,7 @@ export const editFileTool: AgentTool = {
   },
   async execute(input, context) {
     const change = await prepareEdit(input, context);
-    const committed = await writePreparedChange(change, context);
+    const committed = await writePreparedChange(change, context, "edit_file");
     return toToolResult("edit_file", committed);
   },
 };
@@ -119,14 +133,82 @@ export const writeFileTool: AgentTool = {
   },
   async execute(input, context) {
     const change = await prepareWrite(input, context);
-    const committed = await writePreparedChange(change, context);
+    const committed = await writePreparedChange(change, context, "write_file");
     return toToolResult("write_file", committed);
+  },
+};
+
+export const applyPatchTool: AgentTool = {
+  metadata: {
+    category: "workspace",
+    isDestructive: true,
+  },
+  definition: {
+    name: "apply_patch",
+    description:
+      "Apply a unified diff patch to UTF-8 workspace files. Supports create and update hunks only; read existing files first so the patch can be checked against the latest content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        patch: {
+          type: "string",
+          description: "Unified diff patch text with ---/+++ file headers and @@ hunks.",
+        },
+      },
+      required: ["patch"],
+    },
+  },
+  async preview(input, context) {
+    const patch = await preparePatch(input, context);
+    return patch.diff;
+  },
+  async execute(input, context) {
+    const patch = await preparePatch(input, context);
+    const committed = await writePreparedChanges(patch.changes, context, "apply_patch");
+    return toPatchToolResult(committed);
+  },
+};
+
+export const rollbackFileTool: AgentTool = {
+  metadata: {
+    category: "workspace",
+    isDestructive: true,
+  },
+  definition: {
+    name: "rollback_file",
+    description:
+      "Rollback the most recent agent write to a workspace file in the current app session. Use when an edit, write, patch, or previous rollback should be undone.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Workspace-relative file path to rollback.",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  async preview(input, context) {
+    const change = await prepareRollback(input, context);
+    return change.diff;
+  },
+  async execute(input, context) {
+    const change = await prepareRollback(input, context);
+    const committed = await writePreparedChange(change, context, "rollback_file");
+    return toToolResult("rollback_file", committed);
   },
 };
 
 interface PreparedFileChange extends FileChangeResult {
   filePath: string;
   nextContent: string;
+  originalContent: string;
+}
+
+interface PreparedPatch {
+  changes: PreparedFileChange[];
+  diff: MultiFileDiffPreview;
 }
 
 async function prepareEdit(
@@ -197,28 +279,131 @@ async function prepareWrite(
   return buildPreparedChange(workspace, filePath, original, content, operation);
 }
 
+async function prepareRollback(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<PreparedFileChange> {
+  const workspace = requireWorkspace(context);
+  const relativePath = requiredString(input.path, "rollback_file requires a string path.");
+  const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "write");
+  const entry = context.fileHistory?.latest(filePath);
+  if (!entry) {
+    throw new Error(`rollback_file has no history for ${relativePath}.`);
+  }
+  if (path.resolve(entry.workspace) !== path.resolve(workspace)) {
+    throw new Error(`rollback_file history does not belong to this workspace: ${relativePath}`);
+  }
+
+  const current = await readCurrentTextOrMissing(filePath, relativePath);
+  const currentSha = current.exists ? sha256(current.content) : null;
+  if (currentSha !== entry.afterSha256) {
+    throw new Error(`rollback_file current content no longer matches the latest history entry: ${relativePath}`);
+  }
+
+  if (entry.beforeContent === null) {
+    return buildPreparedChange(workspace, filePath, current.content, "", "delete");
+  }
+  const operation: FileChangeResult["operation"] = current.exists ? "update" : "create";
+  return buildPreparedChange(workspace, filePath, current.exists ? current.content : "", entry.beforeContent, operation);
+}
+
 async function writePreparedChange(
   change: PreparedFileChange,
   context: AgentToolContext,
+  toolName: string,
 ): Promise<PreparedFileChange> {
   const { filePath, nextContent } = change;
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, nextContent, "utf8");
-  const stat = await fs.stat(filePath);
+  if (change.operation === "delete") {
+    await fs.rm(filePath, { force: true });
+  } else {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, nextContent, "utf8");
+  }
+  const stat = change.operation === "delete" ? undefined : await fs.stat(filePath);
   const contentHash = sha256(nextContent);
-  context.readState?.set(filePath, {
-    content: nextContent,
-    mtimeMs: stat.mtimeMs,
-    size: stat.size,
-    sha256: contentHash,
-    truncated: false,
-  });
+  recordFileHistory(context, change, toolName);
+  if (stat) {
+    context.readState?.set(filePath, {
+      content: nextContent,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      sha256: contentHash,
+      truncated: false,
+    });
+  } else {
+    context.readState?.delete(filePath);
+  }
   return {
     ...change,
-    bytes: stat.size,
-    modifiedAt: stat.mtime.toISOString(),
-    mtimeMs: stat.mtimeMs,
+    bytes: stat?.size ?? 0,
+    modifiedAt: stat?.mtime.toISOString() ?? new Date().toISOString(),
+    mtimeMs: stat?.mtimeMs ?? 0,
     sha256: contentHash,
+  };
+}
+
+async function writePreparedChanges(
+  changes: PreparedFileChange[],
+  context: AgentToolContext,
+  toolName: string,
+): Promise<PreparedFileChange[]> {
+  const committed: PreparedFileChange[] = [];
+  for (const change of changes) {
+    committed.push(await writePreparedChange(change, context, toolName));
+  }
+  return committed;
+}
+
+async function preparePatch(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<PreparedPatch> {
+  const workspace = requireWorkspace(context);
+  const patchText = requiredRawString(input.patch, "apply_patch requires patch.");
+  if (!patchText.trim()) {
+    throw new Error("apply_patch requires a non-empty patch.");
+  }
+  const files = parseUnifiedDiff(patchText);
+  const changes: PreparedFileChange[] = [];
+
+  for (const file of files) {
+    const targetPath = file.newPath ?? file.oldPath;
+    if (!targetPath) {
+      throw new Error("apply_patch file header is missing a target path.");
+    }
+    const operation: FileChangeResult["operation"] = file.oldPath === undefined ? "create" : "update";
+    const filePath = await resolveWorkspacePathForAccess(workspace, targetPath, operation === "create" ? "write" : "read");
+    let original = "";
+    if (operation === "update") {
+      const { content, stat } = await readEditableTextFile(filePath, targetPath);
+      assertFreshRead(context, filePath, content, stat);
+      original = content;
+    } else {
+      try {
+        await fs.stat(filePath);
+        throw new Error(`apply_patch create target already exists: ${targetPath}`);
+      } catch (error) {
+        if (getErrorCode(error) !== "ENOENT") {
+          throw error;
+        }
+      }
+    }
+    const nextContent = applyHunks(original, file.hunks, targetPath);
+    changes.push(buildPreparedChange(workspace, filePath, original, nextContent, operation));
+  }
+
+  if (changes.length === 0) {
+    throw new Error("apply_patch did not contain any file changes.");
+  }
+  const filesPreview = changes.map((change) => change.diff);
+  return {
+    changes,
+    diff: {
+      kind: "multi_file_diff",
+      files: filesPreview,
+      added: filesPreview.reduce((sum, file) => sum + file.added, 0),
+      removed: filesPreview.reduce((sum, file) => sum + file.removed, 0),
+    },
   };
 }
 
@@ -241,6 +426,189 @@ async function readEditableTextFile(
     content: buffer.toString("utf8"),
     stat,
   };
+}
+
+async function readCurrentTextOrMissing(
+  filePath: string,
+  relativePath: string,
+): Promise<{ exists: true; content: string; stat: Stats } | { exists: false; content: "" }> {
+  try {
+    const { content, stat } = await readEditableTextFile(filePath, relativePath);
+    return { exists: true, content, stat };
+  } catch (error) {
+    if (getErrorCode(error) === "ENOENT") {
+      return { exists: false, content: "" };
+    }
+    throw error;
+  }
+}
+
+interface ParsedPatchFile {
+  oldPath?: string;
+  newPath?: string;
+  hunks: ParsedPatchHunk[];
+}
+
+interface ParsedPatchHunk {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: ParsedPatchLine[];
+}
+
+interface ParsedPatchLine {
+  type: "context" | "added" | "removed";
+  text: string;
+}
+
+function parseUnifiedDiff(patchText: string): ParsedPatchFile[] {
+  const lines = patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  if (lines.at(-1) === "") {
+    lines.pop();
+  }
+  const files: ParsedPatchFile[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (line.startsWith("diff --git ")) {
+      index += 1;
+      continue;
+    }
+    if (!line.startsWith("--- ")) {
+      index += 1;
+      continue;
+    }
+
+    const oldPath = parsePatchPath(line.slice(4));
+    index += 1;
+    if (index >= lines.length || !lines[index].startsWith("+++ ")) {
+      throw new Error("apply_patch expected +++ after --- file header.");
+    }
+    const newPath = parsePatchPath(lines[index].slice(4));
+    if (oldPath === undefined && newPath === undefined) {
+      throw new Error("apply_patch does not support deleting files.");
+    }
+    if (newPath === undefined) {
+      throw new Error("apply_patch does not support deleting files.");
+    }
+    index += 1;
+
+    const hunks: ParsedPatchHunk[] = [];
+    while (index < lines.length) {
+      if (lines[index].startsWith("diff --git ") || lines[index].startsWith("--- ")) {
+        break;
+      }
+      if (!lines[index].startsWith("@@ ")) {
+        index += 1;
+        continue;
+      }
+      const parsed = parseHunkHeader(lines[index]);
+      index += 1;
+      const hunkLines: ParsedPatchLine[] = [];
+      while (index < lines.length) {
+        const hunkLine = lines[index];
+        if (hunkLine.startsWith("@@ ") || hunkLine.startsWith("diff --git ") || hunkLine.startsWith("--- ")) {
+          break;
+        }
+        if (hunkLine === "\\ No newline at end of file") {
+          index += 1;
+          continue;
+        }
+        if (hunkLine.startsWith(" ")) {
+          hunkLines.push({ type: "context", text: hunkLine.slice(1) });
+        } else if (hunkLine.startsWith("+")) {
+          hunkLines.push({ type: "added", text: hunkLine.slice(1) });
+        } else if (hunkLine.startsWith("-")) {
+          hunkLines.push({ type: "removed", text: hunkLine.slice(1) });
+        } else {
+          throw new Error(`apply_patch invalid hunk line: ${hunkLine}`);
+        }
+        index += 1;
+      }
+      hunks.push({ ...parsed, lines: hunkLines });
+    }
+    if (hunks.length === 0) {
+      throw new Error(`apply_patch file has no hunks: ${newPath ?? oldPath ?? "<unknown>"}`);
+    }
+    files.push({ oldPath, newPath, hunks });
+  }
+  return files;
+}
+
+function parsePatchPath(raw: string): string | undefined {
+  const token = raw.trim().split(/\s+/)[0];
+  if (token === "/dev/null") return undefined;
+  const normalized = token.startsWith("a/") || token.startsWith("b/")
+    ? token.slice(2)
+    : token;
+  if (!normalized || normalized.includes("\0")) {
+    throw new Error("apply_patch file path is invalid.");
+  }
+  return normalized;
+}
+
+function parseHunkHeader(header: string): Omit<ParsedPatchHunk, "lines"> {
+  const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(header);
+  if (!match) {
+    throw new Error(`apply_patch invalid hunk header: ${header}`);
+  }
+  return {
+    oldStart: Number(match[1]),
+    oldCount: match[2] === undefined ? 1 : Number(match[2]),
+    newStart: Number(match[3]),
+    newCount: match[4] === undefined ? 1 : Number(match[4]),
+  };
+}
+
+function applyHunks(
+  originalContent: string,
+  hunks: ParsedPatchHunk[],
+  relativePath: string,
+): string {
+  const originalLines = splitLines(originalContent);
+  const nextLines: string[] = [];
+  let originalIndex = 0;
+
+  for (const hunk of hunks) {
+    assertHunkCounts(hunk, relativePath);
+    const hunkStartIndex = Math.max(0, hunk.oldStart - 1);
+    if (hunkStartIndex < originalIndex) {
+      throw new Error(`apply_patch hunks overlap in ${relativePath}.`);
+    }
+    nextLines.push(...originalLines.slice(originalIndex, hunkStartIndex));
+    originalIndex = hunkStartIndex;
+
+    for (const line of hunk.lines) {
+      if (line.type === "added") {
+        nextLines.push(line.text);
+        continue;
+      }
+      const current = originalLines[originalIndex];
+      if (current !== line.text) {
+        throw new Error(`apply_patch hunk does not match ${relativePath}.`);
+      }
+      if (line.type === "context") {
+        nextLines.push(current);
+      }
+      originalIndex += 1;
+    }
+  }
+
+  nextLines.push(...originalLines.slice(originalIndex));
+  return withTrailingNewline(nextLines);
+}
+
+function assertHunkCounts(hunk: ParsedPatchHunk, relativePath: string): void {
+  const removedOrContext = hunk.lines.filter((line) => line.type !== "added").length;
+  const addedOrContext = hunk.lines.filter((line) => line.type !== "removed").length;
+  if (removedOrContext !== hunk.oldCount || addedOrContext !== hunk.newCount) {
+    throw new Error(`apply_patch hunk line counts do not match header in ${relativePath}.`);
+  }
+}
+
+function withTrailingNewline(lines: string[]): string {
+  return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
 function assertFreshRead(
@@ -278,6 +646,7 @@ function buildPreparedChange(
   return {
     filePath,
     nextContent,
+    originalContent,
     path: diff.path,
     operation,
     bytes: Buffer.byteLength(nextContent, "utf8"),
@@ -340,6 +709,68 @@ function toToolResult(toolName: string, change: PreparedFileChange): AgentToolRe
       added: change.diff.added,
       removed: change.diff.removed,
       sha256: change.sha256,
+    }),
+    displayResult,
+  };
+}
+
+function recordFileHistory(
+  context: AgentToolContext,
+  change: PreparedFileChange,
+  toolName: string,
+): void {
+  const workspace = requireWorkspace(context);
+  context.fileHistory?.push({
+    threadId: context.threadId,
+    turnId: context.turnId,
+    toolName,
+    workspace,
+    filePath: change.filePath,
+    relativePath: change.path,
+    operation: toolName === "rollback_file" ? "rollback" : change.operation === "create" ? "create" : "update",
+    beforeContent: change.operation === "create" ? null : change.originalContent,
+    afterContent: change.operation === "delete" ? null : change.nextContent,
+    beforeSha256: change.operation === "create" ? null : sha256(change.originalContent),
+    afterSha256: change.operation === "delete" ? null : sha256(change.nextContent),
+  });
+}
+
+function toPatchToolResult(changes: PreparedFileChange[]): AgentToolResult {
+  const files: FileChangeResult[] = changes.map((change) => ({
+    path: change.path,
+    operation: change.operation,
+    bytes: change.bytes,
+    modifiedAt: change.modifiedAt,
+    mtimeMs: change.mtimeMs,
+    sha256: change.sha256,
+    diff: change.diff,
+  }));
+  const diff: MultiFileDiffPreview = {
+    kind: "multi_file_diff",
+    files: files.map((file) => file.diff),
+    added: files.reduce((sum, file) => sum + file.diff.added, 0),
+    removed: files.reduce((sum, file) => sum + file.diff.removed, 0),
+  };
+  const displayResult: PatchApplyResult = {
+    files,
+    added: diff.added,
+    removed: diff.removed,
+    diff,
+  };
+  return {
+    toolCallId: "",
+    name: "apply_patch",
+    content: JSON.stringify({
+      files: files.map((file) => ({
+        path: file.path,
+        operation: file.operation,
+        bytes: file.bytes,
+        added: file.diff.added,
+        removed: file.diff.removed,
+        sha256: file.sha256,
+      })),
+      added: diff.added,
+      removed: diff.removed,
     }),
     displayResult,
   };

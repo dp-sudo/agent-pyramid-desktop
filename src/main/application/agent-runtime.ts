@@ -16,6 +16,7 @@ import { ModelConfigStore } from "../persistence/model-config-store.js";
 import { LlmWorkerPool } from "../infrastructure/llm-worker/worker-pool.js";
 import { RuntimeEventBus } from "../event-bus.js";
 import { FileReadStateStore } from "./tools/file-read-state.js";
+import { FileHistoryStore } from "./tools/file-history-state.js";
 import type {
   ApprovalItem,
   ApprovalRespondRequest,
@@ -109,7 +110,9 @@ const MAX_PROGRESSIVE_COMPACTION_PASSES = 24;
 export class AgentRuntime {
   private readonly inFlight = new Map<string, TurnRecord>(); // turnId -> record
   private readonly pendingApprovals = new Map<string, PendingApproval>();
+  private readonly activeToolControllers = new Map<string, Set<AbortController>>();
   private readonly readState = new FileReadStateStore();
+  private readonly fileHistory = new FileHistoryStore();
 
   constructor(private readonly deps: RuntimeDeps) {}
 
@@ -204,6 +207,7 @@ export class AgentRuntime {
     if (!turn) return;
     turn.status = "interrupted";
     this.resolvePendingApprovalsForTurn(turnId, "deny");
+    this.abortActiveToolsForTurn(turnId);
     this.deps.pool.cancel(turn.threadId);
     const item: SystemItem = {
       kind: "system",
@@ -767,12 +771,20 @@ export class AgentRuntime {
         }
       }
 
-      const content = await this.deps.registry.execute(call, {
-        threadId: turn.threadId,
-        turnId: turn.id,
-        workspace: thread.workspace,
-        readState: this.readState,
-      });
+      const controller = this.registerActiveToolController(turn.id);
+      let content: AgentToolResult;
+      try {
+        content = await this.deps.registry.execute(call, {
+          threadId: turn.threadId,
+          turnId: turn.id,
+          workspace: thread.workspace,
+          signal: controller.signal,
+          readState: this.readState,
+          fileHistory: this.fileHistory,
+        });
+      } finally {
+        this.unregisterActiveToolController(turn.id, controller);
+      }
       toolItem.status = "completed";
       toolItem.result = content.displayResult ?? content;
       await this.deps.store.appendItem(turn.threadId, toolItem);
@@ -789,13 +801,15 @@ export class AgentRuntime {
       };
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "tool_failed",
-        message: `${call.name}: ${message}`,
-      });
+      if (turn.status !== "interrupted") {
+        this.deps.bus.emit("runtime_error", {
+          kind: "runtime_error",
+          threadId: turn.threadId,
+          turnId: turn.id,
+          code: "tool_failed",
+          message: `${call.name}: ${message}`,
+        });
+      }
       return {
         toolCallId: call.id,
         name: call.name,
@@ -963,8 +977,34 @@ export class AgentRuntime {
       turnId: turn.id,
       workspace: thread.workspace,
       readState: this.readState,
+      fileHistory: this.fileHistory,
     });
     return isApprovalPreview(preview) ? preview : undefined;
+  }
+
+  private registerActiveToolController(turnId: string): AbortController {
+    const controller = new AbortController();
+    const controllers = this.activeToolControllers.get(turnId) ?? new Set<AbortController>();
+    controllers.add(controller);
+    this.activeToolControllers.set(turnId, controllers);
+    return controller;
+  }
+
+  private unregisterActiveToolController(turnId: string, controller: AbortController): void {
+    const controllers = this.activeToolControllers.get(turnId);
+    if (!controllers) return;
+    controllers.delete(controller);
+    if (controllers.size === 0) {
+      this.activeToolControllers.delete(turnId);
+    }
+  }
+
+  private abortActiveToolsForTurn(turnId: string): void {
+    const controllers = this.activeToolControllers.get(turnId);
+    if (!controllers) return;
+    for (const controller of controllers) {
+      controller.abort();
+    }
   }
 
   private resolvePendingApprovalsForTurn(
@@ -1243,10 +1283,22 @@ function parsePlanStep(value: unknown, index: number): PlanStep {
 function isApprovalPreview(value: unknown): value is ApprovalItem["preview"] {
   if (!value || typeof value !== "object") return false;
   const preview = value as Record<string, unknown>;
+  if (preview.kind === "multi_file_diff") {
+    return (
+      Array.isArray(preview.files) &&
+      preview.files.every(isFileDiffPreview) &&
+      typeof preview.added === "number" &&
+      typeof preview.removed === "number"
+    );
+  }
+  return isFileDiffPreview(preview);
+}
+
+function isFileDiffPreview(preview: Record<string, unknown>): boolean {
   return (
     preview.kind === "file_diff" &&
     typeof preview.path === "string" &&
-    (preview.operation === "create" || preview.operation === "update") &&
+    (preview.operation === "create" || preview.operation === "update" || preview.operation === "delete") &&
     typeof preview.added === "number" &&
     typeof preview.removed === "number" &&
     Array.isArray(preview.lines)

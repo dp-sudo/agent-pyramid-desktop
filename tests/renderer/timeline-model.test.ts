@@ -160,4 +160,110 @@ describe("timeline model", () => {
     expect(display.title).toBe("chat.tools.editFilePath:src/main/index.ts");
     expect(display.statusText).toBe("chat.toolStatus.completed");
   });
+
+  it("summarizes command tools with command text", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "run_command",
+      args: { command: "npm run test" },
+      result: {
+        stdout: "passed",
+        exitCode: 0,
+      },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key, options) =>
+      options?.command ? `${key}:${String(options.command)}` : key,
+    );
+
+    expect(display.title).toBe("chat.tools.runCommandCommand:npm run test");
+    expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
+  it("summarizes apply_patch as a coding tool", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "apply_patch",
+      args: { patch: "--- a/file.ts\n+++ b/file.ts" },
+      result: {
+        files: [{ path: "file.ts" }],
+      },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key) => key);
+
+    expect(display.title).toBe("chat.tools.applyPatch");
+    expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
+  it("summarizes rollback_file with file paths", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "rollback_file",
+      args: { path: "file.ts" },
+      result: { path: "file.ts" },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key, options) =>
+      options?.path ? `${key}:${String(options.path)}` : key,
+    );
+
+    expect(display.title).toBe("chat.tools.rollbackFilePath:file.ts");
+    expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
+  it("summarizes diagnose_workspace as a command tool", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "diagnose_workspace",
+      args: {},
+      result: { diagnosticCount: 0 },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key) => key);
+
+    expect(display.title).toBe("chat.tools.diagnoseWorkspace");
+    expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
+  it("summarizes diagnose_file with file paths", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "diagnose_file",
+      args: { path: "src/index.ts" },
+      result: { diagnosticCount: 1 },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key, options) =>
+      options?.path ? `${key}:${String(options.path)}` : key,
+    );
+
+    expect(display.title).toBe("chat.tools.diagnoseFilePath:src/index.ts");
+    expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
 });

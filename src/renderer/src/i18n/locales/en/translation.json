@@ -47,6 +47,14 @@
       "editFilePath": "Edit file: {{path}}",
       "writeFile": "Write file",
       "writeFilePath": "Write file: {{path}}",
+      "applyPatch": "Apply patch",
+      "rollbackFile": "Rollback file",
+      "rollbackFilePath": "Rollback file: {{path}}",
+      "runCommand": "Run command",
+      "runCommandCommand": "Run command: {{command}}",
+      "diagnoseWorkspace": "Diagnose workspace",
+      "diagnoseFile": "Diagnose file",
+      "diagnoseFilePath": "Diagnose file: {{path}}",
       "createPlan": "Create plan",
       "updateGoal": "Update goal"
     }
@@ -113,7 +121,8 @@
     "submitting": "Submitting…",
     "diff": {
       "create": "Create",
-      "update": "Update"
+      "update": "Update",
+      "delete": "Delete"
     }
   },
   "common": {

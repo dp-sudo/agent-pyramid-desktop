@@ -21,7 +21,9 @@
 - 建立 Agent 领域类型和端口接口：`src/main/domain/agent/`。
 - 建立多 turn Agent 编排器：`src/main/application/agent-runtime.ts`。
 - 建立工具注册机制：`src/main/application/tools/`。
-- 建立首批 coding agent 写入工具：`read_file` 会记录文件读状态；`edit_file` / `write_file` 使用共享 workspace 路径策略、读后未过期校验和结构化 diff preview，经 approval gate 后写入工作区文本文件。
+- 建立首批 coding agent 写入工具：`read_file` 会记录文件读状态；`edit_file` / `write_file` 使用共享 workspace 路径策略、读后未过期校验和结构化 diff preview，经 approval gate 后写入工作区文本文件；`apply_patch` 支持受限 unified diff dry-run、多文件 diff preview 和一次性提交；`rollback_file` 可回滚当前 app 会话内最近一次 agent 文件写入。
+- 建立首批命令执行工具：`run_command` 在 active workspace 内运行前台 shell 命令，支持 workspace-relative `cwd`、timeout、stdout/stderr 截断、结构化结果和 turn interrupt 取消。
+- 建立首批诊断工具：`diagnose_workspace` 在 active workspace 内运行 TypeScript/typecheck 并解析结构化错误；`diagnose_file` 使用 TypeScript Language Service 对单文件做语法/语义/建议诊断，用于编辑后的 workspace 级与文件级验证闭环。
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
@@ -68,8 +70,46 @@
 - 新增 coding tools：`edit_file` 使用 `old_string/new_string/replace_all` 精确替换，默认要求唯一匹配；`write_file` 支持新建文件和显式 `overwrite: true` 覆盖现有文件；两者都返回结构化 file diff。
 - 强化 runtime policy：只读工具免审批；`create_plan` / `update_goal` 继续按模式免审批；`sandboxMode: read-only` 和 `approvalPolicy: never` 会拒绝写入类工具；需要审批的写入工具会在 approval item/event 上携带 diff preview。
 - 扩展 renderer：approval block 会展示文件 diff 预览；工具摘要识别 `edit_file` / `write_file`；中英文 i18n 同步新增写入工具和 diff 操作文案。
-- 当前仍未实现 `run_command`、`apply_patch`、LSP 诊断和文件历史回滚；这些应作为后续独立切片继续推进。
+- 当前已实现 TypeScript/typecheck 的 workspace 级诊断与 TypeScript Language Service 文件级诊断；常驻 LSP server、增量诊断和多语言诊断可后续增强。
 - 验证方式：新增 Vitest 覆盖 workspace/read-state/edit/write/runtime approval preview/renderer summary；完整验证命令见本次实现记录。
+
+### 2026-06-08 — coding-agent 命令执行能力落地
+
+- 新增 `src/main/application/tools/command-tools.ts`：注册 `run_command` 工具，命令必须在 active workspace 内以前台方式执行，`cwd` 走共享 workspace realpath/path escape 策略。
+- 扩展工具上下文：`AgentToolContext.signal` 由 runtime 注入，`AgentRuntime.interruptTurn()` 会 abort 当前 turn 的 active tool controllers，使命令工具能随 turn interrupt 取消。
+- 命令结果不把非零退出码包装成工具异常，而是返回结构化 `exitCode/signal/timedOut/durationMs/stdout/stderr/*Truncated`，让模型可以根据真实命令结果继续决策。
+- runtime policy 保持统一：`run_command` 是 `category: "command"`、`isDestructive: true` 的命令工具；因为 shell 命令可修改文件或执行任意脚本，默认需要 approval，线程 `approvalPolicy: "auto"` 不会自动放行，`sandboxMode: "read-only"` 与 `approvalPolicy: "never"` 会拒绝。
+- 扩展 renderer：工具摘要识别 `run_command`，中英文 i18n 新增命令工具文案。
+- 当前已实现 TypeScript/typecheck 的 workspace 级诊断与 TypeScript Language Service 文件级诊断；常驻 LSP server 可后续增强。
+- 验证方式：新增 Vitest 覆盖 command cwd 越界/symlink escape/非目录 cwd/timeout/stdout stderr 截断/runtime approval/runtime interrupt/renderer summary；完整验证命令见本次实现记录。
+
+### 2026-06-08 — coding-agent 补丁应用能力落地
+
+- 扩展 `createCodingTools()`：新增 `apply_patch` 工具，输入为 `{ patch: string }`，支持常见 unified diff/git diff 的 `---` / `+++` 文件头和 `@@` hunk；当前范围限定为 create/update 文本文件，不支持删除、重命名和二进制 patch。
+- `apply_patch` 先解析并 dry-run 所有文件，要求更新现有文件前已通过 `read_file` 建立新鲜读状态；任一 hunk 不匹配、路径越界或目标不合法时，整批 patch 不写入任何文件。
+- 扩展 approval preview：`ApprovalPreview` 新增 `multi_file_diff`，renderer approval block 复用现有 diff UI 展示多文件变更；工具摘要和中英文 i18n 识别 `apply_patch`。
+- `apply_patch` 继续走 runtime policy：作为 destructive workspace tool 默认需要审批，`sandboxMode: "read-only"` 和 `approvalPolicy: "never"` 会在执行前拒绝。
+- 当前已实现 TypeScript/typecheck 的 workspace 级诊断与 TypeScript Language Service 文件级诊断；常驻 LSP server、增量诊断和多语言诊断可后续增强。
+- 验证方式：新增 Vitest 覆盖 patch create/update、多文件 dry-run 失败不写入、路径越界、runtime 多文件 diff approval preview 和 renderer summary；完整验证命令见本次实现记录。
+
+### 2026-06-08 — coding-agent 文件历史与回滚能力落地
+
+- 新增 `FileHistoryStore`：runtime 为写入类工具提供进程内文件历史，记录 agent 写入前后内容、sha256、工具名、turnId 和 workspace-relative path；当前历史随 app 进程生命周期存在，不跨重启持久化。
+- `edit_file`、`write_file`、`apply_patch` 在 commit 后记录历史；`rollback_file` 使用最近一条历史恢复写入前内容。新建文件的回滚会删除文件，更新文件的回滚会恢复旧内容。
+- 回滚前会校验当前文件 sha256 是否仍等于历史中的 afterSha256，避免覆盖用户或外部进程在 agent 写入后的新改动。
+- `rollback_file` 是 destructive workspace tool，默认进入 approval gate，并复用 file diff preview；回滚本身也会记录历史，允许误回滚后再次回滚。
+- 当前已实现 TypeScript/typecheck 的 workspace 级诊断与 TypeScript Language Service 文件级诊断；常驻 LSP server、增量诊断和多语言诊断可后续增强。
+- 验证方式：新增 Vitest 覆盖 update 回滚、create 回滚、缺失 history、stale current 拒绝、runtime approval preview、renderer summary；完整验证命令见本次实现记录。
+
+### 2026-06-08 — coding-agent 诊断能力落地
+
+- 扩展 `createCommandTools()`：新增 `diagnose_workspace` / `diagnose_file` 工具。`diagnose_workspace` 会执行 workspace script/tsc，按命令工具进入 approval gate；`diagnose_file` 只使用 TypeScript Language Service 读取文件诊断，保持只读免审批。
+- `diagnose_workspace` 在 workspace 内优先运行 `npm run typecheck`；如果 package.json 没有 `scripts.typecheck`，fallback 到 `npx tsc --noEmit`。
+- `diagnose_file` 先校验目标文件在 workspace 内且是 UTF-8 文本文件，再用 TypeScript Language Service 读取 tsconfig 并返回目标文件的 syntactic/semantic/suggestion diagnostics，给模型提供更接近 IDE/LSP 的文件级入口。
+- `typescript` 从 devDependency 移为 runtime dependency，因为 main 进程工具在运行时直接使用 TypeScript Language Service API。
+- 工具返回 `path/line/column/code/severity/message/source` 结构化 diagnostics；`diagnose_workspace` 同时保留命令、退出码、timeout 和输出截断状态。
+- 当前实现是 TypeScript/typecheck workspace 诊断 + TypeScript Language Service 文件诊断，不是常驻 LSP server；后续如需更接近 IDE 的体验，可引入 tsserver/LSP 进程管理、增量诊断和多语言 adapter。
+- 验证方式：新增 Vitest 覆盖 package typecheck 诊断解析、fallback tsc 诊断解析、文件级诊断过滤、diagnose_file 路径边界、diagnose_workspace approval/never policy、runtime read-only 免审批和 renderer summary；完整验证命令见本次实现记录。
 
 ### 2026-06-07
 

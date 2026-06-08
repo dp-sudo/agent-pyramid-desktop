@@ -47,6 +47,14 @@
       "editFilePath": "编辑文件：{{path}}",
       "writeFile": "写入文件",
       "writeFilePath": "写入文件：{{path}}",
+      "applyPatch": "应用补丁",
+      "rollbackFile": "回滚文件",
+      "rollbackFilePath": "回滚文件：{{path}}",
+      "runCommand": "运行命令",
+      "runCommandCommand": "运行命令：{{command}}",
+      "diagnoseWorkspace": "诊断工作区",
+      "diagnoseFile": "诊断文件",
+      "diagnoseFilePath": "诊断文件：{{path}}",
       "createPlan": "创建计划",
       "updateGoal": "更新目标"
     }
@@ -113,7 +121,8 @@
     "submitting": "提交中…",
     "diff": {
       "create": "新建",
-      "update": "更新"
+      "update": "更新",
+      "delete": "删除"
     }
   },
   "common": {

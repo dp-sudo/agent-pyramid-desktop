@@ -157,6 +157,15 @@ function ApprovalPreviewBlock({ preview }: { preview: ApprovalPreview }): ReactE
   if (preview.kind === "file_diff") {
     return <FileDiffPreviewBlock preview={preview} />;
   }
+  if (preview.kind === "multi_file_diff") {
+    return (
+      <div className="ds-diff-preview-list">
+        {preview.files.map((file) => (
+          <FileDiffPreviewBlock key={file.path} preview={file} />
+        ))}
+      </div>
+    );
+  }
   return <></>;
 }
 

@@ -1223,6 +1223,11 @@ textarea {
   background: var(--ds-surface-elevated);
 }
 
+.ds-diff-preview-list {
+  display: grid;
+  gap: 10px;
+}
+
 .ds-diff-preview-header {
   display: flex;
   min-width: 0;
