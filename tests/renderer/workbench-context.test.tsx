@@ -4,6 +4,7 @@ import {
   reducer,
   type WorkbenchState,
 } from "../../src/renderer/src/ui/store/WorkbenchContext";
+import { DEFAULT_BASIC_PREFERENCES } from "../../src/renderer/src/ui/preferences";
 import type {
   AssistantItem,
   ModelConfig,
@@ -263,5 +264,36 @@ describe("WorkbenchContext reducer", () => {
 
     expect(state.threads).toEqual(threads);
     expect(state.rightPanelMode).toBeNull();
+  });
+
+  it("applies basic preference updates to workbench state", () => {
+    const withArchived = reducer(INITIAL_STATE, {
+      type: "updateBasicPreference",
+      key: "showArchivedThreadsByDefault",
+      value: true,
+    });
+    const withPanel = reducer(withArchived, {
+      type: "updateBasicPreference",
+      key: "defaultInspectorMode",
+      value: "todo",
+    });
+    const withRememberedWidth = reducer(
+      reducer(withPanel, { type: "setLeftSidebarWidth", width: 320 }),
+      {
+        type: "updateBasicPreference",
+        key: "rememberLeftSidebarWidth",
+        value: true,
+      },
+    );
+    const resetWidth = reducer(withRememberedWidth, {
+      type: "updateBasicPreference",
+      key: "rememberLeftSidebarWidth",
+      value: false,
+    });
+
+    expect(withArchived.showArchivedThreads).toBe(true);
+    expect(withPanel.rightPanelMode).toBe("todo");
+    expect(withRememberedWidth.basicPreferences.leftSidebarWidth).toBe(320);
+    expect(resetWidth.leftSidebarWidth).toBe(DEFAULT_BASIC_PREFERENCES.leftSidebarWidth);
   });
 });

@@ -1,10 +1,12 @@
 import {
   Children,
   isValidElement,
+  useState,
   type ComponentPropsWithoutRef,
   type ReactElement,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -65,12 +67,7 @@ const markdownComponents: Components = {
   },
   pre({ node: _node, children, ...props }) {
     const language = extractCodeLanguage(children);
-    return (
-      <div className="ds-code-block">
-        {language ? <div className="ds-code-block-header">{language}</div> : null}
-        <pre {...props}>{children}</pre>
-      </div>
-    );
+    return <CodeBlock language={language} code={extractCodeText(children)} preProps={props}>{children}</CodeBlock>;
   },
   table({ node: _node, children, ...props }) {
     return (
@@ -85,12 +82,68 @@ type CodeElementProps = ComponentPropsWithoutRef<"code"> & {
   className?: string;
 };
 
+function CodeBlock({
+  children,
+  code,
+  language,
+  preProps,
+}: {
+  children: ReactNode;
+  code: string;
+  language: string | null;
+  preProps: ComponentPropsWithoutRef<"pre">;
+}): ReactElement {
+  const { t } = useTranslation();
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+
+  async function copyCode(): Promise<void> {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API is unavailable.");
+      }
+      await navigator.clipboard.writeText(code);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 1600);
+    } catch {
+      setCopyState("failed");
+    }
+  }
+
+  return (
+    <div className="ds-code-block">
+      <div className="ds-code-block-header">
+        <span>{language ?? t("chat.codeBlock")}</span>
+        <button type="button" onClick={() => void copyCode()}>
+          {copyState === "copied"
+            ? t("chat.copyCodeDone")
+            : copyState === "failed"
+              ? t("chat.copyCodeFailed")
+              : t("chat.copyCode")}
+        </button>
+      </div>
+      <pre {...preProps}>{children}</pre>
+    </div>
+  );
+}
+
 function extractCodeLanguage(children: ReactNode): string | null {
   const firstChild = Children.toArray(children)[0];
   if (!isValidElement<CodeElementProps>(firstChild)) return null;
 
   const match = /(?:^|\s)language-([\w-]+)/.exec(firstChild.props.className ?? "");
   return match?.[1] ?? null;
+}
+
+export function extractCodeText(node: ReactNode): string {
+  return Children.toArray(node)
+    .map((child) => {
+      if (typeof child === "string" || typeof child === "number") return String(child);
+      if (isValidElement<{ children?: ReactNode }>(child)) {
+        return extractCodeText(child.props.children);
+      }
+      return "";
+    })
+    .join("");
 }
 
 function isExternalHref(href: string | undefined): boolean {

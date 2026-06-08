@@ -29,7 +29,12 @@ export function FloatingComposer({
   const [menuOpen, setMenuOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
-  const sendDisabled = disabled || sendPending || draftText.trim().length === 0;
+  const sendDisabled = !canSubmitComposerDraft({
+    text: draftText,
+    attachmentCount: state.composer.attachmentIds.length,
+    disabled: Boolean(disabled),
+    sendPending,
+  });
 
   useEffect(() => {
     setDraftText(state.composer.text);
@@ -82,7 +87,16 @@ export function FloatingComposer({
 
   async function sendDraft(): Promise<void> {
     const text = draftText.trim();
-    if (!text || disabled || sendPending) return;
+    if (
+      !canSubmitComposerDraft({
+        text,
+        attachmentCount: state.composer.attachmentIds.length,
+        disabled: Boolean(disabled),
+        sendPending,
+      })
+    ) {
+      return;
+    }
     setSendPending(true);
     try {
       const sent = await onSend(text);
@@ -297,4 +311,18 @@ function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 102.4) / 10} KB`;
   return `${Math.round(value / 1024 / 102.4) / 10} MB`;
+}
+
+export function canSubmitComposerDraft({
+  text,
+  attachmentCount,
+  disabled,
+  sendPending,
+}: {
+  text: string;
+  attachmentCount: number;
+  disabled: boolean;
+  sendPending: boolean;
+}): boolean {
+  return !disabled && !sendPending && (text.trim().length > 0 || attachmentCount > 0);
 }

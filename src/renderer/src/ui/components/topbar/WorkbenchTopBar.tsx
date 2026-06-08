@@ -1,78 +1,69 @@
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../../store/WorkbenchContext";
-import { Pill } from "../primitives/Pill";
+import { useWorkbench, type RightPanelMode } from "../../store/WorkbenchContext";
 
 export function WorkbenchTopBar(): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
   const isBusy = state.inFlightTurn !== null;
+  const inspectorModes: Array<Exclude<RightPanelMode, null | "file">> = [
+    "changes",
+    "todo",
+    "plan",
+  ];
   return (
     <header className="ds-topbar-surface">
-      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-        <span style={{ fontSize: "var(--ds-size-title)", fontWeight: 600 }}>
+      <div className="ds-topbar-session">
+        <span className="ds-topbar-title">
           {state.activeThreadId ? t("chat.activeSession") : t("chat.noSession")}
         </span>
         {state.activeThreadId ? (
-          <span style={{ fontSize: "var(--ds-size-caption)", color: "var(--ds-text-faint)" }}>
+          <span className="ds-topbar-meta">
             {t("chat.threadId", { id: state.activeThreadId.slice(0, 8) })}
           </span>
         ) : null}
         {state.workspaceRoot ? (
-          <span
-            style={{
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              fontSize: "var(--ds-size-caption)",
-              color: "var(--ds-text-faint)",
-            }}
-            title={state.workspaceRoot}
-          >
+          <span className="ds-topbar-workspace" title={state.workspaceRoot}>
             {state.workspaceRoot}
           </span>
         ) : null}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="ds-topbar-actions">
         {isBusy ? (
-          <span
-            className="ds-pill"
-            style={{
-              background: "var(--ds-warning-soft)",
-              color: "var(--ds-text)",
-              border: "1px solid var(--ds-border)",
-            }}
-          >
+          <span className="ds-topbar-running">
             {t("chat.running")}
           </span>
         ) : null}
-        <Pill
-          onClick={() => actions.openRightPanel("changes")}
-          accent={state.rightPanelMode === "changes"}
-        >
-          {t("inspector.changes")}
-        </Pill>
-        <Pill
-          onClick={() => actions.openRightPanel("todo")}
-          accent={state.rightPanelMode === "todo"}
-        >
-          {t("inspector.todo")}
-        </Pill>
-        <Pill
-          onClick={() => actions.openRightPanel("plan")}
-          accent={state.rightPanelMode === "plan"}
-        >
-          {t("inspector.plan")}
-        </Pill>
-        <Pill
+        <div className="ds-segmented-control ds-topbar-inspector-tabs" role="group">
+          {inspectorModes.map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={state.rightPanelMode === mode ? "is-active" : ""}
+              aria-pressed={state.rightPanelMode === mode}
+              onClick={() => actions.openRightPanel(mode)}
+            >
+              {t(`inspector.${mode}`)}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="ds-pill"
           onClick={state.rightPanelMode === null
             ? () => actions.openRightPanel("changes")
             : () => actions.closeRightPanel()}
         >
-          {state.rightPanelMode === null ? t("inspector.open") : t("inspector.close")}
-        </Pill>
+          {getInspectorToggleLabel(state.rightPanelMode, t)}
+        </button>
       </div>
     </header>
   );
+}
+
+export function getInspectorToggleLabel(
+  mode: RightPanelMode,
+  t: (key: string) => string,
+): string {
+  return mode === null ? t("inspector.open") : t("inspector.close");
 }

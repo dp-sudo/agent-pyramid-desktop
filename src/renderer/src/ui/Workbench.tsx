@@ -7,7 +7,13 @@ import { FloatingComposer } from "./components/composer/FloatingComposer";
 import { MessageTimeline } from "./components/chat/MessageTimeline";
 import { RightInspector } from "./components/inspector/RightInspector";
 import { WriteWorkspaceView } from "./components/write/WriteWorkspaceView";
+import {
+  LEFT_SIDEBAR_MAX_WIDTH,
+  LEFT_SIDEBAR_MIN_WIDTH,
+} from "./preferences";
 import type { IpcResult, ThreadRecord } from "../../../shared/agent-contracts";
+
+const SIDEBAR_KEYBOARD_STEP = 16;
 
 export function Workbench(): ReactElement {
   const { t } = useTranslation();
@@ -259,9 +265,6 @@ export function Workbench(): ReactElement {
 
   const onDeleteThread = useCallback(
     async (id: string) => {
-      const thread = state.threads.find((candidate) => candidate.id === id);
-      const title = thread?.title ?? id;
-      if (!window.confirm(t("threads.deleteConfirm", { title }))) return;
       if (state.inFlightTurn?.threadId === id) {
         actions.setError(t("threads.deleteBlockedRunning"));
         return;
@@ -285,7 +288,7 @@ export function Workbench(): ReactElement {
       actions.setError(null);
       await refreshThreads();
     },
-    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, state.threads, t, unsubscribeThreadEvents],
+    [actions, refreshThreads, state.activeThreadId, state.inFlightTurn, t, unsubscribeThreadEvents],
   );
 
   const onArchiveThread = useCallback(
@@ -330,8 +333,12 @@ export function Workbench(): ReactElement {
   );
 
   const onSend = useCallback(async (draftText: string): Promise<boolean> => {
-    const text = draftText.trim();
-    if (!text) return false;
+    const sendPayload = buildComposerSendPayload(
+      draftText,
+      state.composer.attachmentIds.length,
+      t,
+    );
+    if (!sendPayload) return false;
     if (activeThreadArchived) {
       actions.setError(t("threads.sendBlockedArchived"));
       return false;
@@ -347,7 +354,10 @@ export function Workbench(): ReactElement {
       if (!threadId) {
         const workspace = await ensureWorkspaceRoot();
         if (!workspace) return false;
-        const title = text.length > 60 ? `${text.slice(0, 57)}...` : text;
+        const title =
+          sendPayload.threadTitle.length > 60
+            ? `${sendPayload.threadTitle.slice(0, 57)}...`
+            : sendPayload.threadTitle;
         const threadResult = await window.agentApi.threads.create({
           title,
           workspace,
@@ -367,7 +377,7 @@ export function Workbench(): ReactElement {
       if (state.composer.goalMode && threadId && !state.activeThread?.goal) {
         const goalResult = await window.agentApi.goals.update({
           threadId,
-          goal: text,
+          goal: sendPayload.text,
           status: "active",
         });
         if (goalResult.ok) {
@@ -380,7 +390,8 @@ export function Workbench(): ReactElement {
 
       const result = await window.agentApi.turns.start({
         threadId,
-        text,
+        text: sendPayload.text,
+        displayText: sendPayload.displayText,
         model: state.composer.model,
         modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
         reasoningEffort:
@@ -462,6 +473,7 @@ export function Workbench(): ReactElement {
             onOpenSettings={onOpenSettings}
             workspaceRoot={state.workspaceRoot}
             showArchivedThreads={state.showArchivedThreads}
+            confirmThreadDelete={state.basicPreferences.confirmThreadDelete}
             onToggleArchivedThreads={() =>
               actions.setShowArchivedThreads(!state.showArchivedThreads)
             }
@@ -473,6 +485,20 @@ export function Workbench(): ReactElement {
           className="ds-workbench-divider"
           role="separator"
           aria-orientation="vertical"
+          aria-valuemin={LEFT_SIDEBAR_MIN_WIDTH}
+          aria-valuemax={LEFT_SIDEBAR_MAX_WIDTH}
+          aria-valuenow={state.leftSidebarWidth}
+          tabIndex={0}
+          onKeyDown={(event) => {
+            const next = getNextSidebarWidth(
+              state.leftSidebarWidth,
+              event.key,
+              SIDEBAR_KEYBOARD_STEP,
+            );
+            if (next === state.leftSidebarWidth) return;
+            event.preventDefault();
+            actions.setLeftSidebarWidth(next);
+          }}
           onPointerDown={(event) => {
             const startX = event.clientX;
             const startWidth = state.leftSidebarWidth;
@@ -480,7 +506,7 @@ export function Workbench(): ReactElement {
             target.setPointerCapture(event.pointerId);
             const onMove = (ev: PointerEvent): void => {
               const dx = ev.clientX - startX;
-              const next = Math.min(420, Math.max(180, startWidth + dx));
+              const next = clampSidebarWidth(startWidth + dx);
               actions.setLeftSidebarWidth(next);
             };
             const onUp = (): void => {
@@ -502,7 +528,7 @@ export function Workbench(): ReactElement {
             </div>
             <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
               <div className="ds-chat-column-inset" style={{ display: "flex", flex: 1, flexDirection: "column", minHeight: 0 }}>
-                <MessageTimeline onApprove={(id, decision) => void onApprove(id, decision)} />
+                <MessageTimeline onApprove={onApprove} />
                 <div style={{ padding: "0 0 12px", display: "flex", justifyContent: "center" }}>
                   <div style={{ width: "min(100%, 720px)" }}>
                     <FloatingComposer
@@ -511,17 +537,16 @@ export function Workbench(): ReactElement {
                       disabled={activeThreadArchived}
                     />
                     {state.errorMessage ? (
-                      <div
-                        style={{
-                          marginTop: 8,
-                          padding: "6px 10px",
-                          background: "var(--ds-danger-soft)",
-                          color: "var(--ds-danger)",
-                          borderRadius: "var(--ds-radius-md)",
-                          fontSize: "var(--ds-size-caption)",
-                        }}
-                      >
-                        {state.errorMessage}
+                      <div className="ds-error-toast" role="status">
+                        <span>{state.errorMessage}</span>
+                        <button
+                          type="button"
+                          onClick={() => actions.setError(null)}
+                          aria-label={t("common.dismiss")}
+                          title={t("common.dismiss")}
+                        >
+                          ×
+                        </button>
                       </div>
                     ) : null}
                   </div>
@@ -541,4 +566,43 @@ export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): str
     .filter((result) => !result.ok)
     .map((result) => result.message);
   return messages.length > 0 ? messages.join("\n") : null;
+}
+
+export function clampSidebarWidth(width: number): number {
+  return Math.min(LEFT_SIDEBAR_MAX_WIDTH, Math.max(LEFT_SIDEBAR_MIN_WIDTH, width));
+}
+
+export function getNextSidebarWidth(
+  currentWidth: number,
+  key: string,
+  step = SIDEBAR_KEYBOARD_STEP,
+): number {
+  if (key === "ArrowLeft") return clampSidebarWidth(currentWidth - step);
+  if (key === "ArrowRight") return clampSidebarWidth(currentWidth + step);
+  if (key === "Home") return LEFT_SIDEBAR_MIN_WIDTH;
+  if (key === "End") return LEFT_SIDEBAR_MAX_WIDTH;
+  return currentWidth;
+}
+
+export function buildComposerSendPayload(
+  draftText: string,
+  attachmentCount: number,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): { text: string; displayText?: string; threadTitle: string } | null {
+  const text = draftText.trim();
+  if (text.length > 0) {
+    return { text, threadTitle: text };
+  }
+  if (attachmentCount <= 0) return null;
+
+  const attachmentOnlyText = t(
+    attachmentCount === 1
+      ? "composer.attachmentOnlyMessageSingle"
+      : "composer.attachmentOnlyMessageMultiple",
+  );
+  return {
+    text: attachmentOnlyText,
+    displayText: attachmentOnlyText,
+    threadTitle: attachmentOnlyText,
+  };
 }

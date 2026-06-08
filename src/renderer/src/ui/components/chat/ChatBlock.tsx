@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { Item } from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
@@ -8,7 +8,7 @@ interface ChatBlockProps {
   item: Item;
   isLive?: boolean;
   nested?: boolean;
-  onApprove?: (approvalId: string, decision: "allow" | "deny") => void;
+  onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
 }
 
 export function ChatBlock({ item, isLive, nested, onApprove }: ChatBlockProps): ReactElement {
@@ -47,39 +47,7 @@ export function ChatBlock({ item, isLive, nested, onApprove }: ChatBlockProps): 
     case "tool":
       return <ToolBlock item={item} nested={nested} />;
     case "approval":
-      return (
-        <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
-          <div className="ds-approval-block">
-            <div>
-              <strong>{item.toolName}</strong>
-              {item.decision ? (
-                <span style={{ marginLeft: 8, color: "var(--ds-text-faint)" }}>
-                  ({t(`approvals.${item.decision}`)})
-                </span>
-              ) : null}
-            </div>
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", color: "var(--ds-text-muted)" }}>
-              {JSON.stringify(item.args, null, 2)}
-            </pre>
-            {item.decision === undefined && onApprove ? (
-              <div className="ds-approval-actions">
-                <button
-                  className="ds-approval-allow"
-                  onClick={() => onApprove(item.approvalId, "allow")}
-                >
-                  {t("approvals.allow")}
-                </button>
-                <button
-                  className="ds-approval-deny"
-                  onClick={() => onApprove(item.approvalId, "deny")}
-                >
-                  {t("approvals.deny")}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      );
+      return <ApprovalBlock item={item} nested={nested} onApprove={onApprove} />;
     case "user_input":
       return (
         <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
@@ -125,6 +93,80 @@ export function ChatBlock({ item, isLive, nested, onApprove }: ChatBlockProps): 
       );
     }
   }
+}
+
+function ApprovalBlock({
+  item,
+  nested,
+  onApprove,
+}: {
+  item: Extract<Item, { kind: "approval" }>;
+  nested?: boolean;
+  onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+}): ReactElement {
+  const { t } = useTranslation();
+  const [pendingDecision, setPendingDecision] = useState<"allow" | "deny" | null>(null);
+  const canRespond = canRespondToApproval(item.decision, pendingDecision, Boolean(onApprove));
+  const statusText = approvalStatusText(item.decision, pendingDecision, t);
+
+  async function respond(decision: "allow" | "deny"): Promise<void> {
+    if (!canRespond || !onApprove) return;
+    setPendingDecision(decision);
+    try {
+      await onApprove(item.approvalId, decision);
+    } finally {
+      setPendingDecision(null);
+    }
+  }
+
+  return (
+    <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
+      <div className={`ds-approval-block ${pendingDecision ? "is-pending" : ""}`}>
+        <div className="ds-approval-header">
+          <strong>{item.toolName}</strong>
+          {statusText ? <span>{statusText}</span> : null}
+        </div>
+        <pre className="ds-approval-args">{JSON.stringify(item.args, null, 2)}</pre>
+        {item.decision === undefined && onApprove ? (
+          <div className="ds-approval-actions">
+            <button
+              type="button"
+              className="ds-approval-allow"
+              disabled={!canRespond}
+              onClick={() => void respond("allow")}
+            >
+              {pendingDecision === "allow" ? t("approvals.submitting") : t("approvals.allow")}
+            </button>
+            <button
+              type="button"
+              className="ds-approval-deny"
+              disabled={!canRespond}
+              onClick={() => void respond("deny")}
+            >
+              {pendingDecision === "deny" ? t("approvals.submitting") : t("approvals.deny")}
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function canRespondToApproval(
+  decision: "allow" | "deny" | undefined,
+  pendingDecision: "allow" | "deny" | null,
+  hasHandler: boolean,
+): boolean {
+  return decision === undefined && pendingDecision === null && hasHandler;
+}
+
+export function approvalStatusText(
+  decision: "allow" | "deny" | undefined,
+  pendingDecision: "allow" | "deny" | null,
+  t: (key: string) => string,
+): string {
+  if (pendingDecision) return t("approvals.submitting");
+  return decision ? t(`approvals.${decision}`) : "";
 }
 
 function ToolBlock({

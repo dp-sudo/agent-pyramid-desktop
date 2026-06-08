@@ -26,6 +26,10 @@
     "reasoningLabel": "Reasoning",
     "userInputLabel": "User input needed",
     "compactedItems": "Compacted {{count}} context items",
+    "codeBlock": "code",
+    "copyCode": "Copy",
+    "copyCodeDone": "Copied",
+    "copyCodeFailed": "Copy failed",
     "toolStatus": {
       "pending": "Pending",
       "running": "Running",
@@ -52,13 +56,21 @@
     "activeFile": "Editing: {{path}}",
     "save": "Save",
     "refresh": "Refresh",
-    "searchPlaceholder": "Filter Markdown files"
+    "searchPlaceholder": "Filter Markdown files",
+    "clearSearch": "Clear search",
+    "loadingFiles": "Loading Markdown files…",
+    "noWorkspace": "Open a workspace first.",
+    "emptyFiles": "No Markdown files in this workspace.",
+    "emptySearch": "No Markdown files match \"{{search}}\".",
+    "noActiveFile": "No file open"
   },
   "threads": {
     "newChat": "New thread",
     "empty": "No threads yet.",
     "delete": "Delete thread",
     "deleteConfirm": "Delete \"{{title}}\"? This cannot be undone.",
+    "deleteConfirmShort": "Delete?",
+    "deleteConfirmAction": "Confirm",
     "deleteBlockedRunning": "Stop the running turn before deleting this thread.",
     "changeWorkspace": "Change workspace",
     "noWorkspace": "No workspace selected",
@@ -82,18 +94,27 @@
     "noChanges": "No changes yet.",
     "todoEmpty": "No todos.",
     "planEmpty": "No plan.",
-    "fileEmpty": "No file."
+    "fileEmpty": "No file.",
+    "todoApproval": "Approval needed",
+    "todoFailedTool": "Tool failed",
+    "todoRuntimeError": "Runtime error",
+    "planProgress": "{{completed}}/{{total}} complete",
+    "planStatusPending": "Pending",
+    "planStatusInProgress": "In progress",
+    "planStatusCompleted": "Completed"
   },
   "approvals": {
     "allow": "Allow",
-    "deny": "Deny"
+    "deny": "Deny",
+    "submitting": "Submitting…"
   },
   "common": {
     "settings": "Settings",
     "send": "Send",
     "cancel": "Cancel",
     "on": "On",
-    "off": "Off"
+    "off": "Off",
+    "dismiss": "Dismiss"
   },
   "composer": {
     "placeholder": "Send a message…",
@@ -106,20 +127,34 @@
     "goalMode": "Pursue goal",
     "sending": "Sending…",
     "reasoningEffort": "Reasoning",
-    "removeAttachment": "Remove attachment"
+    "removeAttachment": "Remove attachment",
+    "attachmentOnlyMessageSingle": "Please analyze the attached image.",
+    "attachmentOnlyMessageMultiple": "Please analyze the attached images."
   },
   "settings": {
     "title": "Settings",
     "subtitle": "Tune model profiles, provider access, context limits, and reasoning behavior.",
+    "subtitles": {
+      "basic": "Adjust interface language, theme, and other local workbench preferences.",
+      "model": "Tune model profiles, provider access, context limits, and reasoning behavior."
+    },
     "comingSoon": "Settings view is coming soon.",
     "backToWorkbench": "Back to workbench",
     "save": "Save",
     "saving": "Saving",
     "saved": "Saved",
+    "unsavedChanges": "This model profile has unsaved changes. Save before switching or deleting profiles.",
     "preloadMissing": "Preload script not loaded. Open this page through the Electron app.",
     "navLabel": "Settings sections",
+    "sectionNavLabel": "Settings categories",
     "sidebarFooterTitle": "Runtime config",
     "sidebarFooterDescription": "Saved to userData/config",
+    "sidebarFooter": {
+      "basicTitle": "Local preferences",
+      "basicDescription": "Saved in this renderer session",
+      "modelTitle": "Runtime config",
+      "modelDescription": "Saved to userData/config"
+    },
     "showSecret": "Show key",
     "hideSecret": "Hide key",
     "status": {
@@ -130,7 +165,19 @@
       "saved": "Saved",
       "error": "Needs attention"
     },
+    "sectionTabs": {
+      "basic": "Basic settings",
+      "basicDesc": "Language, layout, and sessions",
+      "model": "Model settings",
+      "modelDesc": "Profiles, access, context, and reasoning"
+    },
     "nav": {
+      "appearance": "Appearance",
+      "appearanceDesc": "Language and theme",
+      "startup": "Startup and layout",
+      "startupDesc": "Launch view and panels",
+      "session": "Sessions and workspace",
+      "sessionDesc": "Archive, workspace, and delete",
       "profiles": "Profiles",
       "profilesDesc": "Switch active model",
       "connection": "Connection",
@@ -141,6 +188,12 @@
       "reasoningDesc": "Thinking controls"
     },
     "sections": {
+      "appearance": "Appearance and language",
+      "appearanceDesc": "These preferences apply immediately and are saved on this device.",
+      "startup": "Startup and layout",
+      "startupDesc": "Control the first workbench view, sidebar sizes, and the default Inspector panel.",
+      "session": "Sessions and workspace",
+      "sessionDesc": "Set the default behavior for thread lists, workspace restore, and delete confirmation.",
       "connection": "Connection",
       "connectionDesc": "These values are sent to the runtime gateway when a turn starts.",
       "context": "Context and output limits",
@@ -149,6 +202,16 @@
       "reasoningDesc": "Control provider thinking options and the Agent tool budget."
     },
     "descriptions": {
+      "locale": "Switch the interface copy between supported languages.",
+      "theme": "Apply the light or dark interface theme across the workbench.",
+      "followSystemTheme": "Apply the operating system light or dark preference automatically.",
+      "defaultStartupView": "Choose whether the app opens into the code workbench or write workbench.",
+      "rememberLeftSidebarWidth": "Save the last dragged width for the code sidebar and write file sidebar.",
+      "rememberRightSidebarWidth": "Save the last dragged width for the right Inspector.",
+      "defaultInspectorMode": "Choose the Inspector panel opened by default; Closed keeps it collapsed.",
+      "showArchivedThreadsByDefault": "Include archived threads in the thread list when the workbench opens.",
+      "restoreLastWorkspaceOnStartup": "Restore the last workspace path used on this device at startup.",
+      "confirmThreadDelete": "Show a second confirmation before deleting a thread; disabling it deletes immediately.",
       "profileName": "Friendly name shown in the model profile picker.",
       "modelProvide": "Provider dialect used by the runtime gateway, for example MiniMax, DeepSeek, or Custom.",
       "model": "Exact model id passed to the provider API.",
@@ -162,6 +225,16 @@
       "agentAutonomy": "Controls automatic tool depth per turn. AGENT_MAX_TOOL_ROUNDS can still override it."
     },
     "fields": {
+      "locale": "Interface language",
+      "theme": "Interface theme",
+      "followSystemTheme": "Follow system theme",
+      "defaultStartupView": "Default startup view",
+      "rememberLeftSidebarWidth": "Remember sidebar width",
+      "rememberRightSidebarWidth": "Remember Inspector width",
+      "defaultInspectorMode": "Default Inspector panel",
+      "showArchivedThreadsByDefault": "Show archived by default",
+      "restoreLastWorkspaceOnStartup": "Restore last workspace on startup",
+      "confirmThreadDelete": "Confirm thread deletion",
       "profileName": "Profile name",
       "modelProvide": "Provider",
       "model": "Model ID",
@@ -173,6 +246,20 @@
       "thinking": "Thinking mode",
       "reasoningEffort": "Reasoning effort",
       "agentAutonomy": "Tool autonomy"
+    },
+    "themes": {
+      "light": "Light",
+      "dark": "Dark"
+    },
+    "startupViews": {
+      "code": "Code workbench",
+      "write": "Write workbench"
+    },
+    "inspectorDefaults": {
+      "closed": "Closed",
+      "changes": "Changes",
+      "todo": "Todo",
+      "plan": "Plan"
     },
     "placeholders": {
       "compactLimit": "90% of context window",
@@ -198,6 +285,10 @@
       "addCustom": "Custom",
       "duplicate": "Duplicate",
       "delete": "Delete",
+      "deleteConfirm": "Delete \"{{name}}\"? This cannot be undone.",
+      "deleteConfirmShort": "Delete?",
+      "deleteConfirmAction": "Confirm",
+      "deleting": "Deleting…",
       "minimaxName": "MiniMax",
       "deepseekName": "DeepSeek",
       "customName": "Custom OpenAI",

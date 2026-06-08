@@ -6,6 +6,7 @@ import type { WriteFileEntry } from "../../../../../shared/agent-contracts";
 const AUTOSAVE_DELAY_MS = 800;
 const COMPLETION_DELAY_MS = 650;
 const COMPLETION_MIN_TRAILING_CHARS = 10;
+type WriteStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
 export function WriteWorkspaceView(): ReactElement {
   const { t } = useTranslation();
@@ -16,7 +17,8 @@ export function WriteWorkspaceView(): ReactElement {
   const [savedContent, setSavedContent] = useState("");
   const [search, setSearch] = useState("");
   const [completion, setCompletion] = useState("");
-  const [status, setStatus] = useState<"idle" | "loading" | "saving" | "saved" | "error">("idle");
+  const [status, setStatus] = useState<WriteStatus>("idle");
+  const [listLoading, setListLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const completionRequestId = useRef(0);
   const listRequestId = useRef(0);
@@ -52,22 +54,41 @@ export function WriteWorkspaceView(): ReactElement {
     const requestId = listRequestId.current + 1;
     listRequestId.current = requestId;
     const switchingWorkspace = workspace !== state.workspaceRoot;
+    setListLoading(true);
     setStatus("loading");
-    const result = await window.agentApi.write.list({ workspace, search: searchInput });
-    if (requestId !== listRequestId.current) return;
-    if (result.ok) {
-      setFiles(result.value);
-      if (switchingWorkspace) {
-        setActivePath(null);
-        setContent("");
-        setSavedContent("");
-        setCompletion("");
+    try {
+      const result = await window.agentApi.write.list({ workspace, search: searchInput });
+      if (requestId !== listRequestId.current) return;
+      if (result.ok) {
+        setFiles(result.value);
+        if (switchingWorkspace) {
+          setActivePath(null);
+          setContent("");
+          setSavedContent("");
+          setCompletion("");
+        }
+        setStatus("idle");
+        setErrorMessage(null);
+      } else {
+        setErrorMessage(result.message);
+        setStatus("error");
       }
-      setStatus("idle");
-      setErrorMessage(null);
-    } else {
-      setErrorMessage(result.message);
-      setStatus("error");
+    } catch (error) {
+      if (requestId === listRequestId.current) {
+        setErrorMessage(messageOf(error));
+        setStatus("error");
+      }
+    } finally {
+      if (requestId === listRequestId.current) {
+        setListLoading(false);
+      }
+    }
+  }
+
+  function handleClearSearch(): void {
+    setSearch("");
+    if (state.workspaceRoot) {
+      void loadList(state.workspaceRoot, "");
     }
   }
 
@@ -210,6 +231,20 @@ export function WriteWorkspaceView(): ReactElement {
     }
   }
 
+  const saveDisabled = shouldDisableWriteSave({
+    activePath,
+    workspaceRoot: state.workspaceRoot,
+    content,
+    savedContent,
+    status,
+  });
+  const listState = getWriteListState({
+    files,
+    listLoading,
+    search,
+    workspaceRoot: state.workspaceRoot,
+  });
+
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <aside
@@ -222,6 +257,22 @@ export function WriteWorkspaceView(): ReactElement {
           minHeight: 0,
         }}
       >
+        <div className="ds-write-route-actions">
+          <button
+            type="button"
+            className="ds-pill"
+            onClick={() => actions.setRoute("code")}
+          >
+            {t("routes.code")}
+          </button>
+          <button
+            type="button"
+            className="ds-pill"
+            onClick={() => actions.setRoute("settings")}
+          >
+            {t("common.settings")}
+          </button>
+        </div>
         <div style={{ padding: 12, display: "flex", gap: 6 }}>
           <button className="ds-pill" onClick={() => void loadList()}>
             {t("write.openWorkspace")}
@@ -256,16 +307,42 @@ export function WriteWorkspaceView(): ReactElement {
             }}
             placeholder={t("write.searchPlaceholder")}
           />
+          {search ? (
+            <button
+              type="button"
+              className="ds-write-search-clear"
+              onClick={handleClearSearch}
+              aria-label={t("write.clearSearch")}
+              title={t("write.clearSearch")}
+            >
+              ×
+            </button>
+          ) : null}
         </div>
         <div className="ds-sidebar-list">
+          {listState === "loading" ? (
+            <div className="ds-sidebar-empty">{t("write.loadingFiles")}</div>
+          ) : null}
+          {listState === "no-workspace" ? (
+            <div className="ds-sidebar-empty">{t("write.noWorkspace")}</div>
+          ) : null}
+          {listState === "empty" ? (
+            <div className="ds-sidebar-empty">{t("write.emptyFiles")}</div>
+          ) : null}
+          {listState === "empty-search" ? (
+            <div className="ds-sidebar-empty">{t("write.emptySearch", { search })}</div>
+          ) : null}
           {files.map((file) => (
-            <div
+            <button
               key={file.path}
-              className={`ds-sidebar-row ${file.path === activePath ? "is-active" : ""}`}
+              type="button"
+              className={`ds-write-file-row ${file.path === activePath ? "is-active" : ""}`}
               onClick={() => void openFile(file.path)}
+              title={`${file.path} · ${formatWriteFileMeta(file)}`}
             >
-              {file.path}
-            </div>
+              <span>{file.path}</span>
+              <small>{formatWriteFileMeta(file)}</small>
+            </button>
           ))}
         </div>
       </aside>
@@ -290,13 +367,14 @@ export function WriteWorkspaceView(): ReactElement {
           {status === "saved" ? t("write.saved") : null}
           {status === "error" ? `${t("write.error")}: ${errorMessage ?? ""}` : null}
           {status === "idle" && activePath ? t("write.activeFile", { path: activePath }) : null}
+          {status === "idle" && !activePath ? t("write.noActiveFile") : null}
           <button
             className="ds-pill is-accent"
             style={{ float: "right" }}
             onClick={() => void save()}
-            disabled={!activePath || !state.workspaceRoot}
+            disabled={saveDisabled}
           >
-            {t("write.save")}
+            {content !== savedContent ? t("write.save") : t("write.saved")}
           </button>
         </div>
       </div>
@@ -306,4 +384,50 @@ export function WriteWorkspaceView(): ReactElement {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+export interface WriteSaveStateInput {
+  activePath: string | null;
+  workspaceRoot: string;
+  content: string;
+  savedContent: string;
+  status: WriteStatus;
+}
+
+export function shouldDisableWriteSave(input: WriteSaveStateInput): boolean {
+  return (
+    !input.activePath ||
+    !input.workspaceRoot ||
+    input.status === "loading" ||
+    input.status === "saving" ||
+    input.content === input.savedContent
+  );
+}
+
+export type WriteListState = "loading" | "no-workspace" | "empty" | "empty-search" | "ready";
+
+export function getWriteListState(input: {
+  files: WriteFileEntry[];
+  listLoading: boolean;
+  search: string;
+  workspaceRoot: string;
+}): WriteListState {
+  if (input.listLoading) return "loading";
+  if (!input.workspaceRoot) return "no-workspace";
+  if (input.files.length > 0) return "ready";
+  return input.search.trim() ? "empty-search" : "empty";
+}
+
+export function formatWriteFileMeta(file: WriteFileEntry): string {
+  return `${formatBytes(file.size)} · ${formatDate(file.modifiedAt)}`;
+}
+
+function formatDate(value: string): string {
+  return new Date(value).toLocaleDateString();
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 102.4) / 10} KB`;
+  return `${Math.round(value / 1024 / 102.4) / 10} MB`;
 }

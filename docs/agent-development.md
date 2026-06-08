@@ -24,6 +24,7 @@
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
+- 设置页采用两级导航：顶部切换设置大类，左侧切换当前大类下的小类，中间展示详细配置；当前“基础设置”大类承载外观与语言、启动与布局、会话与工作区偏好，“大模型设置”大类承载模型档案、连接信息、上下文和推理行为。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
 - 建立 Vitest 自动化测试体系：`vitest.config.ts`、`tsconfig.test.json`、`tests/`，覆盖共享契约、主进程持久化、模型配置、附件、工具、事件总线、LLM 网关、AgentRuntime 和渲染端 reducer。
 
@@ -34,7 +35,7 @@
 3. Agent 编排器只处理运行流程，不直接拼接供应商请求体。
 4. 工具能力通过 `ToolRegistry` 接口注册和执行，后续工具不得绕过注册机制。
 5. 渲染层只通过 preload 暴露的安全 API 调用主进程，不直接访问 Node 能力。
-6. 界面语言切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义。
+6. 界面语言和主题切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义；设置页“基础设置”直接调用渲染层 localStorage 偏好，不进入主进程运行时配置。
 7. 大模型运行时仍以 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为当前激活配置契约；持久层在外层维护 `ModelConfigProfilesState`（`activeProfileId + profiles[]`），`ModelConfigStore.get()` 只返回当前激活档案的 `ModelConfig`，避免 Agent 运行循环感知多档案 UI。
 8. LLM 网关按 `ModelConfig.model_provide` 做供应商感知请求体分流：`MiniMax` 使用 `max_completion_tokens/reasoning_split/thinking.type=adaptive|disabled`，`DeepSeek` 使用 `/chat/completions`、`max_tokens/thinking.type=enabled|disabled/reasoning_effort=high|max`，其他供应商走通用 OpenAI-compatible 请求体。
 9. 自动化测试使用 Vitest，优先测试公开类、共享契约和纯状态逻辑；持久化测试使用临时目录隔离，LLM 网关测试通过 mock `fetch` 验证请求体和 SSE 解析，不依赖真实 API key。
@@ -115,13 +116,13 @@
 
 - 新建 `src/renderer/src/ui/styles/tokens.css`：`--ds-*` 变量全表（light + dark），作为本项目统一设计 token 命名空间。
 - 新建 `src/renderer/src/ui/styles/shell.css`：三段式布局 + divider + composer + chat blocks + inspector + write editor 容器类。
-- 新建 `src/renderer/src/ui/store/WorkbenchContext.tsx`：`useReducer` 模拟 store，state 包含 `route / activeThreadId / threads / items / inFlightTurn / rightPanelMode / composer / leftSidebarWidth / rightSidebarWidth`。
+- 新建 `src/renderer/src/ui/store/WorkbenchContext.tsx`：`useReducer` 模拟 store，state 包含 `route / activeThreadId / threads / items / inFlightTurn / rightPanelMode / composer / leftSidebarWidth / rightSidebarWidth / basicPreferences`。
 - 新建 4 个 primitives：`Pill / IconButton / Chip / KbdHint`。
 - 新建 4 个组件子目录：`sidebar/`、`topbar/`、`composer/`、`chat/`、`inspector/`、`write/`。
 - 新建 `AppShell.tsx` + `Workbench.tsx` + `SettingsView.tsx`：三段式骨架 + 拖拽 + SSE 订阅 + IPC 调用。
 - 重写 `src/renderer/src/main.tsx`：移除 `import './styles.css'`，改为 `import './ui/styles/{tokens,shell}.css'`，挂载 `WorkbenchProvider + AppShell`。
 - i18n 扩展 9 个命名空间（`chat / write / threads / inspector / approvals / common / composer / settings / routes`），英文与中文同步。
-- 主题：`initTheme()` 在 `main.tsx` 渲染前同步从 localStorage 读 `agent.theme` 写到 `<html data-theme>`，避免首次渲染主题闪烁。
+- 主题：`initTheme()` 在 `main.tsx` 渲染前同步从 `src/renderer/src/ui/preferences.ts` 的 `agent-pyramid.basicPreferences` 读主题偏好，支持浅色、深色和跟随系统主题，并写到 `<html data-theme>` 避免首次渲染主题闪烁。
 
 ### 文档
 
@@ -196,6 +197,14 @@
 - 更新 `src/renderer/src/ui/styles/shell.css` 中的设置页样式，以及 `src/renderer/src/i18n/locales/{en,zh-CN}/translation.json` 中的设置页文案。
 - 验证方式：`npm run typecheck`；`npm run build`。
 
+## 2026-06-08 - 基础设置完整化
+
+- 新增 `src/renderer/src/ui/preferences.ts` 作为渲染端基础偏好的唯一权威来源，集中维护 localStorage key、默认值、类型守卫和宽度范围。
+- 设置页“基础设置”扩展为“外观与语言 / 启动与布局 / 会话与工作区”三组：支持界面语言、界面主题、跟随系统主题、默认启动视图、记住左右面板宽度、默认 Inspector 面板、默认显示归档会话、启动时恢复上次工作区和删除会话二次确认。
+- `WorkbenchContext` 从基础偏好派生初始 route、workspaceRoot、归档显示、Inspector 面板和左右宽度；设置页修改偏好后会即时同步到工作台状态。
+- 侧栏删除会话根据 `confirmThreadDelete` 决定是否显示 inline 二次确认；写作工作台补充返回编码工作台和进入设置页的导航，避免默认启动写作视图后缺少返回路径。
+- 验证方式：`npm run typecheck`；`npm run test`；`npm run build`。
+
 ## 2026-06-07 - 线程删除 UI
 
 - 为侧边栏线程新增渲染端删除操作。该操作使用现有 `agentApi.threads.delete(id)` preload API 和 `THREAD_DELETE_CHANNEL` IPC 路径。
@@ -257,9 +266,22 @@
 - 修复 Workbench 初始加载错误可见性：启动时 `threads.list`、`modelConfig.get`、`modelConfig.listProfiles` 的失败不再被静默忽略，会合并显示到现有错误区域。
 - 修复 FloatingComposer 草稿同步：Code composer 会跟随全局 `composer.text` 更新，避免 Write 模式写入草稿后切回 Code 仍显示旧本地 draft。
 - 修复 FloatingComposer 弹层收束：`+` 菜单和模型选择器打开时会响应 composer 外部 `pointerdown` 与 `Escape` 自动关闭，添加图片入口触发文件选择后也会立即收起菜单，避免弹层长期悬浮遮挡时间线。
+- 修复 FloatingComposer 附件-only 发送：当 composer 有图片附件但文本为空时，发送按钮和 Enter 提交会使用本地化默认提示创建 turn，并把 `displayText`、新 thread 标题与 LLM 输入文本保持一致；真正空白且无附件的草稿仍不可发送。
 - 修复模型选择器高亮：当多个 profile 使用同一 model 字符串时，Composer 优先按 `modelProfileId` 高亮唯一档案，避免多 profile 同时显示为选中。
 - 修复模型 profile 状态同步：`WorkbenchContext` 会在 active profile 真实切换或当前 profile 被删除时同步 composer 到新 active profile；普通 profile 列表刷新会保留用户当前有效选择，并刷新该 profile 的最新模型和 reasoning 配置，避免 `model` 文本与 `modelProfileId` 错位。
 - 优化大模型输出 Markdown 渲染：`AssistantMarkdown` 继续使用 `react-markdown` + `remark-gfm`，但新增链接、代码块、表格、任务列表、图片和分隔线的稳定容器/样式映射，长代码和宽表格在中心内容列内横向滚动，外链打开新窗口。
+- 优化代码块交互：Assistant Markdown 代码块顶部栏显示语言或默认代码标签，并提供复制按钮；剪贴板不可用或写入失败时显示失败反馈，不影响消息渲染。
+- 优化流式输出滚动：`MessageTimeline` 在用户停留于底部附近时自动跟随最新 `item_updated` / `item_appended` 内容；用户上滑阅读旧内容后停止抢滚动，回到底部后恢复跟随。
+- 优化工作过程展开状态：`MessageTimeline` 仍默认展开当前运行 turn 的 work process，但会按 turnId 保留用户手动展开/折叠选择，避免流式更新时重置阅读状态。
+- 优化线程侧栏交互：删除会话从系统 `window.confirm` 改为行内确认态，线程主区域改为真实 button，归档/恢复/删除操作独立成 action 区，减少误触并提升键盘焦点可见性。
+- 优化 Write 工作台交互：文件列表增加加载、未打开工作区、无 Markdown 文件和搜索无结果状态；文件行改为真实 button 并显示大小/日期元信息；搜索框支持一键清空；保存按钮在无文件、无变更或忙碌状态下禁用并显示已保存状态。
+- 优化工作台基础可控性：左侧分栏 separator 支持键盘焦点、Arrow/Home/End 调宽并复用鼠标拖拽宽度边界；聊天错误提示改为可关闭 toast，不再只能等待下一次状态覆盖。
+- 优化 RightInspector 交互：右侧分析面板增加左边缘 resizer，支持鼠标拖拽与 Arrow/Home/End 键盘调宽，宽度范围遵循 `docs/ui-design.md` 的 280 到 760；检查器空状态和变更列表样式从内联样式收敛到 `shell.css`。
+- 优化 RightInspector 分析内容：Changes 面板复用工具摘要展示工具标题、状态和参数/结果详情；Todo 面板从待审批、失败工具、运行错误与最新计划未完成步骤派生可操作事项；Plan 面板显示最新计划进度与步骤状态。
+- 优化 approval 交互：审批按钮点击后进入本地提交中状态并禁用 allow/deny，避免 IPC 返回或事件更新前重复提交；approval 参数 JSON 使用固定样式与滚动区域展示。
+- 优化 Settings 模型档案交互：删除 profile 改为卡片内行内确认态，提供确认/取消和删除中反馈，避免单击误删模型配置。
+- 加固 Settings 未保存修改保护：模型档案表单处于 dirty 状态时会阻止激活、创建、复制、删除 profile 和返回工作台，并显示保存提示；保存按钮在 idle/saved/loading/saving 时禁用，避免无变更保存。
+- 扩展 Settings 基础设置：新增“基础设置”大类，并完整提供“外观与语言 / 启动与布局 / 会话与工作区”三组偏好；这些偏好选择后立即生效并保存到渲染端 localStorage，不复用大模型配置保存状态。
 - 修复附件存储输入校验：`AttachmentStore` 现在严格校验 `dataBase64`，非法 base64 不会被 `Buffer.from(..., "base64")` 宽松解码后保存为损坏附件。
 - 修复附件创建失败副产物：`AttachmentStore.create()` 在附件二进制写入后如果索引更新失败，会删除刚创建的 `.bin` 文件并原样抛出错误，避免留下孤儿附件。
 - 加固本地持久化 ID 边界：`JsonlThreadStore` 和 `AttachmentStore` 在解析 thread / attachment 本地路径前校验 UUID，阻止 renderer 或损坏数据传入 `../` 之类路径片段访问、写入或删除持久化目录外文件。

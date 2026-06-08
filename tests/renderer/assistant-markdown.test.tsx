@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AssistantMarkdown } from "../../src/renderer/src/ui/components/chat/AssistantMarkdown";
+import {
+  AssistantMarkdown,
+  extractCodeText,
+} from "../../src/renderer/src/ui/components/chat/AssistantMarkdown";
 
 describe("AssistantMarkdown", () => {
   it("renders model output with stable wrappers for rich markdown blocks", () => {
@@ -25,8 +28,15 @@ describe("AssistantMarkdown", () => {
     expect(html).toContain("target=\"_blank\"");
     expect(html).toContain("rel=\"noreferrer\"");
     expect(html).toContain("class=\"ds-code-block\"");
-    expect(html).toContain("class=\"ds-code-block-header\">ts");
+    expect(html).toContain("class=\"ds-code-block-header\"><span>ts</span>");
+    expect(html).toContain("<button type=\"button\">chat.copyCode</button>");
     expect(html).toContain("class=\"ds-markdown-table-wrap\"");
     expect(html).toContain("class=\"ds-markdown-task-checkbox");
+  });
+
+  it("extracts only code text from a code block node tree", () => {
+    expect(extractCodeText(<code className="language-ts">const value = 1;</code>)).toBe(
+      "const value = 1;",
+    );
   });
 });

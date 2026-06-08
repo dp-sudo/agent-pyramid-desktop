@@ -1,6 +1,13 @@
 import type { ReactElement } from "react";
 
-export type SettingsCategory = "profiles" | "connection" | "context" | "reasoning";
+export type SettingsCategory =
+  | "appearance"
+  | "startup"
+  | "session"
+  | "profiles"
+  | "connection"
+  | "context"
+  | "reasoning";
 
 export interface SettingsSidebarItem {
   id: SettingsCategory;

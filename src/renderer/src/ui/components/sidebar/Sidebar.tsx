@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../store/WorkbenchContext";
 import type { ThreadSummary } from "../../../../../shared/agent-contracts";
@@ -15,6 +15,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
   workspaceRoot: string;
   showArchivedThreads: boolean;
+  confirmThreadDelete: boolean;
   onToggleArchivedThreads: () => void;
 }
 
@@ -30,11 +31,13 @@ export function Sidebar({
   onOpenSettings,
   workspaceRoot,
   showArchivedThreads,
+  confirmThreadDelete,
   onToggleArchivedThreads,
 }: SidebarProps): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
   const groups = groupThreadsByWorkspace(threads);
+  const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<string | null>(null);
 
   return (
     <aside className="ds-sidebar">
@@ -78,51 +81,93 @@ export function Sidebar({
             </div>
             {group.threads.map((thread) => {
               const isArchived = thread.status === "archived";
+              const isActive = state.activeThreadId === thread.id;
+              const isConfirmingDelete = isThreadDeletePending(
+                pendingDeleteThreadId,
+                thread.id,
+              );
               return (
-                <div
+                <article
                   key={thread.id}
                   className={`ds-sidebar-row ${
-                    state.activeThreadId === thread.id ? "is-active" : ""
-                  } ${isArchived ? "is-archived" : ""}`}
-                  onClick={() => onSelectThread(thread.id)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      onSelectThread(thread.id);
-                    }
-                  }}
+                    isActive ? "is-active" : ""
+                  } ${isArchived ? "is-archived" : ""} ${
+                    isConfirmingDelete ? "is-confirming-delete" : ""
+                  }`}
                 >
-                  <span className="ds-sidebar-row-title">{thread.title}</span>
-                  <span className="ds-sidebar-row-time">
-                    {new Date(thread.updatedAt).toLocaleTimeString()}
-                  </span>
                   <button
                     type="button"
-                    className="ds-sidebar-row-action"
-                    title={isArchived ? t("threads.restore") : t("threads.archive")}
-                    aria-label={isArchived ? t("threads.restore") : t("threads.archive")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (isArchived) onRestoreThread(thread.id);
-                      else onArchiveThread(thread.id);
+                    className="ds-sidebar-row-main"
+                    aria-current={isActive ? "page" : undefined}
+                    onClick={() => {
+                      setPendingDeleteThreadId(null);
+                      onSelectThread(thread.id);
                     }}
                   >
-                    {isArchived ? t("threads.restoreShort") : t("threads.archiveShort")}
+                    <span className="ds-sidebar-row-title">{thread.title}</span>
+                    <span className="ds-sidebar-row-time">
+                      {formatThreadTime(thread.updatedAt)}
+                    </span>
                   </button>
-                  <button
-                    type="button"
-                    className="ds-sidebar-delete-button"
-                    title={t("threads.delete")}
-                    aria-label={t("threads.delete")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onDeleteThread(thread.id);
-                    }}
-                  >
-                    {t("threads.deleteShort")}
-                  </button>
-                </div>
+                  {isConfirmingDelete ? (
+                    <div
+                      className="ds-sidebar-delete-confirm"
+                      role="group"
+                      aria-label={t("threads.deleteConfirm", { title: thread.title })}
+                    >
+                      <span>{t("threads.deleteConfirmShort")}</span>
+                      <button
+                        type="button"
+                        className="ds-sidebar-delete-button is-danger"
+                        onClick={() => {
+                          setPendingDeleteThreadId(null);
+                          onDeleteThread(thread.id);
+                        }}
+                      >
+                        {t("threads.deleteConfirmAction")}
+                      </button>
+                      <button
+                        type="button"
+                        className="ds-sidebar-row-action"
+                        onClick={() => setPendingDeleteThreadId(null)}
+                      >
+                        {t("common.cancel")}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="ds-sidebar-row-actions">
+                      <button
+                        type="button"
+                        className="ds-sidebar-row-action"
+                        title={isArchived ? t("threads.restore") : t("threads.archive")}
+                        aria-label={isArchived ? t("threads.restore") : t("threads.archive")}
+                        onClick={() => {
+                          setPendingDeleteThreadId(null);
+                          if (isArchived) onRestoreThread(thread.id);
+                          else onArchiveThread(thread.id);
+                        }}
+                      >
+                        {isArchived ? t("threads.restoreShort") : t("threads.archiveShort")}
+                      </button>
+                      <button
+                        type="button"
+                        className="ds-sidebar-delete-button"
+                        title={t("threads.delete")}
+                        aria-label={t("threads.delete")}
+                        onClick={() => {
+                          if (getThreadDeleteClickMode(confirmThreadDelete) === "confirm") {
+                            setPendingDeleteThreadId(thread.id);
+                            return;
+                          }
+                          setPendingDeleteThreadId(null);
+                          onDeleteThread(thread.id);
+                        }}
+                      >
+                        {t("threads.deleteShort")}
+                      </button>
+                    </div>
+                  )}
+                </article>
               );
             })}
           </section>
@@ -158,4 +203,24 @@ function groupThreadsByWorkspace(threads: ThreadSummary[]): ThreadGroup[] {
     workspace,
     threads: groupedThreads,
   }));
+}
+
+export function formatThreadTime(value: string): string {
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function isThreadDeletePending(
+  pendingDeleteThreadId: string | null,
+  threadId: string,
+): boolean {
+  return pendingDeleteThreadId === threadId;
+}
+
+export function getThreadDeleteClickMode(
+  confirmThreadDelete: boolean,
+): "confirm" | "delete" {
+  return confirmThreadDelete ? "confirm" : "delete";
 }

@@ -26,6 +26,10 @@
     "reasoningLabel": "推理思考",
     "userInputLabel": "需要用户输入",
     "compactedItems": "已压缩 {{count}} 条上下文",
+    "codeBlock": "代码",
+    "copyCode": "复制",
+    "copyCodeDone": "已复制",
+    "copyCodeFailed": "复制失败",
     "toolStatus": {
       "pending": "等待中",
       "running": "运行中",
@@ -52,13 +56,21 @@
     "activeFile": "正在编辑：{{path}}",
     "save": "保存",
     "refresh": "刷新",
-    "searchPlaceholder": "筛选 Markdown 文件"
+    "searchPlaceholder": "筛选 Markdown 文件",
+    "clearSearch": "清空搜索",
+    "loadingFiles": "正在加载 Markdown 文件…",
+    "noWorkspace": "先打开一个工作区。",
+    "emptyFiles": "这个工作区里暂无 Markdown 文件。",
+    "emptySearch": "没有匹配“{{search}}”的 Markdown 文件。",
+    "noActiveFile": "未打开文件"
   },
   "threads": {
     "newChat": "新建会话",
     "empty": "暂无会话。",
     "delete": "删除会话",
     "deleteConfirm": "删除“{{title}}”？此操作无法撤销。",
+    "deleteConfirmShort": "确认删除？",
+    "deleteConfirmAction": "确认",
     "deleteBlockedRunning": "请先停止正在运行的回合，再删除此会话。",
     "changeWorkspace": "更换工作目录",
     "noWorkspace": "未选择工作目录",
@@ -82,18 +94,27 @@
     "noChanges": "暂无变更。",
     "todoEmpty": "暂无待办。",
     "planEmpty": "暂无计划。",
-    "fileEmpty": "暂无文件。"
+    "fileEmpty": "暂无文件。",
+    "todoApproval": "需要审批",
+    "todoFailedTool": "工具失败",
+    "todoRuntimeError": "运行错误",
+    "planProgress": "已完成 {{completed}}/{{total}}",
+    "planStatusPending": "待处理",
+    "planStatusInProgress": "进行中",
+    "planStatusCompleted": "已完成"
   },
   "approvals": {
     "allow": "允许",
-    "deny": "拒绝"
+    "deny": "拒绝",
+    "submitting": "提交中…"
   },
   "common": {
     "settings": "设置",
     "send": "发送",
     "cancel": "取消",
     "on": "开",
-    "off": "关"
+    "off": "关",
+    "dismiss": "关闭"
   },
   "composer": {
     "placeholder": "发送消息…",
@@ -106,19 +127,33 @@
     "goalMode": "目标模式",
     "sending": "发送中…",
     "reasoningEffort": "推理",
-    "removeAttachment": "移除附件"
+    "removeAttachment": "移除附件",
+    "attachmentOnlyMessageSingle": "请分析这张附件图片。",
+    "attachmentOnlyMessageMultiple": "请分析这些附件图片。"
   },
   "settings": {
     "title": "设置",
     "subtitle": "调整模型档案、供应商连接、上下文限制和推理行为。",
+    "subtitles": {
+      "basic": "调整界面语言、主题和其它本地工作台偏好。",
+      "model": "调整模型档案、供应商连接、上下文限制和推理行为。"
+    },
     "comingSoon": "设置页即将推出。",
     "backToWorkbench": "返回工作台",
     "save": "保存",
     "saving": "保存中",
     "saved": "已保存",
+    "unsavedChanges": "当前模型档案有未保存修改。请先保存，再切换或删除档案。",
     "navLabel": "设置分区",
+    "sectionNavLabel": "设置大类",
     "sidebarFooterTitle": "运行时配置",
     "sidebarFooterDescription": "保存到 userData/config",
+    "sidebarFooter": {
+      "basicTitle": "本地偏好",
+      "basicDescription": "保存在当前渲染端会话",
+      "modelTitle": "运行时配置",
+      "modelDescription": "保存到 userData/config"
+    },
     "showSecret": "显示密钥",
     "hideSecret": "隐藏密钥",
     "status": {
@@ -129,7 +164,19 @@
       "saved": "已保存",
       "error": "需要处理"
     },
+    "sectionTabs": {
+      "basic": "基础设置",
+      "basicDesc": "语言、布局与会话",
+      "model": "大模型设置",
+      "modelDesc": "模型、连接、上下文与推理"
+    },
     "nav": {
+      "appearance": "外观与语言",
+      "appearanceDesc": "语言和主题",
+      "startup": "启动与布局",
+      "startupDesc": "启动视图和面板",
+      "session": "会话与工作区",
+      "sessionDesc": "归档、工作区和删除",
       "profiles": "模型档案",
       "profilesDesc": "切换当前模型",
       "connection": "连接信息",
@@ -140,6 +187,12 @@
       "reasoningDesc": "思考参数"
     },
     "sections": {
+      "appearance": "外观与语言",
+      "appearanceDesc": "这些偏好会立即生效，并保存在当前设备上。",
+      "startup": "启动与布局",
+      "startupDesc": "控制工作台首次打开的视图、侧栏尺寸和 Inspector 默认面板。",
+      "session": "会话与工作区",
+      "sessionDesc": "设置会话列表、工作区恢复和删除确认的默认行为。",
       "connection": "连接信息",
       "connectionDesc": "这些值会在开始对话回合时传给运行时网关。",
       "context": "上下文与输出限制",
@@ -148,6 +201,16 @@
       "reasoningDesc": "控制供应商 thinking 参数和 Agent 自动工具预算。"
     },
     "descriptions": {
+      "locale": "在支持的语言之间切换界面文案。",
+      "theme": "将浅色或深色界面主题应用到整个工作台。",
+      "followSystemTheme": "根据操作系统的浅色或深色偏好自动应用主题。",
+      "defaultStartupView": "应用启动后默认进入编码工作台或写作工作台。",
+      "rememberLeftSidebarWidth": "保存编码侧栏和写作文件侧栏的最后拖拽宽度。",
+      "rememberRightSidebarWidth": "保存右侧 Inspector 的最后拖拽宽度。",
+      "defaultInspectorMode": "进入工作台时默认打开的 Inspector 面板；选择关闭则保持收起。",
+      "showArchivedThreadsByDefault": "打开工作台时默认在会话列表中包含归档会话。",
+      "restoreLastWorkspaceOnStartup": "再次启动时恢复当前设备最后使用过的工作区路径。",
+      "confirmThreadDelete": "删除会话前显示二次确认；关闭后点击删除会立即执行。",
       "profileName": "显示在模型档案选择器里的友好名称。",
       "modelProvide": "运行时网关使用的供应商方言，例如 MiniMax、DeepSeek 或 Custom。",
       "model": "传给供应商 API 的精确模型 ID。",
@@ -161,6 +224,16 @@
       "agentAutonomy": "控制单回合可自动执行的工具深度；环境变量 AGENT_MAX_TOOL_ROUNDS 仍可覆盖。"
     },
     "fields": {
+      "locale": "界面语言",
+      "theme": "界面主题",
+      "followSystemTheme": "跟随系统主题",
+      "defaultStartupView": "默认启动视图",
+      "rememberLeftSidebarWidth": "记住侧栏宽度",
+      "rememberRightSidebarWidth": "记住 Inspector 宽度",
+      "defaultInspectorMode": "默认 Inspector 面板",
+      "showArchivedThreadsByDefault": "默认显示归档会话",
+      "restoreLastWorkspaceOnStartup": "启动时恢复上次工作区",
+      "confirmThreadDelete": "删除会话二次确认",
       "modelProvide": "供应商",
       "model": "模型 ID",
       "baseUrl": "接口地址",
@@ -172,6 +245,20 @@
       "reasoningEffort": "推理强度",
       "agentAutonomy": "工具自主度",
       "profileName": "档案名称"
+    },
+    "themes": {
+      "light": "浅色",
+      "dark": "深色"
+    },
+    "startupViews": {
+      "code": "编码工作台",
+      "write": "写作工作台"
+    },
+    "inspectorDefaults": {
+      "closed": "关闭",
+      "changes": "变更",
+      "todo": "待办",
+      "plan": "计划"
     },
     "placeholders": {
       "compactLimit": "上下文窗口的 90%",
@@ -197,6 +284,10 @@
       "addCustom": "自定义",
       "duplicate": "复制",
       "delete": "删除",
+      "deleteConfirm": "删除“{{name}}”？此操作无法撤销。",
+      "deleteConfirmShort": "确认删除？",
+      "deleteConfirmAction": "确认",
+      "deleting": "删除中…",
       "minimaxName": "MiniMax",
       "deepseekName": "DeepSeek",
       "customName": "自定义 OpenAI",

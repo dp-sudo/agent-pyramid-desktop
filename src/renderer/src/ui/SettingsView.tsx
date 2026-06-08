@@ -8,6 +8,11 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  DEFAULT_LOCALE,
+  SUPPORTED_LOCALES,
+  type LocaleCode,
+} from "../../../shared/locale";
+import {
   AGENT_AUTONOMY_LEVELS,
   DEFAULT_DEEPSEEK_MODEL_CONFIG,
   DEFAULT_MODEL_CONFIG,
@@ -32,6 +37,12 @@ import {
   type SettingsCategory,
   type SettingsSidebarItem,
 } from "./components/settings/SettingsSidebar";
+import { i18n, persistLocale, setFollowSystemTheme, setTheme } from "../i18n";
+import type {
+  DefaultInspectorMode,
+  DefaultStartupView,
+  ThemePreference,
+} from "./preferences";
 
 interface SettingsFormState {
   model_provide: string;
@@ -47,11 +58,44 @@ interface SettingsFormState {
 }
 
 type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
+type SettingsSection = "basic" | "model";
+
+interface SettingsSectionItem {
+  id: SettingsSection;
+  label: string;
+  description: string;
+}
+
+const MODEL_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
+  "profiles",
+  "connection",
+  "context",
+  "reasoning",
+];
+const BASIC_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
+  "appearance",
+  "startup",
+  "session",
+];
+const THEME_PREFERENCES: readonly ThemePreference[] = ["light", "dark"];
+const STARTUP_VIEWS: readonly DefaultStartupView[] = ["code", "write"];
+const DEFAULT_INSPECTOR_MODES: readonly DefaultInspectorMode[] = [
+  null,
+  "changes",
+  "todo",
+  "plan",
+];
 
 export function SettingsView(): ReactElement {
   const { t } = useTranslation();
-  const { actions } = useWorkbench();
-  const [category, setCategory] = useState<SettingsCategory>("profiles");
+  const { state, actions } = useWorkbench();
+  const preferences = state.basicPreferences;
+  const [section, setSection] = useState<SettingsSection>("basic");
+  const [category, setCategory] = useState<SettingsCategory>("appearance");
+  const [locale, setLocale] = useState<LocaleCode>(() => {
+    const currentLocale = i18n.language;
+    return isSettingsLocale(currentLocale) ? currentLocale : DEFAULT_LOCALE;
+  });
   const [form, setForm] = useState<SettingsFormState>(() =>
     toFormState(DEFAULT_MODEL_CONFIG),
   );
@@ -62,12 +106,50 @@ export function SettingsView(): ReactElement {
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const [error, setError] = useState<string>("");
   const [profileBusy, setProfileBusy] = useState<string>("");
+  const [pendingDeleteProfileId, setPendingDeleteProfileId] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
 
   const activeProfile = profilesState ? findActiveProfile(profilesState) : null;
   const hasAgentApi = Boolean(window.agentApi);
-  const settingsNavItems = useMemo<SettingsSidebarItem[]>(
+  const settingsSectionItems = useMemo<SettingsSectionItem[]>(
     () => [
+      {
+        id: "basic",
+        label: t("settings.sectionTabs.basic"),
+        description: t("settings.sectionTabs.basicDesc"),
+      },
+      {
+        id: "model",
+        label: t("settings.sectionTabs.model"),
+        description: t("settings.sectionTabs.modelDesc"),
+      },
+    ],
+    [t],
+  );
+  const settingsNavItems = useMemo<SettingsSidebarItem[]>(() => {
+    if (section === "basic") {
+      return [
+        {
+          id: "appearance",
+          label: t("settings.nav.appearance"),
+          description: t("settings.nav.appearanceDesc"),
+          marker: "01",
+        },
+        {
+          id: "startup",
+          label: t("settings.nav.startup"),
+          description: t("settings.nav.startupDesc"),
+          marker: "02",
+        },
+        {
+          id: "session",
+          label: t("settings.nav.session"),
+          description: t("settings.nav.sessionDesc"),
+          marker: "03",
+        },
+      ];
+    }
+    return [
       {
         id: "profiles",
         label: t("settings.nav.profiles"),
@@ -92,9 +174,20 @@ export function SettingsView(): ReactElement {
         description: t("settings.nav.reasoningDesc"),
         marker: "04",
       },
-    ],
-    [t],
-  );
+    ];
+  }, [section, t]);
+  const sidebarFooterTitle =
+    section === "basic"
+      ? t("settings.sidebarFooter.basicTitle")
+      : t("settings.sidebarFooter.modelTitle");
+  const sidebarFooterDescription =
+    section === "basic"
+      ? t("settings.sidebarFooter.basicDescription")
+      : t("settings.sidebarFooter.modelDescription");
+  const settingsSubtitle =
+    section === "basic"
+      ? t("settings.subtitles.basic")
+      : t("settings.subtitles.model");
 
   useEffect(() => {
     let cancelled = false;
@@ -169,13 +262,59 @@ export function SettingsView(): ReactElement {
     setForm((current) => ({ ...current, agent_autonomy: value }));
   }
 
+  function updateLocale(event: ChangeEvent<HTMLSelectElement>): void {
+    const nextLocale = event.target.value;
+    if (!isSettingsLocale(nextLocale)) return;
+    setLocale(nextLocale);
+    persistLocale(nextLocale);
+    void i18n.changeLanguage(nextLocale);
+  }
+
+  function updateThemePreference(theme: ThemePreference): void {
+    actions.updateBasicPreference("theme", theme);
+    actions.updateBasicPreference("followSystemTheme", false);
+    setTheme(theme);
+  }
+
+  function updateFollowSystemTheme(enabled: boolean): void {
+    actions.updateBasicPreference("followSystemTheme", enabled);
+    setFollowSystemTheme(enabled);
+  }
+
+  function updateStartupView(event: ChangeEvent<HTMLSelectElement>): void {
+    const value = event.target.value;
+    if (!isDefaultStartupViewSetting(value)) return;
+    actions.updateBasicPreference("defaultStartupView", value);
+  }
+
+  function updateDefaultInspectorMode(event: ChangeEvent<HTMLSelectElement>): void {
+    const value = toDefaultInspectorMode(event.target.value);
+    actions.updateBasicPreference("defaultInspectorMode", value);
+  }
+
   function markDirty(): void {
     setSaveState((current) =>
       current === "loading" || current === "saving" ? current : "dirty",
     );
   }
 
+  function ensureNoUnsavedProfileChanges(): boolean {
+    if (!shouldBlockSettingsNavigation(saveState)) return true;
+    setError(t("settings.unsavedChanges"));
+    return false;
+  }
+
+  function handleSelectSection(nextSection: SettingsSection): void {
+    if (nextSection === section) return;
+    if (!ensureNoUnsavedProfileChanges()) return;
+    setSection(nextSection);
+    setCategory(getDefaultCategoryForSection(nextSection));
+    setPendingDeleteProfileId(null);
+  }
+
   async function handleActivateProfile(profile: ModelConfigProfile): Promise<void> {
+    if (!ensureNoUnsavedProfileChanges()) return;
+    setPendingDeleteProfileId(null);
     setProfileBusy(profile.id);
     setSaveState("saving");
     setError("");
@@ -197,6 +336,8 @@ export function SettingsView(): ReactElement {
     name: string,
     config: ModelConfig,
   ): Promise<void> {
+    if (!ensureNoUnsavedProfileChanges()) return;
+    setPendingDeleteProfileId(null);
     setProfileBusy("create");
     setSaveState("saving");
     setError("");
@@ -228,6 +369,8 @@ export function SettingsView(): ReactElement {
 
   async function handleDeleteProfile(profile: ModelConfigProfile): Promise<void> {
     if (!profilesState || profilesState.profiles.length <= 1) return;
+    if (!ensureNoUnsavedProfileChanges()) return;
+    setPendingDeleteProfileId(null);
     setProfileBusy(profile.id);
     setSaveState("saving");
     setError("");
@@ -247,6 +390,7 @@ export function SettingsView(): ReactElement {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (section !== "model") return;
     if (!activeProfile) {
       setSaveState("error");
       setError(t("settings.profiles.noActive"));
@@ -308,39 +452,253 @@ export function SettingsView(): ReactElement {
         items={settingsNavItems}
         activeCategory={category}
         navLabel={t("settings.navLabel")}
-        footerTitle={t("settings.sidebarFooterTitle")}
-        footerDescription={t("settings.sidebarFooterDescription")}
+        footerTitle={sidebarFooterTitle}
+        footerDescription={sidebarFooterDescription}
         backLabel={t("settings.backToWorkbench")}
         onSelect={setCategory}
-        onBack={() => actions.setRoute("code")}
+        onBack={() => {
+          if (ensureNoUnsavedProfileChanges()) {
+            actions.setRoute("code");
+          }
+        }}
       />
       <form className="ds-settings-main" onSubmit={(event) => void handleSubmit(event)}>
-        <div className="ds-settings-content">
-          <header className="ds-settings-page-header">
-            <div>
-              <h1>{t("settings.title")}</h1>
-              <p>{t("settings.subtitle")}</p>
-            </div>
-            <div className="ds-settings-page-actions">
-              <StatusBadge tone={saveState} title={error || undefined}>
-                {statusLabel}
-              </StatusBadge>
+        <header className="ds-settings-page-header">
+          <div className="ds-settings-page-heading">
+            <h1>{t("settings.title")}</h1>
+            <p>{settingsSubtitle}</p>
+          </div>
+          <div className="ds-settings-page-actions">
+            {section === "model" ? (
+              <>
+                <StatusBadge tone={saveState} title={error || undefined}>
+                  {statusLabel}
+                </StatusBadge>
+                <button
+                  className="ds-settings-primary-action"
+                  type="submit"
+                  disabled={
+                    !hasAgentApi ||
+                    saveState === "saving" ||
+                    saveState === "loading" ||
+                    saveState === "idle" ||
+                    saveState === "saved"
+                  }
+                >
+                  {saveState === "saving"
+                    ? t("settings.saving")
+                    : saveState === "saved" || saveState === "idle"
+                      ? t("settings.saved")
+                      : t("settings.save")}
+                </button>
+              </>
+            ) : null}
+          </div>
+          <nav className="ds-settings-section-tabs" aria-label={t("settings.sectionNavLabel")}>
+            {settingsSectionItems.map((item) => (
               <button
-                className="ds-settings-primary-action"
-                type="submit"
-                disabled={!hasAgentApi || saveState === "saving" || saveState === "loading"}
+                key={item.id}
+                type="button"
+                className={`ds-settings-section-tab${
+                  section === item.id ? " is-active" : ""
+                }`}
+                aria-pressed={section === item.id}
+                onClick={() => handleSelectSection(item.id)}
               >
-                {saveState === "saving" ? t("settings.saving") : t("settings.save")}
+                <span>{item.label}</span>
+                <small>{item.description}</small>
               </button>
-            </div>
-          </header>
-
-          {!hasAgentApi ? (
+            ))}
+          </nav>
+        </header>
+        <div className="ds-settings-content">
+          {section === "model" && !hasAgentApi ? (
             <div className="ds-settings-notice is-error">{t("settings.preloadMissing")}</div>
           ) : null}
-          {error ? <div className="ds-settings-notice is-error">{error}</div> : null}
+          {section === "model" && error ? (
+            <div className="ds-settings-notice is-error">{error}</div>
+          ) : null}
 
-          {category === "profiles" ? (
+          {section === "basic" && category === "appearance" ? (
+            <SettingsCard
+              title={t("settings.sections.appearance")}
+              description={t("settings.sections.appearanceDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.locale")}
+                description={t("settings.descriptions.locale")}
+                control={
+                  <select
+                    id="settings_locale"
+                    value={locale}
+                    onChange={updateLocale}
+                  >
+                    {SUPPORTED_LOCALES.map((supportedLocale) => (
+                      <option key={supportedLocale} value={supportedLocale}>
+                        {t(`locales.${supportedLocale}`)}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.theme")}
+                description={t("settings.descriptions.theme")}
+                control={
+                  <div className="ds-segmented-control ds-settings-theme-control" role="group">
+                    {THEME_PREFERENCES.map((theme) => (
+                      <button
+                        key={theme}
+                        type="button"
+                        className={preferences.theme === theme ? "is-active" : ""}
+                        aria-pressed={preferences.theme === theme}
+                        onClick={() => updateThemePreference(theme)}
+                      >
+                        {t(`settings.themes.${theme}`)}
+                      </button>
+                    ))}
+                  </div>
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.followSystemTheme")}
+                description={t("settings.descriptions.followSystemTheme")}
+                control={
+                  <Toggle
+                    checked={preferences.followSystemTheme}
+                    label={t("settings.fields.followSystemTheme")}
+                    onChange={updateFollowSystemTheme}
+                  />
+                }
+              />
+            </SettingsCard>
+          ) : null}
+
+          {section === "basic" && category === "startup" ? (
+            <SettingsCard
+              title={t("settings.sections.startup")}
+              description={t("settings.sections.startupDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.defaultStartupView")}
+                description={t("settings.descriptions.defaultStartupView")}
+                control={
+                  <select
+                    id="default_startup_view"
+                    value={preferences.defaultStartupView}
+                    onChange={updateStartupView}
+                  >
+                    {STARTUP_VIEWS.map((view) => (
+                      <option key={view} value={view}>
+                        {t(`settings.startupViews.${view}`)}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.rememberLeftSidebarWidth")}
+                description={t("settings.descriptions.rememberLeftSidebarWidth")}
+                control={
+                  <Toggle
+                    checked={preferences.rememberLeftSidebarWidth}
+                    label={t("settings.fields.rememberLeftSidebarWidth")}
+                    onChange={(checked) =>
+                      actions.updateBasicPreference("rememberLeftSidebarWidth", checked)
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.rememberRightSidebarWidth")}
+                description={t("settings.descriptions.rememberRightSidebarWidth")}
+                control={
+                  <Toggle
+                    checked={preferences.rememberRightSidebarWidth}
+                    label={t("settings.fields.rememberRightSidebarWidth")}
+                    onChange={(checked) =>
+                      actions.updateBasicPreference("rememberRightSidebarWidth", checked)
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.defaultInspectorMode")}
+                description={t("settings.descriptions.defaultInspectorMode")}
+                control={
+                  <select
+                    id="default_inspector_mode"
+                    value={toDefaultInspectorModeValue(preferences.defaultInspectorMode)}
+                    onChange={updateDefaultInspectorMode}
+                  >
+                    {DEFAULT_INSPECTOR_MODES.map((mode) => (
+                      <option
+                        key={toDefaultInspectorModeValue(mode)}
+                        value={toDefaultInspectorModeValue(mode)}
+                      >
+                        {t(`settings.inspectorDefaults.${toDefaultInspectorModeValue(mode)}`)}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+            </SettingsCard>
+          ) : null}
+
+          {section === "basic" && category === "session" ? (
+            <SettingsCard
+              title={t("settings.sections.session")}
+              description={t("settings.sections.sessionDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.showArchivedThreadsByDefault")}
+                description={t("settings.descriptions.showArchivedThreadsByDefault")}
+                control={
+                  <Toggle
+                    checked={preferences.showArchivedThreadsByDefault}
+                    label={t("settings.fields.showArchivedThreadsByDefault")}
+                    onChange={(checked) =>
+                      actions.updateBasicPreference(
+                        "showArchivedThreadsByDefault",
+                        checked,
+                      )
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.restoreLastWorkspaceOnStartup")}
+                description={t("settings.descriptions.restoreLastWorkspaceOnStartup")}
+                control={
+                  <Toggle
+                    checked={preferences.restoreLastWorkspaceOnStartup}
+                    label={t("settings.fields.restoreLastWorkspaceOnStartup")}
+                    onChange={(checked) =>
+                      actions.updateBasicPreference(
+                        "restoreLastWorkspaceOnStartup",
+                        checked,
+                      )
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.confirmThreadDelete")}
+                description={t("settings.descriptions.confirmThreadDelete")}
+                control={
+                  <Toggle
+                    checked={preferences.confirmThreadDelete}
+                    label={t("settings.fields.confirmThreadDelete")}
+                    onChange={(checked) =>
+                      actions.updateBasicPreference("confirmThreadDelete", checked)
+                    }
+                  />
+                }
+              />
+            </SettingsCard>
+          ) : null}
+
+          {section === "model" && category === "profiles" ? (
             <SettingsCard
               title={t("settings.profiles.title")}
               description={t("settings.profiles.subtitle")}
@@ -390,9 +748,20 @@ export function SettingsView(): ReactElement {
                 {profilesState?.profiles.map((profile) => {
                   const isActive = profile.id === profilesState.activeProfileId;
                   const isBusy = profileBusy === profile.id;
+                  const isConfirmingDelete = isProfileDeletePending(
+                    pendingDeleteProfileId,
+                    profile.id,
+                  );
+                  const canDeleteProfile =
+                    hasAgentApi &&
+                    saveState !== "loading" &&
+                    !profileBusy &&
+                    (profilesState?.profiles.length ?? 0) > 1;
                   return (
                     <article
-                      className={`ds-profile-card${isActive ? " is-active" : ""}`}
+                      className={`ds-profile-card${isActive ? " is-active" : ""}${
+                        isConfirmingDelete ? " is-confirming-delete" : ""
+                      }`}
                       key={profile.id}
                     >
                       <button
@@ -415,25 +784,55 @@ export function SettingsView(): ReactElement {
                         </span>
                       </button>
                       <div className="ds-profile-card-actions">
-                        <button
-                          type="button"
-                          disabled={!hasAgentApi || saveState === "loading" || Boolean(profileBusy)}
-                          onClick={() => void handleDuplicateProfile(profile)}
-                        >
-                          {t("settings.profiles.duplicate")}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={
-                            saveState === "loading" ||
-                            !hasAgentApi ||
-                            Boolean(profileBusy) ||
-                            (profilesState?.profiles.length ?? 0) <= 1
-                          }
-                          onClick={() => void handleDeleteProfile(profile)}
-                        >
-                          {t("settings.profiles.delete")}
-                        </button>
+                        {isConfirmingDelete ? (
+                          <div
+                            className="ds-profile-delete-confirm"
+                            role="group"
+                            aria-label={t("settings.profiles.deleteConfirm", {
+                              name: profile.name,
+                            })}
+                          >
+                            <span>{t("settings.profiles.deleteConfirmShort")}</span>
+                            <button
+                              type="button"
+                              className="is-danger"
+                              disabled={!canDeleteProfile}
+                              onClick={() => void handleDeleteProfile(profile)}
+                            >
+                              {isBusy
+                                ? t("settings.profiles.deleting")
+                                : t("settings.profiles.deleteConfirmAction")}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => setPendingDeleteProfileId(null)}
+                            >
+                              {t("common.cancel")}
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              disabled={
+                                !hasAgentApi ||
+                                saveState === "loading" ||
+                                Boolean(profileBusy)
+                              }
+                              onClick={() => void handleDuplicateProfile(profile)}
+                            >
+                              {t("settings.profiles.duplicate")}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!canDeleteProfile}
+                              onClick={() => setPendingDeleteProfileId(profile.id)}
+                            >
+                              {t("settings.profiles.delete")}
+                            </button>
+                          </>
+                        )}
                       </div>
                     </article>
                   );
@@ -442,7 +841,7 @@ export function SettingsView(): ReactElement {
             </SettingsCard>
           ) : null}
 
-          {category === "connection" ? (
+          {section === "model" && category === "connection" ? (
             <SettingsCard
               title={t("settings.sections.connection")}
               description={t("settings.sections.connectionDesc")}
@@ -517,7 +916,7 @@ export function SettingsView(): ReactElement {
             </SettingsCard>
           ) : null}
 
-          {category === "context" ? (
+          {section === "model" && category === "context" ? (
             <SettingsCard
               title={t("settings.sections.context")}
               description={t("settings.sections.contextDesc")}
@@ -564,7 +963,7 @@ export function SettingsView(): ReactElement {
             </SettingsCard>
           ) : null}
 
-          {category === "reasoning" ? (
+          {section === "model" && category === "reasoning" ? (
             <SettingsCard
               title={t("settings.sections.reasoning")}
               description={t("settings.sections.reasoningDesc")}
@@ -691,4 +1090,55 @@ function createCustomModelConfig(): ModelConfig {
     base_url: "https://api.openai.com/v1",
     thinking: false,
   };
+}
+
+function isSettingsLocale(value: string): value is LocaleCode {
+  return SUPPORTED_LOCALES.includes(value as LocaleCode);
+}
+
+function isDefaultStartupViewSetting(value: string): value is DefaultStartupView {
+  return STARTUP_VIEWS.includes(value as DefaultStartupView);
+}
+
+export function toDefaultInspectorModeValue(mode: DefaultInspectorMode): string {
+  return mode ?? "closed";
+}
+
+export function toDefaultInspectorMode(value: string): DefaultInspectorMode {
+  if (value === "changes" || value === "todo" || value === "plan") return value;
+  return null;
+}
+
+export function isProfileDeletePending(
+  pendingDeleteProfileId: string | null,
+  profileId: string,
+): boolean {
+  return pendingDeleteProfileId === profileId;
+}
+
+export function shouldBlockSettingsNavigation(saveState: SaveState): boolean {
+  return saveState === "dirty";
+}
+
+export function getDefaultCategoryForSection(
+  section: SettingsSection,
+): SettingsCategory {
+  switch (section) {
+    case "basic":
+      return "appearance";
+    case "model":
+      return "profiles";
+  }
+}
+
+export function isSettingsCategoryInSection(
+  section: SettingsSection,
+  category: SettingsCategory,
+): boolean {
+  switch (section) {
+    case "basic":
+      return BASIC_SETTINGS_CATEGORIES.includes(category);
+    case "model":
+      return MODEL_SETTINGS_CATEGORIES.includes(category);
+  }
 }
