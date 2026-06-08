@@ -48,7 +48,7 @@ Verification_Strategy: "如何验证本次改动"
 
 ## 3. 参考资料边界：`DeepSeek/` 不是本项目源码
 
-`DeepSeek/` 目录是第三方参考开发资料，**不属于本项目的源代码**。
+仓库内 `DeepSeek/` 目录是第三方参考开发资料，**不属于本项目的源代码**。
 
 本项目真实源码与项目文档位于：
 
@@ -56,9 +56,10 @@ Verification_Strategy: "如何验证本次改动"
 - `src/preload/`
 - `src/renderer/`
 - `src/shared/`
+- `tests/`
 - `docs/`（不含 `DeepSeek/docs/`）
-- 根目录 `package.json`、`electron.vite.config.ts`、`tsconfig.json`、`tsconfig.node.json`
-- `openspec/`
+- 根目录 `package.json`、`package-lock.json`、`electron.vite.config.ts`、`tsconfig.json`、`tsconfig.node.json`、`tsconfig.test.json`、`vitest.config.ts`
+- `openspec/`（如存在；当前仓库未创建该目录）
 
 严格规则：
 
@@ -68,13 +69,24 @@ Verification_Strategy: "如何验证本次改动"
 - **不得**在 `docs/agent-development.md` 或其他项目文档中把 `DeepSeek/` 列为依赖、来源或实现依据。
 - 如需借鉴设计，必须在 `src/` 下独立实现，不得直接 import、link、copy 或 build `DeepSeek/` 下的任何文件。
 
-本规则对人类协作者与 LLM Agent（包括本仓库内置 Agent 运行框架）一律生效；任何对 `DeepSeek/` 的写入、引入、引用都视为越界。
+本规则对人类协作者与 LLM Agent（包括本仓库内置 Agent 运行框架）一律生效；任何对仓库内 `DeepSeek/` 的写入、引入、引用都视为越界。
+
+### 3.1 外部设计学习参考源码
+
+以下目录位于本仓库外，仅允许作为**只读设计学习参考**。它们不是本项目源码、依赖、实现依据或构建输入；不得 import、link、copy、build、test、打包、发布这些目录下的任何文件，也不得把它们写入本项目配置链路。
+
+- Claude Code 参考：Windows 路径 `F:\cc_src\claude code`，WSL 路径 `/mnt/f/cc_src/claude code`。
+  - 源码观察：该项目 package 名为 `claude-code-best`，以 Bun + TypeScript 为主，使用 React Ink/TUI 形态实现终端 coding agent；`src/QueryEngine.ts` 和 `src/query.ts` 承担会话生命周期、流式查询、上下文压缩、预算、权限拒绝、工具执行和 SDK/REPL 复用；`src/tools.ts` 和 `src/Tool.ts` 定义大规模工具目录与工具上下文；`src/services/` 覆盖 MCP、LSP、compact、Langfuse、provider registry、plugin、skill、memory、remote-control、telemetry 等平台能力。
+  - 学习重点：成熟完整的技术类 agent 平台结构，包括 QueryEngine / query loop 边界、工具注册与权限策略、命令系统、MCP / LSP 接入、上下文压缩、遥测与远程控制。只借鉴架构分层和机制设计，不复用其代码、协议私有实现或配置。
+- DeepSeek GUI 参考：Windows 路径 `F:\cc_src\DeepSeek`，WSL 路径 `/mnt/f/cc_src/DeepSeek`。
+  - 源码观察：该项目 package 名为 `deepseek-gui`，是 Electron + React 桌面工作台；`src/renderer/src/components/Workbench.tsx` 呈现 sidebar、topbar、timeline、floating composer、right panels、write workspace、SDD/计划/插件/定时任务等布局组合，和本项目前端界面布局相似；`src/main/runtime/kun-adapter.ts` 通过主进程管理本地 Kun runtime；`kun/src/loop/agent-loop.ts`、`kun/src/server/routes/index.ts`、`kun/src/contracts/` 展示 HTTP/SSE runtime、thread/turn/event/approval/usage/attachment/workspace 等契约边界。
+  - 学习重点：桌面 agent workbench 的前端布局、运行时托管边界、HTTP/SSE contract、Code / Write 工作台、计划/Todo/Goal/审批/用量/附件/插件等用户体验组织方式。只用于 UI 布局和产品机制学习，不得把 `/mnt/f/cc_src/DeepSeek` 或仓库内 `DeepSeek/` 作为实现来源。
 
 ---
 
 ## 4. 当前项目实现概览
 
-本仓库是 `agent-pyramid-desktop`：基于 Electron、Vite、React、TypeScript 的桌面 Agent Workbench。当前实现是“主进程运行时 + worker 隔离 LLM HTTP + preload 安全桥 + React 渲染端”的桌面应用。
+本仓库是 `agent-pyramid-desktop`：基于 Electron、Vite、React、TypeScript 的桌面 Agent Workbench。当前实现是“主进程运行时 + worker 隔离 LLM HTTP + preload 安全桥 + React 渲染端 + Vitest 覆盖关键逻辑”的桌面应用。
 
 真实运行链路：
 
@@ -83,7 +95,7 @@ renderer React
   -> window.agentApi
   -> preload contextBridge
   -> ipcMain handlers
-  -> AgentRuntime / stores / event bus
+  -> AgentRuntime / stores / event bus / tool registry
   -> LlmWorkerPool
   -> worker_threads
   -> MiniMaxGateway
@@ -92,8 +104,8 @@ renderer React
 
 三层进程边界：
 
-- `src/main/index.ts` 是主进程组合根，组装 `JsonlThreadStore`、`ModelConfigStore`、`RuntimeEventBus`、`LlmWorkerPool`、`AgentRuntime`、`InMemoryToolRegistry` 和全部 IPC handler。
-- `src/main/infrastructure/llm-worker/` 使用 Node `worker_threads` 隔离 LLM 请求。`worker-pool.ts` 固定 `threadId -> worker` 路由，`worker.ts` 实例化 `MiniMaxGateway` 并把 SSE delta 转成 typed worker message。
+- `src/main/index.ts` 是主进程组合根，组装 `JsonlThreadStore`、`AttachmentStore`、`ModelConfigStore`、`RuntimeEventBus`、`LlmWorkerPool`、`AgentRuntime`、`InMemoryToolRegistry` 和全部 IPC handler。
+- `src/main/infrastructure/llm-worker/` 使用 Node `worker_threads` 隔离 LLM 请求。`worker-pool.ts` 固定 `threadId -> worker` 路由并支持 cancel，`worker.ts` 实例化 `MiniMaxGateway` 并把 SSE delta 转成 typed worker message。
 - `src/preload/index.ts` 只暴露 `window.agentApi`，Electron 必须保持 `contextIsolation: true` 和 `nodeIntegration: false`。
 - `src/renderer/src/` 是 React 19 UI，使用 `WorkbenchContext.tsx` 内的 `useReducer` 状态，不使用外部状态库。
 
@@ -105,12 +117,12 @@ renderer React
 
 - `src/main/domain/agent/types.ts`：Agent 领域类型，包括 `AgentMessage`、`AgentToolDefinition`、`AgentToolCall`、`LlmRequest`、`LlmResponse`、`LlmStreamChunk`、`LlmGateway`、`AgentTool`。
 - `src/main/domain/agent/ports.ts`：端口接口，目前包括 `ToolRegistry`。
-- `src/main/application/agent-runtime.ts`：当前主运行时。负责多 turn 编排、线程历史收集、模型配置读取、worker 调用、流式 item 更新、工具调用、approval gate、中断和事件广播。
-- `src/main/application/tools/`：工具注册与内置工具。`InMemoryToolRegistry` 是当前注册表，`echoTool` 是验证工具调用链路的内置工具。
+- `src/main/application/agent-runtime.ts`：当前主运行时。负责多 turn 编排、线程历史收集、模型 profile 选择、附件上下文、上下文预算压缩、worker 调用、流式 item 更新、工具循环、approval gate、中断、goal 更新和事件广播。
+- `src/main/application/tools/`：工具注册与内置工具。`InMemoryToolRegistry` 是当前注册表；`createPlanTool`、`createGoalTools()`、`createWorkspaceTools()` 是当前 runtime 可用工具来源；`echoTool` 仅用于验证工具调用链路，runtime 不暴露给模型。
 - `src/main/infrastructure/minimax/`：LLM 网关实现。虽然目录名是 `minimax`，但 `MiniMaxGateway` 当前同时处理 MiniMax、DeepSeek、custom OpenAI-compatible 以及 Anthropic-compatible 请求。
 - `src/main/infrastructure/llm-worker/`：worker 协议、worker 池、worker 入口。
-- `src/main/ipc/`：主进程 IPC handler，按 `threads`、`turns`、`sse`、`approvals`、`write`、`model-config` 分文件注册。
-- `src/main/persistence/`：Electron `userData` 下的线程 JSONL 持久化与模型配置持久化。
+- `src/main/ipc/`：主进程 IPC handler，按 `threads`、`turns`、`sse`、`approvals`、`goals`、`attachments`、`usage`、`workspace`、`write`、`model-config` 分文件注册。
+- `src/main/persistence/`：Electron `userData` 下的线程 JSONL、附件与模型配置持久化。
 - `src/main/event-bus.ts`：运行时事件总线，按 `RuntimeEventKind` 和 `threadId` 订阅。
 
 ### 5.2 共享契约
@@ -139,6 +151,7 @@ renderer React
 - `goals.*`：update。
 - `attachments.*`：create / get / delete。
 - `usage.*`：daily。
+- `workspace.*`：pickDirectory。
 - `write.*`：list / get / put / complete。
 - `modelConfig.*`：get / update / listProfiles / createProfile / updateProfile / deleteProfile / activateProfile。
 
@@ -149,7 +162,7 @@ renderer React
 - `src/renderer/src/main.tsx` 挂载 `WorkbenchProvider + AppShell`，并在渲染前同步执行 `initTheme()`。
 - `src/renderer/src/ui/AppShell.tsx` 根据 `WorkbenchContext` 的 `route` 懒加载 `Workbench` 或 `SettingsView`。
 - `src/renderer/src/ui/Workbench.tsx` 是 code / write 工作台外壳，负责 thread 加载、SSE 订阅、发送消息、中断、approval 响应、路由到写作视图。
-- `src/renderer/src/ui/store/WorkbenchContext.tsx` 是 renderer 状态中心，维护 `route`、`modelConfig`、`threads`、`activeThreadId`、`items`、`inFlightTurn`、composer、左右面板宽度和错误信息。
+- `src/renderer/src/ui/store/WorkbenchContext.tsx` 是 renderer 状态中心，维护 `route`、`modelConfig`、`modelProfiles`、`threads`、`activeThreadId`、`items`、`inFlightTurn`、composer、左右面板宽度和错误信息。
 - `src/renderer/src/ui/components/chat/`：消息时间线和消息块。
 - `src/renderer/src/ui/components/composer/`：浮动输入框。
 - `src/renderer/src/ui/components/sidebar/`：线程侧栏。
@@ -171,7 +184,7 @@ renderer React
 - 入口：`AgentRuntime`。
 - UI 调用：`window.agentApi.turns.start()`、`turns.interrupt()`、`sse.subscribe()`。
 - 数据模型：`ThreadRecord`、`TurnRecord`、`Item`、`RuntimeEvent`。
-- 负责流式输出、JSONL 持久化、approval gate、工具调用和中断。
+- 负责流式输出、JSONL 持久化、模型 profile 解析、附件注入、上下文预算压缩、approval gate、多轮工具调用和中断。
 
 旧单次运行入口、旧 IPC channel 和旧响应 trace 契约已经下线。新增 Agent 能力必须接入多 turn runtime，不要恢复旧单次运行分支。
 
@@ -179,15 +192,19 @@ renderer React
 
 主路径的大致流程：
 
-1. Renderer 调用 `turns.start({ threadId, text, model, reasoningEffort })`。
+1. Renderer 调用 `turns.start({ threadId, text, model, modelProfileId, reasoningEffort, attachmentIds, mode, goalMode })`。
 2. `AgentRuntime.startTurn()` 检查 thread 是否存在，并阻止同 thread 并发 in-flight turn。
-3. Runtime 先追加 `UserItem` 到 `JsonlThreadStore`，再 emit `item_appended` 和 `turn_started`。
-4. Runtime 从 `ModelConfigStore` 读取当前激活模型配置，收集 thread 历史，组装 `LlmRequest`。
-5. `LlmWorkerPool.chat()` 把请求交给 worker，worker 通过 `MiniMaxGateway.stream()` 读取 SSE。
-6. `text_delta` / `reasoning_delta` 在 runtime 内形成 live `AssistantItem` / `ReasoningItem`，通过 `item_updated` 推给 renderer。
-7. 流结束后，最终 item 写入 JSONL，并 emit `item_appended`。
-8. 如模型返回工具调用，runtime 为每个工具创建 `ToolItem`；`create_plan` 只在 plan mode 暴露并免 approval，`update_goal` 只在 goal mode 或 active goal thread 暴露并免 approval，其它工具调用请求 approval。
-9. 工具执行完成或失败后更新 `ToolItem` 结果并 emit `item_updated`，最后 emit `turn_completed`。
+3. Runtime 从 `ModelConfigStore.listProfiles()` 解析请求指定 profile、同名 model profile 或 active profile，并解析附件记录。
+4. Runtime 先追加 `UserItem` 到 `JsonlThreadStore`，再 emit `item_appended` 和 `turn_started`。
+5. Runtime replay thread 历史，按当前 turn 的 plan / goal 模式拼接系统上下文；附件会通过 `AgentContentBlock[]` 注入为 text + image block。
+6. Runtime 组装 `LlmRequest` 前调用 `prepareMessagesForRequest()`，按 `model_auto_compact_token_limit`、`model_context_window`、`max_tokens` 计算输入预算，并执行工具结果裁剪、旧消息裁剪与强制压缩。
+7. `LlmWorkerPool.chat()` 把请求交给与 `threadId` 绑定的 worker，worker 通过 `MiniMaxGateway.stream()` 读取 SSE。
+8. `text_delta` / `reasoning_delta` 在 runtime 内形成 live `AssistantItem` / `ReasoningItem`，通过 `item_updated` 推给 renderer；usage chunk 会记录到 turn。
+9. 流结束后，最终 assistant / reasoning item 写入 JSONL，并 emit `item_appended`。
+10. 如模型返回工具调用，runtime 进入自动工具循环。`AGENT_MAX_TOOL_ROUNDS` 控制每 turn 最大工具轮次，默认 32，合法范围 1 到 128；超过预算会写入 failed `ToolItem` 和 warning `SystemItem`，emit `tool_budget_reached`，并把 turn 标记为 `needs_continuation`。
+11. Runtime 为每个工具创建 `ToolItem` 并执行；`list_files` / `read_file` / `search_files` 是只读工具且免 approval，`create_plan` 只在 plan mode 暴露并免 approval，`update_goal` 只在 goal mode 或 active goal thread 暴露并免 approval，其它工具调用请求 approval。
+12. 工具执行完成或失败后更新 `ToolItem` 结果并 emit `item_updated`；如果执行 `create_plan`，runtime 会额外解析工具结果并追加 `PlanItem`。
+13. 模型不再请求工具后，runtime 追加 `turn_completed` event 到 events JSONL 并 emit `turn_completed`。
 
 中断流程：
 
@@ -201,8 +218,10 @@ renderer React
 - 工具定义通过 `ToolRegistry.listDefinitions()` 提供给模型。
 - 工具执行通过 `ToolRegistry.execute(call)` 返回 `AgentToolResult`。
 - 新工具应放在 `src/main/application/tools/` 或更合适的 application 子目录，并在 `src/main/index.ts` 的 `InMemoryToolRegistry([...])` 组合处注册。
-- 当前内置工具包括 `echoTool`、`createPlanTool` 和 `createGoalTools()` 返回的 `update_goal`。
-- 当前 approval gate 对除模式门控内的 `create_plan` / `update_goal` 外的工具调用生效；修改工具策略时必须同步 `AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime.requiresApproval()`、UI 和持久化记录。
+- 当前注册工具包括 `echoTool`、`createPlanTool`、`createWorkspaceTools()` 返回的 `list_files` / `read_file` / `search_files`，以及 `createGoalTools()` 返回的 `update_goal`。
+- `AgentRuntime` 不向模型暴露 `echo`；只读 workspace 工具跳过 approval；`create_plan` / `update_goal` 由模式门控并跳过 approval；其它工具调用进入 approval gate。
+- Workspace 工具只允许访问 active thread 的 `workspace`，使用 realpath 防 path escape，并跳过隐藏目录、`DeepSeek`、`dist`、`node_modules`、`out` 等目录。
+- 修改工具策略时必须同步 `AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime.requiresApproval()`、UI 和持久化记录。
 
 ---
 
@@ -229,7 +248,7 @@ Provider 方言分流：
 - 默认配置在 `DEFAULT_MODEL_CONFIG`。
 - DeepSeek 默认配置在 `DEFAULT_DEEPSEEK_MODEL_CONFIG`。
 - 配置持久化由 `ModelConfigStore` 写入 Electron `userData/config`。
-- 运行时每个 turn 读取当前激活 profile。
+- 运行时每个 turn 从 profiles 状态解析 profile：优先 `modelProfileId`，其次请求中的 `model` 匹配 profile，最后使用当前 active profile。
 - API key 优先使用配置中的 `OPENAI_API_KEY`；为空时按 provider fallback 到 `DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`，最后 fallback 到 `OPENAI_API_KEY` 环境变量。
 - 不得在代码、文档、测试或提交中写入真实 API key。
 
@@ -267,6 +286,23 @@ threads/
 - 旧单配置会被 normalize 为 profiles 状态。
 - 至少保留一个 profile。
 - `ModelConfigStore.get()` 只返回当前激活 profile 的 `ModelConfig`，不要让 runtime 直接感知设置页 UI 结构。
+- `ModelConfigStore.listProfiles()` 返回完整 `ModelConfigProfilesState`，renderer 的模型选择与设置页通过 preload 的 `modelConfig.*` API 访问。
+
+附件数据由 `AttachmentStore` 写入 Electron `userData/attachments/`：
+
+```text
+attachments/
+  index.json
+  <attachmentId>.bin
+```
+
+行为约束：
+
+- 只支持 `image/png`、`image/jpeg`、`image/webp`、`image/gif`。
+- 单附件上限为 12MB。
+- `index.json` 保存 `AttachmentRecord[]`，写入使用临时文件 + fsync + rename。
+- 文件名必须经过 `path.basename()` 收敛；附件 id 必须是 UUID。
+- Runtime 将附件内容作为 `AgentContentBlock[]` 传给 LLM，不把 base64 写入 `UserItem.attachments` 的元数据字段。
 
 ---
 
@@ -285,7 +321,21 @@ threads/
 4. 在 `src/main/index.ts` 注册 handler。
 5. 在 `src/preload/index.ts` 暴露最小必要 API。
 6. 在 `src/renderer/src/global.d.ts` 和 renderer 调用处同步类型。
-7. 搜索所有 channel 名、类型名、字段名，确认调用方完整更新。
+7. 如新增 renderer 可调用 channel，必须加入 `RENDERER_TO_MAIN_CHANNELS`。
+8. 搜索所有 channel 名、类型名、字段名，确认调用方完整更新。
+
+当前 IPC 分组：
+
+- `threads`：thread list / create / get / update / delete / fork。
+- `turns`：turn start / interrupt / get。
+- `sse`：subscribe / unsubscribe，并通过 `SSE_PUSH_CHANNEL` 推送 `RuntimeEvent`。
+- `approvals`：respond。
+- `goals`：update。
+- `attachments`：create / get / delete。
+- `usage`：daily，聚合 events JSONL 中 `turn_completed.usage`，默认 30 天、最大 180 天，并带 10 秒 cache。
+- `workspace`：pickDirectory，使用 Electron dialog 选择目录。
+- `write`：Markdown list / get / put / complete。
+- `modelConfig`：get / update / profile list / create / update / delete / activate。
 
 运行时事件：
 
@@ -294,6 +344,7 @@ threads/
 - `sse-handlers.ts` 通过 `webContents.send(SSE_PUSH_CHANNEL, evt)` 推送到 renderer。
 - Renderer 通过 `window.agentApi.sse.onEvent()` 监听。
 - 新事件必须同步 `RuntimeEventKind`、`RuntimeEventBus.onThread()` 订阅列表和 renderer 消费逻辑。
+- 现有事件包括 `turn_started`、`turn_completed`、`turn_failed`、`item_appended`、`item_updated`、`approval_requested`、`tool_budget_reached`、`goal_updated`、`runtime_error`。
 
 ---
 
@@ -353,10 +404,11 @@ UI 改动必须遵守 `docs/ui-design.md` 和当前 CSS token 体系。
 - “修复 bug” -> 先复现，再修复，再验证。
 - “重构” -> 前后可观测行为一致。
 
-当前未配置测试框架。每次代码改动至少运行：
+当前已配置 Vitest。每次代码改动至少运行：
 
 ```bash
 npm run typecheck
+npm run test
 npm run build
 ```
 
@@ -381,7 +433,8 @@ npm run build
 - `npm install`：首次克隆后安装依赖。
 - `npm run dev`：启动 Electron + Vite renderer 开发环境。
 - `npm run build`：构建 main、preload、renderer 到 `out/`。
-- `npm run typecheck`：运行 renderer 与 node tsconfig 的 TypeScript 类型检查。
+- `npm run typecheck`：运行 renderer、node 与 test tsconfig 的 TypeScript 类型检查。
+- `npm run test`：运行 Vitest 测试；测试配置位于 `vitest.config.ts`，排除 `DeepSeek/**`、`node_modules/**`、`out/**`。
 - `npm run preview`：预览构建后的 Electron 应用。
 
 如果 Electron 下载失败，可使用镜像：
@@ -391,7 +444,7 @@ $env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'
 npx install-electron --no
 ```
 
-当前没有 test runner、linter、formatter 配置。不要在未确认的情况下新增这些工具。
+当前没有 linter、formatter 配置。不要在未确认的情况下新增这些工具。
 
 ---
 
@@ -406,6 +459,19 @@ npx install-electron --no
 - 主进程相对导入当前多使用 `.js` 后缀以匹配 ESM 输出；新增 main/preload 导入时沿用邻近文件风格。
 - Renderer 组件导入沿用当前无 `.js` 后缀风格。
 - 只在复杂逻辑前添加有价值的注释，不写解释变量赋值的空注释。
+
+### 13.1 注释规范
+
+函数、API handler、跨进程契约、工具实现、持久化流程、LLM 协议转换、安全边界、上下文压缩、并发/取消控制等重要代码块，必须在入口或关键分支前添加简短机制注释。
+
+注释要求：
+
+- 注释说明“为什么存在、保护什么不变量、输入如何流向输出、失败如何暴露”，不要复述代码正在做的表面动作。
+- 公共函数、导出函数、IPC handler 注册函数、tool `execute()`、store 写入/读取路径、LLM 请求构造与 SSE 解析处，如果逻辑不是一眼可见，优先使用一到三行块注释或 JSDoc。
+- 涉及安全边界时必须点明边界，例如 workspace realpath 校验、preload 暴露面、Electron `contextIsolation`、path escape 防护、API key 来源。
+- 涉及协议或状态机时必须点明权威来源和状态转换，例如 IPC channel 来源、`RuntimeEventKind`、turn status、tool approval gate、模型 provider dialect。
+- 修改已有重要机制时，同步更新附近注释；注释过期视为 bug。
+- 禁止写无信息量注释，例如“获取数据”“设置变量”“调用函数”；禁止用注释掩盖不清晰命名或错误处理缺失。
 
 ---
 
@@ -427,7 +493,7 @@ Agent 开发维护文档位于 `docs/agent-development.md`。
 
 UI 设计规则位于 `docs/ui-design.md`。修改设计 token、布局语法、主题、组件模式时必须同步更新。
 
-涉及 OpenSpec change 时，优先检查 `openspec/changes/` 下对应 change 的 `proposal.md`、`design.md`、`tasks.md` 和 `specs/`。
+涉及 OpenSpec change 且仓库中存在对应目录时，优先检查 `openspec/changes/` 下对应 change 的 `proposal.md`、`design.md`、`tasks.md` 和 `specs/`。
 
 ---
 
@@ -471,6 +537,7 @@ PR 需说明：
 - [ ] 新增代码的异常路径是否有处理？错误是否可追踪？
 - [ ] 是否留下了未清理的废弃代码或临时产物？
 - [ ] 如果涉及接口/类型变更，所有调用方和测试是否已同步更新？
+- [ ] 函数、API handler、工具、协议转换、持久化、安全边界等重要机制是否已有准确注释？已有注释是否仍然与代码一致？
 - [ ] 如果涉及 Agent、LLM、工具、IPC、持久化、UI 或 i18n，是否已同步更新 `docs/agent-development.md`？
 - [ ] 是否避免了对 `DeepSeek/` 的写入、构建引用和文档依赖表述？
 

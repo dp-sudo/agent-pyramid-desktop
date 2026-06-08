@@ -166,7 +166,7 @@
 - 稳定 LLM 请求前缀：`AgentRuntime` 的基础 `systemPrompt` 固定不再拼入 plan/goal/current goal 等运行态内容；这些动态指令改为插入到当前用户消息之前的后置 system message，降低首段 prefix 漂移。
 - 稳定工具 catalog：`MiniMaxGateway` 在发送 OpenAI-compatible 与 Anthropic-compatible tools 前，按工具名排序并递归排序 `inputSchema` key，避免同一工具集合因注册顺序或 schema key 顺序不同破坏 provider prefix cache。
 - 增加发送前 history hygiene：`AgentRuntime` 会在构造模型请求时压缩历史中的超大工具结果、长字符串参数、base64 参数和超长数组；该处理只影响发给模型的 `LlmRequest.messages`，不改写 JSONL 持久化历史。
-- `model_auto_compact_token_limit` 现在参与发送前消息预算：运行时会从 `model_auto_compact_token_limit`、`model_context_window - max_tokens` 和 0.95 safety ratio 解析有效输入预算；当 `max_tokens >= model_context_window` 时会保守夹到最小输入预算而不是放大为完整上下文窗口。超预算时先做历史 tool result / 参数 hygiene，再按消息段裁剪旧动态历史，最后对必须保留的当前上下文做渐进式 UTF-8 安全压缩，并用 `[context budget: ...]` 标记被省略内容。该处理只影响发给模型的请求，不改写 JSONL 持久化历史，也不替代后续可由模型生成摘要的完整上下文压缩器。
+- `model_auto_compact_token_limit` 现在参与发送前消息预算：运行时会从 `model_auto_compact_token_limit`、`model_context_window - max_tokens` 和 0.95 safety ratio 解析有效输入预算；模型配置持久层拒绝 `max_tokens >= model_context_window`，避免输出预算挤占完整输入窗口。超预算时先做历史 tool result / 参数 hygiene，再按消息段裁剪旧动态历史，最后对必须保留的当前上下文做渐进式 UTF-8 安全压缩，并用 `[context budget: ...]` 标记被省略内容。该处理只影响发给模型的请求，不改写 JSONL 持久化历史，也不替代后续可由模型生成摘要的完整上下文压缩器。
 - 验证方式：`npm test -- tests/main/infrastructure/minimax-types.test.ts tests/main/infrastructure/minimax-gateway.test.ts tests/main/application/agent-runtime.test.ts tests/main/ipc/usage-handlers.test.ts`、`npm run typecheck`、`npm run build`。
 
 ### 2026-06-07 二次优化
@@ -228,7 +228,7 @@
 
 ## 2026-06-07 - 大模型输出展示与工具闭环
 
-- 扩展 `AgentRuntime` 工具循环：模型返回 tool calls 后，运行时执行工具、把 assistant tool call 和 tool result 追加进后续 `LlmRequest.messages`，最多执行 6 轮，直到模型产出最终回答；工具失败会发出 `runtime_error(code: "tool_failed")`，不会静默吞错。
+- 扩展 `AgentRuntime` 工具循环：模型返回 tool calls 后，运行时执行工具、把 assistant tool call 和 tool result 追加进后续 `LlmRequest.messages`，按模型档案的 `agent_autonomy` 选择工具预算（conservative 12、balanced 32、deep 64），也可通过 `AGENT_MAX_TOOL_ROUNDS` 在 1 到 128 之间覆盖；运行时接近预算时会向模型注入纠偏提示，耗尽后会记录未执行 tool call 的 failed tool result、发出 `tool_budget_reached` 事件，并把 turn 标记为 `needs_continuation`，方便用户继续线程而不是把体验等同于失败；工具失败会发出 `runtime_error(code: "tool_failed")`，不会静默吞错。
 - 扩展工具上下文：`AgentToolContext` 新增 `workspace`，新增只读工作区工具 `list_files`、`read_file`、`search_files`，并在 `src/main/index.ts` 注册；这些工具只允许访问当前线程 workspace，默认跳过 `.git`、`DeepSeek`、`node_modules`、`out` 等非项目源码或构建目录。
 - 扩展 LLM 消息转换：`AgentMessage` 支持 assistant `toolCalls`，OpenAI-compatible 与 Anthropic-compatible 请求构造都会把历史 tool call / tool result 转成供应商可理解的结构。
 - 优化 renderer 时间线：`MessageTimeline` 先按 `turnId` 分组，再将 reasoning、工具调用、过程性 assistant 文本归入可折叠“工作过程”，最终 assistant 文本作为 Markdown 正文显示；工具项显示本地化标题、状态和可展开详情。
@@ -268,6 +268,9 @@
 - 修复 Anthropic-compatible 流式工具调用收尾：兼容服务缺少 `content_block_stop` 但以 `message_delta` / `[DONE]` 结束时，`MiniMaxGateway` 会 flush 已累积的 pending tool call。
 - 修复 LLM SSE reader 清理可追踪性：释放 SSE reader lock 失败时会记录带上下文的 warning，不再使用静默空 catch 分支。
 - 修复工具注册边界：`InMemoryToolRegistry.register()` 现在拒绝重复工具名，避免组合根或测试接线错误被后注册工具静默覆盖。
+- 加固 `update_goal` 目标机制：工具清除目标改为显式 `clear: true`，空字符串或非字符串 `goal` 不再被静默解释为清除；归档线程拒绝 goal 更新；`complete` / `blocked` 时间戳只在首次进入对应终态时写入，后续编辑 summary 或文本不会刷新终态时间；renderer 仅处理当前 active thread 的 `goal_updated` 事件。
+- 优化 workspace 搜索工具容错：`search_files` 的 `path` 现在既可指向目录，也可指向单个 UTF-8 文本文件；单文件路径会只搜索该文件，避免模型把文件路径传给搜索工具时反复得到 `path is not a directory` 并触发工具轮数上限。
+- 优化 AgentRuntime 自动工具预算：固定 6 轮硬限制升级为模型档案 `agent_autonomy` 三档策略（保守 12、平衡 32、深度 64），仍可通过 `AGENT_MAX_TOOL_ROUNDS` 覆盖；运行时会在预算后段提示模型收敛或避免重复失败工具，预算耗尽时会把最后一批未执行 tool call 记录为 failed tool result，发出 `tool_budget_reached`，并以 `needs_continuation` 结束当前 turn。
 - 清理未使用的 worker protocol helper、worker-pool 类型守卫和 main 入口的无消费者 gateway re-export。
 - 新增 `tests/main/ipc/write-handlers.test.ts` 覆盖 Markdown 列表过滤、path escape、跳过目录策略和不可读工作区错误。
 - 验证方式：`npm test`、`npm run typecheck`、`npm run build`。

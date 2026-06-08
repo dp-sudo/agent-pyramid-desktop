@@ -145,7 +145,7 @@
       "context": "上下文与输出限制",
       "contextDesc": "让上下文、自动压缩和输出上限与所选模型保持一致。",
       "reasoning": "推理行为",
-      "reasoningDesc": "控制是否向支持的供应商发送 thinking 和 reasoning effort 参数。"
+      "reasoningDesc": "控制供应商 thinking 参数和 Agent 自动工具预算。"
     },
     "descriptions": {
       "profileName": "显示在模型档案选择器里的友好名称。",
@@ -157,7 +157,8 @@
       "compactLimit": "触发自动压缩的软阈值，不能超过上下文窗口。",
       "maxTokens": "单次模型回复请求的最大输出 token 数。",
       "thinking": "启用供应商支持的 thinking 或 reasoning 参数。",
-      "reasoningEffort": "发送给支持推理等级供应商的 effort 提示。"
+      "reasoningEffort": "发送给支持推理等级供应商的 effort 提示。",
+      "agentAutonomy": "控制单回合可自动执行的工具深度；环境变量 AGENT_MAX_TOOL_ROUNDS 仍可覆盖。"
     },
     "fields": {
       "modelProvide": "供应商",
@@ -169,6 +170,7 @@
       "maxTokens": "最大输出 token",
       "thinking": "思考模式",
       "reasoningEffort": "推理强度",
+      "agentAutonomy": "工具自主度",
       "profileName": "档案名称"
     },
     "placeholders": {
@@ -180,6 +182,11 @@
       "medium": "中",
       "high": "高",
       "xhigh": "超高"
+    },
+    "autonomy": {
+      "conservative": "保守",
+      "balanced": "平衡",
+      "deep": "深度"
     },
     "profiles": {
       "title": "模型配置档案",

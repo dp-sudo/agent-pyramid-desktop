@@ -75,12 +75,18 @@ export function Workbench(): ReactElement {
         if (event.status !== "in-flight") {
           actions.turnEnded(event.status);
         }
+      } else if (event.kind === "tool_budget_reached") {
+        // The timeline receives the persisted warning item; continuation status is not a UI error.
       } else if (event.kind === "turn_failed") {
         actions.turnEnded("failed");
         actions.setError(event.message);
       } else if (event.kind === "runtime_error") {
         actions.setError(event.message);
-      } else if (event.kind === "goal_updated" && state.activeThread) {
+      } else if (
+        event.kind === "goal_updated" &&
+        state.activeThread &&
+        event.threadId === state.activeThread.id
+      ) {
         actions.updateActiveThread({
           ...state.activeThread,
           ...(event.goal ? { goal: event.goal } : { goal: undefined }),

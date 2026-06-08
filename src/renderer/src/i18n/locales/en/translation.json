@@ -146,7 +146,7 @@
       "context": "Context and output limits",
       "contextDesc": "Keep context, compaction, and output limits aligned with the selected model.",
       "reasoning": "Reasoning behavior",
-      "reasoningDesc": "Control whether the provider receives thinking options and effort hints."
+      "reasoningDesc": "Control provider thinking options and the Agent tool budget."
     },
     "descriptions": {
       "profileName": "Friendly name shown in the model profile picker.",
@@ -158,7 +158,8 @@
       "compactLimit": "Soft threshold for automatic context compaction. It must not exceed the context window.",
       "maxTokens": "Maximum tokens requested for a single model response.",
       "thinking": "Enable provider-specific thinking or reasoning parameters when supported.",
-      "reasoningEffort": "Effort hint sent to providers that support reasoning levels."
+      "reasoningEffort": "Effort hint sent to providers that support reasoning levels.",
+      "agentAutonomy": "Controls automatic tool depth per turn. AGENT_MAX_TOOL_ROUNDS can still override it."
     },
     "fields": {
       "profileName": "Profile name",
@@ -170,7 +171,8 @@
       "compactLimit": "Auto compact limit",
       "maxTokens": "Max output tokens",
       "thinking": "Thinking mode",
-      "reasoningEffort": "Reasoning effort"
+      "reasoningEffort": "Reasoning effort",
+      "agentAutonomy": "Tool autonomy"
     },
     "placeholders": {
       "compactLimit": "90% of context window",
@@ -181,6 +183,11 @@
       "medium": "Medium",
       "high": "High",
       "xhigh": "Extra high"
+    },
+    "autonomy": {
+      "conservative": "Conservative",
+      "balanced": "Balanced",
+      "deep": "Deep"
     },
     "profiles": {
       "title": "Model profiles",

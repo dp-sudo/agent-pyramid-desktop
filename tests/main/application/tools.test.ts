@@ -101,6 +101,25 @@ describe("application tools", () => {
       summary: "Done",
     });
 
+    await goalTool.execute(
+      { clear: true },
+      { threadId: "thread-1", turnId: "turn-1" },
+    );
+    expect(updateGoal).toHaveBeenLastCalledWith("thread-1", {
+      goal: null,
+    });
+
+    await expect(
+      goalTool.execute({ goal: "" }, { threadId: "thread-1", turnId: "turn-1" }),
+    ).rejects.toThrow("goal must be a non-empty string. Use clear: true to clear the goal.");
+
+    await expect(
+      goalTool.execute(
+        { clear: true, status: "complete" },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).rejects.toThrow("clear cannot be combined with goal, status, or summary.");
+
     await expect(
       goalTool.execute({ status: "done" }, { threadId: "thread-1", turnId: "turn-1" }),
     ).rejects.toThrow("goal status must be active, complete, or blocked.");
@@ -179,6 +198,33 @@ describe("application tools", () => {
         searched.results.some((result) => result.path.includes("linked-outside")),
       ).toBe(false);
       expect(searched.skippedLargeFiles).toBe(1);
+
+      const searchedFile = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "call-search-file",
+              name: "search_files",
+              arguments: { query: "marker", path: "src/index.ts" },
+            },
+            { threadId: "thread-1", turnId: "turn-1", workspace },
+          )
+        ).content,
+      ) as {
+        path: string;
+        results: Array<{ path: string; line: number; text: string }>;
+        skippedLargeFiles: number;
+        truncated: boolean;
+      };
+      expect(searchedFile).toEqual({
+        query: "marker",
+        path: "src/index.ts",
+        results: [
+          { path: "src/index.ts", line: 1, text: "export const marker = 1;" },
+        ],
+        skippedLargeFiles: 0,
+        truncated: false,
+      });
 
       await expect(
         registry.execute(

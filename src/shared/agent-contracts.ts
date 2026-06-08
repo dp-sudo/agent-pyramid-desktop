@@ -2,6 +2,8 @@ export type LlmProtocol = "openai-compatible" | "anthropic-compatible";
 
 export const MODEL_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
 export type ModelReasoningEffort = (typeof MODEL_REASONING_EFFORTS)[number];
+export const AGENT_AUTONOMY_LEVELS = ["conservative", "balanced", "deep"] as const;
+export type AgentAutonomyLevel = (typeof AGENT_AUTONOMY_LEVELS)[number];
 
 export interface ModelConfig {
   model_provide: string;
@@ -13,6 +15,7 @@ export interface ModelConfig {
   max_tokens: number;
   thinking: boolean;
   model_reasoning_effort: ModelReasoningEffort;
+  agent_autonomy: AgentAutonomyLevel;
 }
 
 export interface ModelConfigUpdate {
@@ -25,6 +28,7 @@ export interface ModelConfigUpdate {
   max_tokens?: number;
   thinking?: boolean;
   model_reasoning_effort?: ModelReasoningEffort;
+  agent_autonomy?: AgentAutonomyLevel;
 }
 
 export interface ModelConfigProfile {
@@ -70,6 +74,7 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   max_tokens: 65536,
   thinking: true,
   model_reasoning_effort: "medium",
+  agent_autonomy: "balanced",
 };
 
 export const DEFAULT_DEEPSEEK_MODEL_CONFIG: ModelConfig = {
@@ -83,6 +88,13 @@ export function isModelReasoningEffort(value: unknown): value is ModelReasoningE
   return (
     typeof value === "string" &&
     MODEL_REASONING_EFFORTS.includes(value as ModelReasoningEffort)
+  );
+}
+
+export function isAgentAutonomyLevel(value: unknown): value is AgentAutonomyLevel {
+  return (
+    typeof value === "string" &&
+    AGENT_AUTONOMY_LEVELS.includes(value as AgentAutonomyLevel)
   );
 }
 
@@ -161,7 +173,12 @@ export interface ThreadListFilter {
 
 // ----------------------------------------------------------------------------
 
-export type TurnStatus = "in-flight" | "completed" | "failed" | "interrupted";
+export type TurnStatus =
+  | "in-flight"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "needs_continuation";
 export type TurnMode = "agent" | "plan";
 
 export interface TokenUsage {
@@ -399,6 +416,16 @@ export interface RuntimeErrorEvent {
   message: string;
 }
 
+export interface ToolBudgetReachedEvent {
+  kind: "tool_budget_reached";
+  threadId: string;
+  turnId: string;
+  maxToolRounds: number;
+  attemptedToolCalls: number;
+  message: string;
+  reachedAt: string;
+}
+
 export interface GoalUpdatedEvent {
   kind: "goal_updated";
   threadId: string;
@@ -412,6 +439,7 @@ export type RuntimeEvent =
   | ItemAppendedEvent
   | ItemUpdatedEvent
   | ApprovalRequestedEvent
+  | ToolBudgetReachedEvent
   | GoalUpdatedEvent
   | RuntimeErrorEvent;
 
@@ -473,6 +501,7 @@ export interface SseUnsubscribeRequest {
 export interface GoalUpdateRequest {
   threadId: string;
   goal?: string | null;
+  clear?: boolean;
   status?: ThreadGoalStatus;
   summary?: string;
 }
@@ -601,6 +630,7 @@ const RUNTIME_EVENT_KINDS: RuntimeEventKind[] = [
   "item_appended",
   "item_updated",
   "approval_requested",
+  "tool_budget_reached",
   "goal_updated",
   "runtime_error",
 ];

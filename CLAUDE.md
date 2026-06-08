@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `src/renderer/` — React renderer (root is `src/renderer/index.html`, code under `src/renderer/src/`)
 - `src/shared/` — cross-process types and IPC channel names
 - `docs/` — project docs (`docs/agent-development.md`, `docs/ui-design.md`, `docs/minimax/` are read-only protocol references)
-- Root config: `package.json`, `electron.vite.config.ts`, `tsconfig.json`, `tsconfig.node.json`, `openspec/`
+- Root config: `package.json`, `electron.vite.config.ts`, `tsconfig.json`, `tsconfig.node.json`, `tsconfig.test.json`, `vitest.config.ts`
 
 **Hard rules for `DeepSeek/`:**
 
@@ -122,7 +122,7 @@ index.json                          # ThreadSummary[], atomic write
 
 ## Commit / PR conventions
 
-Conventional Commits (`feat:`, `fix:`, `chore:`). When changing the agent framework, LLM gateway, tool mechanism, IPC contract, desktop UI, or i18n, update `docs/agent-development.md` in the same change (add a "变更记录" entry with date, summary, and verification command). For UI changes, attach a screenshot; for protocol changes, cite the relevant `docs/minimax/` file. OpenSpec proposals live in `openspec/changes/`.
+Conventional Commits (`feat:`, `fix:`, `chore:`). When changing the agent framework, LLM gateway, tool mechanism, IPC contract, desktop UI, or i18n, update `docs/agent-development.md` in the same change (add a "变更记录" entry with date, summary, and verification command). For UI changes, attach a screenshot; for protocol changes, cite the relevant `docs/minimax/` file. For substantial design work, use the `openspec-propose` / `openspec-apply-change` / `openspec-archive-change` skills (no tracked `openspec/` directory — changes are archived into `docs/agent-development.md` after implementation).
 
 ## When you're stuck
 

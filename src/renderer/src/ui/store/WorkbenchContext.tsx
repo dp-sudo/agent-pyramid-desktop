@@ -99,7 +99,7 @@ export type Action =
   | { type: "updateItem"; item: Item }
   | { type: "resetItems"; items: Item[] }
   | { type: "turnStarted"; turn: TurnRecord }
-  | { type: "turnEnded"; status: "completed" | "failed" | "interrupted" }
+  | { type: "turnEnded"; status: Exclude<TurnRecord["status"], "in-flight"> }
   | { type: "setComposerText"; text: string }
   | { type: "setComposerModel"; model: string; modelProfileId?: string }
   | { type: "setComposerReasoningEffort"; reasoningEffort: ModelReasoningEffort }
@@ -297,7 +297,7 @@ export interface WorkbenchActions {
   appendItem(item: Item): void;
   updateItem(item: Item): void;
   turnStarted(turn: TurnRecord): void;
-  turnEnded(status: "completed" | "failed" | "interrupted"): void;
+  turnEnded(status: Exclude<TurnRecord["status"], "in-flight">): void;
   setComposerText(text: string): void;
   setComposerModel(model: string, modelProfileId?: string): void;
   setComposerReasoningEffort(reasoningEffort: ModelReasoningEffort): void;

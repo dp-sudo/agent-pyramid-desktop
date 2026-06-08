@@ -9,7 +9,9 @@ import {
   DEFAULT_DEEPSEEK_MODEL_CONFIG,
   DEFAULT_MODEL_CONFIG,
   err,
+  isAgentAutonomyLevel,
   isModelReasoningEffort,
+  isRuntimeEvent,
   ok,
 } from "../../src/shared/agent-contracts";
 
@@ -19,6 +21,13 @@ describe("shared agent contracts", () => {
     expect(isModelReasoningEffort("xhigh")).toBe(true);
     expect(isModelReasoningEffort("max")).toBe(false);
     expect(isModelReasoningEffort(undefined)).toBe(false);
+  });
+
+  it("validates agent autonomy values", () => {
+    expect(isAgentAutonomyLevel("balanced")).toBe(true);
+    expect(isAgentAutonomyLevel("deep")).toBe(true);
+    expect(isAgentAutonomyLevel("unlimited")).toBe(false);
+    expect(isAgentAutonomyLevel(undefined)).toBe(false);
   });
 
   it("creates stable IPC envelopes", () => {
@@ -46,7 +55,25 @@ describe("shared agent contracts", () => {
     expect(DEFAULT_MODEL_CONFIG.model_auto_compact_token_limit).toBeLessThanOrEqual(
       DEFAULT_MODEL_CONFIG.model_context_window,
     );
+    expect(DEFAULT_MODEL_CONFIG.max_tokens).toBeLessThan(
+      DEFAULT_MODEL_CONFIG.model_context_window,
+    );
+    expect(DEFAULT_MODEL_CONFIG.agent_autonomy).toBe("balanced");
     expect(DEFAULT_DEEPSEEK_MODEL_CONFIG.model_provide).toBe("DeepSeek");
     expect(DEFAULT_DEEPSEEK_MODEL_CONFIG.base_url).toBe("https://api.deepseek.com");
+  });
+
+  it("recognizes tool budget runtime events", () => {
+    expect(
+      isRuntimeEvent({
+        kind: "tool_budget_reached",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        maxToolRounds: 32,
+        attemptedToolCalls: 1,
+        message: "Continue",
+        reachedAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(true);
   });
 });

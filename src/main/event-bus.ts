@@ -31,6 +31,7 @@ export class RuntimeEventBus extends EventEmitter {
       "item_appended",
       "item_updated",
       "approval_requested",
+      "tool_budget_reached",
       "goal_updated",
       "runtime_error",
     ] as RuntimeEventKind[]) {
@@ -44,6 +45,7 @@ export class RuntimeEventBus extends EventEmitter {
         "item_appended",
         "item_updated",
         "approval_requested",
+        "tool_budget_reached",
         "goal_updated",
         "runtime_error",
       ] as RuntimeEventKind[]) {

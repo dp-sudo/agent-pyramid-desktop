@@ -8,9 +8,11 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  AGENT_AUTONOMY_LEVELS,
   DEFAULT_DEEPSEEK_MODEL_CONFIG,
   DEFAULT_MODEL_CONFIG,
   MODEL_REASONING_EFFORTS,
+  type AgentAutonomyLevel,
   type ModelConfig,
   type ModelConfigProfile,
   type ModelConfigProfilesState,
@@ -41,6 +43,7 @@ interface SettingsFormState {
   max_tokens: string;
   thinking: boolean;
   model_reasoning_effort: ModelReasoningEffort;
+  agent_autonomy: AgentAutonomyLevel;
 }
 
 type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
@@ -128,7 +131,10 @@ export function SettingsView(): ReactElement {
   }
 
   function updateText(
-    field: keyof Omit<SettingsFormState, "thinking" | "model_reasoning_effort">,
+    field: keyof Omit<
+      SettingsFormState,
+      "thinking" | "model_reasoning_effort" | "agent_autonomy"
+    >,
   ): (event: ChangeEvent<HTMLInputElement>) => void {
     return (event) => {
       markDirty();
@@ -155,6 +161,12 @@ export function SettingsView(): ReactElement {
     const value = event.target.value as ModelReasoningEffort;
     markDirty();
     setForm((current) => ({ ...current, model_reasoning_effort: value }));
+  }
+
+  function updateAutonomy(event: ChangeEvent<HTMLSelectElement>): void {
+    const value = event.target.value as AgentAutonomyLevel;
+    markDirty();
+    setForm((current) => ({ ...current, agent_autonomy: value }));
   }
 
   function markDirty(): void {
@@ -585,6 +597,23 @@ export function SettingsView(): ReactElement {
                   </select>
                 }
               />
+              <SettingRow
+                title={t("settings.fields.agentAutonomy")}
+                description={t("settings.descriptions.agentAutonomy")}
+                control={
+                  <select
+                    id="agent_autonomy"
+                    value={form.agent_autonomy}
+                    onChange={updateAutonomy}
+                  >
+                    {AGENT_AUTONOMY_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {t(`settings.autonomy.${level}`)}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
             </SettingsCard>
           ) : null}
         </div>
@@ -604,6 +633,7 @@ function toFormState(config: ModelConfig): SettingsFormState {
     max_tokens: String(config.max_tokens),
     thinking: config.thinking,
     model_reasoning_effort: config.model_reasoning_effort,
+    agent_autonomy: config.agent_autonomy,
   };
 }
 
@@ -629,6 +659,7 @@ function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
     ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
     thinking: form.thinking,
     model_reasoning_effort: form.model_reasoning_effort,
+    agent_autonomy: form.agent_autonomy,
   };
 }
 

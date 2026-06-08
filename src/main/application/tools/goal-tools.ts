@@ -24,7 +24,11 @@ export function createGoalTools(deps: GoalToolDeps): AgentTool[] {
           properties: {
             goal: {
               type: "string",
-              description: "New goal text. Pass an empty string only when clearing the goal.",
+              description: "New non-empty goal text.",
+            },
+            clear: {
+              type: "boolean",
+              description: "Set true to clear the current goal. Do not combine with goal, status, or summary.",
             },
             status: {
               type: "string",
@@ -57,10 +61,22 @@ function parseGoalUpdate(input: Record<string, unknown>): {
     status?: ThreadGoalStatus;
     summary?: string;
   } = {};
+  if ("clear" in input) {
+    if (input.clear !== true && input.clear !== false) {
+      throw new Error("clear must be a boolean.");
+    }
+    if (input.clear === true) {
+      if ("goal" in input || "status" in input || "summary" in input) {
+        throw new Error("clear cannot be combined with goal, status, or summary.");
+      }
+      return { goal: null };
+    }
+  }
   if ("goal" in input) {
-    update.goal = typeof input.goal === "string" && input.goal.trim()
-      ? input.goal.trim()
-      : null;
+    if (typeof input.goal !== "string" || !input.goal.trim()) {
+      throw new Error("goal must be a non-empty string. Use clear: true to clear the goal.");
+    }
+    update.goal = input.goal.trim();
   }
   if ("status" in input) {
     update.status = parseGoalStatus(input.status);

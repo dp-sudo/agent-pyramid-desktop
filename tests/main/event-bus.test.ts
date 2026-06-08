@@ -56,4 +56,25 @@ describe("RuntimeEventBus", () => {
     bus.emit("runtime_error", event);
     expect(listener).toHaveBeenCalledOnce();
   });
+
+  it("forwards tool budget events to thread subscribers", () => {
+    const bus = new RuntimeEventBus();
+    const listener = vi.fn<(event: RuntimeEvent) => void>();
+    const unsubscribe = bus.onThread("thread-1", listener);
+    const event: RuntimeEvent = {
+      kind: "tool_budget_reached",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      maxToolRounds: 12,
+      attemptedToolCalls: 1,
+      message: "Continue this turn.",
+      reachedAt: "2026-06-08T00:00:00.000Z",
+    };
+
+    bus.emit("tool_budget_reached", event);
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith(event);
+    unsubscribe();
+  });
 });

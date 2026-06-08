@@ -74,7 +74,17 @@ const GOAL_MODE_INSTRUCTION = [
 
 const INTERNAL_TOOL_NAMES = new Set(["echo"]);
 const READ_ONLY_TOOL_NAMES = new Set(["list_files", "read_file", "search_files"]);
-const MAX_TOOL_ROUNDS = 6;
+const DEFAULT_AGENT_AUTONOMY = "balanced";
+const AGENT_AUTONOMY_TOOL_ROUNDS = {
+  conservative: 12,
+  balanced: 32,
+  deep: 64,
+} as const satisfies Record<ModelConfig["agent_autonomy"], number>;
+const MIN_MAX_TOOL_ROUNDS = 1;
+const MAX_MAX_TOOL_ROUNDS = 128;
+const TOOL_ROUND_WARNING_THRESHOLD = 0.75;
+const TOOL_BUDGET_CONTINUATION_MESSAGE =
+  "Automatic tool budget reached. Continue the thread to let the assistant use the gathered context, or raise AGENT_MAX_TOOL_ROUNDS for longer autonomous runs.";
 const CONTEXT_BUDGET_SAFETY_RATIO = 0.95;
 const TOOL_RESULT_MAX_LINES = 320;
 const TOOL_RESULT_MAX_BYTES = 32 * 1024;
@@ -249,6 +259,9 @@ export class AgentRuntime {
   ): Promise<ThreadRecord> {
     const thread = await this.deps.store.getThread(threadId);
     if (!thread) throw new Error(`Thread ${threadId} not found`);
+    if (thread.status === "archived") {
+      throw new Error("RUNTIME_THREAD_ARCHIVED");
+    }
 
     const now = new Date().toISOString();
     let nextGoal: ThreadGoal | undefined;
@@ -266,8 +279,12 @@ export class AgentRuntime {
         status,
         createdAt: current?.createdAt ?? now,
         updatedAt: now,
-        ...(status === "complete" ? { completedAt: now } : {}),
-        ...(status === "blocked" ? { blockedAt: now } : {}),
+        ...(status === "complete"
+          ? { completedAt: current?.status === "complete" && current.completedAt ? current.completedAt : now }
+          : {}),
+        ...(status === "blocked"
+          ? { blockedAt: current?.status === "blocked" && current.blockedAt ? current.blockedAt : now }
+          : {}),
         ...(update.summary ? { summary: update.summary } : current?.summary ? { summary: current.summary } : {}),
       };
     }
@@ -300,7 +317,10 @@ export class AgentRuntime {
         { role: "user", content: await this.buildUserContent(userText, attachmentIds) },
       ];
 
-      for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+      const maxToolRounds = resolveMaxToolRounds(modelConfig.agent_autonomy);
+      let warnedAboutToolBudget = false;
+
+      for (let round = 0; round <= maxToolRounds; round += 1) {
         const request = this.buildLlmRequest(turn, thread, messages, modelConfig);
         const streamState: {
           assistantItem: AssistantItem | null;
@@ -343,13 +363,24 @@ export class AgentRuntime {
           return;
         }
 
-        if (round >= MAX_TOOL_ROUNDS) {
-          await this.appendSystemItem(
+        if (round >= maxToolRounds) {
+          await this.appendBudgetExhaustedToolItems(
             turn,
-            "Tool call round limit reached before the model produced a final answer.",
-            "error",
+            response.toolCalls,
+            maxToolRounds,
           );
-          await this.markTurnStatus(turn, "failed");
+          const message = [
+            `Automatic tool budget reached after ${maxToolRounds} round(s) before the model produced a final answer.`,
+            TOOL_BUDGET_CONTINUATION_MESSAGE,
+          ].join(" ");
+          await this.appendSystemItem(turn, message, "warn");
+          await this.emitToolBudgetReached(
+            turn,
+            maxToolRounds,
+            response.toolCalls.length,
+            message,
+          );
+          await this.markTurnStatus(turn, "needs_continuation");
           return;
         }
 
@@ -370,6 +401,22 @@ export class AgentRuntime {
             return;
           }
         }
+
+        const nextRound = round + 1;
+        if (
+          !warnedAboutToolBudget &&
+          shouldWarnAboutToolBudget(nextRound, maxToolRounds)
+        ) {
+          warnedAboutToolBudget = true;
+          messages.push({
+            role: "system",
+            content: [
+              `You have used ${nextRound} of ${maxToolRounds} automatic tool round(s) for this turn.`,
+              "If you have enough evidence, stop calling tools and provide a final answer.",
+              "If more work is essential, choose the next tool call carefully and avoid repeating failed calls.",
+            ].join(" "),
+          });
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -382,6 +429,66 @@ export class AgentRuntime {
       });
       await this.markTurnStatus(turn, "failed");
     }
+  }
+
+  private async appendBudgetExhaustedToolItems(
+    turn: TurnRecord,
+    calls: AgentToolCall[],
+    maxToolRounds: number,
+  ): Promise<void> {
+    for (const call of calls) {
+      const toolItem: ToolItem = {
+        kind: "tool",
+        id: randomUUID(),
+        threadId: turn.threadId,
+        turnId: turn.id,
+        toolCallId: call.id,
+        name: call.name,
+        args: call.arguments,
+        status: "failed",
+        result: {
+          message:
+            `Automatic tool budget reached after ${maxToolRounds} round(s); tool was not executed.`,
+        },
+        createdAt: new Date().toISOString(),
+      };
+      await this.deps.store.appendItem(turn.threadId, toolItem);
+      this.deps.bus.emit("item_appended", {
+        kind: "item_appended",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        item: toolItem,
+      });
+    }
+  }
+
+  private async emitToolBudgetReached(
+    turn: TurnRecord,
+    maxToolRounds: number,
+    attemptedToolCalls: number,
+    message: string,
+  ): Promise<void> {
+    const event = {
+      kind: "tool_budget_reached",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      maxToolRounds,
+      attemptedToolCalls,
+      message,
+      reachedAt: new Date().toISOString(),
+    } as const;
+    try {
+      await this.deps.store.appendEvent(turn.threadId, event);
+    } catch (error) {
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "persistence_error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    this.deps.bus.emit("tool_budget_reached", event);
   }
 
   private buildLlmRequest(
@@ -1144,6 +1251,25 @@ function resolveContextBudget(options: ContextBudgetOptions): ResolvedContextBud
       Math.floor(Math.min(configuredLimit, availableInputTokens) * CONTEXT_BUDGET_SAFETY_RATIO),
     ),
   };
+}
+
+function resolveMaxToolRounds(autonomy: ModelConfig["agent_autonomy"]): number {
+  const configured = process.env.AGENT_MAX_TOOL_ROUNDS;
+  if (configured === undefined || !configured.trim()) {
+    return AGENT_AUTONOMY_TOOL_ROUNDS[autonomy] ?? AGENT_AUTONOMY_TOOL_ROUNDS[DEFAULT_AGENT_AUTONOMY];
+  }
+  const parsed = Number(configured);
+  if (!Number.isFinite(parsed) || parsed < MIN_MAX_TOOL_ROUNDS) {
+    return AGENT_AUTONOMY_TOOL_ROUNDS[autonomy] ?? AGENT_AUTONOMY_TOOL_ROUNDS[DEFAULT_AGENT_AUTONOMY];
+  }
+  return Math.min(MAX_MAX_TOOL_ROUNDS, Math.floor(parsed));
+}
+
+function shouldWarnAboutToolBudget(nextRound: number, maxToolRounds: number): boolean {
+  if (maxToolRounds <= MIN_MAX_TOOL_ROUNDS) {
+    return false;
+  }
+  return nextRound >= Math.max(1, Math.ceil(maxToolRounds * TOOL_ROUND_WARNING_THRESHOLD));
 }
 
 function isWithinRequestBudget(

@@ -87,6 +87,7 @@ describe("AgentRuntime", () => {
   let bus: RuntimeEventBus;
   let fakePool: FakePool;
   let events: RuntimeEvent[];
+  let previousMaxToolRounds: string | undefined;
 
   beforeEach(async () => {
     userDataDir = await makeTempDir("agent-runtime-");
@@ -96,6 +97,8 @@ describe("AgentRuntime", () => {
     bus = new RuntimeEventBus();
     fakePool = new FakePool();
     events = [];
+    previousMaxToolRounds = process.env.AGENT_MAX_TOOL_ROUNDS;
+    delete process.env.AGENT_MAX_TOOL_ROUNDS;
     for (const kind of [
       "turn_started",
       "turn_completed",
@@ -103,6 +106,7 @@ describe("AgentRuntime", () => {
       "item_appended",
       "item_updated",
       "approval_requested",
+      "tool_budget_reached",
       "goal_updated",
       "runtime_error",
     ] as const) {
@@ -111,6 +115,11 @@ describe("AgentRuntime", () => {
   });
 
   afterEach(async () => {
+    if (previousMaxToolRounds === undefined) {
+      delete process.env.AGENT_MAX_TOOL_ROUNDS;
+    } else {
+      process.env.AGENT_MAX_TOOL_ROUNDS = previousMaxToolRounds;
+    }
     await removeTempDir(userDataDir);
   });
 
@@ -422,7 +431,7 @@ describe("AgentRuntime", () => {
       OPENAI_API_KEY: DEFAULT_MODEL_CONFIG.OPENAI_API_KEY,
       model_context_window: 12000,
       model_auto_compact_token_limit: 300,
-      max_tokens: DEFAULT_MODEL_CONFIG.max_tokens,
+      max_tokens: 1000,
       thinking: DEFAULT_MODEL_CONFIG.thinking,
       model_reasoning_effort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
     });
@@ -524,22 +533,15 @@ describe("AgentRuntime", () => {
     expect(messages.some((message) => message.content === historicalInput)).toBe(false);
   });
 
-  it("does not expand input budget when max tokens meet or exceed the context window", async () => {
+  it("rejects model profiles whose max tokens meet or exceed the context window", async () => {
     const thread = await store.createThread({
       title: "Runtime",
       workspace: "/workspace",
       mode: "code",
     });
     const runtime = createRuntime();
-    const historicalInput = `HISTORY-${"x".repeat(1200)}`;
 
-    await runtime.startTurn({
-      threadId: thread.id,
-      text: historicalInput,
-    });
-    await waitFor(() => fakePool.requests.length === 1 && !runtime.isThreadInFlight(thread.id));
-
-    await modelConfigStore.update({
+    await expect(modelConfigStore.update({
       model_provide: DEFAULT_MODEL_CONFIG.model_provide,
       model: DEFAULT_MODEL_CONFIG.model,
       base_url: DEFAULT_MODEL_CONFIG.base_url,
@@ -549,21 +551,9 @@ describe("AgentRuntime", () => {
       max_tokens: 300,
       thinking: DEFAULT_MODEL_CONFIG.thinking,
       model_reasoning_effort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
-    });
+    })).rejects.toThrow("max_tokens must be < model_context_window.");
 
-    await runtime.startTurn({
-      threadId: thread.id,
-      text: "Continue",
-    });
-    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(thread.id));
-
-    const messages = fakePool.requests[1].messages;
-    expect(messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ role: "user", content: "Continue" }),
-      ]),
-    );
-    expect(messages.some((message) => message.content === historicalInput)).toBe(false);
+    expect(runtime.isThreadInFlight(thread.id)).toBe(false);
   });
 
   it("executes read-only tools without approval and sends tool results into the follow-up request", async () => {
@@ -697,6 +687,124 @@ describe("AgentRuntime", () => {
     expect(await store.getThread(thread.id)).toMatchObject({
       goal: { text: "Finish testing", status: "active" },
     });
+  });
+
+  it("exposes update_goal only for explicit goal mode or active goal threads", async () => {
+    const plainThread = await store.createThread({
+      title: "Plain",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const activeThread = await store.createThread({
+      title: "Active goal",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const completedThread = await store.createThread({
+      title: "Completed goal",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const runtime = createRuntime(
+      new InMemoryToolRegistry([
+        ...createGoalTools({
+          updateGoal: async (threadId, update) => {
+            await runtime.updateThreadGoal(threadId, update);
+          },
+        }),
+      ]),
+    );
+    await runtime.updateThreadGoal(activeThread.id, {
+      goal: "Ship runtime",
+      status: "active",
+    });
+    await runtime.updateThreadGoal(completedThread.id, {
+      goal: "Ship docs",
+      status: "complete",
+    });
+
+    await runtime.startTurn({
+      threadId: plainThread.id,
+      text: "Plain",
+    });
+    await waitFor(() => fakePool.requests.length === 1 && !runtime.isThreadInFlight(plainThread.id));
+    await runtime.startTurn({
+      threadId: activeThread.id,
+      text: "Continue active goal",
+    });
+    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(activeThread.id));
+    await runtime.startTurn({
+      threadId: completedThread.id,
+      text: "Follow up completed goal",
+    });
+    await waitFor(() => fakePool.requests.length === 3 && !runtime.isThreadInFlight(completedThread.id));
+    await runtime.startTurn({
+      threadId: completedThread.id,
+      text: "Restart goal mode",
+      goalMode: true,
+    });
+    await waitFor(() => fakePool.requests.length === 4 && !runtime.isThreadInFlight(completedThread.id));
+
+    expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual([]);
+    expect(fakePool.requests[1].tools.map((tool) => tool.name)).toEqual(["update_goal"]);
+    expect(fakePool.requests[2].tools.map((tool) => tool.name)).toEqual([]);
+    expect(fakePool.requests[3].tools.map((tool) => tool.name)).toEqual(["update_goal"]);
+  });
+
+  it("preserves terminal goal timestamps and rejects updates to archived threads", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const runtime = createRuntime();
+
+    const completed = await runtime.updateThreadGoal(thread.id, {
+      goal: "Finish testing",
+      status: "complete",
+      summary: "Initial",
+    });
+    const completedAt = completed.goal?.completedAt;
+    expect(completedAt).toBeDefined();
+
+    const edited = await runtime.updateThreadGoal(thread.id, {
+      summary: "Edited summary",
+    });
+    expect(edited.goal).toMatchObject({
+      text: "Finish testing",
+      status: "complete",
+      summary: "Edited summary",
+      completedAt,
+    });
+
+    const reactivated = await runtime.updateThreadGoal(thread.id, {
+      status: "active",
+    });
+    expect(reactivated.goal).toMatchObject({
+      text: "Finish testing",
+      status: "active",
+    });
+    expect(reactivated.goal?.completedAt).toBeUndefined();
+
+    const blocked = await runtime.updateThreadGoal(thread.id, {
+      status: "blocked",
+    });
+    const blockedAt = blocked.goal?.blockedAt;
+    expect(blockedAt).toBeDefined();
+
+    const blockedEdited = await runtime.updateThreadGoal(thread.id, {
+      summary: "Still blocked",
+    });
+    expect(blockedEdited.goal).toMatchObject({
+      status: "blocked",
+      blockedAt,
+      summary: "Still blocked",
+    });
+
+    await store.updateThread(thread.id, { status: "archived" });
+    await expect(
+      runtime.updateThreadGoal(thread.id, { status: "active" }),
+    ).rejects.toThrow("RUNTIME_THREAD_ARCHIVED");
   });
 
   it("compresses oversized historical tool results only in model requests", async () => {
@@ -882,7 +990,7 @@ describe("AgentRuntime", () => {
       OPENAI_API_KEY: DEFAULT_MODEL_CONFIG.OPENAI_API_KEY,
       model_context_window: 12000,
       model_auto_compact_token_limit: 300,
-      max_tokens: DEFAULT_MODEL_CONFIG.max_tokens,
+      max_tokens: 1000,
       thinking: DEFAULT_MODEL_CONFIG.thinking,
       model_reasoning_effort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
     });
@@ -945,6 +1053,110 @@ describe("AgentRuntime", () => {
       code: "internal",
       message: 'Tool "echo" is not available in this turn.',
     });
+  });
+
+  it("uses a configurable automatic tool budget and pauses for continuation", async () => {
+    process.env.AGENT_MAX_TOOL_ROUNDS = "2";
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_file",
+          description: "Read file",
+          inputSchema: { type: "object" },
+        },
+        async execute(call) {
+          return JSON.stringify({ path: call.path, content: "still need more" });
+        },
+      },
+    ]);
+    fakePool.response = {
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call-read", name: "read_file", arguments: { path: "src/index.ts" } }],
+      raw: {},
+    };
+
+    const runtime = createRuntime(registry);
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Keep inspecting",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed" && event.status === "needs_continuation"));
+
+    expect(fakePool.requests).toHaveLength(3);
+    expect(fakePool.requests[2].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "system",
+          content: expect.stringContaining("You have used 2 of 2 automatic tool round(s)"),
+        }),
+      ]),
+    );
+    const systemItems = [];
+    const toolItems = [];
+    for await (const item of store.replayItems(thread.id)) {
+      if (item.kind === "system") systemItems.push(item);
+      if (item.kind === "tool") toolItems.push(item);
+    }
+    expect(toolItems.at(-1)).toMatchObject({
+      kind: "tool",
+      name: "read_file",
+      status: "failed",
+      result: {
+        message: expect.stringContaining("tool was not executed"),
+      },
+    });
+    expect(systemItems.at(-1)).toMatchObject({
+      level: "warn",
+      text: expect.stringContaining("Automatic tool budget reached after 2 round(s)"),
+    });
+    expect(systemItems.at(-1)?.text).toContain("AGENT_MAX_TOOL_ROUNDS");
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "tool_budget_reached",
+          maxToolRounds: 2,
+          attemptedToolCalls: 1,
+        }),
+      ]),
+    );
+
+    process.env.AGENT_MAX_TOOL_ROUNDS = "32";
+    fakePool.response = {
+      text: "Final after continue",
+      reasoning: "",
+      toolCalls: [],
+      raw: {},
+    };
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Continue",
+    });
+    await waitFor(() => fakePool.requests.length === 4);
+    expect(fakePool.requests[3].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          toolCalls: [
+            expect.objectContaining({
+              id: "call-read",
+              name: "read_file",
+              arguments: { path: "src/index.ts" },
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "call-read",
+          content: expect.stringContaining("tool was not executed"),
+        }),
+      ]),
+    );
   });
 
   it("interrupts turns, denies pending approvals, and emits interrupted completion", async () => {

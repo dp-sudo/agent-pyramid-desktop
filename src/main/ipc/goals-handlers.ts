@@ -8,7 +8,7 @@ export function registerGoalHandlers(runtime: AgentRuntime): void {
   ipcMain.handle(GOAL_UPDATE_CHANNEL, async (_event, request: GoalUpdateRequest) => {
     try {
       return ok(await runtime.updateThreadGoal(request.threadId, {
-        goal: request.goal,
+        goal: request.clear ? null : request.goal,
         status: request.status,
         summary: request.summary,
       }));

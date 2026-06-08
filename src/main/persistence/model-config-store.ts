@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import {
   DEFAULT_MODEL_CONFIG,
+  isAgentAutonomyLevel,
   isModelReasoningEffort,
   type ModelConfig,
   type ModelConfigProfile,
@@ -73,6 +74,7 @@ export class ModelConfigStore {
         thinking: update.thinking ?? active.config.thinking,
         model_reasoning_effort:
           update.model_reasoning_effort ?? active.config.model_reasoning_effort,
+        agent_autonomy: update.agent_autonomy ?? active.config.agent_autonomy,
       });
       const updatedAt = new Date().toISOString();
       const nextState: ModelConfigProfilesState = {
@@ -305,15 +307,32 @@ function normalizeStoredConfig(value: unknown): ModelConfig {
     return DEFAULT_MODEL_CONFIG;
   }
   const raw = value as Partial<ModelConfig>;
-  const contextWindow =
-    raw.model_context_window ?? DEFAULT_MODEL_CONFIG.model_context_window;
+  const contextWindow = normalizeStoredContextWindow(raw.model_context_window);
+  const maxTokens = normalizeStoredMaxTokens(raw.max_tokens, contextWindow);
   return normalizeModelConfig({
     ...DEFAULT_MODEL_CONFIG,
     ...raw,
     model_context_window: contextWindow,
     model_auto_compact_token_limit:
       raw.model_auto_compact_token_limit ?? Math.floor(contextWindow * 0.9),
+    max_tokens: maxTokens,
   });
+}
+
+function normalizeStoredContextWindow(value: unknown): number {
+  if (!Number.isInteger(value) || Number(value) < 2) {
+    return DEFAULT_MODEL_CONFIG.model_context_window;
+  }
+  return Number(value);
+}
+
+function normalizeStoredMaxTokens(value: unknown, contextWindow: number): number {
+  const maxAllowed = contextWindow - 1;
+  const fallback = Math.min(DEFAULT_MODEL_CONFIG.max_tokens, maxAllowed);
+  if (!Number.isInteger(value) || Number(value) < 1) {
+    return fallback;
+  }
+  return Math.min(Number(value), maxAllowed);
 }
 
 function normalizeModelConfig(value: Partial<ModelConfig>): ModelConfig {
@@ -336,8 +355,14 @@ function normalizeModelConfig(value: Partial<ModelConfig>): ModelConfig {
   if (compactLimit > contextWindow) {
     throw new Error("model_auto_compact_token_limit must be <= model_context_window.");
   }
+  if (maxTokens >= contextWindow) {
+    throw new Error("max_tokens must be < model_context_window.");
+  }
   if (!isModelReasoningEffort(value.model_reasoning_effort)) {
     throw new Error("model_reasoning_effort must be one of low, medium, high, xhigh.");
+  }
+  if (!isAgentAutonomyLevel(value.agent_autonomy)) {
+    throw new Error("agent_autonomy must be one of conservative, balanced, deep.");
   }
 
   return {
@@ -353,6 +378,7 @@ function normalizeModelConfig(value: Partial<ModelConfig>): ModelConfig {
         ? value.thinking
         : DEFAULT_MODEL_CONFIG.thinking,
     model_reasoning_effort: value.model_reasoning_effort,
+    agent_autonomy: value.agent_autonomy,
   };
 }
 
