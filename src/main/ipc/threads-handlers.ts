@@ -25,8 +25,13 @@ import {
 } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
 import type { JsonlThreadStore } from "../persistence/index.js";
+import type { RuntimePreferencesStore } from "../persistence/runtime-preferences-store.js";
 
-export function registerThreadHandlers(store: JsonlThreadStore, runtime?: AgentRuntime): void {
+export function registerThreadHandlers(
+  store: JsonlThreadStore,
+  runtime?: AgentRuntime,
+  runtimePreferencesStore?: RuntimePreferencesStore,
+): void {
   ipcMain.handle(THREAD_LIST_CHANNEL, async (_event, filter?: unknown) => {
     try {
       return ok(await store.listThreads(parseThreadListFilter(filter)));
@@ -37,7 +42,10 @@ export function registerThreadHandlers(store: JsonlThreadStore, runtime?: AgentR
 
   ipcMain.handle(THREAD_CREATE_CHANNEL, async (_event, input: unknown) => {
     try {
-      return ok(await store.createThread(parseThreadCreateInput(input)));
+      const parsed = parseThreadCreateInput(input);
+      return ok(await store.createThread(
+        await applyThreadCreateDefaults(parsed, runtimePreferencesStore),
+      ));
     } catch (error) {
       return err("THREAD_CREATE_FAILED", messageOf(error));
     }
@@ -150,11 +158,36 @@ export function parseThreadCreateInput(input: unknown): ThreadCreateInput {
       "parentThreadId",
       "Thread create parentThreadId must be a string.",
     ),
+    ...optionalEnumField(
+      value,
+      "approvalPolicy",
+      THREAD_APPROVAL_POLICIES,
+      "Thread create approvalPolicy is invalid.",
+    ),
+    ...optionalEnumField(
+      value,
+      "sandboxMode",
+      THREAD_SANDBOX_MODES,
+      "Thread create sandboxMode is invalid.",
+    ),
   };
   if (parsed.relation === "fork" && !parsed.parentThreadId) {
     throw new Error("Thread create fork requires parentThreadId.");
   }
   return parsed;
+}
+
+async function applyThreadCreateDefaults(
+  input: ThreadCreateInput,
+  runtimePreferencesStore?: RuntimePreferencesStore,
+): Promise<ThreadCreateInput> {
+  if (!runtimePreferencesStore) return input;
+  const preferences = await runtimePreferencesStore.get();
+  return {
+    ...input,
+    approvalPolicy: input.approvalPolicy ?? preferences.defaultApprovalPolicy,
+    sandboxMode: input.sandboxMode ?? preferences.defaultSandboxMode,
+  };
 }
 
 export function parseThreadUpdatePatch(patch: unknown): ThreadUpdatePatch {

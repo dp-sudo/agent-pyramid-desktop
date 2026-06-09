@@ -83,7 +83,7 @@ No linter or formatter is configured. Do not add one without an explicit task an
 Main process:
 
 - Composition root: `src/main/index.ts`.
-- Wires `JsonlThreadStore`, `AttachmentStore`, `ModelConfigStore`, `RuntimeEventBus`, `LlmWorkerPool`, `AgentRuntime` and `InMemoryToolRegistry`.
+- Wires `JsonlThreadStore`, `AttachmentStore`, `ModelConfigStore`, `RuntimePreferencesStore`, `RuntimeEventBus`, `LlmWorkerPool`, `AgentRuntime` and `InMemoryToolRegistry`.
 - Registers all `src/main/ipc/*-handlers.ts`.
 - Owns Electron security settings, CSP, external navigation and filesystem access.
 
@@ -112,7 +112,7 @@ Renderer:
 
 Cross-process contracts:
 
-- `src/shared/agent-contracts.ts` defines `ModelConfig`, `ThreadRecord`, `TurnRecord`, `Item`, `RuntimeEvent`, approvals, goals, attachments, usage, write-mode requests and `IpcResult<T>`.
+- `src/shared/agent-contracts.ts` defines `ModelConfig`, `RuntimePreferences`, `ThreadRecord`, `TurnRecord`, `Item`, `RuntimeEvent`, approvals, goals, attachments, usage, write-mode requests and `IpcResult<T>`.
 - `src/shared/ipc.ts` defines all channel names and `RENDERER_TO_MAIN_CHANNELS`.
 - `src/shared/locale.ts` defines supported locales.
 
@@ -162,7 +162,7 @@ Tool rules:
 - Anthropic-compatible messages.
 - Provider-specific MiniMax and DeepSeek request body differences.
 
-Model config profiles persist through `ModelConfigStore` in Electron `userData/config`. `AgentRuntime` resolves a profile per turn by explicit `modelProfileId`, model match, active profile, then first profile.
+Model config profiles persist through `ModelConfigStore` in Electron `userData/config`. `AgentRuntime` resolves a profile per turn by explicit `modelProfileId`, Code/Write default profile id from `RuntimePreferences`, model match, active profile, then first profile.
 
 API key resolution:
 
@@ -234,6 +234,7 @@ Current preload groups:
 - `workspace`
 - `write`
 - `modelConfig`
+- `runtimePreferences`
 
 Adding IPC requires updating:
 

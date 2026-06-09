@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useEffect, useRef, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { Item } from "../../../../../shared/agent-contracts";
 import { useWorkbench } from "../../store/WorkbenchContext";
@@ -14,10 +14,20 @@ export function PendingApprovalPanel({
   const { t } = useTranslation();
   const { state } = useWorkbench();
   const approvals = getPendingApprovalsForThread(state.items, state.activeThreadId);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const approvalCount = approvals.length;
+  const autoScrollOnRequest =
+    state.runtimePreferences.approvalExperience.autoScrollOnRequest;
+
+  useEffect(() => {
+    if (!autoScrollOnRequest || approvalCount === 0) return;
+    panelRef.current?.scrollIntoView({ block: "nearest" });
+  }, [approvalCount, autoScrollOnRequest]);
+
   if (approvals.length === 0) return null;
 
   return (
-    <section className="ds-pending-approval-panel" aria-live="polite">
+    <section ref={panelRef} className="ds-pending-approval-panel" aria-live="polite">
       <div className="ds-pending-approval-title">
         <span>{t("approvals.pendingTitle")}</span>
         <span>{approvals.length}</span>

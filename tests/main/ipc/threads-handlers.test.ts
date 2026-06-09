@@ -14,7 +14,12 @@ import {
 } from "../../../src/shared/ipc";
 import type { AgentRuntime } from "../../../src/main/application/agent-runtime";
 import type { JsonlThreadStore } from "../../../src/main/persistence/index";
-import type { ThreadRecord, ThreadSummary } from "../../../src/shared/agent-contracts";
+import type { RuntimePreferencesStore } from "../../../src/main/persistence/runtime-preferences-store";
+import {
+  DEFAULT_RUNTIME_PREFERENCES,
+  type ThreadRecord,
+  type ThreadSummary,
+} from "../../../src/shared/agent-contracts";
 
 type IpcHandler = (_event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -80,6 +85,12 @@ function createRuntime(): AgentRuntime {
   } as unknown as AgentRuntime;
 }
 
+function createRuntimePreferencesStore(): RuntimePreferencesStore {
+  return {
+    get: vi.fn(),
+  } as unknown as RuntimePreferencesStore;
+}
+
 describe("thread handlers", () => {
   beforeEach(() => {
     electronMock.handlers.clear();
@@ -104,11 +115,15 @@ describe("thread handlers", () => {
       mode: "code",
       title: "New",
       relation: "primary",
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
     })).toEqual({
       workspace: "/workspace",
       mode: "code",
       title: "New",
       relation: "primary",
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
     });
     expect(parseThreadUpdatePatch({
       title: "Renamed",
@@ -135,6 +150,20 @@ describe("thread handlers", () => {
     expect(() =>
       parseThreadCreateInput({ workspace: "/workspace", mode: "code", relation: "fork" })
     ).toThrow("Thread create fork requires parentThreadId.");
+    expect(() =>
+      parseThreadCreateInput({
+        workspace: "/workspace",
+        mode: "code",
+        approvalPolicy: "sometimes",
+      })
+    ).toThrow("Thread create approvalPolicy is invalid.");
+    expect(() =>
+      parseThreadCreateInput({
+        workspace: "/workspace",
+        mode: "code",
+        sandboxMode: "workspace",
+      })
+    ).toThrow("Thread create sandboxMode is invalid.");
     expect(() => parseThreadUpdatePatch({})).toThrow(
       "Thread update patch must include at least one field.",
     );
@@ -156,6 +185,36 @@ describe("thread handlers", () => {
       message: "Thread create mode is invalid.",
     });
     expect(store.createThread).not.toHaveBeenCalled();
+  });
+
+  it("applies runtime permission defaults when creating a thread through IPC", async () => {
+    const store = createStore();
+    const runtimePreferencesStore = createRuntimePreferencesStore();
+    vi.mocked(runtimePreferencesStore.get).mockResolvedValue({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      defaultApprovalPolicy: "never",
+      defaultSandboxMode: "read-only",
+    });
+    vi.mocked(store.createThread).mockResolvedValue(thread({
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+    }));
+    registerThreadHandlers(store, undefined, runtimePreferencesStore);
+    const handler = electronMock.handlers.get(THREAD_CREATE_CHANNEL);
+    if (!handler) throw new Error("Expected thread create handler.");
+
+    const result = await handler({}, { workspace: "/workspace", mode: "code" });
+
+    expect(result).toEqual({
+      ok: true,
+      value: thread({ approvalPolicy: "never", sandboxMode: "read-only" }),
+    });
+    expect(store.createThread).toHaveBeenCalledWith({
+      workspace: "/workspace",
+      mode: "code",
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+    });
   });
 
   it("passes parsed list filters to the store", async () => {

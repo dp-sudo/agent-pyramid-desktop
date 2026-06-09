@@ -18,6 +18,7 @@ import type {
 import {
   err,
   isAgentAutonomyLevel,
+  isLlmProtocol,
   isModelReasoningEffort,
   ok,
 } from "../../shared/agent-contracts.js";
@@ -175,6 +176,12 @@ export function parseModelConfigUpdateRequest(
   }
   if (value.model !== undefined) {
     parsed.model = requiredTrimmedString(value.model, "model");
+  }
+  if (value.protocol !== undefined) {
+    if (!isLlmProtocol(value.protocol)) {
+      throw new Error("protocol must be one of openai-compatible, anthropic-compatible.");
+    }
+    parsed.protocol = value.protocol;
   }
   if (value.base_url !== undefined) {
     parsed.base_url = requiredTrimmedString(value.base_url, "base_url");

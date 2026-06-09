@@ -7,6 +7,8 @@ import type {
   GoalUpdateRequest,
   IpcResult,
   RuntimeEvent,
+  RuntimePreferences,
+  RuntimePreferencesUpdate,
   SseSubscribeRequest,
   SseUnsubscribeRequest,
   ThreadCreateInput,
@@ -66,6 +68,8 @@ import {
   MODEL_CONFIG_PROFILES_LIST_CHANNEL,
   MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
   MODEL_CONFIG_UPDATE_CHANNEL,
+  RUNTIME_PREFERENCES_GET_CHANNEL,
+  RUNTIME_PREFERENCES_UPDATE_CHANNEL,
 } from "../shared/ipc";
 
 const threads = {
@@ -276,6 +280,19 @@ const modelConfig = {
   },
 };
 
+const runtimePreferences = {
+  get(): Promise<IpcResult<RuntimePreferences>> {
+    return ipcRenderer.invoke(RUNTIME_PREFERENCES_GET_CHANNEL) as Promise<
+      IpcResult<RuntimePreferences>
+    >;
+  },
+  update(update: RuntimePreferencesUpdate): Promise<IpcResult<RuntimePreferences>> {
+    return ipcRenderer.invoke(RUNTIME_PREFERENCES_UPDATE_CHANNEL, update) as Promise<
+      IpcResult<RuntimePreferences>
+    >;
+  },
+};
+
 export const agentApi = {
   threads,
   turns,
@@ -287,6 +304,7 @@ export const agentApi = {
   workspace,
   write,
   modelConfig,
+  runtimePreferences,
 };
 
 contextBridge.exposeInMainWorld("agentApi", agentApi);

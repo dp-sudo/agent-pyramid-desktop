@@ -16,13 +16,28 @@ import {
   AGENT_AUTONOMY_LEVELS,
   DEFAULT_DEEPSEEK_MODEL_CONFIG,
   DEFAULT_MODEL_CONFIG,
+  DEFAULT_RUNTIME_PREFERENCES,
+  DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+  DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
+  LLM_PROTOCOLS,
   MODEL_REASONING_EFFORTS,
+  RUNTIME_COMPACTION_STRATEGIES,
+  RUNTIME_TOOL_NAMES,
+  THREAD_APPROVAL_POLICIES,
+  THREAD_SANDBOX_MODES,
   type AgentAutonomyLevel,
+  type LlmProtocol,
   type ModelConfig,
   type ModelConfigProfile,
   type ModelConfigProfilesState,
   type ModelConfigUpdate,
   type ModelReasoningEffort,
+  type RuntimeCompactionStrategy,
+  type RuntimePreferences,
+  type RuntimePreferencesUpdate,
+  type RuntimeToolName,
+  type ThreadApprovalPolicy,
+  type ThreadSandboxMode,
 } from "../../../shared/agent-contracts";
 import { useWorkbench } from "./store/WorkbenchContext";
 import {
@@ -47,6 +62,7 @@ import type {
 export interface SettingsFormState {
   model_provide: string;
   model: string;
+  protocol: LlmProtocol;
   base_url: string;
   OPENAI_API_KEY: string;
   model_context_window: string;
@@ -58,7 +74,14 @@ export interface SettingsFormState {
 }
 
 type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
-type SettingsSection = "basic" | "model";
+type RuntimeSaveState = Exclude<SaveState, "dirty">;
+type SettingsSection =
+  | "basic"
+  | "model"
+  | "agent"
+  | "tools"
+  | "workbench"
+  | "visibility";
 type SettingsTranslator = (key: string, options?: Record<string, unknown>) => string;
 
 interface SettingsSectionItem {
@@ -73,10 +96,21 @@ const MODEL_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "context",
   "reasoning",
 ];
-const BASIC_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
-  "appearance",
+const BASIC_SETTINGS_CATEGORIES: readonly SettingsCategory[] = ["appearance"];
+const AGENT_SETTINGS_CATEGORIES: readonly SettingsCategory[] = ["compaction"];
+const TOOLS_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
+  "permissions",
+  "toolAccess",
+  "commandLimits",
+];
+const WORKBENCH_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "startup",
+  "layout",
   "session",
+  "modelDefaults",
+];
+const VISIBILITY_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
+  "approvalPresentation",
 ];
 const THEME_PREFERENCES: readonly ThemePreference[] = ["light", "dark"];
 const STARTUP_VIEWS: readonly DefaultStartupView[] = ["code", "write"];
@@ -104,8 +138,13 @@ export function SettingsView(): ReactElement {
   const [profilesState, setProfilesState] = useState<ModelConfigProfilesState | null>(
     null,
   );
+  const [runtimePreferences, setRuntimePreferences] = useState<RuntimePreferences>(
+    state.runtimePreferences,
+  );
   const [saveState, setSaveState] = useState<SaveState>("loading");
+  const [runtimeSaveState, setRuntimeSaveState] = useState<RuntimeSaveState>("loading");
   const [error, setError] = useState<string>("");
+  const [runtimeError, setRuntimeError] = useState<string>("");
   const [profileBusy, setProfileBusy] = useState<string>("");
   const [pendingDeleteProfileId, setPendingDeleteProfileId] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -130,75 +169,40 @@ export function SettingsView(): ReactElement {
         label: t("settings.sectionTabs.model"),
         description: t("settings.sectionTabs.modelDesc"),
       },
+      {
+        id: "agent",
+        label: t("settings.sectionTabs.agent"),
+        description: t("settings.sectionTabs.agentDesc"),
+      },
+      {
+        id: "tools",
+        label: t("settings.sectionTabs.tools"),
+        description: t("settings.sectionTabs.toolsDesc"),
+      },
+      {
+        id: "workbench",
+        label: t("settings.sectionTabs.workbench"),
+        description: t("settings.sectionTabs.workbenchDesc"),
+      },
+      {
+        id: "visibility",
+        label: t("settings.sectionTabs.visibility"),
+        description: t("settings.sectionTabs.visibilityDesc"),
+      },
     ],
     [t],
   );
-  const settingsNavItems = useMemo<SettingsSidebarItem[]>(() => {
-    if (section === "basic") {
-      return [
-        {
-          id: "appearance",
-          label: t("settings.nav.appearance"),
-          description: t("settings.nav.appearanceDesc"),
-          marker: "01",
-        },
-        {
-          id: "startup",
-          label: t("settings.nav.startup"),
-          description: t("settings.nav.startupDesc"),
-          marker: "02",
-        },
-        {
-          id: "session",
-          label: t("settings.nav.session"),
-          description: t("settings.nav.sessionDesc"),
-          marker: "03",
-        },
-      ];
-    }
-    return [
-      {
-        id: "profiles",
-        label: t("settings.nav.profiles"),
-        description: t("settings.nav.profilesDesc"),
-        marker: "01",
-      },
-      {
-        id: "connection",
-        label: t("settings.nav.connection"),
-        description: t("settings.nav.connectionDesc"),
-        marker: "02",
-      },
-      {
-        id: "context",
-        label: t("settings.nav.context"),
-        description: t("settings.nav.contextDesc"),
-        marker: "03",
-      },
-      {
-        id: "reasoning",
-        label: t("settings.nav.reasoning"),
-        description: t("settings.nav.reasoningDesc"),
-        marker: "04",
-      },
-    ];
-  }, [section, t]);
+  const settingsNavItems = useMemo<SettingsSidebarItem[]>(
+    () => getSettingsNavItems(section, t),
+    [section, t],
+  );
   const visibleSettingsNavItems = useMemo(
     () => filterSettingsSidebarItems(settingsNavItems, settingsSearch),
     [settingsNavItems, settingsSearch],
   );
-  const sidebarFooterTitle =
-    section === "basic"
-      ? t("settings.sidebarFooter.basicTitle")
-      : t("settings.sidebarFooter.modelTitle");
-  const sidebarFooterDescription =
-    section === "basic"
-      ? t("settings.sidebarFooter.basicDescription")
-      : t("settings.sidebarFooter.modelDescription");
-  const settingsSubtitle =
-    section === "basic"
-      ? t("settings.subtitles.basic")
-      : t("settings.subtitles.model");
+  const sidebarFooterTitle = t(`settings.sidebarFooter.${section}Title`);
+  const sidebarFooterDescription = t(`settings.sidebarFooter.${section}Description`);
+  const settingsSubtitle = t(`settings.subtitles.${section}`);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,14 +212,24 @@ export function SettingsView(): ReactElement {
         setError(i18n.t("settings.preloadMissing"));
         return;
       }
-      const result = await window.agentApi.modelConfig.listProfiles();
+      const [profilesResult, runtimePreferencesResult] = await Promise.all([
+        window.agentApi.modelConfig.listProfiles(),
+        window.agentApi.runtimePreferences.get(),
+      ]);
       if (cancelled) return;
-      if (result.ok) {
-        applyProfilesState(result.value);
+      if (profilesResult.ok) {
+        applyProfilesState(profilesResult.value);
         setSaveState("idle");
       } else {
         setSaveState("error");
-        setError(result.message);
+        setError(profilesResult.message);
+      }
+      if (runtimePreferencesResult.ok) {
+        applyRuntimePreferences(runtimePreferencesResult.value);
+        setRuntimeSaveState("idle");
+      } else {
+        setRuntimeSaveState("error");
+        setRuntimeError(runtimePreferencesResult.message);
       }
     })();
     return () => {
@@ -248,6 +262,11 @@ export function SettingsView(): ReactElement {
     }
   }
 
+  function applyRuntimePreferences(preferences: RuntimePreferences): void {
+    setRuntimePreferences(preferences);
+    actions.setRuntimePreferences(preferences);
+  }
+
   function updateText(
     field: keyof Omit<
       SettingsFormState,
@@ -268,6 +287,13 @@ export function SettingsView(): ReactElement {
   function updateProfileName(value: string): void {
     markDirty();
     setProfileName(value);
+  }
+
+  function updateProtocol(event: ChangeEvent<HTMLSelectElement>): void {
+    const value = event.target.value;
+    if (!isLlmProtocolSetting(value)) return;
+    markDirty();
+    setForm((current) => ({ ...current, protocol: value }));
   }
 
   function updateThinking(checked: boolean): void {
@@ -315,6 +341,61 @@ export function SettingsView(): ReactElement {
   function updateDefaultInspectorMode(event: ChangeEvent<HTMLSelectElement>): void {
     const value = toDefaultInspectorMode(event.target.value);
     actions.updateBasicPreference("defaultInspectorMode", value);
+  }
+
+  async function updateRuntimePreferences(update: RuntimePreferencesUpdate): Promise<void> {
+    if (!window.agentApi) {
+      setRuntimeSaveState("error");
+      setRuntimeError(i18n.t("settings.preloadMissing"));
+      return;
+    }
+    setRuntimeSaveState("saving");
+    setRuntimeError("");
+    const result = await window.agentApi.runtimePreferences.update(update);
+    if (!result.ok) {
+      setRuntimeSaveState("error");
+      setRuntimeError(result.message);
+      return;
+    }
+    applyRuntimePreferences(result.value);
+    setRuntimeSaveState("saved");
+  }
+
+  function updateRuntimeToolAvailability(
+    mode: "code" | "write",
+    toolName: RuntimeToolName,
+    enabled: boolean,
+  ): void {
+    void updateRuntimePreferences({
+      toolAvailability: { [mode]: { [toolName]: enabled } },
+    });
+  }
+
+  function updateDefaultApprovalPolicy(event: ChangeEvent<HTMLSelectElement>): void {
+    const value = event.target.value as ThreadApprovalPolicy;
+    void updateRuntimePreferences({ defaultApprovalPolicy: value });
+  }
+
+  function updateDefaultSandboxMode(event: ChangeEvent<HTMLSelectElement>): void {
+    const value = event.target.value as ThreadSandboxMode;
+    void updateRuntimePreferences({ defaultSandboxMode: value });
+  }
+
+  function updateCompactionStrategy(event: ChangeEvent<HTMLSelectElement>): void {
+    const value = event.target.value as RuntimeCompactionStrategy;
+    void updateRuntimePreferences({ compaction: { strategy: value } });
+  }
+
+  function updateCodeDefaultModelProfile(event: ChangeEvent<HTMLSelectElement>): void {
+    void updateRuntimePreferences({
+      codeDefaultModelProfileId: emptyStringToNullableProfileId(event.target.value),
+    });
+  }
+
+  function updateWriteDefaultModelProfile(event: ChangeEvent<HTMLSelectElement>): void {
+    void updateRuntimePreferences({
+      writeDefaultModelProfileId: emptyStringToNullableProfileId(event.target.value),
+    });
   }
 
   function markDirty(): void {
@@ -478,6 +559,21 @@ export function SettingsView(): ReactElement {
             : saveState === "dirty"
               ? t("settings.status.dirty")
               : t("settings.status.idle");
+  const runtimeStatusLabel =
+    runtimeSaveState === "loading"
+      ? t("settings.status.loading")
+      : runtimeSaveState === "saving"
+        ? t("settings.status.saving")
+        : runtimeSaveState === "saved"
+          ? t("settings.status.saved")
+          : runtimeSaveState === "error"
+            ? t("settings.status.error")
+            : t("settings.status.idle");
+  const isRuntimeSettingsSection =
+    section === "agent" ||
+    section === "tools" ||
+    section === "workbench" ||
+    section === "visibility";
 
   return (
     <main className="ds-settings-root">
@@ -530,6 +626,10 @@ export function SettingsView(): ReactElement {
                       : t("settings.save")}
                 </button>
               </>
+            ) : isRuntimeSettingsSection ? (
+              <StatusBadge tone={runtimeSaveState} title={runtimeError || undefined}>
+                {runtimeStatusLabel}
+              </StatusBadge>
             ) : null}
           </div>
           <nav className="ds-settings-section-tabs" aria-label={t("settings.sectionNavLabel")}>
@@ -555,6 +655,12 @@ export function SettingsView(): ReactElement {
           ) : null}
           {section === "model" && error ? (
             <div className="ds-settings-notice is-error">{error}</div>
+          ) : null}
+          {isRuntimeSettingsSection && !hasAgentApi ? (
+            <div className="ds-settings-notice is-error">{t("settings.preloadMissing")}</div>
+          ) : null}
+          {isRuntimeSettingsSection && runtimeError ? (
+            <div className="ds-settings-notice is-error">{runtimeError}</div>
           ) : null}
 
           {section === "basic" && category === "appearance" ? (
@@ -613,7 +719,7 @@ export function SettingsView(): ReactElement {
             </SettingsCard>
           ) : null}
 
-          {section === "basic" && category === "startup" ? (
+          {section === "workbench" && category === "startup" ? (
             <SettingsCard
               title={t("settings.sections.startup")}
               description={t("settings.sections.startupDesc")}
@@ -636,6 +742,14 @@ export function SettingsView(): ReactElement {
                   </select>
                 }
               />
+            </SettingsCard>
+          ) : null}
+
+          {section === "workbench" && category === "layout" ? (
+            <SettingsCard
+              title={t("settings.sections.layout")}
+              description={t("settings.sections.layoutDesc")}
+            >
               <SettingRow
                 title={t("settings.fields.rememberLeftSidebarWidth")}
                 description={t("settings.descriptions.rememberLeftSidebarWidth")}
@@ -686,7 +800,7 @@ export function SettingsView(): ReactElement {
             </SettingsCard>
           ) : null}
 
-          {section === "basic" && category === "session" ? (
+          {section === "workbench" && category === "session" ? (
             <SettingsCard
               title={t("settings.sections.session")}
               description={t("settings.sections.sessionDesc")}
@@ -734,6 +848,54 @@ export function SettingsView(): ReactElement {
                       actions.updateBasicPreference("confirmThreadDelete", checked)
                     }
                   />
+                }
+              />
+            </SettingsCard>
+          ) : null}
+
+          {section === "workbench" && category === "modelDefaults" ? (
+            <SettingsCard
+              title={t("settings.sections.modelDefaults")}
+              description={t("settings.sections.modelDefaultsDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.codeDefaultModelProfile")}
+                description={t("settings.descriptions.codeDefaultModelProfile")}
+                controlId="code_default_model_profile"
+                control={
+                  <select
+                    id="code_default_model_profile"
+                    value={runtimePreferences.codeDefaultModelProfileId ?? ""}
+                    onChange={updateCodeDefaultModelProfile}
+                    disabled={!hasAgentApi || !profilesState}
+                  >
+                    <option value="">{t("settings.profileDefaults.activeProfile")}</option>
+                    {profilesState?.profiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name} / {profile.config.model}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.writeDefaultModelProfile")}
+                description={t("settings.descriptions.writeDefaultModelProfile")}
+                controlId="write_default_model_profile"
+                control={
+                  <select
+                    id="write_default_model_profile"
+                    value={runtimePreferences.writeDefaultModelProfileId ?? ""}
+                    onChange={updateWriteDefaultModelProfile}
+                    disabled={!hasAgentApi || !profilesState}
+                  >
+                    <option value="">{t("settings.profileDefaults.activeProfile")}</option>
+                    {profilesState?.profiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name} / {profile.config.model}
+                      </option>
+                    ))}
+                  </select>
                 }
               />
             </SettingsCard>
@@ -927,6 +1089,24 @@ export function SettingsView(): ReactElement {
                 }
               />
               <SettingRow
+                title={t("settings.fields.protocol")}
+                description={t("settings.descriptions.protocol")}
+                controlId="protocol"
+                control={
+                  <select
+                    id="protocol"
+                    value={form.protocol}
+                    onChange={updateProtocol}
+                  >
+                    {LLM_PROTOCOLS.map((protocol) => (
+                      <option key={protocol} value={protocol}>
+                        {t(`settings.protocols.${protocol}`)}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+              <SettingRow
                 title={t("settings.fields.baseUrl")}
                 description={t("settings.descriptions.baseUrl")}
                 controlId="base_url"
@@ -1066,6 +1246,235 @@ export function SettingsView(): ReactElement {
               />
             </SettingsCard>
           ) : null}
+
+          {section === "agent" && category === "compaction" ? (
+            <SettingsCard
+              title={t("settings.sections.compaction")}
+              description={t("settings.sections.compactionDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.compactionEnabled")}
+                description={t("settings.descriptions.compactionEnabled")}
+                control={
+                  <Toggle
+                    checked={runtimePreferences.compaction.enabled}
+                    label={t("settings.fields.compactionEnabled")}
+                    onChange={(checked) =>
+                      void updateRuntimePreferences({ compaction: { enabled: checked } })
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.compactionStrategy")}
+                description={t("settings.descriptions.compactionStrategy")}
+                controlId="compaction_strategy"
+                control={
+                  <select
+                    id="compaction_strategy"
+                    value={runtimePreferences.compaction.strategy}
+                    onChange={updateCompactionStrategy}
+                    disabled={!runtimePreferences.compaction.enabled}
+                  >
+                    {RUNTIME_COMPACTION_STRATEGIES.map((strategy) => (
+                      <option key={strategy} value={strategy}>
+                        {t(`settings.compactionStrategies.${strategy}`)}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+            </SettingsCard>
+          ) : null}
+
+          {section === "tools" && category === "permissions" ? (
+            <SettingsCard
+              title={t("settings.sections.permissions")}
+              description={t("settings.sections.permissionsDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.defaultApprovalPolicy")}
+                description={t("settings.descriptions.defaultApprovalPolicy")}
+                controlId="default_approval_policy"
+                control={
+                  <select
+                    id="default_approval_policy"
+                    value={runtimePreferences.defaultApprovalPolicy}
+                    onChange={updateDefaultApprovalPolicy}
+                  >
+                    {THREAD_APPROVAL_POLICIES.map((policy) => (
+                      <option key={policy} value={policy}>
+                        {t(`settings.approvalPolicies.${policy}`)}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.defaultSandboxMode")}
+                description={t("settings.descriptions.defaultSandboxMode")}
+                controlId="default_sandbox_mode"
+                control={
+                  <select
+                    id="default_sandbox_mode"
+                    value={runtimePreferences.defaultSandboxMode}
+                    onChange={updateDefaultSandboxMode}
+                  >
+                    {THREAD_SANDBOX_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {t(`settings.sandboxModes.${mode}`)}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+            </SettingsCard>
+          ) : null}
+
+          {section === "tools" && category === "toolAccess" ? (
+            <SettingsCard
+              title={t("settings.sections.toolAccess")}
+              description={t("settings.sections.toolAccessDesc")}
+            >
+              <div className="ds-settings-tool-grid">
+                {RUNTIME_TOOL_NAMES.map((toolName) => (
+                  <div className="ds-settings-tool-row" key={toolName}>
+                    <span>{t(`settings.toolNames.${toolName}`)}</span>
+                    <Toggle
+                      checked={runtimePreferences.toolAvailability.code[toolName]}
+                      label={t("settings.fields.codeToolAccess")}
+                      onChange={(checked) =>
+                        updateRuntimeToolAvailability("code", toolName, checked)
+                      }
+                    />
+                    <Toggle
+                      checked={runtimePreferences.toolAvailability.write[toolName]}
+                      label={t("settings.fields.writeToolAccess")}
+                      onChange={(checked) =>
+                        updateRuntimeToolAvailability("write", toolName, checked)
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            </SettingsCard>
+          ) : null}
+
+          {section === "tools" && category === "commandLimits" ? (
+            <SettingsCard
+              title={t("settings.sections.commandLimits")}
+              description={t("settings.sections.commandLimitsDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.commandTimeout")}
+                description={t("settings.descriptions.commandTimeout")}
+                controlId="command_timeout_ms"
+                control={
+                  <input
+                    id="command_timeout_ms"
+                    type="number"
+                    min="100"
+                    max="120000"
+                    value={runtimePreferences.command.timeoutMs}
+                    placeholder={String(DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS)}
+                    onChange={(event) =>
+                      void updateRuntimePreferences({
+                        command: { timeoutMs: Number(event.target.value) },
+                      })
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.commandMaxOutput")}
+                description={t("settings.descriptions.commandMaxOutput")}
+                controlId="command_max_output_bytes"
+                control={
+                  <input
+                    id="command_max_output_bytes"
+                    type="number"
+                    min="1024"
+                    max="1048576"
+                    value={runtimePreferences.command.maxOutputBytes}
+                    placeholder={String(DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES)}
+                    onChange={(event) =>
+                      void updateRuntimePreferences({
+                        command: { maxOutputBytes: Number(event.target.value) },
+                      })
+                    }
+                  />
+                }
+              />
+            </SettingsCard>
+          ) : null}
+
+          {section === "visibility" && category === "approvalPresentation" ? (
+            <SettingsCard
+              title={t("settings.sections.approvalPresentation")}
+              description={t("settings.sections.approvalPresentationDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.showDiffByDefault")}
+                description={t("settings.descriptions.showDiffByDefault")}
+                control={
+                  <Toggle
+                    checked={runtimePreferences.approvalExperience.showDiffByDefault}
+                    label={t("settings.fields.showDiffByDefault")}
+                    onChange={(checked) =>
+                      void updateRuntimePreferences({
+                        approvalExperience: { showDiffByDefault: checked },
+                      })
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.autoScrollOnRequest")}
+                description={t("settings.descriptions.autoScrollOnRequest")}
+                control={
+                  <Toggle
+                    checked={runtimePreferences.approvalExperience.autoScrollOnRequest}
+                    label={t("settings.fields.autoScrollOnRequest")}
+                    onChange={(checked) =>
+                      void updateRuntimePreferences({
+                        approvalExperience: { autoScrollOnRequest: checked },
+                      })
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.showReadOnlyToolRecords")}
+                description={t("settings.descriptions.showReadOnlyToolRecords")}
+                control={
+                  <Toggle
+                    checked={runtimePreferences.approvalExperience.showReadOnlyToolRecords}
+                    label={t("settings.fields.showReadOnlyToolRecords")}
+                    onChange={(checked) =>
+                      void updateRuntimePreferences({
+                        approvalExperience: { showReadOnlyToolRecords: checked },
+                      })
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.showFailureToasts")}
+                description={t("settings.descriptions.showFailureToasts")}
+                control={
+                  <Toggle
+                    checked={runtimePreferences.approvalExperience.showFailureToasts}
+                    label={t("settings.fields.showFailureToasts")}
+                    onChange={(checked) =>
+                      void updateRuntimePreferences({
+                        approvalExperience: { showFailureToasts: checked },
+                      })
+                    }
+                  />
+                }
+              />
+            </SettingsCard>
+          ) : null}
         </div>
       </form>
     </main>
@@ -1076,6 +1485,7 @@ function toFormState(config: ModelConfig): SettingsFormState {
   return {
     model_provide: config.model_provide,
     model: config.model,
+    protocol: config.protocol,
     base_url: config.base_url,
     OPENAI_API_KEY: config.OPENAI_API_KEY,
     model_context_window: String(config.model_context_window),
@@ -1087,7 +1497,7 @@ function toFormState(config: ModelConfig): SettingsFormState {
   };
 }
 
-function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
+export function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
   const contextWindow = parseOptionalInteger(
     form.model_context_window,
     "model_context_window",
@@ -1100,6 +1510,7 @@ function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
   return {
     model_provide: form.model_provide,
     model: form.model,
+    protocol: form.protocol,
     base_url: form.base_url,
     OPENAI_API_KEY: form.OPENAI_API_KEY,
     ...(contextWindow !== undefined ? { model_context_window: contextWindow } : {}),
@@ -1209,8 +1620,17 @@ function isSettingsLocale(value: string): value is LocaleCode {
   return SUPPORTED_LOCALES.includes(value as LocaleCode);
 }
 
+function isLlmProtocolSetting(value: string): value is LlmProtocol {
+  return LLM_PROTOCOLS.includes(value as LlmProtocol);
+}
+
 function isDefaultStartupViewSetting(value: string): value is DefaultStartupView {
   return STARTUP_VIEWS.includes(value as DefaultStartupView);
+}
+
+function emptyStringToNullableProfileId(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 export function toDefaultInspectorModeValue(mode: DefaultInspectorMode): string {
@@ -1246,6 +1666,7 @@ function hasUnsavedProfileChanges(
     profileName !== activeProfile.name ||
     form.model_provide !== activeProfile.config.model_provide ||
     form.model !== activeProfile.config.model ||
+    form.protocol !== activeProfile.config.protocol ||
     form.base_url !== activeProfile.config.base_url ||
     form.OPENAI_API_KEY !== activeProfile.config.OPENAI_API_KEY ||
     form.model_context_window !== String(activeProfile.config.model_context_window) ||
@@ -1266,6 +1687,14 @@ export function getDefaultCategoryForSection(
       return "appearance";
     case "model":
       return "profiles";
+    case "agent":
+      return "compaction";
+    case "tools":
+      return "permissions";
+    case "workbench":
+      return "startup";
+    case "visibility":
+      return "approvalPresentation";
   }
 }
 
@@ -1273,12 +1702,38 @@ export function isSettingsCategoryInSection(
   section: SettingsSection,
   category: SettingsCategory,
 ): boolean {
+  return getSettingsCategoriesForSection(section).includes(category);
+}
+
+function getSettingsCategoriesForSection(
+  section: SettingsSection,
+): readonly SettingsCategory[] {
   switch (section) {
     case "basic":
-      return BASIC_SETTINGS_CATEGORIES.includes(category);
+      return BASIC_SETTINGS_CATEGORIES;
     case "model":
-      return MODEL_SETTINGS_CATEGORIES.includes(category);
+      return MODEL_SETTINGS_CATEGORIES;
+    case "agent":
+      return AGENT_SETTINGS_CATEGORIES;
+    case "tools":
+      return TOOLS_SETTINGS_CATEGORIES;
+    case "workbench":
+      return WORKBENCH_SETTINGS_CATEGORIES;
+    case "visibility":
+      return VISIBILITY_SETTINGS_CATEGORIES;
   }
+}
+
+function getSettingsNavItems(
+  section: SettingsSection,
+  t: SettingsTranslator,
+): SettingsSidebarItem[] {
+  return getSettingsCategoriesForSection(section).map((category, index) => ({
+    id: category,
+    label: t(`settings.nav.${category}`),
+    description: t(`settings.nav.${category}Desc`),
+    marker: String(index + 1).padStart(2, "0"),
+  }));
 }
 
 export function filterSettingsSidebarItems(

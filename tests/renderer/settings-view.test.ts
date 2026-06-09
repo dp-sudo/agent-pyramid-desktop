@@ -7,6 +7,7 @@ import {
   shouldBlockSettingsNavigation,
   toDefaultInspectorMode,
   toDefaultInspectorModeValue,
+  toUpdatePayload,
   validateModelSettingsForm,
   type SettingsFormState,
 } from "../../src/renderer/src/ui/SettingsView";
@@ -30,18 +31,26 @@ describe("SettingsView helpers", () => {
     expect(shouldBlockSettingsNavigation("saving")).toBe(false);
   });
 
-  it("keeps model settings as a two-level settings section", () => {
+  it("keeps settings categories scoped to six first-level sections", () => {
     expect(getDefaultCategoryForSection("basic")).toBe("appearance");
     expect(getDefaultCategoryForSection("model")).toBe("profiles");
+    expect(getDefaultCategoryForSection("agent")).toBe("compaction");
+    expect(getDefaultCategoryForSection("tools")).toBe("permissions");
+    expect(getDefaultCategoryForSection("workbench")).toBe("startup");
+    expect(getDefaultCategoryForSection("visibility")).toBe("approvalPresentation");
     expect(isSettingsCategoryInSection("basic", "appearance")).toBe(true);
-    expect(isSettingsCategoryInSection("basic", "startup")).toBe(true);
-    expect(isSettingsCategoryInSection("basic", "session")).toBe(true);
+    expect(isSettingsCategoryInSection("basic", "startup")).toBe(false);
     expect(isSettingsCategoryInSection("basic", "profiles")).toBe(false);
     expect(isSettingsCategoryInSection("model", "profiles")).toBe(true);
     expect(isSettingsCategoryInSection("model", "connection")).toBe(true);
     expect(isSettingsCategoryInSection("model", "context")).toBe(true);
     expect(isSettingsCategoryInSection("model", "reasoning")).toBe(true);
     expect(isSettingsCategoryInSection("model", "appearance")).toBe(false);
+    expect(isSettingsCategoryInSection("agent", "compaction")).toBe(true);
+    expect(isSettingsCategoryInSection("tools", "toolAccess")).toBe(true);
+    expect(isSettingsCategoryInSection("tools", "commandLimits")).toBe(true);
+    expect(isSettingsCategoryInSection("workbench", "modelDefaults")).toBe(true);
+    expect(isSettingsCategoryInSection("visibility", "approvalPresentation")).toBe(true);
   });
 
   it("serializes the closed Inspector default as a select value", () => {
@@ -101,12 +110,18 @@ describe("SettingsView helpers", () => {
       testT,
     )).toBe("Max output tokens must stay below context.");
   });
+
+  it("includes the selected protocol in model profile update payloads", () => {
+    expect(toUpdatePayload(modelForm({ protocol: "anthropic-compatible" })))
+      .toMatchObject({ protocol: "anthropic-compatible" });
+  });
 });
 
 function modelForm(overrides: Partial<SettingsFormState> = {}): SettingsFormState {
   return {
     model_provide: "MiniMax",
     model: "MiniMax-M3",
+    protocol: "openai-compatible",
     base_url: "https://api.minimaxi.com/v1",
     OPENAI_API_KEY: "",
     model_context_window: "1000",

@@ -59,21 +59,31 @@ export function Workbench(): ReactElement {
     }
     let cancelled = false;
     void (async () => {
-      const [threadsResult, configResult, profilesResult] = await Promise.all([
+      const [
+        threadsResult,
+        configResult,
+        profilesResult,
+        runtimePreferencesResult,
+      ] = await Promise.all([
         window.agentApi.threads.list({
           includeArchived: state.showArchivedThreads,
         }),
         window.agentApi.modelConfig.get(),
         window.agentApi.modelConfig.listProfiles(),
+        window.agentApi.runtimePreferences.get(),
       ]);
       if (cancelled) return;
       if (threadsResult.ok) actions.setThreads(threadsResult.value);
       if (configResult.ok) actions.setModelConfig(configResult.value);
       if (profilesResult.ok) actions.setModelProfiles(profilesResult.value);
+      if (runtimePreferencesResult.ok) {
+        actions.setRuntimePreferences(runtimePreferencesResult.value);
+      }
       const initialLoadError = formatInitialLoadErrors([
         threadsResult,
         configResult,
         profilesResult,
+        runtimePreferencesResult,
       ]);
       if (initialLoadError) {
         actions.setError(initialLoadError);
@@ -640,6 +650,7 @@ export function Workbench(): ReactElement {
             />
             <WorkbenchErrorToast
               message={state.errorMessage}
+              enabled={state.runtimePreferences.approvalExperience.showFailureToasts}
               onDismiss={() => actions.setError(null)}
               floating
             />
@@ -662,6 +673,7 @@ export function Workbench(): ReactElement {
                     />
                     <WorkbenchErrorToast
                       message={state.errorMessage}
+                      enabled={state.runtimePreferences.approvalExperience.showFailureToasts}
                       onDismiss={() => actions.setError(null)}
                     />
                   </div>
@@ -678,15 +690,17 @@ export function Workbench(): ReactElement {
 
 function WorkbenchErrorToast({
   message,
+  enabled = true,
   onDismiss,
   floating = false,
 }: {
   message: string | null;
+  enabled?: boolean;
   onDismiss: () => void;
   floating?: boolean;
 }): ReactElement | null {
   const { t } = useTranslation();
-  if (!shouldShowWorkbenchErrorToast(message)) return null;
+  if (!shouldShowWorkbenchErrorToast(message, enabled)) return null;
   return (
     <div className={`ds-error-toast ${floating ? "is-floating" : ""}`} role="status">
       <span>{message}</span>
@@ -702,8 +716,11 @@ function WorkbenchErrorToast({
   );
 }
 
-export function shouldShowWorkbenchErrorToast(message: string | null): boolean {
-  return Boolean(message);
+export function shouldShowWorkbenchErrorToast(
+  message: string | null,
+  enabled = true,
+): boolean {
+  return enabled && Boolean(message);
 }
 
 export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): string | null {

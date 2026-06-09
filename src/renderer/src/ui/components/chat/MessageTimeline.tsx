@@ -22,6 +22,8 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
   const [processOpenByTurnId, setProcessOpenByTurnId] = useState<Record<string, boolean>>({});
   const turns = useMemo(() => groupTimelineTurns(state.items), [state.items]);
   const activeInFlightTurn = getActiveThreadInFlightTurn(state);
+  const showReadOnlyToolRecords =
+    state.runtimePreferences.approvalExperience.showReadOnlyToolRecords;
 
   useLayoutEffect(() => {
     const visibleTurnIds = new Set(turns.map((turn) => turn.id));
@@ -70,7 +72,10 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
       <div className="ds-message-timeline-content">
         {turns.map((turn) => {
           const isActiveTurn = activeInFlightTurn?.id === turn.id;
-          const processCount = turn.processItems.length;
+          const processItems = showReadOnlyToolRecords
+            ? turn.processItems
+            : turn.processItems.filter((item) => !isReadOnlyToolRecord(item));
+          const processCount = processItems.length;
           const hasProcess = processCount > 0;
           const processOpen = isTimelineProcessOpen({
             turnId: turn.id,
@@ -108,7 +113,7 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
                     {isActiveTurn ? <span className="ds-shiny-text">{t("chat.running")}</span> : null}
                   </summary>
                   <div className="ds-work-process-body">
-                    {turn.processItems.map((item) => (
+                    {processItems.map((item) => (
                       <ChatBlock
                         key={item.id}
                         item={item}
@@ -143,6 +148,19 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
       </div>
     </div>
   );
+}
+
+const READ_ONLY_TOOL_RECORD_NAMES = new Set([
+  "list_files",
+  "read_file",
+  "search_files",
+  "diagnose_file",
+]);
+
+function isReadOnlyToolRecord(
+  item: ReturnType<typeof groupTimelineTurns>[number]["processItems"][number],
+): boolean {
+  return item.kind === "tool" && READ_ONLY_TOOL_RECORD_NAMES.has(item.name);
 }
 
 export function shouldStickToTimelineBottom({

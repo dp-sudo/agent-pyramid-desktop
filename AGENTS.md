@@ -114,7 +114,7 @@ renderer React
 
 四层进程边界：
 
-- `src/main/index.ts` 是主进程组合根，组装 `JsonlThreadStore`、`AttachmentStore`、`ModelConfigStore`、`RuntimeEventBus`、`LlmWorkerPool`、`AgentRuntime`、`InMemoryToolRegistry` 和全部 IPC handler。
+- `src/main/index.ts` 是主进程组合根，组装 `JsonlThreadStore`、`AttachmentStore`、`ModelConfigStore`、`RuntimePreferencesStore`、`RuntimeEventBus`、`LlmWorkerPool`、`AgentRuntime`、`InMemoryToolRegistry` 和全部 IPC handler。
 - `src/main/infrastructure/llm-worker/` 使用 Node `worker_threads` 隔离 LLM 请求。`worker-pool.ts` 固定 `threadId -> worker` 路由并支持 cancel，`worker.ts` 实例化 `MiniMaxGateway` 并把 SSE delta 转成 typed worker message。
 - `src/preload/index.ts` 只暴露 `window.agentApi`，Electron 必须保持 `contextIsolation: true` 和 `nodeIntegration: false`。
 - `src/renderer/src/` 是 React 19 UI，使用 `WorkbenchContext.tsx` 内的 `useReducer` 状态，不使用外部状态库。
@@ -164,6 +164,7 @@ renderer React
 - `workspace.*`：pickDirectory。
 - `write.*`：list / get / put / complete。
 - `modelConfig.*`：get / update / listProfiles / createProfile / updateProfile / deleteProfile / activateProfile。
+- `runtimePreferences.*`：get / update。
 
 渲染端不得直接 import `src/main/`；只能通过 `window.agentApi` 或 `src/shared/` 交互。
 
@@ -172,7 +173,7 @@ renderer React
 - `src/renderer/src/main.tsx` 挂载 `WorkbenchProvider + AppShell`，并在渲染前同步执行 `initTheme()`。
 - `src/renderer/src/ui/AppShell.tsx` 根据 `WorkbenchContext` 的 `route` 懒加载 `Workbench` 或 `SettingsView`。
 - `src/renderer/src/ui/Workbench.tsx` 是 code / write 工作台外壳，负责 thread 加载、SSE 订阅、发送消息、中断、approval 响应、路由到写作视图。
-- `src/renderer/src/ui/store/WorkbenchContext.tsx` 是 renderer 状态中心，维护 `route`、`modelConfig`、`modelProfiles`、`threads`、`activeThreadId`、`items`、`inFlightTurnsByThreadId`、composer、左右面板宽度和错误信息。
+- `src/renderer/src/ui/store/WorkbenchContext.tsx` 是 renderer 状态中心，维护 `route`、`modelConfig`、`modelProfiles`、`runtimePreferences`、`threads`、`activeThreadId`、`items`、`inFlightTurnsByThreadId`、composer、左右面板宽度和错误信息。
 - `src/renderer/src/ui/components/chat/`：消息时间线和消息块。
 - `src/renderer/src/ui/components/composer/`：浮动输入框。
 - `src/renderer/src/ui/components/sidebar/`：线程侧栏。
@@ -204,7 +205,7 @@ renderer React
 
 1. Renderer 调用 `turns.start({ threadId, text, model, modelProfileId, reasoningEffort, attachmentIds, mode, goalMode })`。
 2. `AgentRuntime.startTurn()` 检查 thread 是否存在，并阻止同 thread 并发 in-flight turn。
-3. Runtime 从 `ModelConfigStore.listProfiles()` 解析请求指定 profile、同名 model profile 或 active profile，并解析附件记录。
+3. Runtime 从 `ModelConfigStore.listProfiles()` 和 `RuntimePreferencesStore.get()` 解析请求指定 profile、Code/Write 默认 profile、同名 model profile 或 active profile，并解析附件记录。
 4. Runtime 先追加 `UserItem` 到 `JsonlThreadStore`，再 emit `item_appended` 和 `turn_started`。
 5. Runtime replay thread 历史，按当前 turn 的 plan / goal 模式拼接系统上下文；附件会通过 `AgentContentBlock[]` 注入为 text + image block。
 6. Runtime 组装 `LlmRequest` 前调用 `prepareMessagesForRequest()`，按 `model_auto_compact_token_limit`、`model_context_window`、`max_tokens` 计算输入预算，并执行工具结果裁剪、旧消息裁剪与强制压缩。
@@ -259,7 +260,7 @@ Provider 方言分流：
 - 默认配置在 `DEFAULT_MODEL_CONFIG`。
 - DeepSeek 默认配置在 `DEFAULT_DEEPSEEK_MODEL_CONFIG`。
 - 配置持久化由 `ModelConfigStore` 写入 Electron `userData/config`。
-- 运行时每个 turn 从 profiles 状态解析 profile：优先 `modelProfileId`，其次请求中的 `model` 匹配 profile，最后使用当前 active profile。
+- 运行时每个 turn 从 profiles 状态解析 profile：优先 `modelProfileId`，其次 Code/Write 默认 profile id，再其次请求中的 `model` 匹配 profile，最后使用当前 active profile 或首个 profile。
 - API key 优先使用配置中的 `OPENAI_API_KEY`；为空时按 provider fallback 到 `DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`，最后 fallback 到 `OPENAI_API_KEY` 环境变量。
 - 不得在代码、文档、测试或提交中写入真实 API key。
 
@@ -298,6 +299,15 @@ threads/
 - 至少保留一个 profile。
 - `ModelConfigStore.get()` 只返回当前激活 profile 的 `ModelConfig`，不要让 runtime 直接感知设置页 UI 结构。
 - `ModelConfigStore.listProfiles()` 返回完整 `ModelConfigProfilesState`，renderer 的模型选择与设置页通过 preload 的 `modelConfig.*` API 访问。
+- `ModelConfig.protocol` 是每个 profile 的 LLM 请求协议，允许 `openai-compatible` 与 `anthropic-compatible`；旧 profile 缺失该字段时 normalize 为 `openai-compatible`。
+
+运行时偏好由 `RuntimePreferencesStore` 写入 Electron `userData/runtime-preferences.json`：
+
+- 当前格式是 `RuntimePreferences`。
+- 缺失或损坏的偏好组会 normalize 为 `DEFAULT_RUNTIME_PREFERENCES`。
+- `defaultApprovalPolicy` / `defaultSandboxMode` 只作为新建 thread 的默认值，不回写已有 thread。
+- `codeDefaultModelProfileId` / `writeDefaultModelProfileId` 在 turn 未显式指定 profile 时参与模型 profile 解析。
+- `toolAvailability`、`command`、`compaction` 和 `approvalExperience` 分别由 runtime 工具目录、命令工具、上下文压缩与 renderer 展示消费。
 
 附件数据由 `AttachmentStore` 写入 Electron `userData/attachments/`：
 
@@ -347,6 +357,7 @@ attachments/
 - `workspace`：pickDirectory，使用 Electron dialog 选择目录。
 - `write`：Markdown list / get / put / complete。
 - `modelConfig`：get / update / profile list / create / update / delete / activate。
+- `runtimePreferences`：get / update。
 
 运行时事件：
 

@@ -187,4 +187,69 @@ describe("LlmWorkerPool", () => {
 
     await expect(promise).rejects.toThrow("cancelled");
   });
+
+  it("preserves worker protocol error codes on rejected chats", async () => {
+    const worker = new FakeWorker();
+    const pool = createPoolWithWorker(worker);
+    await pool.start();
+
+    const promise = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+    const chat = worker.posted[0];
+    if (chat.type !== "chat") throw new Error("Expected chat message.");
+
+    worker.emit("message", {
+      kind: "error",
+      requestId: chat.requestId,
+      message: "bad provider frame",
+      code: "schema",
+    } satisfies WorkerOutbound);
+
+    await expect(promise).rejects.toMatchObject({
+      name: "LlmWorkerError",
+      code: "schema",
+      message: "bad provider frame",
+    });
+  });
+
+  it("does not let old request cleanup remove a newer cancel mapping for the same thread", async () => {
+    const worker = new FakeWorker();
+    const pool = createPoolWithWorker(worker);
+    await pool.start();
+
+    const firstPromise = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+    const firstChat = worker.posted[0];
+    if (firstChat.type !== "chat") throw new Error("Expected first chat message.");
+
+    const secondPromise = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+    const secondChat = worker.posted[1];
+    if (secondChat.type !== "chat") throw new Error("Expected second chat message.");
+
+    worker.emit("message", {
+      kind: "done",
+      requestId: firstChat.requestId,
+      response: {
+        text: "first",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    } satisfies WorkerOutbound);
+    await expect(firstPromise).resolves.toMatchObject({ text: "first" });
+
+    pool.cancel("thread-1");
+    const cancel = worker.posted[2];
+    expect(cancel).toEqual({ type: "cancel", requestId: secondChat.requestId });
+
+    worker.emit("message", {
+      kind: "done",
+      requestId: secondChat.requestId,
+      response: {
+        text: "second",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    } satisfies WorkerOutbound);
+    await expect(secondPromise).resolves.toMatchObject({ text: "second" });
+  });
 });

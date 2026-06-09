@@ -109,7 +109,7 @@ flowchart LR
 | Tool system | `src/main/application/tools/*`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口和内置工具。 |
 | LLM worker | `src/main/infrastructure/llm-worker/*` | main 到 worker 的请求路由、流式 chunk 转发和取消。 |
 | Provider gateway | `src/main/infrastructure/minimax/*` | MiniMax、DeepSeek、自定义 OpenAI-compatible 请求适配；Anthropic-compatible 映射保留在 gateway 层并有单元测试，但当前 runtime profile 仍固定发送 OpenAI-compatible 请求。 |
-| Persistence | `src/main/persistence/*` | 线程 JSONL、附件、模型配置 profiles 的 userData 持久化。 |
+| Persistence | `src/main/persistence/*` | 线程 JSONL、附件、模型配置 profiles、runtime preferences 的 userData 持久化。 |
 | IPC handlers | `src/main/ipc/*-handlers.ts` | 将 renderer 调用映射到 runtime、stores 和文件服务，统一返回 `IpcResult<T>`。 |
 | Preload bridge | `src/preload/index.ts` | 暴露 `window.agentApi`，隐藏 Electron IPC 细节。 |
 | Shared contracts | `src/shared/agent-contracts.ts`、`src/shared/ipc.ts`、`src/shared/locale.ts` | 跨进程类型、IPC channel 常量和语言列表权威来源。 |
@@ -127,7 +127,7 @@ flowchart LR
 ```mermaid
 flowchart TD
   AppReady["app.whenReady()"]
-  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore"]
+  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore\nRuntimePreferencesStore"]
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool"]
   Registry["InMemoryToolRegistry"]
@@ -169,6 +169,7 @@ flowchart TD
 | Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、`AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime` tool access policy、`AgentRuntime.resolveToolPolicy()` |
 | Change thread data | `src/shared/agent-contracts.ts` | `src/main/persistence/index.ts`、IPC handlers、renderer state and tests |
 | Change model config | `src/shared/agent-contracts.ts` | `src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`SettingsView.tsx` |
+| Change runtime preferences | `src/shared/agent-contracts.ts` | `src/main/persistence/runtime-preferences-store.ts`、`src/main/ipc/runtime-preferences-handlers.ts`、`src/preload/index.ts`、`AgentRuntime` |
 | Change attachments | `src/shared/agent-contracts.ts` | `src/main/persistence/attachment-store.ts`、`src/main/ipc/attachments-handlers.ts`、composer/runtime attachment injection |
 | Change write mode | `src/main/ipc/write-handlers.ts` | `src/renderer/src/ui/components/write/WriteWorkspaceView.tsx`、write IPC contracts |
 | Change base UI layout | `docs/ui-design.md` | `docs/ui-layout-reference.md`、`tokens.css`、`shell.css`、component tests |
@@ -187,10 +188,16 @@ flowchart TD
 - `rollback_file` uses in-memory runtime file history to undo the latest agent write when the current file still matches that history entry.
 - `run_command` runs foreground workspace commands with timeout, output truncation, interrupt cancellation, and approval.
 - `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through command execution and therefore requires approval; `diagnose_file` uses TypeScript Language Service for file-level diagnostics and remains read-only.
-- Write threads use `AgentRuntime` tool access policy to hide and reject Code-only coding/command tools by default; policy overrides can allow or deny individual tool names per thread mode before approval/sandbox checks run.
+- Write threads use `AgentRuntime` tool access policy and persisted
+  `RuntimePreferences.toolAvailability` to hide and reject Code-only
+  coding/command tools by default; policy overrides can allow or deny
+  individual tool names per thread mode before approval/sandbox checks run.
 - `create_plan` is only available in plan mode.
 - `update_goal` is only available in goal mode or when a thread has an active goal.
-- Model configuration profiles are persisted by `ModelConfigStore`; runtime receives only the selected `ModelConfig`.
+- Model configuration profiles are persisted by `ModelConfigStore`; runtime
+  receives only the selected `ModelConfig`.
+- Runtime preferences are persisted by `RuntimePreferencesStore`; runtime uses
+  them for thread-mode default profile selection and known-tool availability.
 
 ## Data Ownership
 
@@ -202,6 +209,7 @@ flowchart TD
 | Attachment metadata | `src/shared/agent-contracts.ts` | `AttachmentStore.index.json` |
 | Attachment bytes | `AttachmentStore` | `attachments/<id>.bin` |
 | Model config profiles | `src/shared/agent-contracts.ts` | `ModelConfigStore` |
+| Runtime preferences | `src/shared/agent-contracts.ts` | `RuntimePreferencesStore` |
 | IPC channel names | `src/shared/ipc.ts` | Not persisted |
 | Renderer basic preferences | `src/renderer/src/ui/preferences.ts` | `localStorage` |
 | Supported locales | `src/shared/locale.ts` | Not persisted |
@@ -219,6 +227,7 @@ flowchart TD
 | Thread persistence | `tests/main/persistence/jsonl-thread-store.test.ts` |
 | Attachments | `tests/main/persistence/attachment-store.test.ts` |
 | Model config | `tests/main/persistence/model-config-store.test.ts` |
+| Runtime preferences | `tests/main/persistence/runtime-preferences-store.test.ts` |
 | IPC handlers | `tests/main/ipc/*-handlers.test.ts` |
 | Renderer state/components | `tests/renderer/*.test.ts`、`tests/renderer/*.test.tsx` |
 

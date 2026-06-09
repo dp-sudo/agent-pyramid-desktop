@@ -150,9 +150,18 @@ describe("minimax protocol type helpers", () => {
         usage: {
           input_tokens: 5,
           output_tokens: 7,
+          cache_creation_input_tokens: 3,
+          cache_read_input_tokens: 9,
         },
       }),
-    ).toEqual({ inputTokens: 5, outputTokens: 7, totalTokens: 12 });
+    ).toEqual({
+      inputTokens: 5,
+      outputTokens: 7,
+      totalTokens: 12,
+      cacheHitTokens: 9,
+      cacheMissTokens: 3,
+      cacheHitRate: 0.75,
+    });
     expect(
       normalizeAnthropicUsage({
         usage: {

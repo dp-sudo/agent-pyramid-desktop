@@ -120,6 +120,8 @@ export interface AnthropicMessageResponse {
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
   };
 }
 
@@ -253,12 +255,27 @@ type AnthropicUsageFields = NonNullable<AnthropicMessageResponse["usage"]>;
 export function mapAnthropicUsageFields(usage: AnthropicUsageFields): AgentUsage | undefined {
   const inputTokens = tokenCountOrUndefined(usage.input_tokens);
   const outputTokens = tokenCountOrUndefined(usage.output_tokens);
+  const hasCacheUsage =
+    tokenCountOrUndefined(usage.cache_read_input_tokens) !== undefined ||
+    tokenCountOrUndefined(usage.cache_creation_input_tokens) !== undefined;
+  const cacheHitTokens = hasCacheUsage
+    ? tokenCountOrUndefined(usage.cache_read_input_tokens) ?? 0
+    : undefined;
+  const cacheMissTokens = hasCacheUsage
+    ? tokenCountOrUndefined(usage.cache_creation_input_tokens) ?? 0
+    : undefined;
+  const cacheTotal = (cacheHitTokens ?? 0) + (cacheMissTokens ?? 0);
   const mapped: AgentUsage = {};
 
   if (inputTokens !== undefined) mapped.inputTokens = inputTokens;
   if (outputTokens !== undefined) mapped.outputTokens = outputTokens;
   if (inputTokens !== undefined && outputTokens !== undefined) {
     mapped.totalTokens = inputTokens + outputTokens;
+  }
+  if (cacheHitTokens !== undefined) mapped.cacheHitTokens = cacheHitTokens;
+  if (cacheMissTokens !== undefined) mapped.cacheMissTokens = cacheMissTokens;
+  if (hasCacheUsage) {
+    mapped.cacheHitRate = cacheTotal > 0 ? (cacheHitTokens ?? 0) / cacheTotal : null;
   }
 
   return Object.keys(mapped).length > 0 ? mapped : undefined;

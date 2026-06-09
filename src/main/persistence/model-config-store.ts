@@ -4,7 +4,9 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import {
   DEFAULT_MODEL_CONFIG,
+  isLlmProtocol,
   isAgentAutonomyLevel,
+  isIsoTimestampString,
   isModelReasoningEffort,
   type ModelConfig,
   type ModelConfigProfile,
@@ -19,6 +21,7 @@ const TMP_SUFFIX = ".tmp";
 const MODEL_CONFIG_UPDATE_FIELDS: readonly (keyof ModelConfigUpdate)[] = [
   "model_provide",
   "model",
+  "protocol",
   "base_url",
   "OPENAI_API_KEY",
   "model_context_window",
@@ -82,6 +85,7 @@ export class ModelConfigStore {
       const next = normalizeModelConfig({
         ...active.config,
         ...update,
+        protocol: update.protocol ?? active.config.protocol,
         model_context_window: contextWindow,
         model_auto_compact_token_limit:
           update.model_auto_compact_token_limit ??
@@ -343,15 +347,13 @@ function normalizeStoredProfile(value: unknown): ModelConfigProfile | null {
         ? raw.name.trim()
         : config.model_provide,
     config,
-    createdAt:
-      typeof raw.createdAt === "string" && raw.createdAt.trim()
-        ? raw.createdAt
-        : now,
-    updatedAt:
-      typeof raw.updatedAt === "string" && raw.updatedAt.trim()
-        ? raw.updatedAt
-        : now,
+    createdAt: normalizeStoredTimestamp(raw.createdAt, now),
+    updatedAt: normalizeStoredTimestamp(raw.updatedAt, now),
   };
+}
+
+function normalizeStoredTimestamp(value: unknown, fallback: string): string {
+  return isIsoTimestampString(value) ? value : fallback;
 }
 
 function normalizeStoredConfig(value: unknown): ModelConfig {
@@ -401,6 +403,9 @@ function normalizeStoredCompactLimit(value: unknown, contextWindow: number): num
 function normalizeModelConfig(value: Partial<ModelConfig>): ModelConfig {
   const modelProvide = assertNonEmptyString(value.model_provide, "model_provide");
   const model = assertNonEmptyString(value.model, "model");
+  if (!isLlmProtocol(value.protocol)) {
+    throw new Error("protocol must be one of openai-compatible, anthropic-compatible.");
+  }
   const baseUrl = assertNonEmptyString(value.base_url, "base_url");
   const apiKey = typeof value.OPENAI_API_KEY === "string" ? value.OPENAI_API_KEY : "";
   const contextWindow = assertPositiveInteger(
@@ -431,6 +436,7 @@ function normalizeModelConfig(value: Partial<ModelConfig>): ModelConfig {
   return {
     model_provide: modelProvide,
     model,
+    protocol: value.protocol,
     base_url: baseUrl,
     OPENAI_API_KEY: apiKey,
     model_context_window: contextWindow,

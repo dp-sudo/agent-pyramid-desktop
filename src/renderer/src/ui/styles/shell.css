@@ -1403,6 +1403,11 @@ textarea:focus-visible {
   padding: 7px 9px;
   color: var(--ds-text-muted);
   font-size: var(--ds-size-caption);
+  list-style: none;
+}
+
+.ds-diff-preview-header::-webkit-details-marker {
+  display: none;
 }
 
 .ds-diff-preview-header span:first-child {
@@ -2456,6 +2461,30 @@ textarea:focus-visible {
 .ds-setting-row:first-child,
 .ds-profile-toolbar:first-child {
   border-top: 0;
+}
+
+.ds-settings-tool-grid {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+}
+
+.ds-settings-tool-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-sm);
+  padding: 10px 12px;
+  background: var(--ds-surface);
+}
+
+.ds-settings-tool-row > span {
+  min-width: 0;
+  color: var(--ds-text);
+  font-size: var(--ds-size-body);
+  font-weight: 650;
 }
 
 .ds-setting-row.is-wide {

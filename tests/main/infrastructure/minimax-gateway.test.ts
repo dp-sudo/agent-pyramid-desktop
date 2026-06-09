@@ -592,6 +592,67 @@ describe("MiniMaxGateway", () => {
     ]);
   });
 
+  it("merges Anthropic-compatible stream usage from message_start and message_delta frames", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":4,"cache_creation_input_tokens":6}}}',
+              "",
+              'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done"}}',
+              "",
+              'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    const chunks: LlmStreamChunk[] = [];
+    for await (const chunk of new MiniMaxGateway().stream({
+      ...baseRequest,
+      protocol: "anthropic-compatible",
+      baseUrl: "https://provider.example.test/anthropic",
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      {
+        kind: "usage",
+        usage: {
+          inputTokens: 10,
+          cacheHitTokens: 4,
+          cacheMissTokens: 6,
+          cacheHitRate: 0.4,
+        },
+      },
+      { kind: "text_delta", text: "Done" },
+      {
+        kind: "usage",
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+          cacheHitTokens: 4,
+          cacheMissTokens: 6,
+          cacheHitRate: 0.4,
+        },
+      },
+      { kind: "completed", stopReason: "stop" },
+    ]);
+  });
+
   it("reports invalid JSON provider responses and HTTP failures", async () => {
     vi.stubGlobal(
       "fetch",

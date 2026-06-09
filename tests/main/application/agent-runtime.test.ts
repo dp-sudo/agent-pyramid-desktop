@@ -19,7 +19,8 @@ import type { LlmRequest, LlmResponse, LlmStreamChunk } from "../../../src/main/
 import { AttachmentStore } from "../../../src/main/persistence/attachment-store";
 import { JsonlThreadStore } from "../../../src/main/persistence/index";
 import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
-import type { LlmWorkerPool } from "../../../src/main/infrastructure/llm-worker/worker-pool";
+import { RuntimePreferencesStore } from "../../../src/main/persistence/runtime-preferences-store";
+import { LlmWorkerError, type LlmWorkerPool } from "../../../src/main/infrastructure/llm-worker/worker-pool";
 import type {
   ApprovalRespondRequest,
   Item,
@@ -127,6 +128,7 @@ describe("AgentRuntime", () => {
   let store: JsonlThreadStore;
   let attachmentStore: AttachmentStore;
   let modelConfigStore: ModelConfigStore;
+  let runtimePreferencesStore: RuntimePreferencesStore;
   let bus: RuntimeEventBus;
   let fakePool: FakePool;
   let events: RuntimeEvent[];
@@ -137,6 +139,7 @@ describe("AgentRuntime", () => {
     store = new JsonlThreadStore(userDataDir);
     attachmentStore = new AttachmentStore(userDataDir);
     modelConfigStore = new ModelConfigStore(userDataDir);
+    runtimePreferencesStore = new RuntimePreferencesStore(userDataDir);
     bus = new RuntimeEventBus();
     fakePool = new FakePool();
     events = [];
@@ -174,6 +177,7 @@ describe("AgentRuntime", () => {
       store,
       attachmentStore,
       modelConfigStore,
+      runtimePreferencesStore,
       pool: fakePool as unknown as LlmWorkerPool,
       bus,
       registry,
@@ -240,6 +244,98 @@ describe("AgentRuntime", () => {
     }
     expect(replayed.map((item) => item.kind)).toEqual(["user", "reasoning", "assistant"]);
     expect(replayed.at(-1)).toMatchObject({ kind: "assistant", text: "Hello" });
+  });
+
+  it("uses Code and Write default model profiles when no explicit profile is supplied", async () => {
+    const codeThread = await store.createThread({
+      title: "Code Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const writeThread = await store.createThread({
+      title: "Write Runtime",
+      workspace: "/workspace",
+      mode: "write",
+    });
+    const codeProfiles = await modelConfigStore.createProfile({
+      name: "Code Model",
+      config: {
+        model_provide: "CodeProvider",
+        model: "code-model",
+      },
+    });
+    const codeProfile = codeProfiles.profiles.find((profile) => profile.name === "Code Model");
+    if (!codeProfile) throw new Error("Expected Code Model profile.");
+    const writeProfiles = await modelConfigStore.createProfile({
+      name: "Write Model",
+      config: {
+        model_provide: "WriteProvider",
+        model: "write-model",
+      },
+    });
+    const writeProfile = writeProfiles.profiles.find((profile) => profile.name === "Write Model");
+    if (!writeProfile) throw new Error("Expected Write Model profile.");
+    await runtimePreferencesStore.update({
+      codeDefaultModelProfileId: codeProfile.id,
+      writeDefaultModelProfileId: writeProfile.id,
+    });
+
+    const runtime = createRuntime();
+    const codeTurn = await runtime.startTurn({
+      threadId: codeThread.id,
+      text: "Code request",
+    });
+    const writeTurn = await runtime.startTurn({
+      threadId: writeThread.id,
+      text: "Write request",
+    });
+    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(writeThread.id));
+
+    expect(codeTurn).toMatchObject({
+      model: "code-model",
+      modelProfileId: codeProfile.id,
+    });
+    expect(writeTurn).toMatchObject({
+      model: "write-model",
+      modelProfileId: writeProfile.id,
+    });
+    expect(fakePool.requests.map((request) => request.model)).toEqual([
+      "code-model",
+      "write-model",
+    ]);
+  });
+
+  it("forwards the selected model profile protocol to the LLM request", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const profiles = await modelConfigStore.createProfile({
+      name: "Anthropic",
+      activate: true,
+      config: {
+        model_provide: "AnthropicProvider",
+        model: "claude-test",
+        protocol: "anthropic-compatible",
+      },
+    });
+    const profile = profiles.profiles.find((item) => item.name === "Anthropic");
+    if (!profile) throw new Error("Expected Anthropic profile.");
+
+    const runtime = createRuntime();
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Run",
+      modelProfileId: profile.id,
+    });
+    await waitFor(() => fakePool.requests.length === 1 && !runtime.isThreadInFlight(thread.id));
+
+    expect(fakePool.requests[0]).toMatchObject({
+      provider: "AnthropicProvider",
+      model: "claude-test",
+      protocol: "anthropic-compatible",
+    });
   });
 
   it("uses the explicitly selected model profile and includes attachment content", async () => {
@@ -385,6 +481,110 @@ describe("AgentRuntime", () => {
       ]),
     );
     expect(runtime.isThreadInFlight(thread.id)).toBe(false);
+  });
+
+  it("maps typed worker failures to specific runtime error codes", async () => {
+    const runtime = createRuntime();
+    const schemaThread = await store.createThread({
+      title: "Schema Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.error = new LlmWorkerError("bad provider frame", "schema");
+
+    await runtime.startTurn({
+      threadId: schemaThread.id,
+      text: "Run schema",
+    });
+    await waitFor(() => !runtime.isThreadInFlight(schemaThread.id));
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          threadId: schemaThread.id,
+          code: "schema_invalid",
+          message: "bad provider frame",
+        }),
+      ]),
+    );
+
+    const httpThread = await store.createThread({
+      title: "HTTP Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.error = new LlmWorkerError("LLM stream failed with HTTP 429", "http");
+
+    await runtime.startTurn({
+      threadId: httpThread.id,
+      text: "Run HTTP",
+    });
+    await waitFor(() => !runtime.isThreadInFlight(httpThread.id));
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          threadId: httpThread.id,
+          code: "provider_http",
+          message: "LLM stream failed with HTTP 429",
+        }),
+      ]),
+    );
+  });
+
+  it("persists truncated streamed output when the worker fails after deltas", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.chunks = [{ kind: "text_delta", text: "Partial before failure" }];
+    fakePool.error = new Error("worker connection lost");
+    const runtime = createRuntime();
+
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Run",
+    });
+
+    await waitFor(() =>
+      events.some(
+        (event) =>
+          event.kind === "turn_completed" &&
+          event.turnId === turn.id &&
+          event.status === "failed",
+      ),
+    );
+
+    const replayed: Item[] = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(replayed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "assistant",
+          text: "Partial before failure",
+          truncated: true,
+        }),
+      ]),
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "turn_failed",
+          turnId: turn.id,
+          message: "worker connection lost",
+        }),
+        expect.objectContaining({
+          kind: "turn_completed",
+          turnId: turn.id,
+          status: "failed",
+        }),
+      ]),
+    );
   });
 
   it("clears in-flight state when appending the initial user item fails", async () => {
@@ -1532,6 +1732,134 @@ describe("AgentRuntime", () => {
     expect(toolNames).toEqual(expect.arrayContaining(["list_files", "read_file", "search_files"]));
   });
 
+  it("hides and rejects tools disabled by runtime preferences", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    await runtimePreferencesStore.update({
+      toolAvailability: { code: { run_command: false } },
+    });
+    const registry = new InMemoryToolRegistry(createCommandTools());
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-command",
+            name: "run_command",
+            arguments: { command: nodeCommand("process.stdout.write('nope');") },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Handled unavailable command.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    const runtime = createRuntime(registry);
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Run command",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[0].tools.map((tool) => tool.name)).not.toContain("run_command");
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          code: "tool_not_found",
+          message: 'Tool "run_command" is not available in this turn.',
+        }),
+      ]),
+    );
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(
+      finalItems(replayed).find((item) => item.kind === "tool" && item.name === "run_command"),
+    ).toMatchObject({
+      status: "failed",
+      result: { message: 'Tool "run_command" is not available in this turn.' },
+    });
+  });
+
+  it("allows Write thread code tools when runtime preferences explicitly enable them", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "write",
+    });
+    await runtimePreferencesStore.update({
+      toolAvailability: { write: { write_file: true } },
+    });
+    let executed = false;
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "write_file",
+          description: "Write file",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isDestructive: true },
+        async execute() {
+          executed = true;
+          return "written";
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-write",
+            name: "write_file",
+            arguments: { path: "draft.md", content: "draft" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Write allowed.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    const runtime = createRuntime(registry);
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Write draft",
+    });
+    await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+
+    expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual(["write_file"]);
+    const approval = events.find((event) => event.kind === "approval_requested");
+    expect(approval).toMatchObject({
+      kind: "approval_requested",
+      toolName: "write_file",
+    });
+    if (!approval || approval.kind !== "approval_requested") {
+      throw new Error("Expected write_file approval request.");
+    }
+    runtime.respondApproval({ approvalId: approval.approvalId, decision: "allow" });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(executed).toBe(true);
+  });
+
   it("rejects forced Code-only tool calls in Write threads before approval or execution", async () => {
     const thread = await store.createThread({
       title: "Runtime",
@@ -1679,6 +2007,142 @@ describe("AgentRuntime", () => {
       status: "completed",
       result: { content: "written" },
     });
+  });
+
+  it("applies runtime preferences when filtering and rejecting disabled tools", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    await runtimePreferencesStore.update({
+      toolAvailability: {
+        code: { run_command: false },
+      },
+    });
+    let executed = false;
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "run_command",
+          description: "Run command",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isDestructive: true },
+        async execute() {
+          executed = true;
+          throw new Error("run_command should not execute when disabled.");
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-command",
+            name: "run_command",
+            arguments: { command: "npm test" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Handled disabled command.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    const runtime = createRuntime(registry);
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Run command",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(executed).toBe(false);
+    expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual([]);
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          code: "tool_not_found",
+          message: 'Tool "run_command" is not available in this turn.',
+        }),
+      ]),
+    );
+  });
+
+  it("uses runtime preferences to enable write tools before approval policy", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "write",
+    });
+    await runtimePreferencesStore.update({
+      toolAvailability: {
+        write: { write_file: true },
+      },
+    });
+    let executed = false;
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "write_file",
+          description: "Write file",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isDestructive: true },
+        async execute() {
+          executed = true;
+          return "written";
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-write",
+            name: "write_file",
+            arguments: { path: "draft.md", content: "draft" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Write allowed.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    const runtime = createRuntime(registry);
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Write draft",
+    });
+    await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+
+    expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual(["write_file"]);
+    const approval = events.find((event) => event.kind === "approval_requested");
+    expect(approval).toMatchObject({
+      kind: "approval_requested",
+      toolName: "write_file",
+    });
+    if (!approval || approval.kind !== "approval_requested") {
+      throw new Error("Expected write_file approval request.");
+    }
+    runtime.respondApproval({ approvalId: approval.approvalId, decision: "allow" });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+    expect(executed).toBe(true);
   });
 
   it("rejects conflicting tool access policy entries", () => {
@@ -2075,6 +2539,137 @@ describe("AgentRuntime", () => {
     });
   });
 
+  it("preserves historical tool results within budget when automatic compaction is disabled", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    await runtimePreferencesStore.update({
+      compaction: { enabled: false },
+    });
+    const longToolResult = Array.from({ length: 700 }, (_, index) => `line ${index}`).join("\n");
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_file",
+          description: "Read file",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isReadOnly: true },
+        async execute() {
+          return longToolResult;
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read", name: "read_file", arguments: { path: "large.txt" } }],
+        raw: {},
+      },
+      {
+        text: "Done",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Read a large file",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[1].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "call-read",
+          content: longToolResult,
+        }),
+      ]),
+    );
+  });
+
+  it("uses recent-only compaction strategy to trim older history first", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    await runtimePreferencesStore.update({
+      compaction: { strategy: "recent-only" },
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_file",
+          description: "Read file",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isReadOnly: true },
+        async execute() {
+          return Array.from({ length: 700 }, (_, index) => `line ${index}`).join("\n");
+        },
+      },
+    ]);
+    const runtime = createRuntime(registry);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read", name: "read_file", arguments: { path: "large.txt" } }],
+        raw: {},
+      },
+      {
+        text: "Done",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+      {
+        text: "Continue done",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Read a large file",
+    });
+    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(thread.id));
+    await modelConfigStore.update({
+      model_provide: DEFAULT_MODEL_CONFIG.model_provide,
+      model: DEFAULT_MODEL_CONFIG.model,
+      base_url: DEFAULT_MODEL_CONFIG.base_url,
+      OPENAI_API_KEY: DEFAULT_MODEL_CONFIG.OPENAI_API_KEY,
+      model_context_window: 12000,
+      model_auto_compact_token_limit: 300,
+      max_tokens: 1000,
+      thinking: DEFAULT_MODEL_CONFIG.thinking,
+      model_reasoning_effort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
+    });
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Continue",
+    });
+    await waitFor(() => fakePool.requests.length === 3 && !runtime.isThreadInFlight(thread.id));
+
+    const messages = fakePool.requests[2].messages;
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "Continue" }),
+      ]),
+    );
+    expect(messages.some((message) => message.role === "tool" && message.toolCallId === "call-read")).toBe(false);
+  });
+
   it("keeps large historical tool call rounds while the request is within budget", async () => {
     const thread = await store.createThread({
       title: "Runtime",
@@ -2455,6 +3050,45 @@ describe("AgentRuntime", () => {
         (event) => event.kind === "runtime_error" && event.message === "aborted by cancel",
       ),
     ).toBe(false);
+  });
+
+  it("persists truncated streamed output before emitting interrupted completion", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.delayMs = 30;
+    fakePool.chunks = [{ kind: "text_delta", text: "Partial" }];
+    fakePool.rejectCanceledThreads = true;
+    const runtime = createRuntime();
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Long run",
+    });
+
+    await waitFor(() =>
+      events.some(
+        (event) => event.kind === "item_updated" && event.item.kind === "assistant",
+      ),
+    );
+    await runtime.interruptTurn(turn.id);
+    await waitFor(() => !runtime.isThreadInFlight(thread.id) && fakePool.activeChats === 0);
+
+    const truncatedAssistantIndex = events.findIndex(
+      (event) =>
+        event.kind === "item_appended" &&
+        event.item.kind === "assistant" &&
+        event.item.truncated === true,
+    );
+    const interruptedCompletionIndex = events.findIndex(
+      (event) =>
+        event.kind === "turn_completed" &&
+        event.turnId === turn.id &&
+        event.status === "interrupted",
+    );
+    expect(truncatedAssistantIndex).toBeGreaterThanOrEqual(0);
+    expect(interruptedCompletionIndex).toBeGreaterThan(truncatedAssistantIndex);
   });
 
   it("keeps interrupted turns terminal when partial stream persistence fails", async () => {

@@ -88,6 +88,7 @@ describe("Workbench", () => {
   it("shows the shared Workbench error toast only when an error is present", () => {
     expect(shouldShowWorkbenchErrorToast(null)).toBe(false);
     expect(shouldShowWorkbenchErrorToast("Runtime failed")).toBe(true);
+    expect(shouldShowWorkbenchErrorToast("Runtime failed", false)).toBe(false);
   });
 
   it("cleans up only threads with retained SSE subscriptions", () => {

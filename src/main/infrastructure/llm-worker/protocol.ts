@@ -1,5 +1,7 @@
 import type { LlmRequest, LlmResponse, LlmStreamChunk } from "../../domain/agent/types.js";
 
+export type WorkerErrorCode = "http" | "provider" | "schema" | "internal";
+
 /** A chunk emitted while the model is streaming a chat completion. */
 export interface StreamChunk {
   kind: "delta";
@@ -19,7 +21,7 @@ export interface StreamError {
   kind: "error";
   requestId: string;
   message: string;
-  code?: "http" | "schema" | "internal";
+  code?: WorkerErrorCode;
 }
 
 export type WorkerOutbound = StreamChunk | StreamDone | StreamError;

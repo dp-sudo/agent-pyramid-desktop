@@ -3,20 +3,29 @@ import {
   ATTACHMENT_DELETE_CHANNEL,
   MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
   RENDERER_TO_MAIN_CHANNELS,
+  RUNTIME_PREFERENCES_GET_CHANNEL,
+  RUNTIME_PREFERENCES_UPDATE_CHANNEL,
   TURN_START_CHANNEL,
 } from "../../src/shared/ipc";
 import {
   DEFAULT_DEEPSEEK_MODEL_CONFIG,
   DEFAULT_MODEL_CONFIG,
+  DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+  DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
+  DEFAULT_RUNTIME_PREFERENCES,
   DEFAULT_THREAD_APPROVAL_POLICY,
   DEFAULT_THREAD_LIST_RELATIONS,
   DEFAULT_THREAD_MODE,
   DEFAULT_THREAD_RELATION,
   DEFAULT_THREAD_SANDBOX_MODE,
   DEFAULT_THREAD_STATUS,
+  ISO_TIMESTAMP_PATTERN,
   ITEM_KINDS,
+  LLM_PROTOCOLS,
   MAX_ATTACHMENT_BYTES,
+  RUNTIME_COMPACTION_STRATEGIES,
   RUNTIME_EVENT_KINDS,
+  RUNTIME_TOOL_NAMES,
   SUPPORTED_ATTACHMENT_MIME_TYPES,
   THREAD_APPROVAL_POLICIES,
   THREAD_GOAL_STATUSES,
@@ -30,10 +39,15 @@ import {
   isAttachmentRecord,
   isItem,
   isItemKind,
+  isIsoTimestampString,
+  isLlmProtocol,
   isModelReasoningEffort,
   isNonNegativeInteger,
+  isRuntimeCompactionStrategy,
   isRuntimeEvent,
   isRuntimeEventKind,
+  isRuntimePreferences,
+  isRuntimeToolName,
   isThreadApprovalPolicy,
   isThreadGoalStatus,
   isThreadMode,
@@ -74,6 +88,14 @@ describe("shared agent contracts", () => {
     });
   });
 
+  it("validates LLM protocol values", () => {
+    expect(LLM_PROTOCOLS).toEqual(["openai-compatible", "anthropic-compatible"]);
+    expect(isLlmProtocol("openai-compatible")).toBe(true);
+    expect(isLlmProtocol("anthropic-compatible")).toBe(true);
+    expect(isLlmProtocol("custom")).toBe(false);
+    expect(isLlmProtocol(undefined)).toBe(false);
+  });
+
   it("keeps UUID validation as a shared persistence boundary", () => {
     expect(UUID_PATTERN.test("00000000-0000-4000-8000-000000000000")).toBe(true);
     expect(isUuidString("00000000-0000-4000-8000-000000000000")).toBe(true);
@@ -83,12 +105,22 @@ describe("shared agent contracts", () => {
     expect(isUuidString("attachment-1")).toBe(false);
   });
 
+  it("keeps ISO timestamp validation as a shared persistence boundary", () => {
+    expect(ISO_TIMESTAMP_PATTERN.test("2026-06-08T00:00:00.000Z")).toBe(true);
+    expect(isIsoTimestampString("2026-06-08T00:00:00.000Z")).toBe(true);
+    expect(isIsoTimestampString("2026-06-08")).toBe(false);
+    expect(isIsoTimestampString("2026-02-30T00:00:00.000Z")).toBe(false);
+    expect(isIsoTimestampString("not-a-date")).toBe(false);
+  });
+
   it("keeps key renderer-invoked channels in the allowlist", () => {
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(TURN_START_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(ATTACHMENT_DELETE_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(
       MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
     );
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(RUNTIME_PREFERENCES_GET_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(RUNTIME_PREFERENCES_UPDATE_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).not.toContain("agent:run");
   });
 
@@ -100,8 +132,58 @@ describe("shared agent contracts", () => {
       DEFAULT_MODEL_CONFIG.model_context_window,
     );
     expect(DEFAULT_MODEL_CONFIG.agent_autonomy).toBe("balanced");
+    expect(DEFAULT_MODEL_CONFIG.protocol).toBe("openai-compatible");
     expect(DEFAULT_DEEPSEEK_MODEL_CONFIG.model_provide).toBe("DeepSeek");
     expect(DEFAULT_DEEPSEEK_MODEL_CONFIG.base_url).toBe("https://api.deepseek.com");
+  });
+
+  it("keeps runtime preferences defaults and guards as a shared contract", () => {
+    expect(RUNTIME_TOOL_NAMES).toContain("apply_patch");
+    expect(RUNTIME_TOOL_NAMES).toContain("run_command");
+    expect(RUNTIME_COMPACTION_STRATEGIES).toEqual([
+      "balanced",
+      "recent-only",
+      "preserve-tools",
+      "aggressive",
+    ]);
+    expect(isRuntimeToolName("diagnose_file")).toBe(true);
+    expect(isRuntimeToolName("unknown_tool")).toBe(false);
+    expect(isRuntimeCompactionStrategy("preserve-tools")).toBe(true);
+    expect(isRuntimeCompactionStrategy("full-history")).toBe(false);
+    expect(DEFAULT_RUNTIME_PREFERENCES.defaultApprovalPolicy).toBe(
+      DEFAULT_THREAD_APPROVAL_POLICY,
+    );
+    expect(DEFAULT_RUNTIME_PREFERENCES.defaultSandboxMode).toBe(
+      DEFAULT_THREAD_SANDBOX_MODE,
+    );
+    expect(DEFAULT_RUNTIME_PREFERENCES.command.timeoutMs).toBe(
+      DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
+    );
+    expect(DEFAULT_RUNTIME_PREFERENCES.command.maxOutputBytes).toBe(
+      DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+    );
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.apply_patch).toBe(true);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.apply_patch).toBe(false);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_command).toBe(false);
+    expect(isRuntimePreferences(DEFAULT_RUNTIME_PREFERENCES)).toBe(true);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      command: { ...DEFAULT_RUNTIME_PREFERENCES.command, timeoutMs: 0 },
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      compaction: { ...DEFAULT_RUNTIME_PREFERENCES.compaction, strategy: "full-history" },
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      toolAvailability: {
+        ...DEFAULT_RUNTIME_PREFERENCES.toolAvailability,
+        write: {
+          ...DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write,
+          run_command: "false",
+        },
+      },
+    })).toBe(false);
   });
 
   it("keeps supported attachment MIME types as a shared contract", () => {
@@ -134,6 +216,13 @@ describe("shared agent contracts", () => {
       mimeType: "image/png",
       size: 128,
       createdAt: "2026-06-08T00:00:00.000Z",
+    })).toBe(false);
+    expect(isAttachmentRecord({
+      id: "00000000-0000-4000-8000-000000000003",
+      name: "avatar.png",
+      mimeType: "image/png",
+      size: 128,
+      createdAt: "2026-06-08",
     })).toBe(false);
   });
 
@@ -364,6 +453,16 @@ describe("shared agent contracts", () => {
     ).toBe(true);
     expect(
       isItem({
+        kind: "assistant",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "Hello",
+        createdAt: "not-a-date",
+      }),
+    ).toBe(false);
+    expect(
+      isItem({
         kind: "compaction",
         id: "item-1",
         threadId: "thread-1",
@@ -426,6 +525,15 @@ describe("shared agent contracts", () => {
     expect(isRuntimeEvent({ kind: "turn_completed", threadId: "thread-1" })).toBe(false);
     expect(
       isRuntimeEvent({
+        kind: "runtime_error",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        code: "provider_http",
+        message: "LLM stream failed with HTTP 429",
+      }),
+    ).toBe(true);
+    expect(
+      isRuntimeEvent({
         kind: "turn_completed",
         threadId: "thread-1",
         turnId: "turn-1",
@@ -448,6 +556,15 @@ describe("shared agent contracts", () => {
         },
       }),
     ).toBe(true);
+    expect(
+      isRuntimeEvent({
+        kind: "turn_completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "completed",
+        completedAt: "2026-06-08",
+      }),
+    ).toBe(false);
     expect(
       isRuntimeEvent({
         kind: "turn_completed",
@@ -511,6 +628,18 @@ describe("shared agent contracts", () => {
           mode: "agent",
           goalMode: false,
           usage: { totalTokens: "11" },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeEvent({
+        kind: "goal_updated",
+        threadId: "thread-1",
+        goal: {
+          text: "Ship",
+          status: "active",
+          createdAt: "2026-06-08",
+          updatedAt: "2026-06-08T00:00:00.000Z",
         },
       }),
     ).toBe(false);

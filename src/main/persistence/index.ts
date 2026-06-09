@@ -28,6 +28,7 @@ import {
   THREAD_SANDBOX_MODES,
   THREAD_STATUSES,
   isItem,
+  isIsoTimestampString,
   isRuntimeEvent,
   isUuidString,
 } from "../../shared/agent-contracts.js";
@@ -91,6 +92,14 @@ export class JsonlThreadStore {
     if (relation === "fork" && !parentThreadId) {
       throw new Error("parentThreadId is required for fork threads.");
     }
+    const approvalPolicy =
+      input.approvalPolicy === undefined
+        ? DEFAULT_THREAD_APPROVAL_POLICY
+        : assertEnum(input.approvalPolicy, THREAD_APPROVAL_POLICIES, "approvalPolicy");
+    const sandboxMode =
+      input.sandboxMode === undefined
+        ? DEFAULT_THREAD_SANDBOX_MODE
+        : assertEnum(input.sandboxMode, THREAD_SANDBOX_MODES, "sandboxMode");
     const now = new Date().toISOString();
     const record: ThreadRecord = {
       id: randomUUID(),
@@ -102,8 +111,8 @@ export class JsonlThreadStore {
       ...(parentThreadId ? { parentThreadId } : {}),
       createdAt: now,
       updatedAt: now,
-      approvalPolicy: DEFAULT_THREAD_APPROVAL_POLICY,
-      sandboxMode: DEFAULT_THREAD_SANDBOX_MODE,
+      approvalPolicy,
+      sandboxMode,
     };
     if (relation === "fork" && parentThreadId) {
       record.forkedAt = now;
@@ -302,10 +311,10 @@ export class JsonlThreadStore {
       relation,
       ...(parentThreadId !== undefined ? { parentThreadId } : {}),
       ...(rawForkedAt !== undefined
-        ? { forkedAt: requiredTrimmedString(rawForkedAt, "forkedAt") }
+        ? { forkedAt: requiredIsoTimestampString(rawForkedAt, "forkedAt") }
         : {}),
-      createdAt: requiredTrimmedString(record.createdAt, "createdAt"),
-      updatedAt: requiredTrimmedString(record.updatedAt, "updatedAt"),
+      createdAt: requiredIsoTimestampString(record.createdAt, "createdAt"),
+      updatedAt: requiredIsoTimestampString(record.updatedAt, "updatedAt"),
       approvalPolicy: normalizeStoredApprovalPolicy(record.approvalPolicy),
       sandboxMode: normalizeStoredSandboxMode(record.sandboxMode),
       ...(goal !== undefined ? { goal } : {}),
@@ -321,7 +330,7 @@ export class JsonlThreadStore {
       mode: normalizeStoredThreadMode(summary.mode),
       status: normalizeStoredThreadStatus(summary.status),
       relation: assertEnum(summary.relation, THREAD_RELATIONS, "relation"),
-      updatedAt: requiredTrimmedString(summary.updatedAt, "updatedAt"),
+      updatedAt: requiredIsoTimestampString(summary.updatedAt, "updatedAt"),
     };
   }
 
@@ -475,6 +484,14 @@ function requiredTrimmedString(value: unknown, field: string): string {
   return value.trim();
 }
 
+function requiredIsoTimestampString(value: unknown, field: string): string {
+  const trimmed = requiredTrimmedString(value, field);
+  if (!isIsoTimestampString(trimmed)) {
+    throw new Error(`${field} must be an ISO timestamp.`);
+  }
+  return trimmed;
+}
+
 function requiredAbsolutePath(value: unknown, field: string): string {
   const trimmed = requiredTrimmedString(value, field);
   if (!path.isAbsolute(trimmed)) {
@@ -577,18 +594,18 @@ function normalizeGoalObject(value: unknown): NonNullable<ThreadRecord["goal"]> 
   const goal = value as Partial<NonNullable<ThreadRecord["goal"]>>;
   const text = requiredTrimmedString(goal.text, "goal.text");
   const status = assertEnum(goal.status, THREAD_GOAL_STATUSES, "goal.status");
-  const createdAt = requiredTrimmedString(goal.createdAt, "goal.createdAt");
-  const updatedAt = requiredTrimmedString(goal.updatedAt, "goal.updatedAt");
+  const createdAt = requiredIsoTimestampString(goal.createdAt, "goal.createdAt");
+  const updatedAt = requiredIsoTimestampString(goal.updatedAt, "goal.updatedAt");
   return {
     text,
     status,
     createdAt,
     updatedAt,
     ...(goal.completedAt !== undefined
-      ? { completedAt: requiredTrimmedString(goal.completedAt, "goal.completedAt") }
+      ? { completedAt: requiredIsoTimestampString(goal.completedAt, "goal.completedAt") }
       : {}),
     ...(goal.blockedAt !== undefined
-      ? { blockedAt: requiredTrimmedString(goal.blockedAt, "goal.blockedAt") }
+      ? { blockedAt: requiredIsoTimestampString(goal.blockedAt, "goal.blockedAt") }
       : {}),
     ...(goal.summary !== undefined
       ? { summary: optionalTrimmedString(goal.summary, "goal.summary") }

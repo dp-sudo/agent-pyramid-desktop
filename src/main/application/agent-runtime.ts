@@ -13,7 +13,8 @@ import type { ToolRegistry } from "../domain/agent/ports.js";
 import { JsonlThreadStore } from "../persistence/index.js";
 import { AttachmentStore } from "../persistence/attachment-store.js";
 import { ModelConfigStore } from "../persistence/model-config-store.js";
-import { LlmWorkerPool } from "../infrastructure/llm-worker/worker-pool.js";
+import { RuntimePreferencesStore } from "../persistence/runtime-preferences-store.js";
+import { LlmWorkerPool, isLlmWorkerError } from "../infrastructure/llm-worker/worker-pool.js";
 import { RuntimeEventBus } from "../event-bus.js";
 import { FileReadStateStore } from "./tools/file-read-state.js";
 import { FileHistoryStore } from "./tools/file-history-state.js";
@@ -35,11 +36,15 @@ import type {
   TurnMode,
   PlanItem,
   PlanStep,
+  RuntimePreferences,
+  RuntimeErrorEvent,
   TerminalTurnStatus,
   UserItem,
 } from "../../shared/agent-contracts.js";
 import {
+  DEFAULT_RUNTIME_PREFERENCES,
   THREAD_MODES,
+  isRuntimeToolName,
   isNonNegativeInteger,
   isModelReasoningEffort,
   isThreadGoalStatus,
@@ -49,6 +54,7 @@ interface RuntimeDeps {
   store: JsonlThreadStore;
   attachmentStore: AttachmentStore;
   modelConfigStore: ModelConfigStore;
+  runtimePreferencesStore?: RuntimePreferencesStore;
   pool: LlmWorkerPool;
   bus: RuntimeEventBus;
   registry: ToolRegistry;
@@ -212,7 +218,7 @@ export class AgentRuntime {
 
   isThreadInFlight(threadId: string): boolean {
     return Array.from(this.inFlight.values()).some(
-      (turn) => turn.threadId === threadId && turn.status === "in-flight",
+      (turn) => turn.threadId === threadId,
     );
   }
 
@@ -228,7 +234,13 @@ export class AgentRuntime {
       throw new Error("RUNTIME_TURN_BUSY");
     }
     const modelProfiles = await this.deps.modelConfigStore.listProfiles();
-    const selectedProfile = this.resolveModelProfile(modelProfiles, normalizedRequest);
+    const runtimePreferences = await this.resolveRuntimePreferences();
+    const selectedProfile = this.resolveModelProfile(
+      modelProfiles,
+      normalizedRequest,
+      thread.mode,
+      runtimePreferences,
+    );
     const modelConfig = selectedProfile.config;
     const attachmentIds = normalizedRequest.attachmentIds;
     const attachments = await this.resolveAttachmentRecords(attachmentIds);
@@ -288,7 +300,14 @@ export class AgentRuntime {
     }
 
     // Run the loop in the background; return the turn record immediately.
-    void this.runTurn(turn, thread, normalizedRequest.text, attachmentIds, modelConfig);
+    void this.runTurn(
+      turn,
+      thread,
+      normalizedRequest.text,
+      attachmentIds,
+      modelConfig,
+      runtimePreferences,
+    );
     return turn;
   }
 
@@ -325,7 +344,6 @@ export class AgentRuntime {
         message: error instanceof Error ? error.message : String(error),
       });
     }
-    await this.markTurnStatus(turn, "interrupted");
   }
 
   resumeThread(threadId: string): Promise<ThreadRecord | null> {
@@ -406,6 +424,7 @@ export class AgentRuntime {
     userText: string,
     attachmentIds: string[],
     modelConfig: ModelConfig,
+    runtimePreferences: RuntimePreferences,
   ): Promise<void> {
     try {
       const history = await this.collectHistory(thread, turn.id);
@@ -419,7 +438,13 @@ export class AgentRuntime {
       let warnedAboutToolBudget = false;
 
       for (let round = 0; round <= maxToolRounds; round += 1) {
-        const request = this.buildLlmRequest(turn, thread, messages, modelConfig);
+        const request = this.buildLlmRequest(
+          turn,
+          thread,
+          messages,
+          modelConfig,
+          runtimePreferences,
+        );
         const streamState: {
           assistantItem: AssistantItem | null;
           reasoningItem: ReasoningItem | null;
@@ -435,15 +460,16 @@ export class AgentRuntime {
           });
         } catch (error) {
           if (turn.status === "interrupted") {
-            await this.persistInterruptedStream(turn, streamState);
+            await this.finalizeInterruptedTurn(turn, streamState);
             return;
           }
+          await this.persistTruncatedStreamOutputSafely(turn, streamState);
           const message = error instanceof Error ? error.message : String(error);
           this.deps.bus.emit("runtime_error", {
             kind: "runtime_error",
             threadId: turn.threadId,
             turnId: turn.id,
-            code: "internal",
+            code: runtimeErrorCodeFromWorkerError(error),
             message,
           });
           await this.emitTurnFailed(turn, message);
@@ -452,11 +478,12 @@ export class AgentRuntime {
         }
 
         if (turn.status === "interrupted") {
-          await this.persistInterruptedStream(turn, streamState);
+          await this.finalizeInterruptedTurn(turn, streamState);
           return;
         }
         const assistantText = await this.persistModelOutput(turn, response, streamState);
         if (turn.status !== "in-flight") {
+          await this.finalizeInterruptedTurn(turn);
           return;
         }
         turn.usage = response.usage ?? turn.usage;
@@ -494,13 +521,14 @@ export class AgentRuntime {
         });
 
         for (const call of response.toolCalls) {
-          const result = await this.executeToolCall(turn, thread, call);
+          const result = await this.executeToolCall(turn, thread, call, runtimePreferences);
           messages.push({
             role: "tool",
             content: result.content,
             toolCallId: result.toolCallId,
           });
           if (turn.status !== "in-flight") {
+            await this.finalizeInterruptedTurn(turn);
             return;
           }
         }
@@ -531,6 +559,7 @@ export class AgentRuntime {
           code: "persistence_error",
           message,
         });
+        await this.finalizeInterruptedTurn(turn);
         return;
       }
       await this.emitTurnFailed(turn, message);
@@ -625,11 +654,12 @@ export class AgentRuntime {
     thread: ThreadRecord,
     messages: AgentMessage[],
     modelConfig: ModelConfig,
+    runtimePreferences: RuntimePreferences,
   ): LlmRequest {
     const systemPrompt = this.buildSystemPrompt();
-    const tools = this.listToolDefinitionsForTurn(turn, thread);
+    const tools = this.listToolDefinitionsForTurn(turn, thread, runtimePreferences);
     return {
-      protocol: "openai-compatible",
+      protocol: modelConfig.protocol,
       provider: modelConfig.model_provide,
       model: turn.model,
       apiKey: this.resolveApiKey(modelConfig),
@@ -641,6 +671,7 @@ export class AgentRuntime {
         compactTokenLimit: modelConfig.model_auto_compact_token_limit,
         contextWindow: modelConfig.model_context_window,
         maxTokens: modelConfig.max_tokens,
+        compaction: runtimePreferences.compaction,
       }),
       tools,
       maxTokens: modelConfig.max_tokens,
@@ -650,7 +681,7 @@ export class AgentRuntime {
     };
   }
 
-  private async persistInterruptedStream(
+  private async persistTruncatedStreamOutput(
     turn: TurnRecord,
     streamState: {
       assistantItem: AssistantItem | null;
@@ -677,6 +708,42 @@ export class AgentRuntime {
         threadId: turn.threadId,
         turnId: turn.id,
         item: interruptedAssistantItem,
+      });
+    }
+  }
+
+  // Interrupts are finalized by the background run loop so streamed partial
+  // output/tool cleanup is durable before the terminal turn event unlocks the thread.
+  private async finalizeInterruptedTurn(
+    turn: TurnRecord,
+    streamState?: {
+      assistantItem: AssistantItem | null;
+      reasoningItem: ReasoningItem | null;
+    },
+  ): Promise<void> {
+    if (!this.inFlight.has(turn.id)) return;
+    if (streamState) {
+      await this.persistTruncatedStreamOutputSafely(turn, streamState);
+    }
+    await this.markTurnStatus(turn, "interrupted");
+  }
+
+  private async persistTruncatedStreamOutputSafely(
+    turn: TurnRecord,
+    streamState: {
+      assistantItem: AssistantItem | null;
+      reasoningItem: ReasoningItem | null;
+    },
+  ): Promise<void> {
+    try {
+      await this.persistTruncatedStreamOutput(turn, streamState);
+    } catch (error) {
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "persistence_error",
+        message: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -814,6 +881,7 @@ export class AgentRuntime {
     turn: TurnRecord,
     thread: ThreadRecord,
     call: AgentToolCall,
+    runtimePreferences: RuntimePreferences,
   ): Promise<AgentToolResult> {
     const toolItem: ToolItem = {
       kind: "tool",
@@ -835,7 +903,7 @@ export class AgentRuntime {
       item: toolItem,
     });
 
-    if (!this.isToolAvailableForTurn(call.name, turn, thread)) {
+    if (!this.isToolAvailableForTurn(call.name, turn, thread, runtimePreferences)) {
       toolItem.status = "failed";
       toolItem.result = { message: `Tool "${call.name}" is not available in this turn.` };
       await this.deps.store.appendItem(turn.threadId, toolItem);
@@ -855,7 +923,12 @@ export class AgentRuntime {
       };
     }
 
-    const policyDecision = this.resolveToolPolicy(call.name, turn, thread);
+    const policyDecision = this.resolveToolPolicy(
+      call.name,
+      turn,
+      thread,
+      runtimePreferences,
+    );
     if (policyDecision === "deny") {
       toolItem.status = "failed";
       toolItem.result = {
@@ -896,6 +969,7 @@ export class AgentRuntime {
         turnId: turn.id,
         workspace: thread.workspace,
         signal: controller.signal,
+        commandDefaults: runtimePreferences.command,
         readState: this.readState,
         fileHistory: this.fileHistory,
       });
@@ -963,18 +1037,28 @@ export class AgentRuntime {
   private listToolDefinitionsForTurn(
     turn: TurnRecord,
     thread: ThreadRecord,
+    runtimePreferences: RuntimePreferences,
   ): AgentToolDefinition[] {
     return this.deps.registry
       .listDefinitions()
-      .filter((definition) => this.isToolEnabledForTurn(definition.name, turn, thread, definition));
+      .filter((definition) =>
+        this.isToolEnabledForTurn(
+          definition.name,
+          turn,
+          thread,
+          runtimePreferences,
+          definition,
+        ),
+      );
   }
 
   private isToolAvailableForTurn(
     name: string,
     turn: TurnRecord,
     thread: ThreadRecord,
+    runtimePreferences: RuntimePreferences,
   ): boolean {
-    return this.listToolDefinitionsForTurn(turn, thread).some(
+    return this.listToolDefinitionsForTurn(turn, thread, runtimePreferences).some(
       (definition) => definition.name === name,
     );
   }
@@ -983,23 +1067,43 @@ export class AgentRuntime {
     name: string,
     turn: TurnRecord,
     thread: ThreadRecord,
+    runtimePreferences: RuntimePreferences,
     definition?: AgentToolDefinition,
   ): boolean {
     if (name === "create_plan") {
       return turn.mode === "plan" &&
-        this.isToolAllowedByAccessPolicy(name, turn, thread, definition);
+        this.isToolAllowedByAccessPolicy(
+          name,
+          turn,
+          thread,
+          runtimePreferences,
+          definition,
+        );
     }
     if (name === "update_goal") {
       return Boolean(turn.goalMode || thread.goal?.status === "active") &&
-        this.isToolAllowedByAccessPolicy(name, turn, thread, definition);
+        this.isToolAllowedByAccessPolicy(
+          name,
+          turn,
+          thread,
+          runtimePreferences,
+          definition,
+        );
     }
-    return this.isToolAllowedByAccessPolicy(name, turn, thread, definition);
+    return this.isToolAllowedByAccessPolicy(
+      name,
+      turn,
+      thread,
+      runtimePreferences,
+      definition,
+    );
   }
 
   private isToolAllowedByAccessPolicy(
     name: string,
     turn: TurnRecord,
     thread: ThreadRecord,
+    runtimePreferences: RuntimePreferences,
     definition?: AgentToolDefinition,
   ): boolean {
     // Tool access is a catalog-level policy, separate from approval/sandbox
@@ -1009,6 +1113,9 @@ export class AgentRuntime {
     const configuredDecision = this.deps.toolAccessPolicy?.(input);
     if (configuredDecision === "allow") return true;
     if (configuredDecision === "deny") return false;
+    if (isRuntimeToolName(name)) {
+      return runtimePreferences.toolAvailability[thread.mode][name];
+    }
     return DEFAULT_TOOL_ACCESS_POLICY(input) !== "deny";
   }
 
@@ -1016,6 +1123,7 @@ export class AgentRuntime {
     name: string,
     turn: TurnRecord,
     thread: ThreadRecord,
+    runtimePreferences: RuntimePreferences,
   ): "allow" | "ask" | "deny" {
     const tool = this.deps.registry.getTool(name);
     if (!tool) {
@@ -1026,7 +1134,7 @@ export class AgentRuntime {
     }
     if (
       (name === "create_plan" || name === "update_goal") &&
-      this.isToolAvailableForTurn(name, turn, thread)
+      this.isToolAvailableForTurn(name, turn, thread, runtimePreferences)
     ) {
       return "allow";
     }
@@ -1303,6 +1411,8 @@ export class AgentRuntime {
   private resolveModelProfile(
     state: ModelConfigProfilesState,
     request: TurnStartRequest,
+    threadMode: ThreadRecord["mode"],
+    preferences: RuntimePreferences,
   ): ModelConfigProfile {
     const profiles = state.profiles;
     if (request.modelProfileId) {
@@ -1311,6 +1421,14 @@ export class AgentRuntime {
         throw new Error(`Model config profile ${request.modelProfileId} not found.`);
       }
       return selected;
+    }
+
+    const modeDefaultProfileId = threadMode === "write"
+      ? preferences.writeDefaultModelProfileId
+      : preferences.codeDefaultModelProfileId;
+    if (modeDefaultProfileId) {
+      const selected = profiles.find((profile) => profile.id === modeDefaultProfileId);
+      if (selected) return selected;
     }
 
     const selected = request.model
@@ -1326,6 +1444,12 @@ export class AgentRuntime {
       throw new Error("No model config profile is available.");
     }
     return fallback;
+  }
+
+  private async resolveRuntimePreferences(): Promise<RuntimePreferences> {
+    return this.deps.runtimePreferencesStore
+      ? this.deps.runtimePreferencesStore.get()
+      : DEFAULT_RUNTIME_PREFERENCES;
   }
 
   private async resolveAttachmentRecords(
@@ -1532,6 +1656,28 @@ function interruptedToolMessage(toolName: string): string {
   return toolName === "run_command" ? "Command was interrupted." : "Tool was interrupted.";
 }
 
+function runtimeErrorCodeFromWorkerError(error: unknown): RuntimeErrorEvent["code"] {
+  if (!isLlmWorkerError(error)) {
+    return "internal";
+  }
+  switch (error.code) {
+    case "http":
+      return "provider_http";
+    case "provider":
+      return "provider_error";
+    case "schema":
+      return "schema_invalid";
+    case "worker_crashed":
+      return "worker_crashed";
+    case "internal":
+      return "internal";
+    default: {
+      const exhaustive: never = error.code;
+      return exhaustive;
+    }
+  }
+}
+
 async function waitForInterruptedToolExecutions(
   executions: Promise<void>[],
 ): Promise<boolean> {
@@ -1662,10 +1808,28 @@ function prepareMessagesForRequest(
     compactTokenLimit: number;
     contextWindow: number;
     maxTokens: number;
+    compaction: RuntimePreferences["compaction"];
   },
 ): AgentMessage[] {
   const budget = resolveContextBudget(options);
-  let prepared = applyRequestHistoryHygiene(messages, DEFAULT_REQUEST_HYGIENE_PROFILE);
+  if (!options.compaction.enabled) {
+    return enforceHardContextLimit(messages, budget);
+  }
+
+  if (options.compaction.strategy === "recent-only") {
+    return prepareRecentOnlyMessages(messages, budget);
+  }
+
+  if (options.compaction.strategy === "aggressive") {
+    return prepareAggressiveMessages(messages, budget);
+  }
+
+  let prepared = applyRequestHistoryHygiene(
+    messages,
+    options.compaction.strategy === "preserve-tools"
+      ? PRESERVE_TOOLS_REQUEST_HYGIENE_PROFILE
+      : DEFAULT_REQUEST_HYGIENE_PROFILE,
+  );
   if (isWithinRequestBudget(prepared, budget)) {
     return prepared;
   }
@@ -1686,6 +1850,60 @@ function prepareMessagesForRequest(
   }
 
   return compactMandatoryMessagesToFit(prepared, budget);
+}
+
+function prepareRecentOnlyMessages(
+  messages: AgentMessage[],
+  budget: ResolvedContextBudget,
+): AgentMessage[] {
+  if (isWithinRequestBudget(messages, budget)) {
+    return messages;
+  }
+
+  let prepared = trimOldestDynamicMessages(messages, budget);
+  if (isWithinRequestBudget(prepared, budget)) {
+    return prepared;
+  }
+
+  prepared = applyRequestHistoryHygiene(prepared, TIGHT_REQUEST_HYGIENE_PROFILE);
+  if (isWithinRequestBudget(prepared, budget)) {
+    return prepared;
+  }
+
+  return compactMandatoryMessagesToFit(prepared, budget);
+}
+
+function prepareAggressiveMessages(
+  messages: AgentMessage[],
+  budget: ResolvedContextBudget,
+): AgentMessage[] {
+  let prepared = applyRequestHistoryHygiene(messages, TIGHT_REQUEST_HYGIENE_PROFILE);
+  if (isWithinRequestBudget(prepared, budget)) {
+    return prepared;
+  }
+
+  prepared = trimOldestDynamicMessages(prepared, budget);
+  if (isWithinRequestBudget(prepared, budget)) {
+    return prepared;
+  }
+
+  return compactMandatoryMessagesToFit(prepared, budget);
+}
+
+function enforceHardContextLimit(
+  messages: AgentMessage[],
+  budget: ResolvedContextBudget,
+): AgentMessage[] {
+  if (isWithinRequestBudget(messages, budget)) {
+    return messages;
+  }
+
+  const trimmed = trimOldestDynamicMessages(messages, budget);
+  if (isWithinRequestBudget(trimmed, budget)) {
+    return trimmed;
+  }
+
+  return compactMandatoryMessagesToFit(trimmed, budget);
 }
 
 interface ContextBudgetOptions {
@@ -1719,6 +1937,13 @@ const DEFAULT_REQUEST_HYGIENE_PROFILE: RequestHygieneProfile = {
 const TIGHT_REQUEST_HYGIENE_PROFILE: RequestHygieneProfile = {
   toolResultMaxLines: TIGHT_TOOL_RESULT_MAX_LINES,
   toolResultMaxBytes: TIGHT_TOOL_RESULT_MAX_BYTES,
+  toolArgumentStringMaxBytes: TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES,
+  toolArgumentArrayMaxItems: TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
+};
+
+const PRESERVE_TOOLS_REQUEST_HYGIENE_PROFILE: RequestHygieneProfile = {
+  toolResultMaxLines: TOOL_RESULT_MAX_LINES,
+  toolResultMaxBytes: TOOL_RESULT_MAX_BYTES,
   toolArgumentStringMaxBytes: TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES,
   toolArgumentArrayMaxItems: TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
 };

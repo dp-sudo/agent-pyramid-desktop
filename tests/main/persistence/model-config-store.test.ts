@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
 import {
   DEFAULT_MODEL_CONFIG,
+  isIsoTimestampString,
   type ModelConfig,
   type ModelConfigProfilesState,
 } from "../../../src/shared/agent-contracts";
@@ -42,6 +43,7 @@ describe("ModelConfigStore", () => {
     expect(updated).toMatchObject({
       model_provide: "Agnes",
       model: "agnes-2.0-flash",
+      protocol: "openai-compatible",
       model_auto_compact_token_limit: 900,
       thinking: false,
       model_reasoning_effort: "high",
@@ -80,6 +82,14 @@ describe("ModelConfigStore", () => {
     });
     expect(renamed.name).toBe("DeepSeek Flash");
     expect(renamed.config.max_tokens).toBe(4096);
+
+    const protocolUpdated = await store.updateProfile({
+      id: createdProfile.id,
+      config: {
+        protocol: "anthropic-compatible",
+      },
+    });
+    expect(protocolUpdated.config.protocol).toBe("anthropic-compatible");
 
     const afterDelete = await store.deleteProfile(createdProfile.id);
     expect(afterDelete.activeProfileId).toBe("default");
@@ -166,6 +176,33 @@ describe("ModelConfigStore", () => {
       ],
     };
     expect(profiles).toMatchObject(expectedProfiles);
+  });
+
+  it("normalizes legacy configs without protocol to OpenAI-compatible", async () => {
+    const legacyConfig = {
+      model_provide: "Legacy",
+      model: "legacy-model",
+      base_url: "https://legacy.example.test/v1",
+      OPENAI_API_KEY: "",
+      model_context_window: 100,
+      model_auto_compact_token_limit: 90,
+      max_tokens: 50,
+      thinking: true,
+      model_reasoning_effort: "medium",
+      agent_autonomy: "balanced",
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(legacyConfig));
+
+    const profiles = await store.listProfiles();
+    expect(profiles.profiles[0]?.config.protocol).toBe("openai-compatible");
+  });
+
+  it("rejects invalid protocol updates at the store boundary", async () => {
+    await expect(
+      store.update({
+        protocol: "custom",
+      } as unknown as Parameters<ModelConfigStore["update"]>[0]),
+    ).rejects.toThrow("protocol must be one of openai-compatible, anthropic-compatible.");
   });
 
   it("clamps legacy single-config max tokens below the context window", async () => {
@@ -258,6 +295,30 @@ describe("ModelConfigStore", () => {
     expect(profiles.activeProfileId).toBe("legacy-profile");
     expect(profiles.profiles[0]?.config.model_context_window).toBe(100);
     expect(profiles.profiles[0]?.config.model_auto_compact_token_limit).toBe(100);
+  });
+
+  it("normalizes invalid stored profile timestamps to ISO timestamps", async () => {
+    const profileState: ModelConfigProfilesState = {
+      activeProfileId: "legacy-profile",
+      profiles: [
+        {
+          id: "legacy-profile",
+          name: "Legacy",
+          config: DEFAULT_MODEL_CONFIG,
+          createdAt: "not-a-date",
+          updatedAt: "2026-01-01",
+        },
+      ],
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(profileState));
+
+    const profiles = await store.listProfiles();
+    const profile = profiles.profiles[0];
+
+    expect(profile?.createdAt).not.toBe("not-a-date");
+    expect(profile?.updatedAt).not.toBe("2026-01-01");
+    expect(isIsoTimestampString(profile?.createdAt)).toBe(true);
+    expect(isIsoTimestampString(profile?.updatedAt)).toBe(true);
   });
 
   it("rejects invalid token limits and keeps failures observable", async () => {

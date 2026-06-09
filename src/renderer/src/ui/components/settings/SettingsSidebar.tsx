@@ -3,11 +3,18 @@ import type { ReactElement } from "react";
 export type SettingsCategory =
   | "appearance"
   | "startup"
+  | "layout"
   | "session"
   | "profiles"
   | "connection"
   | "context"
-  | "reasoning";
+  | "reasoning"
+  | "compaction"
+  | "permissions"
+  | "toolAccess"
+  | "commandLimits"
+  | "modelDefaults"
+  | "approvalPresentation";
 
 export interface SettingsSidebarItem {
   id: SettingsCategory;

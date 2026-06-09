@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type {
   WorkerChatRequest,
+  WorkerErrorCode,
   WorkerInbound,
   WorkerOutbound,
 } from "./protocol.js";
@@ -33,6 +34,21 @@ interface WorkerLike {
 }
 
 type WorkerFactory = (filename: string) => WorkerLike;
+export type LlmWorkerErrorCode = WorkerErrorCode | "worker_crashed";
+
+export class LlmWorkerError extends Error {
+  constructor(
+    message: string,
+    readonly code: LlmWorkerErrorCode,
+  ) {
+    super(message);
+    this.name = "LlmWorkerError";
+  }
+}
+
+export function isLlmWorkerError(error: unknown): error is LlmWorkerError {
+  return error instanceof LlmWorkerError;
+}
 
 /**
  * Routes chat requests to N workers. Same `threadId` always lands on the
@@ -90,18 +106,21 @@ export class LlmWorkerPool {
         }
         if (raw.kind === "error") {
           cleanup();
-          reject(new Error(raw.message));
+          reject(new LlmWorkerError(raw.message, raw.code ?? "internal"));
         }
       };
 
       const errorHandler = (error: Error): void => {
         cleanup();
-        reject(error);
+        reject(new LlmWorkerError(error.message, "worker_crashed"));
       };
 
       const exitHandler = (code: number): void => {
         cleanup();
-        reject(new Error(`LLM worker exited before completing request ${requestId} with code ${code}.`));
+        reject(new LlmWorkerError(
+          `LLM worker exited before completing request ${requestId} with code ${code}.`,
+          "worker_crashed",
+        ));
       };
 
       const cleanup = (): void => {
@@ -109,7 +128,9 @@ export class LlmWorkerPool {
         entry.worker.off("error", errorHandler);
         entry.worker.off("exit", exitHandler);
         entry.activeRequests = Math.max(0, entry.activeRequests - 1);
-        this.threadToCancel.delete(thread.id);
+        if (this.threadToCancel.get(thread.id) === cancelMsg) {
+          this.threadToCancel.delete(thread.id);
+        }
       };
 
       entry.worker.on("message", messageHandler);

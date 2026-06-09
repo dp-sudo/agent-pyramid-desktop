@@ -4,6 +4,7 @@ import { app, BrowserWindow, session, shell } from "electron";
 import { JsonlThreadStore } from "./persistence/index.js";
 import { AttachmentStore } from "./persistence/attachment-store.js";
 import { ModelConfigStore } from "./persistence/model-config-store.js";
+import { RuntimePreferencesStore } from "./persistence/runtime-preferences-store.js";
 import { RuntimeEventBus } from "./event-bus.js";
 import { LlmWorkerPool } from "./infrastructure/llm-worker/worker-pool.js";
 import { AgentRuntime } from "./application/agent-runtime.js";
@@ -23,6 +24,7 @@ import { registerUsageHandlers } from "./ipc/usage-handlers.js";
 import { registerWorkspaceHandlers } from "./ipc/workspace-handlers.js";
 import { registerWriteHandlers } from "./ipc/write-handlers.js";
 import { registerModelConfigHandlers } from "./ipc/model-config-handlers.js";
+import { registerRuntimePreferencesHandlers } from "./ipc/runtime-preferences-handlers.js";
 import { isSamePath } from "./application/path-utils.js";
 
 // ---------------------------------------------------------------------------
@@ -33,6 +35,7 @@ const userDataDir = app.getPath("userData");
 const store = new JsonlThreadStore(userDataDir);
 const attachmentStore = new AttachmentStore(userDataDir);
 const modelConfigStore = new ModelConfigStore(userDataDir);
+const runtimePreferencesStore = new RuntimePreferencesStore(userDataDir);
 const bus = new RuntimeEventBus();
 bus.setMaxListeners(50);
 const pool = new LlmWorkerPool(1);
@@ -41,6 +44,7 @@ const runtime = new AgentRuntime({
   store,
   attachmentStore,
   modelConfigStore,
+  runtimePreferencesStore,
   pool,
   bus,
   registry,
@@ -156,6 +160,7 @@ app.whenReady().then(async () => {
     await store.init();
     await attachmentStore.init();
     await modelConfigStore.init();
+    await runtimePreferencesStore.init();
   } catch (error) {
     console.error("[main] persistence init failed:", error);
     throw error;
@@ -167,7 +172,7 @@ app.whenReady().then(async () => {
     throw error;
   }
 
-  registerThreadHandlers(store, runtime);
+  registerThreadHandlers(store, runtime, runtimePreferencesStore);
   registerTurnHandlers(runtime, store);
   registerSseHandlers(bus);
   registerApprovalHandlers(runtime);
@@ -177,6 +182,7 @@ app.whenReady().then(async () => {
   registerWorkspaceHandlers();
   registerWriteHandlers();
   registerModelConfigHandlers(modelConfigStore);
+  registerRuntimePreferencesHandlers(runtimePreferencesStore);
 
   createWindow();
 

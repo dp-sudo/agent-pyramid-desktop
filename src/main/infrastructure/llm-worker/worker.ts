@@ -1,5 +1,11 @@
 import { parentPort } from "node:worker_threads";
 import { MiniMaxGateway } from "../minimax/minimax-gateway.js";
+import {
+  classifyWorkerErrorCode,
+  createWorkerRawStreamSummary,
+  normalizeWorkerErrorCode,
+  recordWorkerRawStreamChunk,
+} from "./worker-diagnostics.js";
 import type {
   WorkerChatRequest,
   WorkerInbound,
@@ -27,10 +33,10 @@ async function handleChat(request: WorkerChatRequest): Promise<void> {
     let reasoning = "";
     let usage: AgentUsage | undefined;
     const toolCalls: AgentToolCall[] = [];
-    const rawChunks: unknown[] = [];
+    const rawSummary = createWorkerRawStreamSummary();
 
     for await (const chunk of gateway.stream(payload as LlmRequest, { signal: controller.signal })) {
-      rawChunks.push(chunk);
+      recordWorkerRawStreamChunk(rawSummary, chunk);
       if (chunk.kind === "text_delta") {
         text += chunk.text;
         send({ kind: "delta", requestId, chunk });
@@ -48,7 +54,12 @@ async function handleChat(request: WorkerChatRequest): Promise<void> {
       } else if (chunk.kind === "completed") {
         send({ kind: "delta", requestId, chunk });
       } else if (chunk.kind === "error") {
-        send({ kind: "error", requestId, message: chunk.message, code: "internal" });
+        send({
+          kind: "error",
+          requestId,
+          message: chunk.message,
+          code: normalizeWorkerErrorCode(chunk.code),
+        });
         return;
       }
     }
@@ -58,12 +69,12 @@ async function handleChat(request: WorkerChatRequest): Promise<void> {
       reasoning,
       toolCalls,
       usage,
-      raw: rawChunks
+      raw: rawSummary
     };
     send({ kind: "done", requestId, response });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    send({ kind: "error", requestId, message, code: "internal" });
+    send({ kind: "error", requestId, message, code: classifyWorkerErrorCode(error) });
   } finally {
     inflight.delete(requestId);
   }

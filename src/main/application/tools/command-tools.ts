@@ -10,15 +10,26 @@ import {
 } from "./workspace-policy.js";
 import { assertUtf8TextBuffer } from "./text-file.js";
 import { isPathInsideOrEqual, isSamePath } from "../path-utils.js";
+import {
+  DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+  DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
+  MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+  MAX_RUNTIME_COMMAND_TIMEOUT_MS,
+  MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+  MIN_RUNTIME_COMMAND_TIMEOUT_MS,
+} from "../../../shared/agent-contracts.js";
 
-const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
-const MIN_COMMAND_TIMEOUT_MS = 100;
-const MAX_COMMAND_TIMEOUT_MS = 120_000;
+const DEFAULT_COMMAND_TIMEOUT_MS = DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS;
+const MIN_COMMAND_TIMEOUT_MS = MIN_RUNTIME_COMMAND_TIMEOUT_MS;
+const MAX_COMMAND_TIMEOUT_MS = MAX_RUNTIME_COMMAND_TIMEOUT_MS;
+const DEFAULT_COMMAND_MAX_OUTPUT_BYTES = DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
+const MIN_COMMAND_MAX_OUTPUT_BYTES = MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
+const MAX_COMMAND_MAX_OUTPUT_BYTES = MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MAX_COMMAND_BYTES = 4_096;
-const MAX_OUTPUT_BYTES = 32 * 1024;
 const KILL_GRACE_MS = 1_000;
 const COMMAND_TIMEOUT_DESCRIPTION =
-  `Maximum runtime in milliseconds. Defaults to ${DEFAULT_COMMAND_TIMEOUT_MS}, ` +
+  `Maximum runtime in milliseconds. Defaults to the runtime command preference ` +
+  `(${DEFAULT_COMMAND_TIMEOUT_MS}), ` +
   `minimum ${MIN_COMMAND_TIMEOUT_MS}, maximum ${MAX_COMMAND_TIMEOUT_MS}.`;
 
 interface CommandRunResult {
@@ -205,9 +216,10 @@ async function executeRunCommand(
     input.timeout_ms,
     MIN_COMMAND_TIMEOUT_MS,
     MAX_COMMAND_TIMEOUT_MS,
-    DEFAULT_COMMAND_TIMEOUT_MS,
+    commandTimeoutMs(context),
     "timeout_ms",
   );
+  const maxOutputBytes = commandMaxOutputBytes(context);
   const cwdPath = await resolveWorkspacePathForAccess(workspace, cwdArg, "read");
   const stat = await fs.stat(cwdPath);
   if (!stat.isDirectory()) {
@@ -215,7 +227,13 @@ async function executeRunCommand(
   }
 
   const startedAt = Date.now();
-  const output = await spawnWorkspaceCommand(command, cwdPath, timeoutMs, context.signal);
+  const output = await spawnWorkspaceCommand(
+    command,
+    cwdPath,
+    timeoutMs,
+    maxOutputBytes,
+    context.signal,
+  );
   return {
     command,
     cwd: toWorkspaceRelative(workspace, cwdPath) || ".",
@@ -272,9 +290,10 @@ async function executeDiagnoseWorkspace(
     input.timeout_ms,
     MIN_COMMAND_TIMEOUT_MS,
     MAX_COMMAND_TIMEOUT_MS,
-    DEFAULT_COMMAND_TIMEOUT_MS,
+    commandTimeoutMs(context),
     "timeout_ms",
   );
+  const maxOutputBytes = commandMaxOutputBytes(context);
   const cwdPath = await resolveWorkspacePathForAccess(workspace, cwdArg, "read");
   const stat = await fs.stat(cwdPath);
   if (!stat.isDirectory()) {
@@ -282,7 +301,13 @@ async function executeDiagnoseWorkspace(
   }
   const command = await resolveDiagnosticCommand(cwdPath);
   const startedAt = Date.now();
-  const output = await spawnWorkspaceCommand(command, cwdPath, timeoutMs, context.signal);
+  const output = await spawnWorkspaceCommand(
+    command,
+    cwdPath,
+    timeoutMs,
+    maxOutputBytes,
+    context.signal,
+  );
   const rawOutput = joinCommandOutput(output.stdout.text, output.stderr.text);
   const cwd = toWorkspaceRelative(workspace, cwdPath) || ".";
   const diagnostics = parseTypeScriptDiagnostics(rawOutput, workspace, cwdPath);
@@ -339,6 +364,7 @@ async function spawnWorkspaceCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
+  maxOutputBytes: number,
   signal: AbortSignal | undefined,
 ): Promise<CommandOutput> {
   if (signal?.aborted) {
@@ -346,8 +372,8 @@ async function spawnWorkspaceCommand(
   }
 
   return new Promise<CommandOutput>((resolve, reject) => {
-    const stdout = createOutputCollector();
-    const stderr = createOutputCollector();
+    const stdout = createOutputCollector(maxOutputBytes);
+    const stderr = createOutputCollector(maxOutputBytes);
     let timedOut = false;
     let settled = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
@@ -467,7 +493,7 @@ export function createShellInvocation(command: string): ShellInvocation {
   };
 }
 
-function createOutputCollector(): {
+function createOutputCollector(maxOutputBytes: number): {
   collect(data: Buffer | string): void;
   finish(): StreamCapture;
 } {
@@ -480,7 +506,7 @@ function createOutputCollector(): {
     collect(data) {
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
       bytes += buffer.length;
-      const remaining = MAX_OUTPUT_BYTES - storedBytes;
+      const remaining = maxOutputBytes - storedBytes;
       if (remaining <= 0) {
         truncated = true;
         return;
@@ -502,6 +528,28 @@ function createOutputCollector(): {
       };
     },
   };
+}
+
+function commandMaxOutputBytes(context: AgentToolContext): number {
+  const value = context.commandDefaults?.maxOutputBytes ?? DEFAULT_COMMAND_MAX_OUTPUT_BYTES;
+  if (!Number.isFinite(value)) {
+    return DEFAULT_COMMAND_MAX_OUTPUT_BYTES;
+  }
+  return Math.min(
+    MAX_COMMAND_MAX_OUTPUT_BYTES,
+    Math.max(MIN_COMMAND_MAX_OUTPUT_BYTES, Math.floor(value)),
+  );
+}
+
+function commandTimeoutMs(context: AgentToolContext): number {
+  const value = context.commandDefaults?.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
+  if (!Number.isFinite(value)) {
+    return DEFAULT_COMMAND_TIMEOUT_MS;
+  }
+  return Math.min(
+    MAX_COMMAND_TIMEOUT_MS,
+    Math.max(MIN_COMMAND_TIMEOUT_MS, Math.floor(value)),
+  );
 }
 
 function toToolResult(result: CommandRunResult): AgentToolResult {

@@ -71,6 +71,7 @@ Current groups:
 | Workspace | `agentApi.workspace.*` | `src/main/ipc/workspace-handlers.ts` |
 | Write mode | `agentApi.write.*` | `src/main/ipc/write-handlers.ts` |
 | Model config | `agentApi.modelConfig.*` | `src/main/ipc/model-config-handlers.ts` |
+| Runtime preferences | `agentApi.runtimePreferences.*` | `src/main/ipc/runtime-preferences-handlers.ts` |
 
 ## Contract Table
 
@@ -93,6 +94,9 @@ Notes:
   `THREAD_STATUS_INVALID`.
 - `thread:create` rejects `relation: "fork"` without `parentThreadId`; normal
   fork creation should use the dedicated `thread:fork` channel.
+- `thread:create` applies `RuntimePreferences.defaultApprovalPolicy` and
+  `RuntimePreferences.defaultSandboxMode` when those fields are omitted from
+  the request. Explicit request values still win.
 - `thread:update` rejects empty patches before store access and blocks
   archiving an in-flight thread.
 - `thread:delete` blocks deleting an in-flight thread.
@@ -260,7 +264,8 @@ Notes:
 
 - Store always keeps at least one profile.
 - `ModelConfigStore.get()` returns only the active profile config.
-- Runtime resolves a turn profile by explicit id, model match, active profile, then first profile.
+- Runtime resolves a turn profile by explicit id, Code/Write default profile id
+  from `RuntimePreferences`, model match, active profile, then first profile.
 - Profile creation validates `activate` as a strict boolean; non-boolean truthy
   values return `MODEL_CONFIG_PROFILES_CREATE_FAILED` and cannot change the active
   profile.
@@ -269,10 +274,38 @@ Notes:
   treating them as no-op updates.
 - `config:model:update` and profile `config` payloads validate primitive field
   types at the IPC boundary, including `thinking`, `OPENAI_API_KEY`, reasoning
-  effort, autonomy and positive integer token settings.
+  effort, autonomy, `protocol` and positive integer token settings.
+- `protocol` accepts only `openai-compatible` or `anthropic-compatible`.
+  Unsupported values return the existing model-config error envelope and are
+  not persisted.
 - Store-level active config and profile updates also reject empty or unknown-only
   payloads so direct persistence calls cannot report a save that only changes
   `updatedAt`.
+
+### Runtime Preferences
+
+| Channel | Preload Method | Request | Success Value | Error Codes |
+| --- | --- | --- | --- | --- |
+| `runtime-preferences:get` | `runtimePreferences.get()` | none | `RuntimePreferences` | `RUNTIME_PREFERENCES_GET_FAILED` |
+| `runtime-preferences:update` | `runtimePreferences.update(update)` | `RuntimePreferencesUpdate` | `RuntimePreferences` | `RUNTIME_PREFERENCES_UPDATE_FAILED` |
+
+Notes:
+
+- Preferences are persisted by `RuntimePreferencesStore` in
+  `userData/runtime-preferences.json`.
+- Update payloads must be objects and include at least one recognized field.
+- `defaultApprovalPolicy` / `defaultSandboxMode` reuse shared thread enum
+  guards; model profile ids are non-empty strings or `null`.
+- `toolAvailability` validates mode names, tool names and boolean values before
+  persistence. AgentRuntime uses it to filter tool definitions sent to the model
+  and to reject forced calls to disabled tools.
+- `command.timeoutMs` and `command.maxOutputBytes` must stay within shared
+  integer bounds from `src/shared/agent-contracts.ts`.
+- `approvalExperience` and `compaction` are persisted runtime preference
+  contracts. `approvalExperience` controls renderer presentation only, while
+  `compaction` is consumed by runtime message preparation before model
+  requests. Unsupported stored shapes normalize to defaults on read and
+  malformed update payloads fail before store access.
 
 ## Runtime Event Push Contract
 

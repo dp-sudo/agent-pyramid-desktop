@@ -34,6 +34,7 @@ flowchart LR
   Store["JsonlThreadStore"]
   Attachments["AttachmentStore"]
   Config["ModelConfigStore"]
+  Preferences["RuntimePreferencesStore"]
   Registry["ToolRegistry"]
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool"]
@@ -47,6 +48,7 @@ flowchart LR
   Runtime --> Store
   Runtime --> Attachments
   Runtime --> Config
+  Runtime --> Preferences
   Runtime --> Registry
   Runtime --> Pool
   Runtime --> Bus
@@ -68,6 +70,7 @@ sequenceDiagram
   participant RT as AgentRuntime
   participant Store as JsonlThreadStore
   participant Config as ModelConfigStore
+  participant Prefs as RuntimePreferencesStore
   participant Att as AttachmentStore
   participant Bus as RuntimeEventBus
 
@@ -76,6 +79,7 @@ sequenceDiagram
   IPC->>RT: startTurn(request)
   RT->>Store: getThread(threadId)
   RT->>Config: listProfiles()
+  RT->>Prefs: get()
   RT->>Att: get(attachmentIds)
   RT->>Store: appendItem(UserItem)
   RT->>Bus: item_appended(UserItem)
@@ -102,6 +106,8 @@ Important behavior:
 - Thread is not archived.
 - Same thread does not already have an in-flight turn.
 - Requested `modelProfileId`, when present, exists.
+- Runtime preferences are readable; if no store is configured, runtime falls
+  back to `DEFAULT_RUNTIME_PREFERENCES`.
 - Attachment ids, when present, resolve through `AttachmentStore.get()`.
 
 Failure mapping:
@@ -128,12 +134,18 @@ The created `TurnRecord` contains:
 - `mode`: request mode or `"agent"`.
 - `goalMode`: request goal mode or active thread goal state.
 
+Shared runtime event replay requires `startedAt`, `completedAt`, `failedAt`,
+and tool-budget `reachedAt` values to match `Date.prototype.toISOString()`.
+
 Model profile resolution order:
 
 1. Explicit `request.modelProfileId`.
-2. `request.model` matching a profile config model.
-3. Active profile id.
-4. First available profile.
+2. Thread-mode default profile from `RuntimePreferences`
+   (`codeDefaultModelProfileId` / `writeDefaultModelProfileId`) when it matches
+   an existing profile.
+3. `request.model` matching a profile config model.
+4. Active profile id.
+5. First available profile.
 
 ## Background Run Loop
 
@@ -174,6 +186,21 @@ Runtime context placement:
 - Plan and goal instructions are runtime context messages, not merged into the base prompt.
 - User attachments become `AgentContentBlock[]` in `AgentMessage.content`.
 
+LLM request construction:
+
+- `LlmRequest.protocol` comes from the selected `ModelConfig.protocol`.
+  `openai-compatible` and `anthropic-compatible` share the same runtime loop;
+  `MiniMaxGateway` owns request body and SSE parsing differences.
+- Tool definitions are filtered by turn mode, goal/plan mode and
+  `RuntimePreferences.toolAvailability` before they are passed to
+  `prepareMessagesForRequest()` and the worker pool.
+- Context budget inputs still come from the selected model profile
+  (`model_context_window`, `model_auto_compact_token_limit`, `max_tokens`),
+  while automatic compaction enablement and strategy come from
+  `RuntimePreferences.compaction`.
+- When automatic compaction is disabled, runtime skips summary compaction but
+  still applies the hard context safety limit before calling the worker.
+
 ## Streaming Semantics
 
 Worker stream chunks are represented by `LlmStreamChunk` in `src/main/domain/agent/types.ts`.
@@ -186,7 +213,10 @@ Runtime currently reacts to:
 
 Final persistence:
 
-- Reasoning and assistant live items are appended to `messages.jsonl` when the stream completes or is interrupted.
+- Reasoning and assistant live items are appended to `messages.jsonl` when the
+  stream completes, is interrupted, or fails after partial deltas.
+- Interrupted and failed partial assistant output is persisted with
+  `truncated: true` before the terminal lifecycle event is emitted.
 - The same item id may appear more than once in JSONL because updates are append-only.
 - Renderer and `turns.get` dedupe by item id, keeping the latest item version.
 
@@ -218,7 +248,15 @@ Worker invariants:
 - Same `threadId` maps to the same worker entry while the worker is alive.
 - `AgentRuntime` enforces same-thread in-flight gating.
 - `LlmWorkerPool.cancel(threadId)` posts a cancel message for the active request.
+- A worker request cleanup only clears the cancel handle it installed; this
+  protects newer same-thread requests if an old request settles late.
 - Worker replacement clears thread affinity for dead workers.
+- Worker errors preserve protocol categories through the pool: provider HTTP
+  failures become `provider_http`, provider/schema parse failures become
+  `schema_invalid`, and worker process failures become `worker_crashed`.
+- Worker `LlmResponse.raw` is a bounded stream summary rather than a full chunk
+  transcript, so long text/reasoning/tool streams do not duplicate unbounded
+  content in memory.
 
 ## Tool Loop
 
@@ -255,14 +293,22 @@ Tool availability:
 
 - `create_plan` is only enabled when `turn.mode === "plan"`.
 - `update_goal` is enabled when `turn.goalMode` is true or the thread has an active goal.
-- Other registered tools pass through `AgentRuntime` tool access policy before
-  they are sent to the model or executed from a forced model tool call.
+- Other registered tools pass through `AgentRuntime` tool access policy and
+  persisted `RuntimePreferences.toolAvailability` before they are sent to the
+  model or executed from a forced model tool call.
 - The default tool access policy denies Code-only tools in Write threads:
   `edit_file`, `write_file`, `apply_patch`, `rollback_file`, `run_command`,
   `diagnose_workspace`, and `diagnose_file`.
 - Tool access policy is catalog-level control. It can be configured per thread
   mode to allow or deny individual tool names without changing persisted thread
   data. Approval and sandbox checks still run afterward.
+- `RuntimePreferences.toolAvailability` is the main-process persisted catalog
+  switch for known runtime tools. Disabled tools are omitted from
+  `LlmRequest.tools`; if the model still returns a disabled tool call, runtime
+  appends a failed `ToolItem` and emits `runtime_error(code: "tool_not_found")`.
+- Constructor-injected `toolAccessPolicy` remains the highest-priority override
+  for tests and composition-root policy, then persisted runtime preferences
+  apply to known runtime tool names, then the default policy applies.
 
 Approval policy currently implemented in runtime:
 
@@ -279,9 +325,9 @@ Workspace tools require an absolute thread workspace path before resolving file 
 
 File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; it is not replayed from JSONL after restart.
 
-`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start.
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Runtime injects `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start.
 
-`diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
+`diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass and receives the same runtime command defaults as `run_command`. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
 
 Write-mode Markdown file operations remain renderer-invoked IPC services under
 `window.agentApi.write.*`. They are not exposed to the model as coding tools;
@@ -356,9 +402,11 @@ sequenceDiagram
   RT->>Pool: cancel(threadId)
   RT->>Store: append warning SystemItem
   RT->>Bus: item_appended(SystemItem)
+  IPC-->>UI: ok({ turnId })
+  Pool-->>RT: worker request settles
+  RT->>Store: append truncated partial stream output if present
   RT->>Store: appendEvent(turn_completed status=interrupted)
   RT->>Bus: turn_completed(status=interrupted)
-  IPC-->>UI: ok({ turnId })
 ```
 
 Notes:
@@ -368,6 +416,9 @@ Notes:
   with `truncated: true`; if the worker returns normally after cancellation,
   runtime still ignores the final response and keeps the interrupted terminal
   state.
+- The interrupted turn remains in the in-flight map until the background run loop
+  has persisted partial output/tool cleanup and emitted the terminal event, so a
+  new same-thread turn cannot start while the old stream cleanup is still active.
 
 ## Turn Completion And Failure
 
@@ -388,7 +439,8 @@ Completion persistence:
 
 Failure behavior:
 
-- Runtime emits `runtime_error` for worker/internal/tool/persistence categories where available.
+- Runtime emits `runtime_error` for provider HTTP, schema, worker, internal,
+  tool, and persistence categories where available.
 - Runtime appends and emits `turn_failed` for top-level run loop failures.
 - Runtime marks turn failed through `markTurnStatus("failed")`.
 

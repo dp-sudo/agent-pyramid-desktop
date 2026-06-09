@@ -585,7 +585,7 @@ flowchart LR
   Sidebar["SettingsSidebar"]
   Main["Settings Main"]
   Header["Page header + status/actions"]
-  Tabs["Basic / Model section tabs"]
+  Tabs["Six section tabs"]
   Content["SettingsCard content"]
 
   Sidebar --> Main
@@ -608,6 +608,10 @@ Sections:
 
 - `basic`
 - `model`
+- `agent`
+- `tools`
+- `workbench`
+- `visibility`
 
 Section tabs:
 
@@ -615,11 +619,16 @@ Section tabs:
 - Buttons: `ds-settings-section-tab`.
 - Active button gets `is-active` and `aria-pressed`.
 
-Basic categories:
+Category ownership:
 
-- `appearance`
-- `startup`
-- `session`
+| Section | Categories | Persistence / consumer |
+| --- | --- | --- |
+| `basic` | `appearance` | Renderer `basicPreferences` localStorage, i18n and theme helpers. |
+| `model` | `profiles`, `connection`, `context`, `reasoning` | Main `ModelConfigStore` through `modelConfig.*` IPC. |
+| `agent` | `compaction` | Main `RuntimePreferencesStore`; consumed by `AgentRuntime.prepareMessagesForRequest()`. |
+| `tools` | `permissions`, `toolAccess`, `commandLimits` | Main `RuntimePreferencesStore`; consumed by thread creation, tool catalog filtering and command-backed tools. |
+| `workbench` | `startup`, `layout`, `session`, `modelDefaults` | Renderer `basicPreferences` for UI-only fields; `RuntimePreferencesStore` for Code/Write default model profile ids. |
+| `visibility` | `approvalPresentation` | Main `RuntimePreferencesStore`; consumed by approval/timeline/toast presentation in renderer. |
 
 Model categories:
 
@@ -627,6 +636,27 @@ Model categories:
 - `connection`
 - `context`
 - `reasoning`
+
+Agent Behavior categories:
+
+- `compaction`
+
+Tools And Permissions categories:
+
+- `permissions`
+- `toolAccess`
+- `commandLimits`
+
+Workbench Settings categories:
+
+- `startup`
+- `layout`
+- `session`
+- `modelDefaults`
+
+Notifications And Visibility categories:
+
+- `approvalPresentation`
 
 Navigation guard:
 
@@ -641,6 +671,15 @@ Appearance:
 - Theme segmented control: light/dark.
 - Follow system theme toggle.
 
+State sink:
+
+- Basic settings update `basicPreferences` in `WorkbenchContext`.
+- Persisted with `saveBasicPreferences()`.
+- Locale and theme go through `i18n`, `persistLocale()`, `setTheme()`, and
+  `setFollowSystemTheme()`.
+
+### Workbench Settings
+
 Startup:
 
 - Default startup view: `code | write`.
@@ -654,12 +693,19 @@ Session:
 - Restore last workspace on startup.
 - Confirm thread delete.
 
-State sink:
+Model defaults:
 
-- Basic settings update `basicPreferences` in `WorkbenchContext`.
-- Persisted with `saveBasicPreferences()`.
-- Locale and theme go through `i18n`, `persistLocale()`, `setTheme()`, and
-  `setFollowSystemTheme()`.
+- Code default model profile id.
+- Write default model profile id.
+- Empty selection means "use active profile"; runtime falls back to active/first
+  profile if a saved default profile id no longer exists.
+
+State sinks:
+
+- Startup, layout and session settings update renderer `basicPreferences` and
+  localStorage.
+- Model defaults update `runtimePreferences` through
+  `window.agentApi.runtimePreferences.update()`.
 
 ### Model Settings
 
@@ -680,6 +726,7 @@ Connection:
 - Profile name.
 - Provider name.
 - Model id.
+- Protocol: `openai-compatible | anthropic-compatible`.
 - Base URL.
 - API key via `SecretInput`.
 
@@ -713,6 +760,44 @@ Primary save button:
 - Only visible for model section.
 - Disabled when no preload API, loading, saving, idle, or saved.
 - Submit calls `modelConfig.updateProfile`.
+
+### Agent Behavior
+
+Compaction:
+
+- Automatic compaction toggle.
+- Strategy select: `balanced`, `recent-only`, `preserve-tools`, `aggressive`.
+- Disabling automatic compaction still keeps hard context-window enforcement in
+  runtime.
+
+### Tools And Permissions
+
+Permissions:
+
+- Default approval policy for newly created threads.
+- Default sandbox mode for newly created threads.
+
+Tool access:
+
+- Per-tool switches for Code and Write runtime catalogs.
+- Disabled tools are omitted from model tool definitions; forced calls are
+  rejected by runtime.
+- Write mode keeps Code-only tools disabled by default.
+
+Command limits:
+
+- Command timeout in milliseconds.
+- Command output byte limit.
+- Values are validated by shared runtime preference bounds before persistence.
+
+### Notifications And Visibility
+
+Approval presentation:
+
+- Open approval diffs by default.
+- Scroll pending approvals into view.
+- Show or hide read-only tool process records.
+- Show or suppress runtime failure toasts.
 
 ### Settings Primitives
 
@@ -770,6 +855,7 @@ flowchart TD
   Composer["Composer state"]
   Preferences["basicPreferences"]
   ModelProfiles["modelProfiles"]
+  RuntimePreferences["runtimePreferences"]
 
   Code --> Workspace
   Code --> Threads
@@ -779,6 +865,7 @@ flowchart TD
   Write --> Threads
   Settings --> Preferences
   Settings --> ModelProfiles
+  Settings --> RuntimePreferences
   Settings --> Code
   Write --> Code
   Code --> Settings
@@ -796,6 +883,9 @@ Cross-route coupling:
   composer model selection.
 - Basic settings can change startup route, inspector default, sidebar width
   persistence, archived-thread visibility, and delete confirmation behavior.
+- Runtime preference settings can change Code/Write default model profiles,
+  approval/sandbox defaults for newly created threads, tool catalog visibility,
+  command defaults, compaction strategy and approval presentation behavior.
 
 ## Documentation Maintenance Checklist
 

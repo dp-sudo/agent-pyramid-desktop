@@ -1,6 +1,7 @@
 import type {
   LlmProtocol,
   ModelReasoningEffort,
+  RuntimeCommandPreferences,
   TokenUsage,
 } from "../../../shared/agent-contracts";
 
@@ -39,6 +40,7 @@ export interface AgentToolContext {
   turnId: string;
   workspace?: string;
   signal?: AbortSignal;
+  commandDefaults?: RuntimeCommandPreferences;
   readState?: {
     get(filePath: string): {
       content: string;

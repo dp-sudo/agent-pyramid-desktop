@@ -223,11 +223,48 @@ describe("JsonlThreadStore", () => {
 
     await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
     await fs.writeFile(
+      threadPath,
+      JSON.stringify({ ...record, updatedAt: "not-a-date" }, null, 2),
+      "utf8",
+    );
+    await expect(store.getThread(thread.id)).rejects.toThrow(
+      "updatedAt must be an ISO timestamp.",
+    );
+
+    await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
+    await fs.writeFile(
+      threadPath,
+      JSON.stringify({
+        ...record,
+        goal: {
+          text: "Finish",
+          status: "active",
+          createdAt: "2026-06-07",
+          updatedAt: "2026-06-07T00:00:00.000Z",
+        },
+      }, null, 2),
+      "utf8",
+    );
+    await expect(store.getThread(thread.id)).rejects.toThrow(
+      "goal.createdAt must be an ISO timestamp.",
+    );
+
+    await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
+    await fs.writeFile(
       indexPath,
       JSON.stringify([{ ...index[0], status: "paused" }], null, 2),
       "utf8",
     );
     await expect(store.listThreads()).rejects.toThrow("status is invalid.");
+
+    await fs.writeFile(
+      indexPath,
+      JSON.stringify([{ ...index[0], updatedAt: "not-a-date" }], null, 2),
+      "utf8",
+    );
+    await expect(store.listThreads()).rejects.toThrow(
+      "updatedAt must be an ISO timestamp.",
+    );
   });
 
   it("serializes concurrent appends for the same thread", async () => {
@@ -280,10 +317,22 @@ describe("JsonlThreadStore", () => {
       store.appendItem(thread.id, { ...item, level: "notice" } as unknown as Item),
     ).rejects.toThrow("Item shape is invalid.");
     await expect(
+      store.appendItem(thread.id, { ...item, createdAt: "not-a-date" }),
+    ).rejects.toThrow("Item shape is invalid.");
+    await expect(
       store.appendItem(thread.id, { ...item, threadId: "00000000-0000-4000-8000-000000000000" }),
     ).rejects.toThrow("Item threadId does not match target thread.");
     await expect(
       store.appendEvent(thread.id, { ...event, item: { kind: "assistant" } } as unknown as RuntimeEvent),
+    ).rejects.toThrow("Runtime event shape is invalid.");
+    await expect(
+      store.appendEvent(thread.id, {
+        kind: "turn_completed",
+        threadId: thread.id,
+        turnId: "turn-1",
+        status: "completed",
+        completedAt: "not-a-date",
+      }),
     ).rejects.toThrow("Runtime event shape is invalid.");
     await expect(
       store.appendEvent(thread.id, { ...event, threadId: "00000000-0000-4000-8000-000000000000" }),
@@ -363,11 +412,33 @@ describe("JsonlThreadStore", () => {
     const thread = await store.createThread({
       workspace: "/workspace",
       mode: "code",
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+    });
+    expect(thread).toMatchObject({
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
     });
 
     await expect(store.updateThread(thread.id, {})).rejects.toThrow(
       "Thread update patch must include at least one field.",
     );
+
+    await expect(
+      store.createThread({
+        workspace: "/workspace",
+        mode: "code",
+        approvalPolicy: "sometimes" as "auto",
+      }),
+    ).rejects.toThrow("approvalPolicy is invalid.");
+
+    await expect(
+      store.createThread({
+        workspace: "/workspace",
+        mode: "code",
+        sandboxMode: "workspace" as "read-only",
+      }),
+    ).rejects.toThrow("sandboxMode is invalid.");
 
     await expect(
       store.updateThread(thread.id, {

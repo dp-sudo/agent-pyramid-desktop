@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ApprovalPreview, FileDiffLine, Item } from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { summarizeToolItem } from "./timeline-model";
+import { useWorkbench } from "../../store/WorkbenchContext";
 
 interface ChatBlockProps {
   item: Item;
@@ -119,9 +120,12 @@ export function ApprovalCard({
   onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
 }): ReactElement {
   const { t } = useTranslation();
+  const { state } = useWorkbench();
   const [pendingDecision, setPendingDecision] = useState<"allow" | "deny" | null>(null);
   const canRespond = canRespondToApproval(item.decision, pendingDecision, Boolean(onApprove));
   const statusText = approvalStatusText(item.decision, pendingDecision, t);
+  const showDiffByDefault =
+    state.runtimePreferences.approvalExperience.showDiffByDefault;
 
   async function respond(decision: "allow" | "deny"): Promise<void> {
     if (!canRespond || !onApprove) return;
@@ -139,7 +143,9 @@ export function ApprovalCard({
         <strong>{item.toolName}</strong>
         {statusText ? <span>{statusText}</span> : null}
       </div>
-      {item.preview ? <ApprovalPreviewBlock preview={item.preview} /> : null}
+      {item.preview ? (
+        <ApprovalPreviewBlock preview={item.preview} defaultOpen={showDiffByDefault} />
+      ) : null}
       <pre className="ds-approval-args">{JSON.stringify(item.args, null, 2)}</pre>
       {item.decision === undefined && onApprove ? (
         <div className="ds-approval-actions">
@@ -165,15 +171,21 @@ export function ApprovalCard({
   );
 }
 
-function ApprovalPreviewBlock({ preview }: { preview: ApprovalPreview }): ReactElement {
+function ApprovalPreviewBlock({
+  preview,
+  defaultOpen,
+}: {
+  preview: ApprovalPreview;
+  defaultOpen: boolean;
+}): ReactElement {
   if (preview.kind === "file_diff") {
-    return <FileDiffPreviewBlock preview={preview} />;
+    return <FileDiffPreviewBlock preview={preview} defaultOpen={defaultOpen} />;
   }
   if (preview.kind === "multi_file_diff") {
     return (
       <div className="ds-diff-preview-list">
         {preview.files.map((file) => (
-          <FileDiffPreviewBlock key={file.path} preview={file} />
+          <FileDiffPreviewBlock key={file.path} preview={file} defaultOpen={defaultOpen} />
         ))}
       </div>
     );
@@ -181,22 +193,28 @@ function ApprovalPreviewBlock({ preview }: { preview: ApprovalPreview }): ReactE
   return <></>;
 }
 
-function FileDiffPreviewBlock({ preview }: { preview: Extract<ApprovalPreview, { kind: "file_diff" }> }): ReactElement {
+function FileDiffPreviewBlock({
+  preview,
+  defaultOpen,
+}: {
+  preview: Extract<ApprovalPreview, { kind: "file_diff" }>;
+  defaultOpen: boolean;
+}): ReactElement {
   const { t } = useTranslation();
   return (
-    <div className="ds-diff-preview">
-      <div className="ds-diff-preview-header">
+    <details className="ds-diff-preview" open={defaultOpen}>
+      <summary className="ds-diff-preview-header">
         <span>{preview.path}</span>
         <span>
           {t(`approvals.diff.${preview.operation}`)} · +{preview.added} / -{preview.removed}
         </span>
-      </div>
+      </summary>
       <div className="ds-diff-preview-lines">
         {preview.lines.map((line, index) => (
           <DiffLine key={`${index}:${line.type}:${line.text}`} line={line} />
         ))}
       </div>
-    </div>
+    </details>
   );
 }
 

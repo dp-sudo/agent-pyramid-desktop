@@ -49,6 +49,7 @@ describe("model config handlers", () => {
     expect(parseModelConfigUpdateRequest({
       model_provide: " MiniMax ",
       model: " MiniMax-M3 ",
+      protocol: "anthropic-compatible",
       base_url: " https://api.example.test/v1 ",
       OPENAI_API_KEY: "",
       thinking: false,
@@ -60,6 +61,7 @@ describe("model config handlers", () => {
     })).toEqual({
       model_provide: "MiniMax",
       model: "MiniMax-M3",
+      protocol: "anthropic-compatible",
       base_url: "https://api.example.test/v1",
       OPENAI_API_KEY: "",
       thinking: false,
@@ -76,6 +78,8 @@ describe("model config handlers", () => {
       .toThrow("Model config update request must include at least one field.");
     expect(() => parseModelConfigUpdateRequest({ thinking: "false" }))
       .toThrow("thinking must be a boolean.");
+    expect(() => parseModelConfigUpdateRequest({ protocol: "custom" }))
+      .toThrow("protocol must be one of openai-compatible, anthropic-compatible.");
     expect(() => parseModelConfigUpdateRequest({ OPENAI_API_KEY: false }))
       .toThrow("OPENAI_API_KEY must be a string.");
     expect(() => parseModelConfigUpdateRequest({ model_reasoning_effort: "extreme" }))
@@ -144,12 +148,12 @@ describe("model config handlers", () => {
       parseModelConfigProfileUpdateRequest({
         id: " profile-1 ",
         name: "DeepSeek",
-        config: { model: "deepseek-v4-flash" },
+        config: { model: "deepseek-v4-flash", protocol: "anthropic-compatible" },
       }),
     ).toEqual({
       id: "profile-1",
       name: "DeepSeek",
-      config: { model: "deepseek-v4-flash" },
+      config: { model: "deepseek-v4-flash", protocol: "anthropic-compatible" },
     });
     expect(() => parseModelConfigProfileUpdateRequest({ id: "profile-1", name: " " }))
       .toThrow("Model config profile name is required.");

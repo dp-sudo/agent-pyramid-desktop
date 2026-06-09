@@ -6,7 +6,10 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { DEFAULT_MODEL_CONFIG } from "../../../../shared/agent-contracts";
+import {
+  DEFAULT_MODEL_CONFIG,
+  DEFAULT_RUNTIME_PREFERENCES,
+} from "../../../../shared/agent-contracts";
 import {
   DEFAULT_BASIC_PREFERENCES,
   LEFT_SIDEBAR_DEFAULT_WIDTH,
@@ -23,6 +26,7 @@ import type {
   ModelConfig,
   ModelConfigProfilesState,
   ModelReasoningEffort,
+  RuntimePreferences,
   TerminalTurnStatus,
   ThreadRecord,
   ThreadSummary,
@@ -53,6 +57,7 @@ export interface WorkbenchState {
   lastWorkbenchRoute: Extract<WorkbenchRoute, "code" | "write">;
   modelConfig: ModelConfig;
   modelProfiles: ModelConfigProfilesState | null;
+  runtimePreferences: RuntimePreferences;
   workspaceRoot: string;
   showArchivedThreads: boolean;
   threads: ThreadSummary[];
@@ -76,6 +81,7 @@ export const INITIAL_STATE: WorkbenchState = {
   lastWorkbenchRoute: initialBasicPreferences.defaultStartupView,
   modelConfig: DEFAULT_MODEL_CONFIG,
   modelProfiles: null,
+  runtimePreferences: DEFAULT_RUNTIME_PREFERENCES,
   workspaceRoot: initialBasicPreferences.restoreLastWorkspaceOnStartup
     ? loadLastWorkspaceRoot()
     : "",
@@ -150,6 +156,7 @@ export type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
   | { type: "setModelConfig"; config: ModelConfig }
   | { type: "setModelProfiles"; profiles: ModelConfigProfilesState }
+  | { type: "setRuntimePreferences"; preferences: RuntimePreferences }
   | { type: "setWorkspaceRoot"; workspaceRoot: string }
   | { type: "setShowArchivedThreads"; show: boolean }
   | { type: "setThreads"; threads: ThreadSummary[] }
@@ -248,6 +255,11 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
           : {}),
       };
     }
+    case "setRuntimePreferences":
+      return {
+        ...state,
+        runtimePreferences: action.preferences,
+      };
     case "setWorkspaceRoot":
       if (state.basicPreferences.restoreLastWorkspaceOnStartup) {
         saveLastWorkspaceRoot(action.workspaceRoot);
@@ -503,6 +515,7 @@ export interface WorkbenchActions {
   setRoute(route: WorkbenchRoute): void;
   setModelConfig(config: ModelConfig): void;
   setModelProfiles(profiles: ModelConfigProfilesState): void;
+  setRuntimePreferences(preferences: RuntimePreferences): void;
   setWorkspaceRoot(workspaceRoot: string): void;
   setShowArchivedThreads(show: boolean): void;
   setThreads(threads: ThreadSummary[]): void;
@@ -551,6 +564,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }): ReactE
       setRoute: (route) => dispatch({ type: "setRoute", route }),
       setModelConfig: (config) => dispatch({ type: "setModelConfig", config }),
       setModelProfiles: (profiles) => dispatch({ type: "setModelProfiles", profiles }),
+      setRuntimePreferences: (preferences) =>
+        dispatch({ type: "setRuntimePreferences", preferences }),
       setWorkspaceRoot: (workspaceRoot) =>
         dispatch({ type: "setWorkspaceRoot", workspaceRoot }),
       setShowArchivedThreads: (show) =>

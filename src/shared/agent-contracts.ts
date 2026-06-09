@@ -1,10 +1,23 @@
-export type LlmProtocol = "openai-compatible" | "anthropic-compatible";
+export const LLM_PROTOCOLS = ["openai-compatible", "anthropic-compatible"] as const;
+export type LlmProtocol = (typeof LLM_PROTOCOLS)[number];
+export const DEFAULT_LLM_PROTOCOL: LlmProtocol = "openai-compatible";
 
 export const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function isUuidString(value: unknown): value is string {
   return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
+export const ISO_TIMESTAMP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+export function isIsoTimestampString(value: unknown): value is string {
+  if (typeof value !== "string" || !ISO_TIMESTAMP_PATTERN.test(value)) {
+    return false;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 export const MODEL_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
@@ -15,6 +28,7 @@ export type AgentAutonomyLevel = (typeof AGENT_AUTONOMY_LEVELS)[number];
 export interface ModelConfig {
   model_provide: string;
   model: string;
+  protocol: LlmProtocol;
   base_url: string;
   OPENAI_API_KEY: string;
   model_context_window: number;
@@ -28,6 +42,7 @@ export interface ModelConfig {
 export interface ModelConfigUpdate {
   model_provide?: string;
   model?: string;
+  protocol?: LlmProtocol;
   base_url?: string;
   OPENAI_API_KEY?: string;
   model_context_window?: number;
@@ -74,6 +89,7 @@ export interface ModelConfigProfileActivateRequest {
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   model_provide: "MiniMax",
   model: "MiniMax-M3",
+  protocol: DEFAULT_LLM_PROTOCOL,
   base_url: "https://api.minimaxi.com/v1",
   OPENAI_API_KEY: "",
   model_context_window: 256000,
@@ -171,6 +187,10 @@ export interface ThreadRecord {
   goal?: ThreadGoal;
 }
 
+export function isLlmProtocol(value: unknown): value is LlmProtocol {
+  return typeof value === "string" && LLM_PROTOCOLS.includes(value as LlmProtocol);
+}
+
 /** A lightweight row in the index.json listing. */
 export interface ThreadSummary {
   id: string;
@@ -188,6 +208,8 @@ export interface ThreadCreateInput {
   mode: ThreadMode;
   relation?: ThreadRelation;
   parentThreadId?: string;
+  approvalPolicy?: ThreadApprovalPolicy;
+  sandboxMode?: ThreadSandboxMode;
 }
 
 export interface ThreadUpdatePatch {
@@ -229,6 +251,161 @@ export function isThreadApprovalPolicy(value: unknown): value is ThreadApprovalP
 
 export function isThreadSandboxMode(value: unknown): value is ThreadSandboxMode {
   return typeof value === "string" && THREAD_SANDBOX_MODES.includes(value as ThreadSandboxMode);
+}
+
+// ============================================================================
+// Runtime preferences
+// ============================================================================
+
+export const RUNTIME_TOOL_NAMES = [
+  "list_files",
+  "read_file",
+  "search_files",
+  "edit_file",
+  "write_file",
+  "apply_patch",
+  "rollback_file",
+  "run_command",
+  "diagnose_workspace",
+  "diagnose_file",
+  "create_plan",
+  "update_goal",
+] as const;
+export type RuntimeToolName = (typeof RUNTIME_TOOL_NAMES)[number];
+
+export const RUNTIME_COMPACTION_STRATEGIES = [
+  "balanced",
+  "recent-only",
+  "preserve-tools",
+  "aggressive",
+] as const;
+export type RuntimeCompactionStrategy = (typeof RUNTIME_COMPACTION_STRATEGIES)[number];
+
+export interface RuntimeToolAvailabilityPreferences {
+  code: Record<RuntimeToolName, boolean>;
+  write: Record<RuntimeToolName, boolean>;
+}
+
+export interface RuntimeApprovalExperiencePreferences {
+  showDiffByDefault: boolean;
+  autoScrollOnRequest: boolean;
+  showReadOnlyToolRecords: boolean;
+  showFailureToasts: boolean;
+}
+
+export interface RuntimeCommandPreferences {
+  timeoutMs: number;
+  maxOutputBytes: number;
+}
+
+export interface RuntimeCompactionPreferences {
+  enabled: boolean;
+  strategy: RuntimeCompactionStrategy;
+}
+
+export interface RuntimePreferences {
+  defaultApprovalPolicy: ThreadApprovalPolicy;
+  defaultSandboxMode: ThreadSandboxMode;
+  toolAvailability: RuntimeToolAvailabilityPreferences;
+  codeDefaultModelProfileId: string | null;
+  writeDefaultModelProfileId: string | null;
+  approvalExperience: RuntimeApprovalExperiencePreferences;
+  command: RuntimeCommandPreferences;
+  compaction: RuntimeCompactionPreferences;
+}
+
+export interface RuntimePreferencesUpdate {
+  defaultApprovalPolicy?: ThreadApprovalPolicy;
+  defaultSandboxMode?: ThreadSandboxMode;
+  toolAvailability?: Partial<Record<ThreadMode, Partial<Record<RuntimeToolName, boolean>>>>;
+  codeDefaultModelProfileId?: string | null;
+  writeDefaultModelProfileId?: string | null;
+  approvalExperience?: Partial<RuntimeApprovalExperiencePreferences>;
+  command?: Partial<RuntimeCommandPreferences>;
+  compaction?: Partial<RuntimeCompactionPreferences>;
+}
+
+export const DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS = 30_000;
+export const MIN_RUNTIME_COMMAND_TIMEOUT_MS = 100;
+export const MAX_RUNTIME_COMMAND_TIMEOUT_MS = 120_000;
+export const DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES = 32 * 1024;
+export const MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES = 1_024;
+export const MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES = 1024 * 1024;
+
+export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferences = {
+  code: {
+    list_files: true,
+    read_file: true,
+    search_files: true,
+    edit_file: true,
+    write_file: true,
+    apply_patch: true,
+    rollback_file: true,
+    run_command: true,
+    diagnose_workspace: true,
+    diagnose_file: true,
+    create_plan: true,
+    update_goal: true,
+  },
+  write: {
+    list_files: true,
+    read_file: true,
+    search_files: true,
+    edit_file: false,
+    write_file: false,
+    apply_patch: false,
+    rollback_file: false,
+    run_command: false,
+    diagnose_workspace: false,
+    diagnose_file: false,
+    create_plan: true,
+    update_goal: true,
+  },
+};
+
+export const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
+  defaultApprovalPolicy: DEFAULT_THREAD_APPROVAL_POLICY,
+  defaultSandboxMode: DEFAULT_THREAD_SANDBOX_MODE,
+  toolAvailability: DEFAULT_RUNTIME_TOOL_AVAILABILITY,
+  codeDefaultModelProfileId: null,
+  writeDefaultModelProfileId: null,
+  approvalExperience: {
+    showDiffByDefault: true,
+    autoScrollOnRequest: true,
+    showReadOnlyToolRecords: true,
+    showFailureToasts: true,
+  },
+  command: {
+    timeoutMs: DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
+    maxOutputBytes: DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+  },
+  compaction: {
+    enabled: true,
+    strategy: "balanced",
+  },
+};
+
+export function isRuntimeToolName(value: unknown): value is RuntimeToolName {
+  return typeof value === "string" && RUNTIME_TOOL_NAMES.includes(value as RuntimeToolName);
+}
+
+export function isRuntimeCompactionStrategy(
+  value: unknown,
+): value is RuntimeCompactionStrategy {
+  return typeof value === "string" &&
+    RUNTIME_COMPACTION_STRATEGIES.includes(value as RuntimeCompactionStrategy);
+}
+
+export function isRuntimePreferences(value: unknown): value is RuntimePreferences {
+  if (!isRecord(value)) return false;
+  return isThreadApprovalPolicy(value.defaultApprovalPolicy) &&
+    isThreadSandboxMode(value.defaultSandboxMode) &&
+    isRuntimeToolAvailabilityPreferences(value.toolAvailability) &&
+    isNullableString(value.codeDefaultModelProfileId) &&
+    isNullableString(value.writeDefaultModelProfileId) &&
+    isRuntimeApprovalExperiencePreferences(value.approvalExperience) &&
+    isRuntimeCommandPreferences(value.command) &&
+    isRuntimeCompactionPreferences(value.compaction);
 }
 
 // ----------------------------------------------------------------------------
@@ -312,7 +489,7 @@ export function isAttachmentRecord(value: unknown): value is AttachmentRecord {
     Number.isInteger(size) &&
     size >= 0 &&
     size <= MAX_ATTACHMENT_BYTES &&
-    hasString(value, "createdAt");
+    isIsoTimestampString(value.createdAt);
 }
 
 export interface AttachmentDeleteRequest {
@@ -537,6 +714,8 @@ export interface RuntimeErrorEvent {
   code:
     | "worker_crashed"
     | "worker_timeout"
+    | "provider_http"
+    | "provider_error"
     | "schema_invalid"
     | "tool_not_found"
     | "tool_failed"
@@ -790,7 +969,7 @@ export function isItem(value: unknown): value is Item {
         isRecord(v.args) &&
         isOptionalApprovalPreview(v.preview) &&
         isOptionalApprovalDecision(v.decision) &&
-        isOptionalString(v.resolvedAt);
+        isOptionalIsoTimestampString(v.resolvedAt);
     case "user_input":
       return hasString(v, "turnId") &&
         hasString(v, "question") &&
@@ -820,19 +999,19 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
     case "turn_started":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
-        hasString(v, "startedAt") &&
+        isIsoTimestampString(v.startedAt) &&
         isTurnRecord(v.turn);
     case "turn_completed":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
         isTerminalTurnStatus(v.status) &&
-        hasString(v, "completedAt") &&
+        isIsoTimestampString(v.completedAt) &&
         isOptionalTokenUsage(v.usage);
     case "turn_failed":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
         hasString(v, "message") &&
-        hasString(v, "failedAt");
+        isIsoTimestampString(v.failedAt);
     case "item_appended":
     case "item_updated":
       return hasString(v, "threadId") &&
@@ -851,7 +1030,7 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
         isPositiveInteger(v.maxToolRounds) &&
         isPositiveInteger(v.attemptedToolCalls) &&
         hasString(v, "message") &&
-        hasString(v, "reachedAt");
+        isIsoTimestampString(v.reachedAt);
     case "goal_updated":
       return hasString(v, "threadId") &&
         (v.goal === undefined || isThreadGoal(v.goal));
@@ -877,16 +1056,64 @@ export function isThreadRecord(value: unknown): value is ThreadRecord {
     isThreadRelation(v.relation) &&
     (v.approvalPolicy === undefined || isThreadApprovalPolicy(v.approvalPolicy)) &&
     (v.sandboxMode === undefined || isThreadSandboxMode(v.sandboxMode)) &&
-    typeof v.createdAt === "string" &&
-    typeof v.updatedAt === "string"
+    (v.forkedAt === undefined || isIsoTimestampString(v.forkedAt)) &&
+    isIsoTimestampString(v.createdAt) &&
+    isIsoTimestampString(v.updatedAt)
   );
+}
+
+function isRuntimeToolAvailabilityPreferences(
+  value: unknown,
+): value is RuntimeToolAvailabilityPreferences {
+  if (!isRecord(value)) return false;
+  return THREAD_MODES.every((mode) => {
+    const byMode = value[mode];
+    if (!isRecord(byMode)) return false;
+    return RUNTIME_TOOL_NAMES.every((toolName) => typeof byMode[toolName] === "boolean");
+  });
+}
+
+function isRuntimeApprovalExperiencePreferences(
+  value: unknown,
+): value is RuntimeApprovalExperiencePreferences {
+  if (!isRecord(value)) return false;
+  return typeof value.showDiffByDefault === "boolean" &&
+    typeof value.autoScrollOnRequest === "boolean" &&
+    typeof value.showReadOnlyToolRecords === "boolean" &&
+    typeof value.showFailureToasts === "boolean";
+}
+
+function isRuntimeCommandPreferences(value: unknown): value is RuntimeCommandPreferences {
+  if (!isRecord(value)) return false;
+  return isIntegerInRange(
+    value.timeoutMs,
+    MIN_RUNTIME_COMMAND_TIMEOUT_MS,
+    MAX_RUNTIME_COMMAND_TIMEOUT_MS,
+  ) &&
+    isIntegerInRange(
+      value.maxOutputBytes,
+      MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+      MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+    );
+}
+
+function isRuntimeCompactionPreferences(
+  value: unknown,
+): value is RuntimeCompactionPreferences {
+  if (!isRecord(value)) return false;
+  return typeof value.enabled === "boolean" &&
+    isRuntimeCompactionStrategy(value.strategy);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
 }
 
 function hasBaseItemFields(value: Record<string, unknown>): boolean {
   return hasString(value, "kind") &&
     hasString(value, "id") &&
     hasString(value, "threadId") &&
-    hasString(value, "createdAt");
+    isIsoTimestampString(value.createdAt);
 }
 
 function isTurnRecord(value: unknown): value is TurnRecord {
@@ -894,7 +1121,8 @@ function isTurnRecord(value: unknown): value is TurnRecord {
   return hasString(value, "id") &&
     hasString(value, "threadId") &&
     isTurnStatus(value.status) &&
-    hasString(value, "startedAt") &&
+    isIsoTimestampString(value.startedAt) &&
+    isOptionalIsoTimestampString(value.completedAt) &&
     hasString(value, "model") &&
     (value.reasoningEffort === undefined || isModelReasoningEffort(value.reasoningEffort)) &&
     hasString(value, "mode") &&
@@ -907,10 +1135,10 @@ function isThreadGoal(value: unknown): value is ThreadGoal {
   if (!isRecord(value)) return false;
   return hasString(value, "text") &&
     isThreadGoalStatus(value.status) &&
-    hasString(value, "createdAt") &&
-    hasString(value, "updatedAt") &&
-    isOptionalString(value.completedAt) &&
-    isOptionalString(value.blockedAt) &&
+    isIsoTimestampString(value.createdAt) &&
+    isIsoTimestampString(value.updatedAt) &&
+    isOptionalIsoTimestampString(value.completedAt) &&
+    isOptionalIsoTimestampString(value.blockedAt) &&
     isOptionalString(value.summary);
 }
 
@@ -931,6 +1159,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
+}
+
+function isOptionalIsoTimestampString(value: unknown): value is string | undefined {
+  return value === undefined || isIsoTimestampString(value);
 }
 
 function isOptionalBoolean(value: unknown): boolean {
@@ -1036,6 +1268,13 @@ function isPositiveInteger(value: unknown): value is number {
   return isNonNegativeInteger(value) && value > 0;
 }
 
+function isIntegerInRange(value: unknown, min: number, max: number): value is number {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= min &&
+    value <= max;
+}
+
 function isCacheHitRate(value: unknown): value is number {
   return typeof value === "number" &&
     Number.isFinite(value) &&
@@ -1054,6 +1293,8 @@ function isSystemLevel(value: unknown): value is SystemItem["level"] {
 function isRuntimeErrorCode(value: unknown): value is RuntimeErrorEvent["code"] {
   return value === "worker_crashed" ||
     value === "worker_timeout" ||
+    value === "provider_http" ||
+    value === "provider_error" ||
     value === "schema_invalid" ||
     value === "tool_not_found" ||
     value === "tool_failed" ||

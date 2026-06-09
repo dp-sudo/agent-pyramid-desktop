@@ -8,6 +8,7 @@ import {
   type WorkbenchState,
 } from "../../src/renderer/src/ui/store/WorkbenchContext";
 import { DEFAULT_BASIC_PREFERENCES } from "../../src/renderer/src/ui/preferences";
+import { DEFAULT_RUNTIME_PREFERENCES } from "../../src/shared/agent-contracts";
 import type {
   AssistantItem,
   ModelConfig,
@@ -255,6 +256,24 @@ describe("WorkbenchContext reducer", () => {
       model: "deepseek-v4-flash",
       modelProfileId: "profile-2",
     });
+  });
+
+  it("syncs runtime preferences into shared workbench state", () => {
+    const preferences = {
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      defaultApprovalPolicy: "never" as const,
+      compaction: {
+        ...DEFAULT_RUNTIME_PREFERENCES.compaction,
+        enabled: false,
+      },
+    };
+
+    const synced = reducer(INITIAL_STATE, {
+      type: "setRuntimePreferences",
+      preferences,
+    });
+
+    expect(synced.runtimePreferences).toEqual(preferences);
   });
 
   it("falls back to the active profile when the selected profile is removed", () => {

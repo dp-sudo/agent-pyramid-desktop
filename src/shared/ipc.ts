@@ -49,6 +49,10 @@ export const MODEL_CONFIG_PROFILES_UPDATE_CHANNEL = "config:model:profiles:updat
 export const MODEL_CONFIG_PROFILES_DELETE_CHANNEL = "config:model:profiles:delete";
 export const MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL = "config:model:profiles:activate";
 
+// Runtime preferences
+export const RUNTIME_PREFERENCES_GET_CHANNEL = "runtime-preferences:get";
+export const RUNTIME_PREFERENCES_UPDATE_CHANNEL = "runtime-preferences:update";
+
 /** All channels a renderer may invoke on the main process. */
 export const RENDERER_TO_MAIN_CHANNELS = [
   THREAD_LIST_CHANNEL,
@@ -80,6 +84,8 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
   MODEL_CONFIG_PROFILES_DELETE_CHANNEL,
   MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
+  RUNTIME_PREFERENCES_GET_CHANNEL,
+  RUNTIME_PREFERENCES_UPDATE_CHANNEL,
 ] as const;
 
 export type RendererToMainChannel = (typeof RENDERER_TO_MAIN_CHANNELS)[number];

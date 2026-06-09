@@ -167,7 +167,7 @@ describe("application tools", () => {
     const runCommand = tools.find((tool) => tool.definition.name === "run_command");
     const diagnoseWorkspace = tools.find((tool) => tool.definition.name === "diagnose_workspace");
     const timeoutDescription =
-      "Maximum runtime in milliseconds. Defaults to 30000, minimum 100, maximum 120000.";
+      "Maximum runtime in milliseconds. Defaults to the runtime command preference (30000), minimum 100, maximum 120000.";
 
     expect(toolSchemaProperties(runCommand).timeout_ms).toMatchObject({
       type: "number",
@@ -1619,6 +1619,97 @@ describe("application tools", () => {
     } finally {
       await removeTempDir(workspace);
       await removeTempDir(outside);
+    }
+  });
+
+  it("uses runtime command defaults for timeout and output truncation", async () => {
+    const workspace = await makeTempDir("command-tools-runtime-defaults-");
+    try {
+      await fs.writeFile(
+        path.join(workspace, "emit-output.js"),
+        "process.stderr.write('e'.repeat(3000)); process.exit(2);\n",
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(workspace, "package.json"),
+        JSON.stringify({
+          scripts: {
+            typecheck: "node emit-output.js",
+          },
+        }),
+        "utf8",
+      );
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        workspace,
+        commandDefaults: {
+          timeoutMs: 100,
+          maxOutputBytes: 2048,
+        },
+      };
+
+      const timedOut = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "call-default-timeout",
+              name: "run_command",
+              arguments: {
+                command: nodeCommand("setTimeout(() => undefined, 1000);"),
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as { timedOut: boolean; exitCode: number | null };
+      expect(timedOut.timedOut).toBe(true);
+      expect(timedOut.exitCode === null || timedOut.exitCode > 0).toBe(true);
+
+      const truncated = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "call-default-output",
+              name: "run_command",
+              arguments: {
+                command: nodeCommand("process.stdout.write('x'.repeat(3000));"),
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as {
+        stdout: string;
+        stdoutBytes: number;
+        stdoutTruncated: boolean;
+      };
+      expect(truncated.stdout.length).toBe(2048);
+      expect(truncated.stdoutBytes).toBe(3000);
+      expect(truncated.stdoutTruncated).toBe(true);
+
+      const diagnostics = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "call-diagnose-default-output",
+              name: "diagnose_workspace",
+              arguments: {},
+            },
+            {
+              ...context,
+              commandDefaults: {
+                timeoutMs: 30_000,
+                maxOutputBytes: 2048,
+              },
+            },
+          )
+        ).content,
+      ) as { stdoutTruncated: boolean; stderrTruncated: boolean };
+      expect(diagnostics.stdoutTruncated || diagnostics.stderrTruncated).toBe(true);
+    } finally {
+      await removeTempDir(workspace);
     }
   });
 

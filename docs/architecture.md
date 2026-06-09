@@ -46,6 +46,7 @@ flowchart LR
     Threads["JsonlThreadStore"]
     Attachments["AttachmentStore"]
     Config["ModelConfigStore"]
+    RuntimePrefs["RuntimePreferencesStore"]
     WorkerPool["LlmWorkerPool"]
     WriteSvc["write-handlers"]
   end
@@ -128,7 +129,7 @@ Security invariants:
 ```mermaid
 flowchart TD
   AppReady["app.whenReady()"]
-  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore"]
+  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore\nRuntimePreferencesStore"]
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool(1)"]
   Registry["InMemoryToolRegistry"]
@@ -162,6 +163,7 @@ Registered IPC groups:
 - `workspace`: pick directory.
 - `write`: markdown list, get, put, inline complete.
 - `modelConfig`: get/update and profile lifecycle.
+- `runtimePreferences`: get/update runtime preference state.
 
 ## Runtime Turn Lifecycle
 
@@ -173,6 +175,7 @@ sequenceDiagram
   participant A as AgentRuntime
   participant S as JsonlThreadStore
   participant C as ModelConfigStore
+  participant Prefs as RuntimePreferencesStore
   participant Att as AttachmentStore
   participant W as LlmWorkerPool
   participant Bus as RuntimeEventBus
@@ -182,6 +185,7 @@ sequenceDiagram
   M->>A: startTurn(request)
   A->>S: getThread(threadId)
   A->>C: listProfiles()
+  A->>Prefs: get()
   A->>Att: get(attachmentIds)
   A->>S: appendItem(user)
   A->>Bus: item_appended + turn_started(TurnRecord)
@@ -289,19 +293,26 @@ Worker rules:
 
 - Same thread routes to the same worker while alive.
 - `cancel(threadId)` posts a request-specific cancel message.
+- Request cleanup only clears the cancel handle it installed, so a settling old
+  request cannot remove a newer same-thread cancel mapping.
 - Worker exit clears stale thread affinity and creates a replacement worker.
 - Worker stream chunks become `LlmStreamChunk` events for runtime consumption.
+- Worker protocol errors keep their category through the pool and are mapped to
+  runtime errors such as `provider_http`, `schema_invalid`, and `worker_crashed`.
+- Worker raw diagnostics are bounded stream summaries, not full retained chunk
+  transcripts.
 
 Gateway rules:
 
-- `AgentRuntime` currently builds `LlmRequest` with
-  `protocol: "openai-compatible"` from model profiles; Anthropic-compatible
-  handling is a gateway-level tested path, not yet exposed as a model profile
-  setting.
+- `AgentRuntime` forwards the selected model profile `protocol` into
+  `LlmRequest`, so OpenAI-compatible and Anthropic-compatible profiles use the
+  same runtime path.
 - Provider dialect is resolved from `LlmRequest.provider`.
 - MiniMax and DeepSeek use provider-specific request body fields.
 - Custom OpenAI-compatible providers use generic chat completions bodies.
 - Anthropic-compatible providers use messages/tool_use/tool_result mapping.
+- Anthropic-compatible streaming usage is merged across `message_start` and
+  `message_delta` frames, including prompt cache read/create token fields.
 - OpenAI-compatible and Anthropic-compatible SSE keep reading after terminal
   finish/stop signals until `[DONE]` or stream close so provider usage-only
   tail frames are preserved.

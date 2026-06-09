@@ -33,7 +33,7 @@
 - 清理 Write 模式 IPC 契约：`WritePutRequest` 只保留当前已实现的 plain UTF-8 写入字段，删除未接入 handler 的 `viaGit` 旧字段，避免调用方误以为 `write.put` 会走 git apply。
 - 修复设置页模型档案状态机：profile 保存失败后如果表单仍与 active profile 不一致，切换 section/profile、复制、删除或返回工作台会继续触发未保存修改守卫，避免把失败后的用户修改静默丢弃。
 - 修复 SSE IPC envelope 边界：`sse:subscribe` / `sse:unsubscribe` 对坏请求返回 `SSE_SUBSCRIBE_FAILED` / `SSE_UNSUBSCRIBE_FAILED`，不再让 ipcMain handler 直接 throw。
-- 设置页采用两级导航：顶部切换设置大类，左侧切换当前大类下的小类，中间展示详细配置；当前“基础设置”大类承载外观与语言、启动与布局、会话与工作区偏好，“大模型设置”大类承载模型档案、连接信息、上下文和推理行为。
+- 设置页采用六个一级设置区 + 左侧区内小类导航：基础设置承载外观与语言，大模型设置承载模型档案、连接信息、上下文和推理行为，Agent 行为承载上下文压缩，工具与权限承载默认审批/沙盒、工具目录和命令限制，工作台设置承载启动/布局/会话和 Code/Write 默认模型，通知与可见性承载 approval 展示偏好。
 - 打磨前端可用性与可访问性：设置页左侧导航支持当前大类内搜索，设置表单的 `input/select` 通过 `SettingRow` 建立真实 label 关联，模型 profile 脏表单和 Write 工作台脏文档会在窗口刷新/关闭前触发未保存提示；Composer 附件处理新增 pending 反馈并阻止处理中发送，模型选择器补充空态；Write 工作台搜索改为短防抖，减少高频 IPC 抖动。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
 - 建立 Vitest 自动化测试体系：`vitest.config.ts`、`tsconfig.test.json`、`tests/`，覆盖共享契约、主进程持久化、模型配置、附件、工具、事件总线、LLM 网关、AgentRuntime 和渲染端 reducer。
@@ -45,10 +45,10 @@
 3. Agent 编排器只处理运行流程，不直接拼接供应商请求体。
 4. 工具能力通过 `ToolRegistry` 接口注册、预览和执行，后续工具不得绕过注册机制；runtime 先按 thread mode 与可配置 tool access policy 决定工具是否进入当前 turn catalog，再基于 metadata、`approvalPolicy` 与 `sandboxMode` 做审批/拒绝决策。
 5. 渲染层只通过 preload 暴露的安全 API 调用主进程，不直接访问 Node 能力。
-6. 界面语言和主题切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义；设置页“基础设置”直接调用渲染层 localStorage 偏好，不进入主进程运行时配置。
+6. 界面语言和主题切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义；设置页“基础设置”直接调用渲染层 localStorage 偏好，不进入主进程运行时配置。会影响 Agent runtime、工具目录、命令限制、上下文压缩或新线程安全默认值的设置必须进入 shared `RuntimePreferences`、main-process persistence 和 typed IPC。
 7. 大模型运行时仍以 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为当前激活配置契约；持久层在外层维护 `ModelConfigProfilesState`（`activeProfileId + profiles[]`），`ModelConfigStore.get()` 只返回当前激活档案的 `ModelConfig`，避免 Agent 运行循环感知多档案 UI。
 8. LLM 网关按 `ModelConfig.model_provide` 做供应商感知请求体分流：`MiniMax` 使用 `max_completion_tokens/reasoning_split/thinking.type=adaptive|disabled`，`DeepSeek` 使用 `/chat/completions`、`max_tokens/thinking.type=enabled|disabled/reasoning_effort=high|max`，其他供应商走通用 OpenAI-compatible 请求体。
-   当前 `AgentRuntime` 从模型 profile 构造请求时固定使用 `protocol: "openai-compatible"`；Anthropic-compatible 映射是 gateway 层已有测试覆盖的能力，尚未接入设置页/profile 协议选择。
+   `AgentRuntime` now forwards the selected model profile `protocol` into `LlmRequest`; OpenAI-compatible and Anthropic-compatible profiles share the same runtime path while the gateway owns provider-specific body/SSE mapping.
 9. 自动化测试使用 Vitest，优先测试公开类、共享契约和纯状态逻辑；持久化测试使用临时目录隔离，LLM 网关测试通过 mock `fetch` 验证请求体和 SSE 解析，不依赖真实 API key。
 
 
@@ -529,4 +529,16 @@
 - 加固附件元数据契约：shared contract 现在导出 `isAttachmentRecord()`，`UserItem.attachments` 的 replay guard 和 `AttachmentStore` index 读取共同使用同一 metadata 校验，畸形 MIME / size 的附件元数据不会进入 runtime 或 renderer。
 - 收敛 UUID 校验边界：shared contract 现在导出 `UUID_PATTERN` / `isUuidString()`，线程与附件持久化路径解析、附件 metadata guard 共用同一 UUID 判断，避免 id 安全边界在多个 store 内重复漂移。
 - 加固 JSONL 写入边界：`JsonlThreadStore.appendItem()` / `appendEvent()` 现在会在写入前复用 shared `isItem()` / `isRuntimeEvent()` 并校验 record `threadId` 与目标线程一致，避免坏记录先写入成功再在 replay 阶段被跳过。
+- 收敛 ISO 时间戳契约：shared contract 现在导出 `ISO_TIMESTAMP_PATTERN` / `isIsoTimestampString()`，`Item.createdAt`、`RuntimeEvent` 时间字段、`TurnRecord`、`ThreadGoal` 和 `AttachmentRecord.createdAt` 复用同一 `Date.prototype.toISOString()` 边界，避免坏时间字符串进入 JSONL、usage 聚合或 renderer 排序。
+- 加固 thread/index 时间读取边界：`JsonlThreadStore` 现在在读取 `thread.json` / `index.json` 时用 shared ISO timestamp 守卫校验 `createdAt`、`updatedAt`、`forkedAt` 和 goal 时间字段，避免损坏数据通过 `Date.parse()` 变成不稳定排序或活动时间比较。
+- 收敛模型配置 profile 时间边界：`ModelConfigStore` 读取 profiles 状态时会用 shared ISO timestamp 守卫归一化 `createdAt` / `updatedAt`，缺失或损坏的 legacy 时间会替换为当前 ISO 时间，不再把坏字符串传给设置页或后续持久化。
+- 落地 runtime preferences 主进程链路：新增 shared `RuntimePreferences` 契约、`RuntimePreferencesStore`、`runtime-preferences:get/update` IPC 与 preload API；`AgentRuntime` 现在使用 thread-mode 默认 profile，并把 `toolAvailability` 接入工具 definitions 过滤和 forced tool call 拦截；新建 thread 会读取默认 approval/sandbox，命令工具读取 timeout/output limit，上下文准备读取 compaction enablement/strategy，renderer 读取 approval presentation 偏好，避免设置保存后无运行时或 UI 效果。
 - 验证方式：`npm run typecheck`、`npm run test`、`npm run build`。
+
+### 2026-06-09 - LLM streaming usage and interrupt lifecycle hardening
+- Hardened Anthropic-compatible usage mapping: `cache_read_input_tokens` and `cache_creation_input_tokens` now populate `TokenUsage.cacheHitTokens`, `cacheMissTokens`, and `cacheHitRate`; streaming usage from `message_start` and `message_delta` frames is merged before it reaches the runtime, so partial provider usage frames do not overwrite previously observed fields.
+- Hardened streaming turn cleanup: interrupted turns remain in `AgentRuntime` in-flight state until the background run loop persists truncated partial output/tool cleanup and emits `turn_completed(status: "interrupted")`; non-interrupt worker failures after text/reasoning deltas now persist the truncated assistant/reasoning output before `turn_failed`.
+- Hardened worker cancellation: `LlmWorkerPool` request cleanup only clears the cancel handle installed by that request, preventing late old-request cleanup from deleting a newer same-thread cancel mapping.
+- Hardened worker diagnostics: worker protocol errors now preserve `http` / `schema` / `internal` through `LlmWorkerPool`, `AgentRuntime` maps them to `provider_http` / `schema_invalid` / `internal`, worker exit/error maps to `worker_crashed`, and worker `LlmResponse.raw` is now a bounded stream summary instead of an unbounded full chunk transcript.
+- Current model profile protocol behavior: `AgentRuntime` forwards the selected profile `protocol` into `LlmRequest`; OpenAI-compatible and Anthropic-compatible profiles share the same runtime path while `MiniMaxGateway` owns provider-specific body and SSE mapping.
+- Verification: `npm test -- tests/main/infrastructure/minimax-types.test.ts tests/main/infrastructure/minimax-gateway.test.ts`, `npm test -- tests/main/application/agent-runtime.test.ts tests/main/infrastructure/worker-pool.test.ts`, `npm test -- tests/main/infrastructure/worker-diagnostics.test.ts tests/main/infrastructure/worker-pool.test.ts tests/main/application/agent-runtime.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.

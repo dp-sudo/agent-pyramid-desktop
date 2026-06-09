@@ -11,6 +11,7 @@
 | Thread persistence | `src/main/persistence/index.ts` |
 | Attachment persistence | `src/main/persistence/attachment-store.ts` |
 | Model config persistence | `src/main/persistence/model-config-store.ts` |
+| Runtime preferences persistence | `src/main/persistence/runtime-preferences-store.ts` |
 | Runtime event emission | `src/main/application/agent-runtime.ts` and `src/main/event-bus.ts` |
 | Renderer state shape | `src/renderer/src/ui/store/WorkbenchContext.tsx` |
 | Renderer local preferences | `src/renderer/src/ui/preferences.ts` |
@@ -35,6 +36,7 @@ userData/
     index.json
     <attachmentId>.bin
   config
+  runtime-preferences.json
 ```
 
 ```mermaid
@@ -43,14 +45,17 @@ flowchart TB
   ThreadStore["JsonlThreadStore"]
   AttachmentStore["AttachmentStore"]
   ConfigStore["ModelConfigStore"]
+  RuntimePreferencesStore["RuntimePreferencesStore"]
   Threads["userData/threads"]
   Attachments["userData/attachments"]
   Config["userData/config"]
+  RuntimePreferences["userData/runtime-preferences.json"]
   Renderer["WorkbenchContext"]
 
   Contracts --> ThreadStore --> Threads
   Contracts --> AttachmentStore --> Attachments
   Contracts --> ConfigStore --> Config
+  Contracts --> RuntimePreferencesStore --> RuntimePreferences
   Contracts --> Renderer
 ```
 
@@ -103,6 +108,10 @@ Important semantics:
 - UUID validation uses shared `isUuidString()` in
   `src/shared/agent-contracts.ts`; thread and attachment persistence reuse this
   boundary before resolving filesystem paths.
+- Thread/index timestamp fields (`createdAt`, `updatedAt`, `forkedAt`) and goal
+  timestamps reuse shared `isIsoTimestampString()` on read; malformed timestamps
+  fail at the persistence boundary before they can enter list sorting or
+  activity-time comparison.
 - Thread field domains are centralized in `src/shared/agent-contracts.ts`
   (`THREAD_RELATIONS`, `THREAD_MODES`, `THREAD_STATUSES`,
   `THREAD_APPROVAL_POLICIES`, `THREAD_SANDBOX_MODES`,
@@ -110,6 +119,10 @@ Important semantics:
   normalization. Thread defaults are centralized in the same file as
   `DEFAULT_THREAD_*` constants.
 - `JsonlThreadStore.createThread()` defaults `status` to `active`.
+- `thread:create` applies `RuntimePreferences.defaultApprovalPolicy` and
+  `RuntimePreferences.defaultSandboxMode` when the renderer does not provide
+  explicit values. This affects new threads only; existing thread records are
+  not retroactively rewritten.
 - `ThreadRecord.workspace` must be an absolute path; create rejects relative workspace input before writing `thread.json` or `index.json`.
 - Threads with `relation: "fork"` must carry `parentThreadId`; the dedicated
   `forkThread()` path supplies it and orphan fork records are rejected on read.
@@ -284,6 +297,9 @@ Append-only update rule:
 - `JsonlThreadStore.appendItem()` / `appendEvent()` validate the shared
   `Item` / `RuntimeEvent` shape and require the record `threadId` to match the
   target thread before writing JSONL.
+- `Item.createdAt` and runtime event timestamp fields must use the
+  `Date.prototype.toISOString()` shape validated by shared
+  `isIsoTimestampString()`.
 - Streaming assistant/reasoning items emit `item_updated` before final persistence.
 - Tool and approval status updates are appended as a new JSONL row with the same item id.
 - Replay consumers dedupe by `item.id` and keep the latest row.
@@ -324,7 +340,8 @@ Rules:
   (12 MB).
 - Attachment metadata validation is centralized in shared `isAttachmentRecord()`;
   both `AttachmentStore` index reads and `UserItem.attachments` replay guards use
-  this contract.
+  this contract. `AttachmentRecord.createdAt` uses the same shared ISO timestamp
+  boundary as item and event records.
 - `AttachmentStore.get()` returns metadata plus `dataBase64`.
 - `UserItem` stores attachment ids and metadata, not image bytes.
 - Runtime reads attachment bytes and sends them to the LLM as `AgentContentBlock[]`.
@@ -345,8 +362,14 @@ Current event kinds:
 - `goal_updated`
 - `runtime_error`
 
+`runtime_error.code` is one of `worker_crashed`, `worker_timeout`,
+`provider_http`, `schema_invalid`, `tool_not_found`, `tool_failed`,
+`approval_timeout`, `persistence_error`, or `internal`.
+
 `turn_started` carries the complete runtime-created `TurnRecord` as `turn`.
 Usage data lives on `turn_completed.usage` and is aggregated by `usage:daily`.
+Runtime event timestamps such as `startedAt`, `completedAt`, `failedAt`, and
+`reachedAt` must use `Date.prototype.toISOString()` format.
 Persisted event replay validates `usage` as a `TokenUsage` object when present;
 token count fields must be non-negative integers, `cacheHitRate` must be
 `null` or a `0..1` ratio, and malformed token fields are skipped with the rest
@@ -359,6 +382,9 @@ of the bad event row.
 Active model config contract:
 
 - `ModelConfig`
+- `ModelConfig.protocol` is the per-profile LLM request dialect:
+  `openai-compatible` uses chat-completions shape and
+  `anthropic-compatible` uses messages shape.
 
 Profile state contract:
 
@@ -380,6 +406,10 @@ Key semantics:
 - `ModelConfigStore.get()` returns the active profile's `ModelConfig`.
 - `ModelConfigStore.listProfiles()` returns all profiles.
 - Store normalizes older single-config files into profile state.
+- Store normalizes missing profile `protocol` to `openai-compatible`.
+- Stored profile `createdAt` / `updatedAt` values use the shared
+  `isIsoTimestampString()` boundary; missing or malformed legacy values are
+  normalized to the current ISO timestamp when the config file is read.
 - At least one profile must remain.
 - Profile creation treats `activate` as a strict boolean; non-boolean values are
   rejected instead of being interpreted by truthiness.
@@ -396,6 +426,48 @@ Default configs are defined in `src/shared/agent-contracts.ts`:
 - `DEFAULT_MODEL_CONFIG`
 - `DEFAULT_DEEPSEEK_MODEL_CONFIG`
 
+## Runtime Preferences Model
+
+Runtime preferences are main-process Agent controls that influence runtime
+behavior and therefore live in shared contracts, not renderer localStorage.
+
+Contracts:
+
+- `RuntimePreferences`
+- `RuntimePreferencesUpdate`
+- `RuntimeToolAvailabilityPreferences`
+- `RuntimeApprovalExperiencePreferences`
+- `RuntimeCommandPreferences`
+- `RuntimeCompactionPreferences`
+
+Storage file:
+
+```text
+userData/runtime-preferences.json
+```
+
+Key semantics:
+
+- Missing or malformed stored preference groups normalize to
+  `DEFAULT_RUNTIME_PREFERENCES`.
+- Updates must include at least one recognized field; unknown-only or malformed
+  update payloads fail before persistence.
+- `toolAvailability` is currently consumed by `AgentRuntime` as a catalog-level
+  tool switch. Disabled tools are omitted from LLM tool definitions and forced
+  calls to disabled tools produce failed tool items.
+- Mode default profile ids are consumed by `AgentRuntime` when a turn request
+  does not specify `modelProfileId`.
+- `defaultApprovalPolicy` and `defaultSandboxMode` are consumed by thread
+  creation as defaults when the create request omits explicit values.
+- `command.timeoutMs` and `command.maxOutputBytes` are consumed by
+  `run_command` and `diagnose_workspace` when a tool call does not provide a
+  stricter override.
+- `compaction.enabled` and `compaction.strategy` are consumed by
+  `AgentRuntime.prepareMessagesForRequest()` before every model request.
+- `approvalExperience` is consumed by renderer presentation only; it controls
+  approval diff expansion, pending-approval scrolling, read-only tool record
+  visibility and failure toasts without bypassing runtime approval enforcement.
+
 ## Renderer State Model
 
 `WorkbenchContext.tsx` owns renderer UI state through `useReducer`.
@@ -405,6 +477,7 @@ Important state:
 - `route`: `"code" | "write" | "settings"`
 - `modelConfig`
 - `modelProfiles`
+- `runtimePreferences`
 - `workspaceRoot`
 - `showArchivedThreads`
 - `threads`
@@ -441,7 +514,7 @@ Examples:
 - delete confirmation behavior
 - restore last workspace
 
-If a preference must influence Agent runtime behavior, do not hide it in renderer localStorage. Promote it into a shared contract and main process persistence/API.
+If a preference must influence Agent runtime behavior, do not hide it in renderer localStorage. Promote it into `RuntimePreferences`, main-process persistence and a typed IPC API.
 
 ## Field Change Checklist
 

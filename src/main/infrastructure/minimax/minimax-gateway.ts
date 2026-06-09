@@ -181,12 +181,14 @@ export class MiniMaxGateway implements LlmGateway {
     );
 
     let stopReason: LlmStopReason = "stop";
+    let usage: AgentUsage | undefined;
     const toolAccumulator = new AnthropicToolCallAccumulator();
 
     for await (const payload of readSseJson(response.body, options.signal)) {
       const result = consumeAnthropicStreamPayload(payload, toolAccumulator);
       if (result.usage) {
-        yield { kind: "usage", usage: result.usage };
+        usage = mergeAnthropicStreamUsage(usage, result.usage);
+        yield { kind: "usage", usage };
       }
       if (result.stopReason) {
         stopReason = result.stopReason;
@@ -227,6 +229,9 @@ interface OpenAiStreamPayload {
 interface AnthropicStreamPayload {
   type?: string;
   index?: number;
+  message?: {
+    usage?: AnthropicMessageResponse["usage"];
+  };
   content_block?: {
     type?: string;
     id?: string;
@@ -240,10 +245,7 @@ interface AnthropicStreamPayload {
     partial_json?: string;
     stop_reason?: string;
   };
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-  };
+  usage?: AnthropicMessageResponse["usage"];
 }
 
 interface PendingOpenAiToolCall {
@@ -439,6 +441,7 @@ function consumeAnthropicStreamPayload(
   const payload = raw as AnthropicStreamPayload;
   const chunks: LlmStreamChunk[] = [];
   const index = numberOrUndefined(payload.index);
+  const usage = mapAnthropicStreamUsage(payload);
 
   if (payload.type === "content_block_start" && index !== undefined && payload.content_block) {
     toolAccumulator.start(index, payload.content_block);
@@ -469,14 +472,39 @@ function consumeAnthropicStreamPayload(
     return {
       chunks,
       stopReason: mapAnthropicStopReason(payload.delta?.stop_reason),
-      usage: payload.usage ? mapAnthropicUsageFields(payload.usage) : undefined
+      usage
     };
   }
 
   return {
     chunks,
-    usage: payload.usage ? mapAnthropicUsageFields(payload.usage) : undefined
+    usage
   };
+}
+
+function mapAnthropicStreamUsage(payload: AnthropicStreamPayload): AgentUsage | undefined {
+  const usage = payload.usage ?? payload.message?.usage;
+  return usage ? mapAnthropicUsageFields(usage) : undefined;
+}
+
+function mergeAnthropicStreamUsage(
+  previous: AgentUsage | undefined,
+  next: AgentUsage
+): AgentUsage {
+  const merged: AgentUsage = {
+    ...(previous ?? {}),
+    ...next
+  };
+  if (merged.inputTokens !== undefined && merged.outputTokens !== undefined) {
+    merged.totalTokens = merged.inputTokens + merged.outputTokens;
+  }
+  if (merged.cacheHitTokens !== undefined || merged.cacheMissTokens !== undefined) {
+    const cacheHitTokens = merged.cacheHitTokens ?? 0;
+    const cacheMissTokens = merged.cacheMissTokens ?? 0;
+    const cacheTotal = cacheHitTokens + cacheMissTokens;
+    merged.cacheHitRate = cacheTotal > 0 ? cacheHitTokens / cacheTotal : null;
+  }
+  return merged;
 }
 
 function resolveEndpoint(baseUrl: string, path: string): string {
@@ -900,9 +928,14 @@ function takeSseFrame(buffer: string): { block: string; rest: string } | null {
 }
 
 function parseSseFrame(frame: string): unknown | "[DONE]" | null {
-  const data = frame
+  const lines = frame
     .split("\n")
-    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line))
+    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+  const event = lines
+    .filter((line) => line.startsWith("event:"))
+    .map((line) => line.slice(6).trim())
+    .find((value) => value.length > 0);
+  const data = lines
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trimStart())
     .join("\n")
@@ -911,12 +944,43 @@ function parseSseFrame(frame: string): unknown | "[DONE]" | null {
   if (!data) return null;
   if (data === "[DONE]") return "[DONE]";
 
+  if (event === "error") {
+    throw new Error(`LLM stream error event: ${formatSseErrorData(data)}`);
+  }
+
   try {
     return JSON.parse(data) as unknown;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`LLM stream frame was not valid JSON: ${reason}`);
   }
+}
+
+function formatSseErrorData(data: string): string {
+  try {
+    const parsed = JSON.parse(data) as unknown;
+    if (parsed && typeof parsed === "object") {
+      const value = parsed as {
+        error?: { message?: unknown; type?: unknown; code?: unknown };
+        message?: unknown;
+      };
+      const message =
+        typeof value.error?.message === "string"
+          ? value.error.message
+          : typeof value.message === "string" ? value.message : "";
+      const type = typeof value.error?.type === "string" ? value.error.type : "";
+      const code =
+        typeof value.error?.code === "string" || typeof value.error?.code === "number"
+          ? String(value.error.code)
+          : "";
+      const details = [type, code, message].filter((part) => part.length > 0).join(": ");
+      return (details || JSON.stringify(parsed)).slice(0, 800);
+    }
+  } catch (error) {
+    void error;
+    return data.slice(0, 800);
+  }
+  return data.slice(0, 800);
 }
 
 function normalizeMaybeCumulativeDelta(value: string | undefined, previous: string): string {
