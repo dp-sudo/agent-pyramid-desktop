@@ -89,8 +89,7 @@ function findFinalAssistantStart(items: TimelineProcessItem[]): number {
 
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
-    if (item.kind === "reasoning" && start === items.length) continue;
-    if (isFollowupItem(item) && start === items.length) continue;
+    if (isPassiveFollowupItem(item) && start === items.length) continue;
     if (item.kind !== "assistant" || !item.text.trim()) break;
     start = index;
   }
@@ -100,6 +99,13 @@ function findFinalAssistantStart(items: TimelineProcessItem[]): number {
 
 function isFollowupItem(item: TimelineProcessItem): boolean {
   return item.kind === "plan";
+}
+
+function isPassiveFollowupItem(item: TimelineProcessItem): boolean {
+  return item.kind === "reasoning" ||
+    item.kind === "plan" ||
+    item.kind === "compaction" ||
+    item.kind === "system";
 }
 
 export interface ToolDisplay {

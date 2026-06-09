@@ -4,7 +4,9 @@ import {
   getDefaultCategoryForSection,
   isProfileDeletePending,
   isSettingsCategoryInSection,
+  messageOfUnknownError,
   shouldBlockSettingsNavigation,
+  shouldDisableRuntimePreferenceControls,
   toDefaultInspectorMode,
   toDefaultInspectorModeValue,
   toUpdatePayload,
@@ -138,6 +140,22 @@ describe("SettingsView helpers", () => {
         ok: false,
         message: `Command timeout must be between ${MIN_RUNTIME_COMMAND_TIMEOUT_MS} and ${MAX_RUNTIME_COMMAND_TIMEOUT_MS}.`,
       });
+  });
+
+  it("disables runtime preference controls when IPC is unavailable or saving", () => {
+    expect(shouldDisableRuntimePreferenceControls(false, "idle")).toBe(true);
+    expect(shouldDisableRuntimePreferenceControls(true, "loading")).toBe(true);
+    expect(shouldDisableRuntimePreferenceControls(true, "saving")).toBe(true);
+    expect(shouldDisableRuntimePreferenceControls(true, "idle")).toBe(false);
+    expect(shouldDisableRuntimePreferenceControls(true, "saved")).toBe(false);
+    expect(shouldDisableRuntimePreferenceControls(true, "error")).toBe(false);
+  });
+
+  it("keeps rejected runtime preference IPC errors traceable", () => {
+    expect(messageOfUnknownError(new Error("IPC channel failed"))).toBe("IPC channel failed");
+    expect(messageOfUnknownError("renderer bridge unavailable")).toBe(
+      "renderer bridge unavailable",
+    );
   });
 });
 

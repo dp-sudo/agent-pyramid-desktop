@@ -13,6 +13,7 @@ import {
   shouldSaveWriteFileBeforeSwitch,
   shouldWarnBeforeLeavingWriteDocument,
   shouldUseSelectedWriteWorkspace,
+  WRITE_SEARCH_CLEAR_BUTTON_TEXT,
 } from "../../src/renderer/src/ui/components/write/WriteWorkspaceView";
 
 describe("WriteWorkspaceView helpers", () => {
@@ -171,6 +172,7 @@ describe("WriteWorkspaceView helpers", () => {
   });
 
   it("derives file list empty states from workspace, search, and loading status", () => {
+    expect(WRITE_SEARCH_CLEAR_BUTTON_TEXT).toBe("x");
     expect(getWriteListState({ files: [], listLoading: false, search: "", workspaceRoot: "" }))
       .toBe("no-workspace");
     expect(getWriteListState({

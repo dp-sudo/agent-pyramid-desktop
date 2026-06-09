@@ -4,6 +4,7 @@ import {
   AssistantMarkdown,
   closeDanglingCodeFence,
   extractCodeText,
+  isCodeBlockCollapsedByDefault,
   normalizeMarkdownHref,
 } from "../../src/renderer/src/ui/components/chat/AssistantMarkdown";
 
@@ -34,6 +35,20 @@ describe("AssistantMarkdown", () => {
     expect(html).toContain("<button type=\"button\">chat.copyCode</button>");
     expect(html).toContain("class=\"ds-markdown-table-wrap\"");
     expect(html).toContain("class=\"ds-markdown-task-checkbox");
+  });
+
+  it("collapses long code blocks by default without hiding the copy control", () => {
+    const longCode = Array.from({ length: 19 }, (_, index) => `line ${index + 1}`).join("\n");
+    const html = renderToStaticMarkup(
+      <AssistantMarkdown text={["```txt", longCode, "```"].join("\n")} />,
+    );
+
+    expect(isCodeBlockCollapsedByDefault(longCode)).toBe(true);
+    expect(isCodeBlockCollapsedByDefault("short\ncode")).toBe(false);
+    expect(html).toContain("class=\"ds-code-block is-collapsed\"");
+    expect(html).toContain("aria-expanded=\"false\"");
+    expect(html).toContain("chat.expandCode");
+    expect(html).toContain("chat.copyCode");
   });
 
   it("extracts only code text from a code block node tree", () => {

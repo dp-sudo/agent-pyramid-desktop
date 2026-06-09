@@ -1753,6 +1753,44 @@ describe("application tools", () => {
     }
   });
 
+  it("keeps command output truncation on a UTF-8 character boundary", async () => {
+    const workspace = await makeTempDir("command-tools-utf8-truncate-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-utf8-truncate",
+          name: "run_command",
+          arguments: {
+            command: nodeCommand("process.stdout.write('x'.repeat(1023) + '你' + 'tail');"),
+          },
+        },
+        {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          workspace,
+          commandDefaults: {
+            timeoutMs: 30_000,
+            maxOutputBytes: 1024,
+          },
+        },
+      );
+      const parsed = JSON.parse(result.content) as {
+        stdout: string;
+        stdoutBytes: number;
+        stdoutTruncated: boolean;
+      };
+
+      expect(parsed.stdout).toBe("x".repeat(1023));
+      expect(parsed.stdout).not.toContain("\uFFFD");
+      expect(parsed.stdoutBytes).toBe(Buffer.byteLength("x".repeat(1023) + "你" + "tail", "utf8"));
+      expect(parsed.stdoutTruncated).toBe(true);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("rejects command timeout overrides above the runtime command preference", async () => {
     const workspace = await makeTempDir("command-tools-timeout-policy-");
     try {

@@ -21,15 +21,17 @@ import {
   LEFT_SIDEBAR_MAX_WIDTH,
   LEFT_SIDEBAR_MIN_WIDTH,
 } from "./preferences";
-import type {
-  IpcResult,
-  RuntimeEvent,
-  RuntimeErrorEvent,
-  ThreadRecord,
-  ThreadSummary,
+import {
+  err,
+  type IpcResult,
+  type RuntimeEvent,
+  type RuntimeErrorEvent,
+  type ThreadRecord,
+  type ThreadSummary,
 } from "../../../shared/agent-contracts";
 
 const SIDEBAR_KEYBOARD_STEP = 16;
+export const WORKBENCH_DISMISS_BUTTON_TEXT = "x";
 
 export function Workbench(): ReactElement {
   const { t } = useTranslation();
@@ -65,12 +67,14 @@ export function Workbench(): ReactElement {
         profilesResult,
         runtimePreferencesResult,
       ] = await Promise.all([
-        window.agentApi.threads.list({
-          includeArchived: state.showArchivedThreads,
-        }),
-        window.agentApi.modelConfig.get(),
-        window.agentApi.modelConfig.listProfiles(),
-        window.agentApi.runtimePreferences.get(),
+        runWorkbenchIpc(() =>
+          window.agentApi.threads.list({
+            includeArchived: state.showArchivedThreads,
+          }),
+        ),
+        runWorkbenchIpc(() => window.agentApi.modelConfig.get()),
+        runWorkbenchIpc(() => window.agentApi.modelConfig.listProfiles()),
+        runWorkbenchIpc(() => window.agentApi.runtimePreferences.get()),
       ]);
       if (cancelled) return;
       if (threadsResult.ok) actions.setThreads(threadsResult.value);
@@ -114,9 +118,11 @@ export function Workbench(): ReactElement {
   }, [handleRuntimeEvent]);
 
   const refreshThreads = useCallback(async () => {
-    const result = await window.agentApi.threads.list({
-      includeArchived: state.showArchivedThreads,
-    });
+    const result = await runWorkbenchIpc(() =>
+      window.agentApi.threads.list({
+        includeArchived: state.showArchivedThreads,
+      }),
+    );
     if (result.ok) {
       actions.setThreads(result.value);
     } else {
@@ -127,7 +133,9 @@ export function Workbench(): ReactElement {
   const subscribeThreadEvents = useCallback(
     async (threadId: string): Promise<boolean> => {
       if (subscribedThreadIdsRef.current.has(threadId)) return true;
-      const result = await window.agentApi.sse.subscribe({ threadId });
+      const result = await runWorkbenchIpc(() =>
+        window.agentApi.sse.subscribe({ threadId }),
+      );
       if (result.ok) {
         subscribedThreadIdsRef.current.add(threadId);
         return true;
@@ -143,7 +151,9 @@ export function Workbench(): ReactElement {
       if (!shouldUnsubscribeRemovedThread(subscribedThreadIdsRef.current, threadId)) {
         return true;
       }
-      const result = await window.agentApi.sse.unsubscribe({ threadId });
+      const result = await runWorkbenchIpc(() =>
+        window.agentApi.sse.unsubscribe({ threadId }),
+      );
       if (!result.ok && result.code !== "SSE_NOT_SUBSCRIBED") {
         actions.setError(result.message);
         subscribedThreadIdsRef.current.delete(threadId);
@@ -166,7 +176,7 @@ export function Workbench(): ReactElement {
     const current = workspaceRootRef.current.trim();
     if (current) return current;
 
-    const result = await window.agentApi.workspace.pickDirectory();
+    const result = await runWorkbenchIpc(() => window.agentApi.workspace.pickDirectory());
     if (!result.ok) {
       actions.setError(result.message);
       return null;
@@ -185,13 +195,13 @@ export function Workbench(): ReactElement {
       const requestId = selectThreadRequestRef.current + 1;
       selectThreadRequestRef.current = requestId;
       actions.setError(null);
-      const threadResult = await window.agentApi.threads.get(id);
+      const threadResult = await runWorkbenchIpc(() => window.agentApi.threads.get(id));
       if (requestId !== selectThreadRequestRef.current) return false;
       if (!threadResult.ok) {
         actions.setError(threadResult.message);
         return false;
       }
-      const itemsResult = await window.agentApi.turns.get(id);
+      const itemsResult = await runWorkbenchIpc(() => window.agentApi.turns.get(id));
       if (requestId !== selectThreadRequestRef.current) return false;
       if (!itemsResult.ok) {
         actions.setError(itemsResult.message);
@@ -213,9 +223,11 @@ export function Workbench(): ReactElement {
 
   const selectOrCreateThreadForWorkspace = useCallback(
     async (workspace: string, mode: ThreadRecord["mode"]): Promise<boolean> => {
-      const threadsResult = await window.agentApi.threads.list({
-        includeArchived: state.showArchivedThreads,
-      });
+      const threadsResult = await runWorkbenchIpc(() =>
+        window.agentApi.threads.list({
+          includeArchived: state.showArchivedThreads,
+        }),
+      );
       if (!threadsResult.ok) {
         actions.setError(threadsResult.message);
         return false;
@@ -231,11 +243,13 @@ export function Workbench(): ReactElement {
         return selectThreadById(latestForWorkspace.id);
       }
 
-      const created = await window.agentApi.threads.create({
-        title: "New thread",
-        workspace,
-        mode,
-      });
+      const created = await runWorkbenchIpc(() =>
+        window.agentApi.threads.create({
+          title: "New thread",
+          workspace,
+          mode,
+        }),
+      );
       if (!created.ok) {
         actions.setError(created.message);
         return false;
@@ -256,7 +270,7 @@ export function Workbench(): ReactElement {
   );
 
   const onPickWorkspace = useCallback(async () => {
-    const result = await window.agentApi.workspace.pickDirectory();
+    const result = await runWorkbenchIpc(() => window.agentApi.workspace.pickDirectory());
     if (!result.ok) {
       actions.setError(result.message);
       return;
@@ -275,11 +289,13 @@ export function Workbench(): ReactElement {
   const onNewChat = useCallback(async () => {
     const workspace = await ensureWorkspaceRoot();
     if (!workspace) return;
-    const result = await window.agentApi.threads.create({
-      title: "New thread",
-      workspace,
-      mode: "code",
-    });
+    const result = await runWorkbenchIpc(() =>
+      window.agentApi.threads.create({
+        title: "New thread",
+        workspace,
+        mode: "code",
+      }),
+    );
     if (!result.ok) {
       actions.setError(result.message);
       return;
@@ -298,7 +314,7 @@ export function Workbench(): ReactElement {
         return;
       }
 
-      const result = await window.agentApi.threads.delete(id);
+      const result = await runWorkbenchIpc(() => window.agentApi.threads.delete(id));
       if (!result.ok) {
         actions.setError(
           result.code === "THREAD_DELETE_BUSY"
@@ -327,7 +343,9 @@ export function Workbench(): ReactElement {
         return;
       }
 
-      const result = await window.agentApi.threads.update(id, { status: "archived" });
+      const result = await runWorkbenchIpc(() =>
+        window.agentApi.threads.update(id, { status: "archived" }),
+      );
       if (!result.ok) {
         actions.setError(
           result.code === "THREAD_ARCHIVE_BUSY"
@@ -351,7 +369,9 @@ export function Workbench(): ReactElement {
 
   const onRestoreThread = useCallback(
     async (id: string) => {
-      const result = await window.agentApi.threads.update(id, { status: "active" });
+      const result = await runWorkbenchIpc(() =>
+        window.agentApi.threads.update(id, { status: "active" }),
+      );
       if (!result.ok) {
         actions.setError(result.message);
         return;
@@ -388,11 +408,13 @@ export function Workbench(): ReactElement {
           sendPayload.threadTitle.length > 60
             ? `${sendPayload.threadTitle.slice(0, 57)}...`
             : sendPayload.threadTitle;
-        const threadResult = await window.agentApi.threads.create({
-          title,
-          workspace,
-          mode: workbenchThreadModeForRoute(state.route),
-        });
+        const threadResult = await runWorkbenchIpc(() =>
+          window.agentApi.threads.create({
+            title,
+            workspace,
+            mode: workbenchThreadModeForRoute(state.route),
+          }),
+        );
         if (!threadResult.ok) {
           actions.setError(threadResult.message);
           return false;
@@ -405,11 +427,13 @@ export function Workbench(): ReactElement {
       }
 
       if (state.composer.goalMode && threadId && !state.activeThread?.goal) {
-        const goalResult = await window.agentApi.goals.update({
-          threadId,
-          goal: sendPayload.text,
-          status: "active",
-        });
+        const goalResult = await runWorkbenchIpc(() =>
+          window.agentApi.goals.update({
+            threadId,
+            goal: sendPayload.text,
+            status: "active",
+          }),
+        );
         if (goalResult.ok) {
           actions.updateActiveThread(goalResult.value);
         } else {
@@ -418,18 +442,20 @@ export function Workbench(): ReactElement {
         }
       }
 
-      const result = await window.agentApi.turns.start({
-        threadId,
-        text: sendPayload.text,
-        displayText: sendPayload.displayText,
-        model: state.composer.model,
-        modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
-        reasoningEffort:
-          state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
-        attachmentIds: state.composer.attachmentIds,
-        mode: state.composer.mode,
-        goalMode: state.composer.goalMode,
-      });
+      const result = await runWorkbenchIpc(() =>
+        window.agentApi.turns.start({
+          threadId,
+          text: sendPayload.text,
+          displayText: sendPayload.displayText,
+          model: state.composer.model,
+          modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
+          reasoningEffort:
+            state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
+          attachmentIds: state.composer.attachmentIds,
+          mode: state.composer.mode,
+          goalMode: state.composer.goalMode,
+        }),
+      );
       if (!result.ok) {
         actions.setError(result.message);
         return false;
@@ -481,11 +507,13 @@ export function Workbench(): ReactElement {
             sendPayload.threadTitle.length > 60
               ? `${sendPayload.threadTitle.slice(0, 57)}...`
               : sendPayload.threadTitle;
-          const threadResult = await window.agentApi.threads.create({
-            title,
-            workspace,
-            mode: "write",
-          });
+          const threadResult = await runWorkbenchIpc(() =>
+            window.agentApi.threads.create({
+              title,
+              workspace,
+              mode: "write",
+            }),
+          );
           if (!threadResult.ok) {
             actions.setError(threadResult.message);
             return false;
@@ -497,18 +525,20 @@ export function Workbench(): ReactElement {
           void refreshThreads();
         }
 
-        const result = await window.agentApi.turns.start({
-          threadId,
-          text: sendPayload.text,
-          displayText: sendPayload.displayText,
-          model: state.composer.model,
-          modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
-          reasoningEffort:
-            state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
-          attachmentIds: [],
-          mode: "agent",
-          goalMode: false,
-        });
+        const result = await runWorkbenchIpc(() =>
+          window.agentApi.turns.start({
+            threadId,
+            text: sendPayload.text,
+            displayText: sendPayload.displayText,
+            model: state.composer.model,
+            modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
+            reasoningEffort:
+              state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
+            attachmentIds: [],
+            mode: "agent",
+            goalMode: false,
+          }),
+        );
         if (!result.ok) {
           actions.setError(result.message);
           return false;
@@ -538,7 +568,9 @@ export function Workbench(): ReactElement {
 
   const onInterrupt = useCallback(async () => {
     if (!activeThreadInFlightTurn) return;
-    const result = await window.agentApi.turns.interrupt(activeThreadInFlightTurn.id);
+    const result = await runWorkbenchIpc(() =>
+      window.agentApi.turns.interrupt(activeThreadInFlightTurn.id),
+    );
     if (result.ok) {
       actions.setError(null);
     } else {
@@ -548,7 +580,9 @@ export function Workbench(): ReactElement {
 
   const onApprove = useCallback(
     async (approvalId: string, decision: "allow" | "deny") => {
-      const result = await window.agentApi.approvals.respond({ approvalId, decision });
+      const result = await runWorkbenchIpc(() =>
+        window.agentApi.approvals.respond({ approvalId, decision }),
+      );
       if (result.ok) {
         actions.setError(null);
       } else {
@@ -710,7 +744,7 @@ function WorkbenchErrorToast({
         aria-label={t("common.dismiss")}
         title={t("common.dismiss")}
       >
-        ×
+        {WORKBENCH_DISMISS_BUTTON_TEXT}
       </button>
     </div>
   );
@@ -728,6 +762,20 @@ export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): str
     .filter((result) => !result.ok)
     .map((result) => result.message);
   return messages.length > 0 ? messages.join("\n") : null;
+}
+
+export async function runWorkbenchIpc<T>(
+  invoke: () => Promise<IpcResult<T>>,
+): Promise<IpcResult<T>> {
+  try {
+    return await invoke();
+  } catch (error) {
+    return err("RENDERER_IPC_REJECTED", messageOfWorkbenchError(error));
+  }
+}
+
+export function messageOfWorkbenchError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function shouldUnsubscribeRemovedThread(

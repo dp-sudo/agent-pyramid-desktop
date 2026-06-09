@@ -15,14 +15,16 @@ export function PendingApprovalPanel({
   const { state } = useWorkbench();
   const approvals = getPendingApprovalsForThread(state.items, state.activeThreadId);
   const panelRef = useRef<HTMLElement | null>(null);
-  const approvalCount = approvals.length;
+  const approvalSignature = pendingApprovalSignature(approvals);
   const autoScrollOnRequest =
     state.runtimePreferences.approvalExperience.autoScrollOnRequest;
 
   useEffect(() => {
-    if (!autoScrollOnRequest || approvalCount === 0) return;
+    if (!shouldAutoScrollPendingApprovals(autoScrollOnRequest, approvalSignature)) {
+      return;
+    }
     panelRef.current?.scrollIntoView({ block: "nearest" });
-  }, [approvalCount, autoScrollOnRequest]);
+  }, [approvalSignature, autoScrollOnRequest]);
 
   if (approvals.length === 0) return null;
 
@@ -52,4 +54,17 @@ export function getPendingApprovalsForThread(
       item.threadId === threadId &&
       item.decision === undefined,
   );
+}
+
+export function pendingApprovalSignature(
+  approvals: Array<Extract<Item, { kind: "approval" }>>,
+): string {
+  return approvals.map((item) => item.approvalId || item.id).join("|");
+}
+
+export function shouldAutoScrollPendingApprovals(
+  autoScrollOnRequest: boolean,
+  approvalSignature: string,
+): boolean {
+  return autoScrollOnRequest && approvalSignature.length > 0;
 }

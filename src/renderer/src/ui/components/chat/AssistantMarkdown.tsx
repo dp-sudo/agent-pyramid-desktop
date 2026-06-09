@@ -16,6 +16,8 @@ interface AssistantMarkdownProps {
   streaming?: boolean;
 }
 
+const COLLAPSED_CODE_BLOCK_LINE_LIMIT = 18;
+
 export function AssistantMarkdown({ text, streaming }: AssistantMarkdownProps): ReactElement {
   const renderText = streaming ? closeDanglingCodeFence(text) : text;
   return (
@@ -99,6 +101,8 @@ function CodeBlock({
 }): ReactElement {
   const { t } = useTranslation();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const shouldStartCollapsed = isCodeBlockCollapsedByDefault(code);
+  const [collapsed, setCollapsed] = useState(shouldStartCollapsed);
 
   async function copyCode(): Promise<void> {
     try {
@@ -115,20 +119,41 @@ function CodeBlock({
   }
 
   return (
-    <div className="ds-code-block">
+    <div className={collapsed ? "ds-code-block is-collapsed" : "ds-code-block"}>
       <div className="ds-code-block-header">
         <span>{language ?? t("chat.codeBlock")}</span>
-        <button type="button" onClick={() => void copyCode()}>
-          {copyState === "copied"
-            ? t("chat.copyCodeDone")
-            : copyState === "failed"
-              ? t("chat.copyCodeFailed")
-              : t("chat.copyCode")}
-        </button>
+        <div className="ds-code-block-actions">
+          {shouldStartCollapsed ? (
+            <button
+              type="button"
+              aria-expanded={!collapsed}
+              onClick={() => setCollapsed((current) => !current)}
+            >
+              {collapsed ? t("chat.expandCode") : t("chat.collapseCode")}
+            </button>
+          ) : null}
+          <button type="button" onClick={() => void copyCode()}>
+            {copyState === "copied"
+              ? t("chat.copyCodeDone")
+              : copyState === "failed"
+                ? t("chat.copyCodeFailed")
+                : t("chat.copyCode")}
+          </button>
+        </div>
       </div>
       <pre {...preProps}>{children}</pre>
     </div>
   );
+}
+
+export function isCodeBlockCollapsedByDefault(code: string): boolean {
+  return countCodeLines(code) > COLLAPSED_CODE_BLOCK_LINE_LIMIT;
+}
+
+function countCodeLines(code: string): number {
+  if (!code) return 0;
+  const normalized = code.endsWith("\n") ? code.slice(0, -1) : code;
+  return normalized.split("\n").length;
 }
 
 function extractCodeLanguage(children: ReactNode): string | null {

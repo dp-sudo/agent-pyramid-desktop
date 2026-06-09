@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import * as path from "node:path";
 import ts from "typescript";
 import type { AgentTool, AgentToolContext, AgentToolResult } from "../../domain/agent/types";
@@ -521,8 +522,11 @@ function createOutputCollector(maxOutputBytes: number): {
       storedBytes += buffer.length;
     },
     finish() {
+      const decoder = new StringDecoder("utf8");
+      const buffer = Buffer.concat(chunks, storedBytes);
+      const text = decoder.write(buffer) + (truncated ? "" : decoder.end());
       return {
-        text: Buffer.concat(chunks, storedBytes).toString("utf8"),
+        text,
         bytes,
         truncated,
       };

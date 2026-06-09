@@ -1016,6 +1016,13 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.ds-code-block-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
 .ds-code-block-header button {
   flex: 0 0 auto;
   border: 1px solid var(--ds-border-muted);
@@ -1037,6 +1044,10 @@ textarea:focus-visible {
 .ds-code-block-header button:focus-visible {
   outline: 2px solid var(--ds-accent);
   outline-offset: 1px;
+}
+
+.ds-code-block.is-collapsed pre {
+  max-height: 220px;
 }
 
 .ds-markdown pre {

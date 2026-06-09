@@ -70,6 +70,34 @@
 
 ## 变更记录
 
+### 2026-06-09 - Stable visible close controls
+- Replaced remaining renderer-visible close/remove glyphs in Write search clear and Composer attachment remove controls with stable ASCII text while keeping localized accessible labels and titles.
+- Verification plan: renderer Write workspace and Floating Composer helper tests lock the stable visible text; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Pending approval auto-scroll trigger
+- Changed `PendingApprovalPanel` auto-scroll from a count-only dependency to a pending approval identity signature, so replacing one pending approval with another still honors `autoScrollOnRequest`.
+- Replaced the Workbench error-toast visible dismiss glyph with stable ASCII text while keeping the localized accessible label and title.
+- Verification plan: renderer pending approval and Workbench helper tests cover the auto-scroll trigger decision and dismiss text; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Code block folding and post-answer ordering
+- Added default folding for long renderer code blocks inside `AssistantMarkdown` while preserving the existing copy action and short-code expanded behavior.
+- Tightened timeline sectioning so passive records that arrive after the final assistant answer, including reasoning, plan, system, and compaction items, stay after the answer instead of moving into the pre-answer work process.
+- Verification plan: renderer Markdown and timeline model tests cover long-code folding and post-answer passive ordering; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Workbench IPC reject visibility
+- Wrapped Workbench preload IPC calls so rejected `ipcRenderer.invoke()` promises are converted into traceable `IpcResult.err` values and routed through the existing workbench error toast instead of becoming unhandled promises.
+- Verification plan: Workbench helper tests cover rejected promises and synchronous bridge throws; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Frontend timeline reasoning folding
+- Updated renderer timeline grouping so non-assistant follow-up items that arrive after the final assistant answer remain after that answer instead of being folded back into the pre-answer work process.
+- Rendered reasoning items as collapsible process entries. Live reasoning opens by default, while completed/replayed reasoning can stay folded until the user expands it.
+- Verification plan: renderer timeline and chat block tests cover follow-up ordering and reasoning details rendering; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Settings runtime preference control gating
+- Disabled runtime preference controls while Settings is loading or saving runtime preferences, and added an in-flight guard around `runtimePreferences.update()` so rapid repeated controls cannot submit overlapping saves.
+- Surfaced rejected runtime preference IPC promises as Settings error state instead of leaving the runtime settings badge stuck in `saving`.
+- Verification plan: settings helper tests cover preload-unavailable, loading, saving, idle, saved, and error states; full `typecheck/test/build` verification is run before handoff.
+
 ### 2026-06-09 - create_plan step status validation
 - Consolidated plan step status values into shared `PLAN_STEP_STATUSES` and made `create_plan` reject unknown step statuses instead of silently downgrading them to `pending`; omitted status still defaults to `pending`.
 - Verification: shared contract and application tools tests cover the shared status list, omitted status default, and invalid status rejection; full `typecheck/test/build` verification is run before handoff.

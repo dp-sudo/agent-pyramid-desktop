@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
@@ -162,6 +163,7 @@ export function SettingsView(): ReactElement {
   const [pendingDeleteProfileId, setPendingDeleteProfileId] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [settingsSearch, setSettingsSearch] = useState("");
+  const runtimeSaveInProgressRef = useRef(false);
 
   const activeProfile = profilesState ? findActiveProfile(profilesState) : null;
   const hasAgentApi = Boolean(window.agentApi);
@@ -216,6 +218,10 @@ export function SettingsView(): ReactElement {
   const sidebarFooterTitle = t(`settings.sidebarFooter.${section}Title`);
   const sidebarFooterDescription = t(`settings.sidebarFooter.${section}Description`);
   const settingsSubtitle = t(`settings.subtitles.${section}`);
+  const runtimeControlsDisabled = shouldDisableRuntimePreferenceControls(
+    hasAgentApi,
+    runtimeSaveState,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -225,10 +231,24 @@ export function SettingsView(): ReactElement {
         setError(i18n.t("settings.preloadMissing"));
         return;
       }
-      const [profilesResult, runtimePreferencesResult] = await Promise.all([
-        window.agentApi.modelConfig.listProfiles(),
-        window.agentApi.runtimePreferences.get(),
-      ]);
+      let profilesResult: Awaited<ReturnType<typeof window.agentApi.modelConfig.listProfiles>>;
+      let runtimePreferencesResult: Awaited<
+        ReturnType<typeof window.agentApi.runtimePreferences.get>
+      >;
+      try {
+        [profilesResult, runtimePreferencesResult] = await Promise.all([
+          window.agentApi.modelConfig.listProfiles(),
+          window.agentApi.runtimePreferences.get(),
+        ]);
+      } catch (loadError) {
+        if (cancelled) return;
+        const message = messageOfUnknownError(loadError);
+        setSaveState("error");
+        setError(message);
+        setRuntimeSaveState("error");
+        setRuntimeError(message);
+        return;
+      }
       if (cancelled) return;
       if (profilesResult.ok) {
         applyProfilesState(profilesResult.value);
@@ -363,16 +383,25 @@ export function SettingsView(): ReactElement {
       setRuntimeError(i18n.t("settings.preloadMissing"));
       return;
     }
+    if (runtimeSaveInProgressRef.current) return;
+    runtimeSaveInProgressRef.current = true;
     setRuntimeSaveState("saving");
     setRuntimeError("");
-    const result = await window.agentApi.runtimePreferences.update(update);
-    if (!result.ok) {
+    try {
+      const result = await window.agentApi.runtimePreferences.update(update);
+      if (!result.ok) {
+        setRuntimeSaveState("error");
+        setRuntimeError(result.message);
+        return;
+      }
+      applyRuntimePreferences(result.value);
+      setRuntimeSaveState("saved");
+    } catch (updateError) {
       setRuntimeSaveState("error");
-      setRuntimeError(result.message);
-      return;
+      setRuntimeError(messageOfUnknownError(updateError));
+    } finally {
+      runtimeSaveInProgressRef.current = false;
     }
-    applyRuntimePreferences(result.value);
-    setRuntimeSaveState("saved");
   }
 
   function updateRuntimeToolAvailability(
@@ -935,7 +964,7 @@ export function SettingsView(): ReactElement {
                     id="code_default_model_profile"
                     value={runtimePreferences.codeDefaultModelProfileId ?? ""}
                     onChange={updateCodeDefaultModelProfile}
-                    disabled={!hasAgentApi || !profilesState}
+                    disabled={runtimeControlsDisabled || !profilesState}
                   >
                     <option value="">{t("settings.profileDefaults.activeProfile")}</option>
                     {profilesState?.profiles.map((profile) => (
@@ -955,7 +984,7 @@ export function SettingsView(): ReactElement {
                     id="write_default_model_profile"
                     value={runtimePreferences.writeDefaultModelProfileId ?? ""}
                     onChange={updateWriteDefaultModelProfile}
-                    disabled={!hasAgentApi || !profilesState}
+                    disabled={runtimeControlsDisabled || !profilesState}
                   >
                     <option value="">{t("settings.profileDefaults.activeProfile")}</option>
                     {profilesState?.profiles.map((profile) => (
@@ -1361,6 +1390,7 @@ export function SettingsView(): ReactElement {
                   <Toggle
                     checked={runtimePreferences.compaction.enabled}
                     label={t("settings.fields.compactionEnabled")}
+                    disabled={runtimeControlsDisabled}
                     onChange={(checked) =>
                       void updateRuntimePreferences({ compaction: { enabled: checked } })
                     }
@@ -1376,7 +1406,7 @@ export function SettingsView(): ReactElement {
                     id="compaction_strategy"
                     value={runtimePreferences.compaction.strategy}
                     onChange={updateCompactionStrategy}
-                    disabled={!runtimePreferences.compaction.enabled}
+                    disabled={runtimeControlsDisabled || !runtimePreferences.compaction.enabled}
                   >
                     {RUNTIME_COMPACTION_STRATEGIES.map((strategy) => (
                       <option key={strategy} value={strategy}>
@@ -1403,6 +1433,7 @@ export function SettingsView(): ReactElement {
                     id="default_approval_policy"
                     value={runtimePreferences.defaultApprovalPolicy}
                     onChange={updateDefaultApprovalPolicy}
+                    disabled={runtimeControlsDisabled}
                   >
                     {THREAD_APPROVAL_POLICIES.map((policy) => (
                       <option key={policy} value={policy}>
@@ -1421,6 +1452,7 @@ export function SettingsView(): ReactElement {
                     id="default_sandbox_mode"
                     value={runtimePreferences.defaultSandboxMode}
                     onChange={updateDefaultSandboxMode}
+                    disabled={runtimeControlsDisabled}
                   >
                     {THREAD_SANDBOX_MODES.map((mode) => (
                       <option key={mode} value={mode}>
@@ -1445,6 +1477,7 @@ export function SettingsView(): ReactElement {
                     <Toggle
                       checked={runtimePreferences.toolAvailability.code[toolName]}
                       label={t("settings.fields.codeToolAccess")}
+                      disabled={runtimeControlsDisabled}
                       onChange={(checked) =>
                         updateRuntimeToolAvailability("code", toolName, checked)
                       }
@@ -1452,6 +1485,7 @@ export function SettingsView(): ReactElement {
                     <Toggle
                       checked={runtimePreferences.toolAvailability.write[toolName]}
                       label={t("settings.fields.writeToolAccess")}
+                      disabled={runtimeControlsDisabled}
                       onChange={(checked) =>
                         updateRuntimeToolAvailability("write", toolName, checked)
                       }
@@ -1479,7 +1513,7 @@ export function SettingsView(): ReactElement {
                     max={MAX_RUNTIME_COMMAND_TIMEOUT_MS}
                     value={commandDraft.timeoutMs}
                     placeholder={String(DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS)}
-                    disabled={!hasAgentApi}
+                    disabled={runtimeControlsDisabled}
                     onChange={(event) =>
                       updateCommandDraft("timeoutMs", event.target.value)
                     }
@@ -1502,7 +1536,7 @@ export function SettingsView(): ReactElement {
                     max={MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES}
                     value={commandDraft.maxOutputBytes}
                     placeholder={String(DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES)}
-                    disabled={!hasAgentApi}
+                    disabled={runtimeControlsDisabled}
                     onChange={(event) =>
                       updateCommandDraft("maxOutputBytes", event.target.value)
                     }
@@ -1533,6 +1567,7 @@ export function SettingsView(): ReactElement {
                   <Toggle
                     checked={runtimePreferences.approvalExperience.showDiffByDefault}
                     label={t("settings.fields.showDiffByDefault")}
+                    disabled={runtimeControlsDisabled}
                     onChange={(checked) =>
                       void updateRuntimePreferences({
                         approvalExperience: { showDiffByDefault: checked },
@@ -1548,6 +1583,7 @@ export function SettingsView(): ReactElement {
                   <Toggle
                     checked={runtimePreferences.approvalExperience.autoScrollOnRequest}
                     label={t("settings.fields.autoScrollOnRequest")}
+                    disabled={runtimeControlsDisabled}
                     onChange={(checked) =>
                       void updateRuntimePreferences({
                         approvalExperience: { autoScrollOnRequest: checked },
@@ -1563,6 +1599,7 @@ export function SettingsView(): ReactElement {
                   <Toggle
                     checked={runtimePreferences.approvalExperience.showReadOnlyToolRecords}
                     label={t("settings.fields.showReadOnlyToolRecords")}
+                    disabled={runtimeControlsDisabled}
                     onChange={(checked) =>
                       void updateRuntimePreferences({
                         approvalExperience: { showReadOnlyToolRecords: checked },
@@ -1578,6 +1615,7 @@ export function SettingsView(): ReactElement {
                   <Toggle
                     checked={runtimePreferences.approvalExperience.showFailureToasts}
                     label={t("settings.fields.showFailureToasts")}
+                    disabled={runtimeControlsDisabled}
                     onChange={(checked) =>
                       void updateRuntimePreferences({
                         approvalExperience: { showFailureToasts: checked },
@@ -1735,6 +1773,17 @@ export function validateRuntimeCommandDraft(
     };
   }
   return { ok: true, value: parsed };
+}
+
+export function shouldDisableRuntimePreferenceControls(
+  hasAgentApi: boolean,
+  runtimeSaveState: RuntimeSaveState,
+): boolean {
+  return !hasAgentApi || runtimeSaveState === "loading" || runtimeSaveState === "saving";
+}
+
+export function messageOfUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function parseOptionalPositiveIntegerForValidation(

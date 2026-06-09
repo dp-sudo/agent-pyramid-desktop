@@ -9,9 +9,12 @@ import {
   formatInitialLoadErrors,
   getNextSidebarWidth,
   isGlobalRuntimeErrorEvent,
+  messageOfWorkbenchError,
   normalizeWriteAssistantSendPayload,
+  runWorkbenchIpc,
   shouldShowWorkbenchErrorToast,
   shouldUnsubscribeRemovedThread,
+  WORKBENCH_DISMISS_BUTTON_TEXT,
   workbenchThreadModeForRoute,
 } from "../../src/renderer/src/ui/Workbench";
 import type {
@@ -33,6 +36,22 @@ describe("Workbench", () => {
 
   it("does not report an initial load error when all IPC requests succeed", () => {
     expect(formatInitialLoadErrors([ok([]), ok({}), ok({})])).toBeNull();
+  });
+
+  it("keeps rejected Workbench IPC calls visible through IpcResult errors", async () => {
+    await expect(
+      runWorkbenchIpc(() => Promise.reject(new Error("threads channel unavailable"))),
+    ).resolves.toEqual(
+      err("RENDERER_IPC_REJECTED", "threads channel unavailable"),
+    );
+    await expect(
+      runWorkbenchIpc(() => {
+        throw "preload bridge unavailable";
+      }),
+    ).resolves.toEqual(
+      err("RENDERER_IPC_REJECTED", "preload bridge unavailable"),
+    );
+    expect(messageOfWorkbenchError(new Error("runtime failed"))).toBe("runtime failed");
   });
 
   it("keeps sidebar width inside the supported drag range", () => {
@@ -89,6 +108,7 @@ describe("Workbench", () => {
     expect(shouldShowWorkbenchErrorToast(null)).toBe(false);
     expect(shouldShowWorkbenchErrorToast("Runtime failed")).toBe(true);
     expect(shouldShowWorkbenchErrorToast("Runtime failed", false)).toBe(false);
+    expect(WORKBENCH_DISMISS_BUTTON_TEXT).toBe("x");
   });
 
   it("cleans up only threads with retained SSE subscriptions", () => {

@@ -113,6 +113,100 @@ describe("timeline model", () => {
     expect(turn.assistantItems.map((item) => item.id)).toEqual(["assistant-final"]);
   });
 
+  it("keeps process items that arrive after the final answer in follow-up order", () => {
+    const items: Item[] = [
+      {
+        kind: "user",
+        id: "user-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "Explain",
+        createdAt,
+      },
+      {
+        kind: "assistant",
+        id: "assistant-final",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "Final answer",
+        createdAt,
+      },
+      {
+        kind: "reasoning",
+        id: "reasoning-after",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "Late reasoning chunk",
+        createdAt,
+      },
+      {
+        kind: "plan",
+        id: "plan-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        steps: [{ id: "step-1", title: "Patch", status: "pending" }],
+        createdAt,
+      },
+    ];
+
+    const [turn] = groupTimelineTurns(items);
+
+    expect(turn.processItems).toEqual([]);
+    expect(turn.assistantItems.map((item) => item.id)).toEqual(["assistant-final"]);
+    expect(turn.followupItems.map((item) => item.id)).toEqual([
+      "reasoning-after",
+      "plan-1",
+    ]);
+  });
+
+  it("keeps passive post-answer system records after the final answer", () => {
+    const items: Item[] = [
+      {
+        kind: "user",
+        id: "user-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "Explain",
+        createdAt,
+      },
+      {
+        kind: "assistant",
+        id: "assistant-final",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "Final answer",
+        createdAt,
+      },
+      {
+        kind: "system",
+        id: "system-after",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "Interrupted after answer.",
+        level: "warn",
+        createdAt,
+      },
+      {
+        kind: "compaction",
+        id: "compaction-after",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        summary: "Older context compacted.",
+        replacedItemCount: 4,
+        createdAt,
+      },
+    ];
+
+    const [turn] = groupTimelineTurns(items);
+
+    expect(turn.processItems).toEqual([]);
+    expect(turn.assistantItems.map((item) => item.id)).toEqual(["assistant-final"]);
+    expect(turn.followupItems.map((item) => item.id)).toEqual([
+      "system-after",
+      "compaction-after",
+    ]);
+  });
+
   it("summarizes known tools with localized status and detail", () => {
     const item: ToolItem = {
       kind: "tool",

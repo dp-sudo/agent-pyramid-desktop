@@ -8,6 +8,7 @@ const AUTOSAVE_DELAY_MS = 800;
 const COMPLETION_DELAY_MS = 650;
 const WRITE_SEARCH_DEBOUNCE_MS = 250;
 const COMPLETION_MIN_TRAILING_CHARS = 10;
+export const WRITE_SEARCH_CLEAR_BUTTON_TEXT = "x";
 type WriteStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
 export interface WriteAssistantPromptPayload {
@@ -484,7 +485,7 @@ export function WriteWorkspaceView({
               aria-label={t("write.clearSearch")}
               title={t("write.clearSearch")}
             >
-              ×
+              {WRITE_SEARCH_CLEAR_BUTTON_TEXT}
             </button>
           ) : null}
         </div>

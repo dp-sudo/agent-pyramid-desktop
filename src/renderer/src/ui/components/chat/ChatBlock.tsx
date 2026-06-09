@@ -37,14 +37,7 @@ export function ChatBlock({ item, isLive, nested, onApprove }: ChatBlockProps): 
         </div>
       );
     case "reasoning":
-      return (
-        <div className={`ds-process-entry ${nested ? "is-nested" : ""}`}>
-          <div className="ds-process-entry-title">{t("chat.reasoningLabel")}</div>
-          <div className="ds-process-entry-detail ds-process-reasoning">
-            <AssistantMarkdown text={item.text} streaming={isLive} />
-          </div>
-        </div>
-      );
+      return <ReasoningBlock item={item} isLive={isLive} nested={nested} />;
     case "tool":
       return <ToolBlock item={item} nested={nested} />;
     case "approval":
@@ -94,6 +87,37 @@ export function ChatBlock({ item, isLive, nested, onApprove }: ChatBlockProps): 
       );
     }
   }
+}
+
+function ReasoningBlock({
+  item,
+  isLive,
+  nested,
+}: {
+  item: Extract<Item, { kind: "reasoning" }>;
+  isLive?: boolean;
+  nested?: boolean;
+}): ReactElement {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(() => isReasoningOpenByDefault(Boolean(isLive)));
+  return (
+    <details
+      className={`ds-process-entry ds-process-reasoning-entry ${nested ? "is-nested" : ""}`}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="ds-process-entry-summary">
+        <span className="ds-process-entry-title">{t("chat.reasoningLabel")}</span>
+      </summary>
+      <div className="ds-process-entry-detail ds-process-reasoning">
+        <AssistantMarkdown text={item.text} streaming={isLive} />
+      </div>
+    </details>
+  );
+}
+
+export function isReasoningOpenByDefault(isLive: boolean): boolean {
+  return isLive;
 }
 
 function ApprovalBlock({

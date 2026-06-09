@@ -30,6 +30,7 @@ interface FloatingComposerProps {
 
 const COMPOSER_IMAGE_ACCEPT = SUPPORTED_ATTACHMENT_MIME_TYPES.join(",");
 const COMPOSER_THUMBNAIL_MAX_EDGE = 192;
+export const COMPOSER_REMOVE_ATTACHMENT_BUTTON_TEXT = "x";
 
 export interface ComposerImageFile {
   file: File;
@@ -313,7 +314,7 @@ export function FloatingComposer({
                 title={t("composer.removeAttachment")}
                 aria-label={t("composer.removeAttachment")}
               >
-                ×
+                {COMPOSER_REMOVE_ATTACHMENT_BUTTON_TEXT}
               </button>
             </div>
           ))}

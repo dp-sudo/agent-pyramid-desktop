@@ -30,6 +30,8 @@
     "copyCode": "Copy",
     "copyCodeDone": "Copied",
     "copyCodeFailed": "Copy failed",
+    "expandCode": "Expand",
+    "collapseCode": "Collapse",
     "toolStatus": {
       "pending": "Pending",
       "running": "Running",

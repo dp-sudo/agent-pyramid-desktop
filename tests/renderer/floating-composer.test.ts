@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canAddComposerImageFromSource,
   canSubmitComposerDraft,
+  COMPOSER_REMOVE_ATTACHMENT_BUTTON_TEXT,
   getAttachmentThumbnailSrc,
   getClipboardImageFiles,
   getComposerImageAttachmentName,
@@ -67,6 +68,7 @@ describe("FloatingComposer", () => {
   });
 
   it("blocks attachment removal while a send or active turn can still need the blob", () => {
+    expect(COMPOSER_REMOVE_ATTACHMENT_BUTTON_TEXT).toBe("x");
     expect(
       isAttachmentRemovalDisabled({
         disabled: false,

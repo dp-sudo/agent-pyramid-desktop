@@ -205,7 +205,8 @@ Component: `MessageTimeline`.
 Purpose:
 
 - Group raw `Item[]` into turns via `groupTimelineTurns()`.
-- Render user, work process, assistant, and follow-up items.
+- Render user, pre-answer work process, assistant, and follow-up items without
+  moving post-answer items ahead of the answer.
 - Keep scroll pinned to bottom while user is near the bottom.
 - Show `InitialSessionUsageHeatmap` when no items exist.
 
@@ -235,7 +236,7 @@ Item rendering:
 | --- | --- |
 | `user` | Right-side user bubble with optional attachment names. |
 | `assistant` | Markdown assistant bubble. Live output gets shiny styling. |
-| `reasoning` | Process entry with reasoning label and markdown body. |
+| `reasoning` | Collapsible process entry with reasoning label and markdown body. |
 | `tool` | Collapsible process entry with status/tone summary. |
 | `approval` | Approval block with args JSON and allow/deny buttons. |
 | `user_input` | System-style user input prompt. |
@@ -250,6 +251,7 @@ Key classes:
 - `ds-assistant-bubble`
 - `ds-message-attachments`
 - `ds-process-entry`
+- `ds-process-reasoning-entry`
 - `ds-process-entry-summary`
 - `ds-process-entry-title`
 - `ds-process-entry-status`
@@ -268,6 +270,9 @@ Approval behavior:
 - Unresolved approvals for the active thread also appear in a composer-adjacent
   pending approval panel, while the timeline block remains as the durable audit
   record.
+- Pending approval auto-scroll is driven by the pending approval identity
+  signature, not only by count, so replacing one pending approval with another
+  still honors `autoScrollOnRequest`.
 
 ### Assistant Markdown
 
@@ -283,6 +288,8 @@ Renderer:
   protocols render as plain text instead of clickable anchors.
 - Code blocks are wrapped in `ds-code-block`.
 - Code language header is extracted from `language-*` class.
+- Long code blocks start collapsed with expand/collapse controls while short code
+  blocks remain open.
 - Tables are wrapped in `ds-markdown-table-wrap`.
 - Images are wrapped in `ds-markdown-image-frame`; only `http(s)` and supported
   image `data:` URLs are rendered.
@@ -294,6 +301,7 @@ Key classes:
 - `ds-shiny-markdown`
 - `ds-code-block`
 - `ds-code-block-header`
+- `ds-code-block-actions`
 - `ds-markdown-table-wrap`
 - `ds-markdown-image-frame`
 - `ds-markdown-task-checkbox`
@@ -311,6 +319,8 @@ Purpose:
 - Paste image attachments directly from the clipboard when Workbench Settings
   allows clipboard image paste.
 - Preview image attachments as thumbnails with an overlaid remove button.
+- Attachment remove uses stable visible text plus localized `aria-label` /
+  `title`, matching the error-toast control.
 - Toggle plan mode and goal mode.
 - Select model profile and reasoning effort.
 
@@ -409,6 +419,10 @@ Class: `ds-error-toast`.
 Source:
 
 - `state.errorMessage`.
+- Workbench preload IPC `IpcResult.err` values and rejected invoke promises are
+  normalized into this state before display.
+- The dismiss button uses stable visible text plus localized `aria-label` and
+  `title`; it must not depend on glyphs that can degrade under encoding issues.
 
 Behavior:
 
@@ -461,6 +475,9 @@ Purpose:
 - Refresh markdown file list.
 - Show active workspace.
 - Search markdown files.
+- Search clear uses stable visible text plus localized `aria-label` / `title`,
+  so the control does not depend on glyphs that can degrade under encoding
+  issues.
 - Display file list and list states.
 
 Key classes:
@@ -719,6 +736,8 @@ State sinks:
   `FloatingComposer`.
 - Model defaults update `runtimePreferences` through
   `window.agentApi.runtimePreferences.update()`.
+- Runtime preference controls are disabled while the runtime preference load or
+  save state is `loading` / `saving`, and when the preload API is unavailable.
 
 ### Model Settings
 
