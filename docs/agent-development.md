@@ -70,6 +70,11 @@
 
 ## 变更记录
 
+### 2026-06-09 - SSE 全局运行时错误投递修复
+
+- 修复 SSE push 兼容边界：`sse-handlers.ts` 现在为每个已订阅窗口维护单一全局 `runtime_error` 监听器，无 `threadId` 的进程级错误会投递一次；带 `threadId` 的错误继续走原有 thread subscription，避免多 thread 订阅窗口收到重复全局错误。
+- 验证方式：扩展 SSE IPC 单元测试覆盖全局错误单次投递、线程级错误按订阅过滤、unsubscribe 与 webContents destroyed 后清理全局监听；完整验证命令见本次维护结果。
+
 ### 2026-06-09 - Renderer SSE 后台生命周期投影修复
 
 - 修复 Workbench runtime event 分发边界：保留的后台 thread SSE subscription 即使在 Code/Write route 切换后清空 active thread，也会继续消费 `turn_started` / `turn_completed` / `turn_failed` 生命周期事件并维护 `inFlightTurnsByThreadId`；timeline item 仍只写入当前 active thread，避免后台内容污染当前对话。
@@ -84,6 +89,14 @@
 
 - 修复 model config IPC parser 的空更新问题：`config:model:update` 现在拒绝 `{}`，profile update 也会拒绝只有 `id` 或 `config: {}` 的 payload，避免无业务字段变化却写入新的 `updatedAt` 或向用户报告保存成功；profile create 仍允许 `config: {}` 作为创建默认配置 profile。
 - 验证方式：扩展 model-config IPC 单元测试覆盖空 update、空 profile update、空 config update envelope，以及 create 默认配置 profile；完整验证命令见本次实现结果。
+
+### 2026-06-09 - Renderer 半成品 Inspector 与绑定状态清理
+
+- 清理未实现的右侧 Inspector `file` 模式：`RightPanelMode` 只保留当前可打开的 `changes`、`todo`、`plan`，删除空 `FilePanel` 占位和未使用 i18n 文案，避免类型层保留不可达半成品功能。
+- 修复 Write workspace 绑定返回值：复用已有 thread 时，若 thread 或 timeline items 加载失败，`selectOrCreateThreadForWorkspace()` 会返回失败，Write 文件列表不会继续按成功绑定路径加载。
+- 清理 `AppShell` 挂载时重复清空线程列表的无效 effect，避免启动阶段产生无意义状态写入。
+- 加固 workspace thread 选择：`findLatestThreadForWorkspace()` 现在按 `updatedAt` 选择最新 active thread，不再依赖输入数组排序。
+- 验证方式：扩展 renderer 单元测试覆盖非排序 thread 输入；完整验证命令见本次维护结果。
 
 ### 2026-06-09 - Windows 运行兼容优化
 

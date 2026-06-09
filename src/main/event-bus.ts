@@ -3,8 +3,8 @@ import type { RuntimeEvent, RuntimeEventKind } from "../shared/agent-contracts.j
 
 /**
  * Main-process event bus. The runtime emits typed RuntimeEvent values;
- * the IPC layer subscribes per-thread and forwards to the relevant
- * renderer via `webContents.send`.
+ * the IPC layer forwards thread-scoped events to relevant renderers and
+ * separately fans out process-level runtime errors without a threadId.
  */
 export class RuntimeEventBus extends EventEmitter {
   override on(eventName: RuntimeEventKind, listener: (event: RuntimeEvent) => void): this {

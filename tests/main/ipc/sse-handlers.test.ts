@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RuntimeEventBus } from "../../../src/main/event-bus";
 import {
+  SSE_PUSH_CHANNEL,
   SSE_SUBSCRIBE_CHANNEL,
   SSE_UNSUBSCRIBE_CHANNEL,
 } from "../../../src/shared/ipc";
@@ -9,7 +10,11 @@ import {
   __resetSseSubscriptionsForTests,
   registerSseHandlers,
 } from "../../../src/main/ipc/sse-handlers";
-import type { RuntimeEvent, TurnRecord } from "../../../src/shared/agent-contracts";
+import type {
+  RuntimeErrorEvent,
+  RuntimeEvent,
+  TurnRecord,
+} from "../../../src/shared/agent-contracts";
 
 type IpcHandler = (
   event: { sender: FakeWebContents },
@@ -70,6 +75,15 @@ function turnStartedEvent(overrides: Partial<TurnRecord> = {}): RuntimeEvent {
   };
 }
 
+function runtimeErrorEvent(overrides: Partial<RuntimeErrorEvent> = {}): RuntimeErrorEvent {
+  return {
+    kind: "runtime_error",
+    code: "internal",
+    message: "Global failure",
+    ...overrides,
+  };
+}
+
 describe("sse handlers", () => {
   beforeEach(() => {
     electronMock.handlers.clear();
@@ -97,6 +111,41 @@ describe("sse handlers", () => {
     expect(sender.send).toHaveBeenCalledTimes(2);
   });
 
+  it("forwards global runtime errors once per webContents", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const subscribe = electronMock.handlers.get(SSE_SUBSCRIBE_CHANNEL);
+    if (!subscribe) throw new Error("Expected subscribe handler.");
+
+    const sender = new FakeWebContents();
+    await subscribe({ sender }, { threadId: "thread-1" });
+    await subscribe({ sender }, { threadId: "thread-2" });
+
+    const event = runtimeErrorEvent();
+    bus.emit("runtime_error", event);
+
+    expect(sender.send).toHaveBeenCalledOnce();
+    expect(sender.send).toHaveBeenCalledWith(SSE_PUSH_CHANNEL, event);
+  });
+
+  it("keeps thread-scoped runtime errors on the matching thread subscription", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const subscribe = electronMock.handlers.get(SSE_SUBSCRIBE_CHANNEL);
+    if (!subscribe) throw new Error("Expected subscribe handler.");
+
+    const sender = new FakeWebContents();
+    await subscribe({ sender }, { threadId: "thread-1" });
+
+    const ignored = runtimeErrorEvent({ threadId: "thread-2", message: "Ignored" });
+    const delivered = runtimeErrorEvent({ threadId: "thread-1", message: "Delivered" });
+    bus.emit("runtime_error", ignored);
+    bus.emit("runtime_error", delivered);
+
+    expect(sender.send).toHaveBeenCalledOnce();
+    expect(sender.send).toHaveBeenCalledWith(SSE_PUSH_CHANNEL, delivered);
+  });
+
   it("removes destroyed listeners on unsubscribe", async () => {
     const bus = new RuntimeEventBus();
     registerSseHandlers(bus);
@@ -112,6 +161,37 @@ describe("sse handlers", () => {
 
     expect(result).toEqual({ ok: true, value: { unsubscribed: true } });
     expect(sender.listenerCount("destroyed")).toBe(0);
+  });
+
+  it("stops forwarding global runtime errors after the last unsubscribe", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const subscribe = electronMock.handlers.get(SSE_SUBSCRIBE_CHANNEL);
+    const unsubscribe = electronMock.handlers.get(SSE_UNSUBSCRIBE_CHANNEL);
+    if (!subscribe || !unsubscribe) throw new Error("Expected SSE handlers.");
+
+    const sender = new FakeWebContents();
+    await subscribe({ sender }, { threadId: "thread-1" });
+    await unsubscribe({ sender }, { threadId: "thread-1" });
+
+    bus.emit("runtime_error", runtimeErrorEvent());
+
+    expect(sender.send).not.toHaveBeenCalled();
+  });
+
+  it("stops forwarding global runtime errors after webContents destruction", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const subscribe = electronMock.handlers.get(SSE_SUBSCRIBE_CHANNEL);
+    if (!subscribe) throw new Error("Expected subscribe handler.");
+
+    const sender = new FakeWebContents();
+    await subscribe({ sender }, { threadId: "thread-1" });
+    sender.destroy();
+
+    bus.emit("runtime_error", runtimeErrorEvent());
+
+    expect(sender.send).not.toHaveBeenCalled();
   });
 
   it("normalizes subscription thread ids before storing unsubscribe keys", async () => {

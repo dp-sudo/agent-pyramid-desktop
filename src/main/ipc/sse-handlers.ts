@@ -20,6 +20,7 @@ interface Subscription {
 interface WebContentsSubscriptions {
   cleanup: () => void;
   threads: Map<string, Subscription>;
+  unsubscribeGlobalRuntimeErrors: () => void;
 }
 
 const subscriptions = new Map<number, WebContentsSubscriptions>(); // webContentsId -> thread subscriptions
@@ -31,7 +32,7 @@ export function registerSseHandlers(bus: RuntimeEventBus): void {
       try {
         const threadId = parseThreadId(request, "threadId");
         const webContents = event.sender;
-        const bucket = ensureWebContentsSubscriptions(webContents);
+        const bucket = ensureWebContentsSubscriptions(webContents, bus);
         const existing = bucket.threads.get(threadId);
         if (existing) {
           existing.unsubscribe();
@@ -90,14 +91,26 @@ function ensureWebContentsSubscriptions(
     isDestroyed(): boolean;
     send(channel: string, event: RuntimeEvent): void;
   },
+  bus: RuntimeEventBus,
 ): WebContentsSubscriptions {
   const existing = subscriptions.get(webContents.id);
   if (existing) return existing;
+
+  // Thread subscriptions intentionally filter by threadId. A global
+  // runtime_error has no threadId, so each renderer gets one bucket-level
+  // listener that forwards those process-level failures without duplicating
+  // them for every subscribed thread.
+  const unsubscribeGlobalRuntimeErrors = bus.onKind("runtime_error", (evt: RuntimeEvent) => {
+    if (evt.kind !== "runtime_error" || evt.threadId) return;
+    if (webContents.isDestroyed()) return;
+    webContents.send(SSE_PUSH_CHANNEL, evt);
+  });
   const bucket: WebContentsSubscriptions = {
     cleanup: onWebContentsDestroyed(webContents, () => {
       disposeWebContentsSubscriptions(webContents.id);
     }),
     threads: new Map<string, Subscription>(),
+    unsubscribeGlobalRuntimeErrors,
   };
   subscriptions.set(webContents.id, bucket);
   return bucket;
@@ -110,8 +123,7 @@ function disposeThreadSubscription(webContentsId: number, threadId: string): boo
   sub.unsubscribe();
   bucket.threads.delete(threadId);
   if (bucket.threads.size === 0) {
-    bucket.cleanup();
-    subscriptions.delete(webContentsId);
+    disposeWebContentsSubscriptions(webContentsId);
   }
   return true;
 }
@@ -122,6 +134,7 @@ function disposeWebContentsSubscriptions(webContentsId: number): void {
   for (const sub of bucket.threads.values()) {
     sub.unsubscribe();
   }
+  bucket.unsubscribeGlobalRuntimeErrors();
   bucket.cleanup();
   subscriptions.delete(webContentsId);
 }

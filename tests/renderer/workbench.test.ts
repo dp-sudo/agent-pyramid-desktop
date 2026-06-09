@@ -124,6 +124,7 @@ describe("Workbench", () => {
 
   it("prefers the latest active thread that matches workspace and route mode", () => {
     const threads = [
+      makeThreadSummary("write-older", "/workspace", "write", "2026-06-08T07:00:00.000Z"),
       makeThreadSummary("code-1", "/workspace", "code", "2026-06-08T08:00:00.000Z"),
       makeThreadSummary("write-1", "/workspace", "write", "2026-06-08T09:00:00.000Z"),
       makeThreadSummary("write-archived", "/workspace", "write", "2026-06-08T10:00:00.000Z", "archived"),

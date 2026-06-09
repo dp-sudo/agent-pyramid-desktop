@@ -402,6 +402,12 @@ state stale. When a thread is deleted or archived from the sidebar, the
 renderer releases any retained subscription for that thread after the main
 process confirms the operation.
 
+SSE forwarding remains thread-scoped for normal runtime events. A
+`runtime_error` without `threadId` is forwarded once per subscribed window as a
+global process-level error, so renderer error handling can surface failures
+that are not tied to a specific active thread without duplicating them across
+retained thread subscriptions.
+
 Renderer event handling:
 
 - `turn_started`: `actions.turnStarted(event.turn)` keyed by `event.threadId`;

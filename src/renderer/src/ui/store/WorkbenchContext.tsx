@@ -30,7 +30,7 @@ import type {
 } from "../../../../shared/agent-contracts";
 
 export type WorkbenchRoute = "code" | "write" | "settings";
-export type RightPanelMode = "changes" | "todo" | "plan" | "file" | null;
+export type RightPanelMode = "changes" | "todo" | "plan" | null;
 
 export interface ComposerAttachment extends AttachmentRecord {
   previewUrl?: string;

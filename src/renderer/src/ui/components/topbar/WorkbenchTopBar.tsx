@@ -10,7 +10,7 @@ export function WorkbenchTopBar(): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
   const isBusy = getActiveThreadInFlightTurn(state) !== null;
-  const inspectorModes: Array<Exclude<RightPanelMode, null | "file">> = [
+  const inspectorModes: Array<Exclude<RightPanelMode, null>> = [
     "changes",
     "todo",
     "plan",

@@ -362,7 +362,6 @@ Purpose:
 - Show derived change/tool summaries.
 - Show pending todos.
 - Show latest plan progress.
-- Reserve a future file panel mode.
 
 Layout:
 
@@ -383,7 +382,6 @@ Panels:
 | `changes` | `ChangesPanel` | Tool item summaries. |
 | `todo` | `TodoPanel` | Pending approvals, failed tools, error system items, incomplete plan steps. |
 | `plan` | `PlanPanel` | Latest `PlanItem`, progress meter, steps. |
-| `file` | `FilePanel` | Empty placeholder. |
 
 Key classes:
 

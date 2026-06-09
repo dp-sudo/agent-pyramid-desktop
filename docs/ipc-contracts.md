@@ -278,6 +278,11 @@ flowchart LR
   Runtime --> Bus --> Handler --> WebContents --> Preload --> Renderer
 ```
 
+`sse-handlers.ts` keeps thread-scoped events on per-thread subscriptions. A
+`runtime_error` without `threadId` is treated as a global process-level error
+and is forwarded once per subscribed `webContents`, even if that window has
+multiple active thread subscriptions.
+
 Current `RuntimeEvent.kind` values:
 
 - `turn_started`

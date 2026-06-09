@@ -59,9 +59,7 @@ export function RightInspector(): ReactElement | null {
             ? t("inspector.changes")
             : state.rightPanelMode === "todo"
               ? t("inspector.todo")
-              : state.rightPanelMode === "plan"
-                ? t("inspector.plan")
-                : t("inspector.file")}
+              : t("inspector.plan")}
         </strong>
         <button
           type="button"
@@ -77,7 +75,6 @@ export function RightInspector(): ReactElement | null {
         {state.rightPanelMode === "changes" ? <ChangesPanel /> : null}
         {state.rightPanelMode === "todo" ? <TodoPanel /> : null}
         {state.rightPanelMode === "plan" ? <PlanPanel /> : null}
-        {state.rightPanelMode === "file" ? <FilePanel /> : null}
       </div>
     </aside>
   );
@@ -157,11 +154,6 @@ function PlanPanel(): ReactElement {
       </ol>
     </div>
   );
-}
-
-function FilePanel(): ReactElement {
-  const { t } = useTranslation();
-  return <div className="ds-inspector-empty">{t("inspector.fileEmpty")}</div>;
 }
 
 export function clampRightInspectorWidth(width: number): number {

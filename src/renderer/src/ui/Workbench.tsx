@@ -171,31 +171,32 @@ export function Workbench(): ReactElement {
   }, [actions]);
 
   const onSelectThread = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       const requestId = selectThreadRequestRef.current + 1;
       selectThreadRequestRef.current = requestId;
       actions.setError(null);
       const threadResult = await window.agentApi.threads.get(id);
-      if (requestId !== selectThreadRequestRef.current) return;
+      if (requestId !== selectThreadRequestRef.current) return false;
       if (!threadResult.ok) {
         actions.setError(threadResult.message);
-        return;
+        return false;
       }
       const itemsResult = await window.agentApi.turns.get(id);
-      if (requestId !== selectThreadRequestRef.current) return;
+      if (requestId !== selectThreadRequestRef.current) return false;
       if (!itemsResult.ok) {
         actions.setError(itemsResult.message);
-        return;
+        return false;
       }
       const items = itemsResult.ok ? itemsResult.value.items : [];
       actions.selectThread(threadResult.value, items);
+      return true;
     },
     [actions],
   );
 
   const selectThreadById = useCallback(
-    async (id: string): Promise<void> => {
-      await onSelectThread(id);
+    async (id: string): Promise<boolean> => {
+      return onSelectThread(id);
     },
     [onSelectThread],
   );
@@ -217,8 +218,7 @@ export function Workbench(): ReactElement {
         mode,
       );
       if (latestForWorkspace) {
-        await selectThreadById(latestForWorkspace.id);
-        return true;
+        return selectThreadById(latestForWorkspace.id);
       }
 
       const created = await window.agentApi.threads.create({
@@ -788,12 +788,20 @@ export function findLatestThreadForWorkspace(
   workspace: string,
   mode: ThreadRecord["mode"],
 ): ThreadSummary | null {
-  return threads.find(
-    (thread) =>
-      thread.mode === mode &&
-      thread.workspace === workspace &&
-      thread.status !== "archived",
-  ) ?? null;
+  let latest: ThreadSummary | null = null;
+  for (const thread of threads) {
+    if (
+      thread.mode !== mode ||
+      thread.workspace !== workspace ||
+      thread.status === "archived"
+    ) {
+      continue;
+    }
+    if (!latest || Date.parse(thread.updatedAt) > Date.parse(latest.updatedAt)) {
+      latest = thread;
+    }
+  }
+  return latest;
 }
 
 export function filterThreadsForWorkbench(

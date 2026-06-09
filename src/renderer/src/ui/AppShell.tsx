@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, type ReactElement } from "react";
+import { lazy, Suspense, type ReactElement } from "react";
 import { useWorkbench } from "./store/WorkbenchContext";
 
 const Workbench = lazy(() =>
@@ -23,11 +23,7 @@ function RouteFallback(): ReactElement {
 }
 
 export function AppShell(): ReactElement {
-  const { state, actions } = useWorkbench();
-
-  useEffect(() => {
-    void actions.setThreads([]);
-  }, [actions]);
+  const { state } = useWorkbench();
 
   return (
     <div className="ds-workbench-shell">
