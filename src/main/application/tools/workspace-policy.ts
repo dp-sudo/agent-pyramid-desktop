@@ -1,6 +1,10 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { AgentToolContext } from "../../domain/agent/types";
+import {
+  isPathInsideOrEqual,
+  toPortableRelativePath,
+} from "../path-utils.js";
 
 const SKIPPED_DIRECTORIES = new Set([
   ".git",
@@ -69,7 +73,7 @@ function resolveWorkspaceRoot(workspace: string): string {
 }
 
 export function toWorkspaceRelative(workspace: string, fullPath: string): string {
-  return path.relative(resolveWorkspaceRoot(workspace), fullPath).replaceAll(path.sep, "/");
+  return toPortableRelativePath(resolveWorkspaceRoot(workspace), fullPath);
 }
 
 export function shouldSkipEntry(name: string): boolean {
@@ -90,7 +94,7 @@ function assertAllowedWorkspacePath(
 }
 
 function assertWithinWorkspace(root: string, resolved: string, relativePath: string): void {
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+  if (!isPathInsideOrEqual(root, resolved)) {
     throw new Error(`Path escapes workspace: ${relativePath}`);
   }
 }

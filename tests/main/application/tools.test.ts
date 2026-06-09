@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createCommandTools } from "../../../src/main/application/tools/command-tools";
+import { createCommandTools, createShellInvocation } from "../../../src/main/application/tools/command-tools";
 import { createCodingTools } from "../../../src/main/application/tools/coding-tools";
 import { createPlanTool } from "../../../src/main/application/tools/create-plan-tool";
 import { FileHistoryStore } from "../../../src/main/application/tools/file-history-state";
@@ -44,11 +44,31 @@ function asStringToolResult(result: string | { content: string }): string {
 }
 
 function nodeCommand(script: string): string {
+  if (process.platform === "win32") {
+    const encoded = Buffer.from(script, "utf8").toString("base64");
+    return `node -e eval^(Buffer.from^('${encoded}','base64'^).toString^(^)^)`;
+  }
   return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`;
 }
 
 function tscCommand(project = "tsconfig.json"): string {
   return `node ${JSON.stringify(requireFromTest.resolve("typescript/bin/tsc"))} --noEmit -p ${JSON.stringify(project)}`;
+}
+
+function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    enumerable: true,
+    value: platform,
+  });
+  try {
+    return fn();
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  }
 }
 
 describe("application tools", () => {
@@ -1419,6 +1439,42 @@ describe("application tools", () => {
     } finally {
       await removeTempDir(workspace);
     }
+  });
+
+  it("selects explicit Windows and POSIX shell invocations for workspace commands", () => {
+    withPlatform("win32", () => {
+      const originalComSpec = process.env.ComSpec;
+      process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
+      try {
+        expect(createShellInvocation("npm run typecheck")).toEqual({
+          file: "C:\\Windows\\System32\\cmd.exe",
+          args: ["/d", "/s", "/c", "npm run typecheck"],
+        });
+      } finally {
+        if (originalComSpec === undefined) {
+          delete process.env.ComSpec;
+        } else {
+          process.env.ComSpec = originalComSpec;
+        }
+      }
+    });
+
+    withPlatform("linux", () => {
+      const originalShell = process.env.SHELL;
+      process.env.SHELL = "/bin/bash";
+      try {
+        expect(createShellInvocation("npm run typecheck")).toEqual({
+          file: "/bin/bash",
+          args: ["-c", "npm run typecheck"],
+        });
+      } finally {
+        if (originalShell === undefined) {
+          delete process.env.SHELL;
+        } else {
+          process.env.SHELL = originalShell;
+        }
+      }
+    });
   });
 
   it("guards run_command cwd, timeouts, and output truncation", async () => {

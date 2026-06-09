@@ -9,6 +9,7 @@ import {
   toWorkspaceRelative,
 } from "./workspace-policy.js";
 import { assertUtf8TextBuffer } from "./text-file.js";
+import { isPathInsideOrEqual, isSamePath } from "../path-utils.js";
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const MIN_COMMAND_TIMEOUT_MS = 100;
@@ -326,6 +327,11 @@ interface CommandOutput {
   stderr: StreamCapture;
 }
 
+interface ShellInvocation {
+  file: string;
+  args: string[];
+}
+
 async function spawnWorkspaceCommand(
   command: string,
   cwd: string,
@@ -343,9 +349,10 @@ async function spawnWorkspaceCommand(
     let settled = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
 
-    const child = spawn(command, {
+    const shell = createShellInvocation(command);
+    const child = spawn(shell.file, shell.args, {
       cwd,
-      shell: true,
+      shell: false,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -442,6 +449,19 @@ function killWindowsProcessTree(
     console.warn("[command-tools] taskkill failed; falling back to child.kill:", error);
     child.kill(fallbackSignal);
   });
+}
+
+export function createShellInvocation(command: string): ShellInvocation {
+  if (process.platform === "win32") {
+    return {
+      file: process.env.ComSpec || "cmd.exe",
+      args: ["/d", "/s", "/c", command],
+    };
+  }
+  return {
+    file: process.env.SHELL || "/bin/sh",
+    args: ["-c", command],
+  };
 }
 
 function createOutputCollector(): {
@@ -571,10 +591,10 @@ async function collectLanguageServiceDiagnostics(
 function findTsConfig(workspace: string, filePath: string): string | undefined {
   let current = path.dirname(filePath);
   const root = path.resolve(workspace);
-  while (current === root || current.startsWith(root + path.sep)) {
+  while (isPathInsideOrEqual(root, current)) {
     const candidate = path.join(current, "tsconfig.json");
     if (ts.sys.fileExists(candidate)) return candidate;
-    if (current === root) break;
+    if (isSamePath(current, root)) break;
     current = path.dirname(current);
   }
   const rootCandidate = path.join(root, "tsconfig.json");

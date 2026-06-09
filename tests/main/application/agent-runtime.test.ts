@@ -32,6 +32,10 @@ const IMAGE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
 function nodeCommand(script: string): string {
+  if (process.platform === "win32") {
+    const encoded = Buffer.from(script, "utf8").toString("base64");
+    return `node -e eval^(Buffer.from^('${encoded}','base64'^).toString^(^)^)`;
+  }
   return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`;
 }
 

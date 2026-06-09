@@ -79,6 +79,19 @@ function createPoolWithWorker(worker: FakeWorker): LlmWorkerPool {
 }
 
 describe("LlmWorkerPool", () => {
+  it("starts workers from the stable bundled worker entry", async () => {
+    const worker = new FakeWorker();
+    let workerFilename = "";
+    const pool = new LlmWorkerPool(1, (filename) => {
+      workerFilename = filename;
+      return worker;
+    });
+
+    await pool.start();
+
+    expect(workerFilename.endsWith("llm-worker.js")).toBe(true);
+  });
+
   it("resolves chat responses and cleans request listeners", async () => {
     const worker = new FakeWorker();
     const pool = createPoolWithWorker(worker);

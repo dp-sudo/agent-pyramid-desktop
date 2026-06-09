@@ -87,6 +87,10 @@ Current groups:
 
 Notes:
 
+- Thread IPC handlers validate request objects, ids, simple enum fields, and
+  booleans before store/runtime access; malformed payloads return the existing
+  `THREAD_*_FAILED` envelope, with invalid update status preserving
+  `THREAD_STATUS_INVALID`.
 - `thread:update` blocks archiving an in-flight thread.
 - `thread:delete` blocks deleting an in-flight thread.
 - `JsonlThreadStore` validates thread ids, patch fields, and boolean list
@@ -140,6 +144,8 @@ Notes:
 Notes:
 
 - Pending approval state is in-memory in `AgentRuntime`.
+- Handler validates that `approvalId` is a non-empty string and `decision` is
+  `allow` or `deny` before touching runtime pending-approval state.
 - If the approval id is not pending, runtime throws and handler returns `APPROVAL_RESPOND_FAILED`.
 
 ### Goals
@@ -181,6 +187,8 @@ Notes:
 
 Notes:
 
+- Omitted request uses the default window; a present request must be an object,
+  and `days`, when provided, must be an integer before aggregation starts.
 - Default window is 30 days.
 - Maximum window is 180 days.
 - Handler uses a 10-second cache per store and day count.
@@ -244,6 +252,9 @@ Notes:
 - Profile creation validates `activate` as a strict boolean; non-boolean truthy
   values return `MODEL_CONFIG_PROFILES_CREATE_FAILED` and cannot change the active
   profile.
+- Profile update/delete/activate handlers validate non-empty profile ids before
+  store access. Profile update rejects non-object `config` payloads instead of
+  treating them as no-op updates.
 
 ## Runtime Event Push Contract
 

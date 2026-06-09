@@ -3,14 +3,29 @@ import { JsonlThreadStore } from "../../../src/main/persistence/index";
 import {
   collectCachedDailyUsage,
   collectDailyUsage,
+  parseUsageDailyRequest,
+  registerUsageHandlers,
 } from "../../../src/main/ipc/usage-handlers";
 import type { RuntimeEvent } from "../../../src/shared/agent-contracts";
+import { USAGE_DAILY_CHANNEL } from "../../../src/shared/ipc";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
+type IpcHandler = (_event: unknown, request?: unknown) => Promise<unknown>;
+
+const electronMock = vi.hoisted(() => {
+  const handlers = new Map<string, IpcHandler>();
+  return {
+    handlers,
+    ipcMain: {
+      handle: vi.fn((channel: string, handler: IpcHandler) => {
+        handlers.set(channel, handler);
+      }),
+    },
+  };
+});
+
 vi.mock("electron", () => ({
-  ipcMain: {
-    handle: vi.fn(),
-  },
+  ipcMain: electronMock.ipcMain,
 }));
 
 describe("usage handlers", () => {
@@ -18,10 +33,39 @@ describe("usage handlers", () => {
   let store: JsonlThreadStore;
 
   beforeEach(async () => {
+    electronMock.handlers.clear();
+    electronMock.ipcMain.handle.mockClear();
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-07T12:00:00.000Z"));
     userDataDir = await makeTempDir("agent-usage-store-");
     store = new JsonlThreadStore(userDataDir);
+  });
+
+  it("parses usage daily requests at the IPC boundary", () => {
+    expect(parseUsageDailyRequest(undefined)).toEqual({});
+    expect(parseUsageDailyRequest({ days: 7 })).toEqual({ days: 7 });
+    expect(() => parseUsageDailyRequest(null)).toThrow(
+      "Usage daily request must be an object.",
+    );
+    expect(() => parseUsageDailyRequest({ days: 1.5 })).toThrow(
+      "Usage daily days must be an integer.",
+    );
+  });
+
+  it("returns an error envelope for malformed usage requests", async () => {
+    const replayEvents = vi.spyOn(store, "replayEvents");
+    registerUsageHandlers(store);
+    const handler = electronMock.handlers.get(USAGE_DAILY_CHANNEL);
+    if (!handler) throw new Error("Expected usage daily handler.");
+
+    const result = await handler({}, { days: "30" });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "USAGE_DAILY_FAILED",
+      message: "Usage daily days must be an integer.",
+    });
+    expect(replayEvents).not.toHaveBeenCalled();
   });
 
   afterEach(async () => {

@@ -70,6 +70,14 @@
 
 ## 变更记录
 
+### 2026-06-09 - Windows 运行兼容优化
+
+- 新增主进程路径比较辅助：workspace tools、coding tools 和 Write IPC 的路径边界判断改为按宿主平台语义比较，Windows 下兼容盘符/路径大小写差异，同时保留 path escape 与 skipped directory 防护。
+- 加固命令工具跨平台执行：`run_command` / `diagnose_workspace` 不再依赖 Node 的隐式 `shell: true`，Windows 下显式走 `cmd.exe /d /s /c`，POSIX 下走 `$SHELL -c`；原有 timeout/interruption 的进程树终止策略保持不变。
+- 加固 Windows 打包启动链路：LLM worker pool 优先解析 `out/main/llm-worker.js` 稳定构建入口；生产 file URL 导航校验改为文件路径比较，避免 Windows file URL 盘符/编码差异造成误判。
+- 补充回归测试覆盖 Windows 风格路径大小写、shell invocation 和 worker 构建入口。
+- 验证方式：`npm run typecheck`、`npm run test`、`npm run build`。
+
 ### 2026-06-09 - 前端设置与 Write 工作台可用性收口
 
 - 修复 Settings 返回路径：`WorkbenchContext` 记录最近一次 code/write 工作台路由，设置页返回时回到来源工作台，避免从 Write 进入设置后被固定带回 Code。
@@ -90,8 +98,14 @@
 - 修复 Windows 命令中断：`run_command` 中断/超时时会终止 shell 子进程树，runtime 在 interrupted 终态前对已 abort 工具做有上限的 settle 等待，避免命令子进程继续占用 workspace。
 - 修复 TypeScript workspace diagnostics 测试脚本跨平台 quoting：测试内的 `typecheck` script 改用 `node` 启动本仓库解析出的 `tsc`，避免带空格的 Node 绝对路径在 Windows npm script 下被截断。
 - 加固 Write IPC 请求边界：`write.list/get/put/complete` 现在会在进入文件系统访问前校验请求对象和字符串字段，坏 payload 通过既有 `WRITE_*_FAILED` envelope 暴露明确错误。
+- 加固 threads IPC：`thread:list/create/get/update/delete/fork` 现在会在进入 `JsonlThreadStore` 或 runtime busy gate 前校验请求对象、id、简单枚举与布尔字段，坏 payload 返回既有 thread error envelope；非法 update status 继续保留 `THREAD_STATUS_INVALID`。
 - 加固 turns IPC：`turn:interrupt` 现在要求非空字符串 turnId，坏 payload 返回 `TURN_INTERRUPT_FAILED`，避免 malformed request 被 runtime no-op 包装成成功；`turn:get` 要求非空字符串 threadId，坏 payload 返回 `TURN_GET_FAILED` 且不会进入 store replay。
 - 加固 attachments IPC：`attachment:create/get/delete` 现在会在进入 `AttachmentStore` 前校验请求对象和 id/string 字段，坏 payload 通过既有 `ATTACHMENT_*_FAILED` envelope 暴露且不会触发附件持久化初始化。
+- 加固 usage IPC：`usage:daily` 仅在省略 request 时使用默认窗口；存在 request 时必须是对象且 `days` 必须为整数，坏 payload 返回 `USAGE_DAILY_FAILED`，不再静默降级成成功查询。
+- 加固 approval IPC：`approval:respond` 现在要求对象 payload、非空 approvalId 与 `allow | deny` decision，坏 payload 返回 `APPROVAL_RESPOND_FAILED` 且不会进入 runtime pending-approval 状态。
+- 加固 model config profile IPC：`profiles:update/delete/activate` 现在会先校验非空 profile id；`profiles:update` 会拒绝 `config: null` / array 等坏 payload，避免被 store 当作 no-op 更新并写入新的 `updatedAt`。
+- 修复路径工具类型兼容：`path-utils` 不再引用当前 Node 类型未导出的 `path.PlatformPath`，保持 win32/posix 路径安全比较行为不变并恢复 typecheck。
+- 修复 run_command 测试脚本 Windows quoting：测试 helper 不再把 `process.execPath` 当 JSON 字符串传给 `cmd /s /c`，Windows 下改用 base64 `node -e eval(...)` 形式，避免验证命令被 shell quote 误解析。
 - 修复 Anthropic-compatible 无工具请求兼容性：`MiniMaxGateway` 现在只在工具列表非空时发送 `tools` 与 `tool_choice: auto`，避免 no-tool chat 请求被兼容服务误判为工具调用请求。
 - 修复 Write workspace 绑定失败空错误：选择工作区时若无法选择或创建对应 Write thread，Write 状态栏会显示本地化失败原因；回调抛出的真实错误也会直接暴露。
 - 补充回归测试覆盖 runtime 默认隔离、策略覆盖放行、Write 强制 Code-only tool call 拒绝、route-aware thread helper 和 Write 文档状态隔离。

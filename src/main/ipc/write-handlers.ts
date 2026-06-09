@@ -17,6 +17,10 @@ import type {
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
 import { decodeUtf8TextBuffer } from "../application/tools/text-file.js";
+import {
+  isPathInsideOrEqual,
+  toPortableRelativePath,
+} from "../application/path-utils.js";
 
 const MARKDOWN_EXT = [".md", ".mdx", ".markdown"];
 const SKIPPED_DIRECTORIES = new Set([
@@ -260,7 +264,7 @@ function resolveWorkspaceRoot(workspace: string): string {
 }
 
 function assertWithinWorkspace(root: string, resolved: string, relativePath: string): void {
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+  if (!isPathInsideOrEqual(root, resolved)) {
     throw new Error(`Path escapes workspace: ${relativePath}`);
   }
 }
@@ -275,7 +279,7 @@ function assertAllowedWorkspacePath(root: string, resolved: string, relativePath
 }
 
 function toWorkspaceRelative(workspace: string, fullPath: string): string {
-  return path.relative(workspace, fullPath).replaceAll(path.sep, "/");
+  return toPortableRelativePath(workspace, fullPath);
 }
 
 function shouldSkipEntry(name: string): boolean {

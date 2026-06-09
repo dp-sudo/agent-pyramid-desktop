@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, session, shell } from "electron";
 import { JsonlThreadStore } from "./persistence/index.js";
 import { AttachmentStore } from "./persistence/attachment-store.js";
@@ -23,6 +23,7 @@ import { registerUsageHandlers } from "./ipc/usage-handlers.js";
 import { registerWorkspaceHandlers } from "./ipc/workspace-handlers.js";
 import { registerWriteHandlers } from "./ipc/write-handlers.js";
 import { registerModelConfigHandlers } from "./ipc/model-config-handlers.js";
+import { isSamePath } from "./application/path-utils.js";
 
 // ---------------------------------------------------------------------------
 // Wiring
@@ -137,8 +138,7 @@ function isAllowedAppNavigation(rawUrl: string): boolean {
       return url.origin === rendererUrl.origin;
     }
 
-    const rendererUrl = pathToFileURL(RENDERER_INDEX_FILE);
-    return url.protocol === "file:" && url.pathname === rendererUrl.pathname;
+    return url.protocol === "file:" && isSamePath(fileURLToPath(url), RENDERER_INDEX_FILE);
   } catch (_error) {
     void _error;
     return false;

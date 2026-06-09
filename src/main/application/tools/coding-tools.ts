@@ -8,6 +8,7 @@ import {
   toWorkspaceRelative,
 } from "./workspace-policy.js";
 import { decodeUtf8TextBuffer } from "./text-file.js";
+import { isSamePath } from "../path-utils.js";
 
 const MAX_EDIT_FILE_BYTES = 1_000_000;
 
@@ -292,7 +293,7 @@ async function prepareRollback(
   if (!entry) {
     throw new Error(`rollback_file has no history for ${relativePath}.`);
   }
-  if (path.resolve(entry.workspace) !== path.resolve(workspace)) {
+  if (!isSamePath(path.resolve(entry.workspace), path.resolve(workspace))) {
     throw new Error(`rollback_file history does not belong to this workspace: ${relativePath}`);
   }
 
@@ -396,7 +397,7 @@ async function assertPreparedChangePathStillAllowed(
   access: "read" | "write",
 ): Promise<void> {
   const resolved = await resolveWorkspacePathForAccess(change.workspace, change.path, access);
-  if (path.resolve(resolved) !== path.resolve(change.filePath)) {
+  if (!isSamePath(path.resolve(resolved), path.resolve(change.filePath))) {
     throw new Error(`Path changed before write: ${change.path}. Read it again before writing.`);
   }
 }

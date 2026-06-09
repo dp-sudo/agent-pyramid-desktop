@@ -20,13 +20,29 @@ interface UsageCacheEntry {
 const usageCache = new WeakMap<JsonlThreadStore, Map<number, UsageCacheEntry>>();
 
 export function registerUsageHandlers(store: JsonlThreadStore): void {
-  ipcMain.handle(USAGE_DAILY_CHANNEL, async (_event, request?: UsageDailyRequest) => {
+  ipcMain.handle(USAGE_DAILY_CHANNEL, async (_event, request?: unknown) => {
     try {
-      return ok(await collectCachedDailyUsage(store, request?.days));
+      return ok(await collectCachedDailyUsage(store, parseUsageDailyRequest(request).days));
     } catch (error) {
       return err("USAGE_DAILY_FAILED", messageOf(error));
     }
   });
+}
+
+// Usage aggregation defaults are intentional only for omitted requests. Bad
+// renderer payloads fail at the IPC boundary so malformed state is not reported
+// as a successful default 30-day query.
+export function parseUsageDailyRequest(request: unknown): UsageDailyRequest {
+  if (request === undefined) return {};
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    throw new Error("Usage daily request must be an object.");
+  }
+  const days = (request as Record<string, unknown>).days;
+  if (days === undefined) return {};
+  if (typeof days !== "number" || !Number.isInteger(days)) {
+    throw new Error("Usage daily days must be an integer.");
+  }
+  return { days };
 }
 
 export async function collectCachedDailyUsage(

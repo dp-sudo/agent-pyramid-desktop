@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -12,7 +13,7 @@ import type { ThreadRecord } from "../../../shared/agent-contracts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const WORKER_FILE = path.join(__dirname, "llm-worker.js");
+const WORKER_FILE = resolveWorkerFile();
 
 interface PoolEntry {
   worker: WorkerLike;
@@ -191,4 +192,12 @@ export class LlmWorkerPool {
       this.threadToCancel.delete(threadId);
     }
   }
+}
+
+export function resolveWorkerFile(): string {
+  const candidates = [
+    path.join(__dirname, "llm-worker.js"),
+    path.join(__dirname, "worker.js"),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
 }
