@@ -312,11 +312,18 @@ Tool availability:
 - Constructor-injected `toolAccessPolicy` remains the highest-priority override
   for tests and composition-root policy, then persisted runtime preferences
   apply to known runtime tool names, then the default policy applies.
+- Renderer read-only tool record visibility uses the shared
+  `RUNTIME_READ_ONLY_TOOL_NAMES` list, and tests assert that list matches
+  built-in `metadata.isReadOnly` tools so UI presentation cannot drift from
+  runtime approval metadata.
 
 Approval policy currently implemented in runtime:
 
 - Tools marked `metadata.isReadOnly` skip approval.
 - Enabled `create_plan` and `update_goal` skip approval.
+- `create_plan` step statuses use shared `PLAN_STEP_STATUSES`; missing status
+  defaults to `pending`, while unknown values fail instead of being silently
+  downgraded.
 - `sandboxMode: "read-only"` denies non-read-only tools before execution.
 - `approvalPolicy: "never"` denies non-read-only tools before execution.
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
@@ -447,7 +454,7 @@ Failure behavior:
 - Runtime appends and emits `turn_failed` for top-level run loop failures.
 - Runtime marks turn failed through `markTurnStatus("failed")`.
 
-`RuntimeEventBus` carries live UI events such as `item_appended`, `item_updated`, `approval_requested`, and `goal_updated`. The durable event log is narrower: terminal turn usage/failure and tool budget audit events live in `events.jsonl`, while item state lives in `messages.jsonl`.
+`RuntimeEventBus` carries live UI events such as `item_appended`, `item_updated`, `approval_requested`, and `goal_updated`. The bus validates emitted runtime event shapes and kind/name consistency before delivery, while preserving Node `EventEmitter` listener lifecycle meta events (`newListener` / `removeListener`) for diagnostics and cleanup hooks. The durable event log is narrower: terminal turn usage/failure and tool budget audit events live in `events.jsonl`, while item state lives in `messages.jsonl`.
 
 ## Renderer Event Consumption
 

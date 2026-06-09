@@ -171,7 +171,6 @@
       "workbench": "Choose startup, layout, session, and Code/Write model defaults.",
       "visibility": "Control approval presentation and runtime visibility preferences."
     },
-    "comingSoon": "Settings view is coming soon.",
     "backToWorkbench": "Back to workbench",
     "save": "Save",
     "saving": "Saving",
@@ -320,7 +319,7 @@
       "allowComposerImagePaste": "Allow clipboard image files to become composer attachments without blocking regular text paste.",
       "defaultApprovalPolicy": "Default approval policy assigned to newly created threads.",
       "defaultSandboxMode": "Default sandbox mode assigned to newly created threads.",
-      "commandTimeout": "Default timeout in milliseconds for run_command and diagnose_workspace.",
+      "commandTimeout": "Default timeout and maximum tool-call timeout in milliseconds for run_command and diagnose_workspace.",
       "commandMaxOutput": "Maximum stdout and stderr bytes kept for command-backed tools.",
       "compactionEnabled": "Allow the runtime to compact or trim history before model requests.",
       "compactionStrategy": "Select the first strategy used when history exceeds the request budget.",

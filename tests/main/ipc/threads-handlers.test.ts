@@ -17,6 +17,7 @@ import type { JsonlThreadStore } from "../../../src/main/persistence/index";
 import type { RuntimePreferencesStore } from "../../../src/main/persistence/runtime-preferences-store";
 import {
   DEFAULT_RUNTIME_PREFERENCES,
+  type ThreadGoal,
   type ThreadRecord,
   type ThreadSummary,
 } from "../../../src/shared/agent-contracts";
@@ -63,6 +64,16 @@ function summary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
     mode: "code",
     status: "active",
     relation: "primary",
+    updatedAt: "2026-06-07T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function goal(overrides: Partial<ThreadGoal> = {}): ThreadGoal {
+  return {
+    text: "Ship goal",
+    status: "active",
+    createdAt: "2026-06-07T00:00:00.000Z",
     updatedAt: "2026-06-07T00:00:00.000Z",
     ...overrides,
   };
@@ -130,12 +141,15 @@ describe("thread handlers", () => {
       status: "archived",
       approvalPolicy: "never",
       sandboxMode: "read-only",
+      goal: goal(),
     })).toEqual({
       title: "Renamed",
       status: "archived",
       approvalPolicy: "never",
       sandboxMode: "read-only",
+      goal: goal(),
     });
+    expect(parseThreadUpdatePatch({ goal: null })).toEqual({ goal: null });
   });
 
   it("rejects malformed thread request payloads", () => {
@@ -169,6 +183,8 @@ describe("thread handlers", () => {
     );
     expect(() => parseThreadUpdatePatch({ status: "paused" }))
       .toThrow("Thread status must be active or archived.");
+    expect(() => parseThreadUpdatePatch({ goal: { text: "Ship", status: "paused" } }))
+      .toThrow("Thread update goal is invalid.");
   });
 
   it("returns an error envelope for malformed create requests before store access", async () => {
@@ -276,6 +292,41 @@ describe("thread handlers", () => {
       ok: false,
       code: "THREAD_UPDATE_FAILED",
       message: "Thread update patch must include at least one field.",
+    });
+    expect(store.getThread).not.toHaveBeenCalled();
+    expect(store.updateThread).not.toHaveBeenCalled();
+  });
+
+  it("returns an error envelope for malformed goal patches before store access", async () => {
+    const store = createStore();
+    registerThreadHandlers(store);
+    const handler = electronMock.handlers.get(THREAD_UPDATE_CHANNEL);
+    if (!handler) throw new Error("Expected thread update handler.");
+
+    const result = await handler({}, "thread-1", { goal: { text: "Ship", status: "paused" } });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "THREAD_UPDATE_FAILED",
+      message: "Thread update goal is invalid.",
+    });
+
+    const blankTextResult = await handler({}, "thread-1", {
+      goal: goal({ text: "   " }),
+    });
+    expect(blankTextResult).toEqual({
+      ok: false,
+      code: "THREAD_UPDATE_FAILED",
+      message: "Thread update goal is invalid.",
+    });
+
+    const blankSummaryResult = await handler({}, "thread-1", {
+      goal: goal({ summary: "   " }),
+    });
+    expect(blankSummaryResult).toEqual({
+      ok: false,
+      code: "THREAD_UPDATE_FAILED",
+      message: "Thread update goal is invalid.",
     });
     expect(store.getThread).not.toHaveBeenCalled();
     expect(store.updateThread).not.toHaveBeenCalled();

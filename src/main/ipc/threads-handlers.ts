@@ -10,7 +10,6 @@ import {
 import type {
   ThreadCreateInput,
   ThreadListFilter,
-  ThreadRecord,
   ThreadUpdatePatch,
 } from "../../shared/agent-contracts.js";
 import {
@@ -20,6 +19,7 @@ import {
   THREAD_SANDBOX_MODES,
   THREAD_STATUSES,
   err,
+  isThreadGoal,
   isThreadRelation,
   ok,
 } from "../../shared/agent-contracts.js";
@@ -192,6 +192,7 @@ async function applyThreadCreateDefaults(
 
 export function parseThreadUpdatePatch(patch: unknown): ThreadUpdatePatch {
   const value = requestObject(patch, "Thread update patch");
+  const goal = parseOptionalThreadGoalPatch(value.goal);
   const parsed: ThreadUpdatePatch = {
     ...optionalStringField(value, "title", "Thread update title must be a string."),
     ...optionalEnumField(
@@ -207,12 +208,21 @@ export function parseThreadUpdatePatch(patch: unknown): ThreadUpdatePatch {
       "Thread update sandboxMode is invalid.",
     ),
     ...optionalEnumField(value, "status", THREAD_STATUSES, "Thread status must be active or archived."),
-    ...(value.goal !== undefined ? { goal: value.goal as ThreadUpdatePatch["goal"] } : {}),
+    ...(goal !== undefined ? { goal } : {}),
   };
   if (Object.keys(parsed).length === 0) {
     throw new Error("Thread update patch must include at least one field.");
   }
   return parsed;
+}
+
+function parseOptionalThreadGoalPatch(value: unknown): ThreadUpdatePatch["goal"] | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!isThreadGoal(value)) {
+    throw new Error("Thread update goal is invalid.");
+  }
+  return value;
 }
 
 export function parseThreadId(request: unknown, label: string): string {

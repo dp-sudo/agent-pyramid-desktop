@@ -20,7 +20,9 @@ function turn(overrides: Partial<TurnRecord> = {}): TurnRecord {
   };
 }
 
-function turnStartedEvent(overrides: Partial<TurnRecord> = {}): RuntimeEvent {
+function turnStartedEvent(
+  overrides: Partial<TurnRecord> = {},
+): Extract<RuntimeEvent, { kind: "turn_started" }> {
   const record = turn(overrides);
   return {
     kind: "turn_started",
@@ -148,6 +150,55 @@ describe("RuntimeEventBus", () => {
     unsubscribe();
     bus.emit("runtime_error", event);
     expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it("rejects invalid or mismatched runtime events before delivery", () => {
+    const bus = new RuntimeEventBus();
+    const listener = vi.fn<(event: RuntimeEvent) => void>();
+    bus.onKind("runtime_error", listener);
+    const event: RuntimeEvent = {
+      kind: "runtime_error",
+      threadId: "thread-1",
+      code: "internal",
+      message: "failure",
+    };
+
+    expect(() => bus.emit("turn_failed", event)).toThrow(
+      "Runtime event kind does not match emitted event name.",
+    );
+    expect(() =>
+      bus.emit("runtime_error", { ...event, code: "unknown" } as unknown as RuntimeEvent),
+    ).toThrow("Runtime event shape is invalid.");
+    const inconsistentEvent = turnStartedEvent();
+    expect(() =>
+      bus.emit("turn_started", {
+        ...inconsistentEvent,
+        turn: { ...inconsistentEvent.turn, threadId: "thread-2" },
+      }),
+    ).toThrow("Runtime event shape is invalid.");
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("preserves EventEmitter listener lifecycle meta events", () => {
+    const bus = new RuntimeEventBus();
+    const newListener = vi.fn<(
+      eventName: string | symbol,
+      listener: (...args: unknown[]) => void,
+    ) => void>();
+    const removeListener = vi.fn<(
+      eventName: string | symbol,
+      listener: (...args: unknown[]) => void,
+    ) => void>();
+    bus.on("newListener", newListener);
+    bus.on("removeListener", removeListener);
+    const listener = vi.fn<(event: RuntimeEvent) => void>();
+
+    const unsubscribe = bus.onKind("runtime_error", listener);
+    unsubscribe();
+
+    expect(newListener.mock.calls.some(([eventName]) => eventName === "runtime_error"))
+      .toBe(true);
+    expect(removeListener).toHaveBeenCalledWith("runtime_error", listener);
   });
 
   it("forwards tool budget events to thread subscribers", () => {

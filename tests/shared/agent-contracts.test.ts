@@ -23,8 +23,10 @@ import {
   ITEM_KINDS,
   LLM_PROTOCOLS,
   MAX_ATTACHMENT_BYTES,
+  PLAN_STEP_STATUSES,
   RUNTIME_COMPACTION_STRATEGIES,
   RUNTIME_EVENT_KINDS,
+  RUNTIME_READ_ONLY_TOOL_NAMES,
   RUNTIME_TOOL_NAMES,
   SUPPORTED_ATTACHMENT_MIME_TYPES,
   THREAD_APPROVAL_POLICIES,
@@ -140,6 +142,16 @@ describe("shared agent contracts", () => {
   it("keeps runtime preferences defaults and guards as a shared contract", () => {
     expect(RUNTIME_TOOL_NAMES).toContain("apply_patch");
     expect(RUNTIME_TOOL_NAMES).toContain("run_command");
+    expect(RUNTIME_READ_ONLY_TOOL_NAMES).toEqual([
+      "list_files",
+      "read_file",
+      "search_files",
+      "diagnose_file",
+    ]);
+    expect(RUNTIME_READ_ONLY_TOOL_NAMES.every((toolName) =>
+      RUNTIME_TOOL_NAMES.includes(toolName),
+    )).toBe(true);
+    expect(PLAN_STEP_STATUSES).toEqual(["pending", "in_progress", "completed"]);
     expect(RUNTIME_COMPACTION_STRATEGIES).toEqual([
       "balanced",
       "recent-only",
@@ -256,10 +268,69 @@ describe("shared agent contracts", () => {
     expect(isThreadApprovalPolicy("sometimes")).toBe(false);
     expect(isThreadSandboxMode("workspace-write")).toBe(true);
     expect(isThreadSandboxMode("full-access")).toBe(false);
+    const primaryThreadId = "00000000-0000-4000-8000-000000000101";
+    const forkThreadId = "00000000-0000-4000-8000-000000000102";
+
     expect(isThreadRecord({
-      id: "thread-1",
+      id: primaryThreadId,
       title: "Thread",
       workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+      goal: {
+        text: "Ship",
+        status: "active",
+        createdAt: "2026-06-08T00:00:00.000Z",
+        updatedAt: "2026-06-08T00:00:00.000Z",
+      },
+    })).toBe(true);
+    expect(isThreadRecord({
+      id: forkThreadId,
+      title: "Fork",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "fork",
+      parentThreadId: primaryThreadId,
+      forkedAt: "2026-06-08T00:00:00.000Z",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(true);
+    expect(isThreadRecord({
+      id: "00000000-0000-4000-8000-000000000103",
+      title: "Windows Drive",
+      workspace: "C:\\workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(true);
+    expect(isThreadRecord({
+      id: "00000000-0000-4000-8000-000000000104",
+      title: "Windows Rooted",
+      workspace: "\\workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(true);
+    expect(isThreadRecord({
+      id: "00000000-0000-4000-8000-000000000105",
+      title: "Windows UNC",
+      workspace: "\\\\server\\share",
       mode: "code",
       status: "active",
       relation: "primary",
@@ -277,8 +348,124 @@ describe("shared agent contracts", () => {
       relation: "primary",
       createdAt: "2026-06-08T00:00:00.000Z",
       updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: primaryThreadId,
+      title: "   ",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: primaryThreadId,
+      title: "Thread",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+      goal: {
+        text: "   ",
+        status: "active",
+        createdAt: "2026-06-08T00:00:00.000Z",
+        updatedAt: "2026-06-08T00:00:00.000Z",
+      },
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: primaryThreadId,
+      title: "Thread",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+      goal: {
+        text: "Ship",
+        status: "active",
+        createdAt: "2026-06-08T00:00:00.000Z",
+        updatedAt: "2026-06-08T00:00:00.000Z",
+        summary: "   ",
+      },
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: primaryThreadId,
+      title: "Thread",
+      workspace: "relative/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: primaryThreadId,
+      title: "Thread",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
       approvalPolicy: "sometimes",
       sandboxMode: "workspace-write",
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: forkThreadId,
+      title: "Fork",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "fork",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: forkThreadId,
+      title: "Fork",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "fork",
+      parentThreadId: 1,
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: primaryThreadId,
+      title: "Thread",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+      goal: {
+        text: "Ship",
+        status: "paused",
+        createdAt: "2026-06-08T00:00:00.000Z",
+        updatedAt: "2026-06-08T00:00:00.000Z",
+      },
     })).toBe(false);
   });
 
@@ -640,6 +827,56 @@ describe("shared agent contracts", () => {
         },
       }),
     ).toBe(false);
+    const validTurnStarted = {
+      kind: "turn_started",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      startedAt: "2026-06-08T00:00:00.000Z",
+      turn: {
+        id: "turn-1",
+        threadId: "thread-1",
+        status: "in-flight",
+        startedAt: "2026-06-08T00:00:00.000Z",
+        model: "MiniMax-M3",
+        mode: "agent",
+      },
+    };
+    expect(isRuntimeEvent(validTurnStarted)).toBe(true);
+    expect(isRuntimeEvent({
+      ...validTurnStarted,
+      turn: { ...validTurnStarted.turn, threadId: "thread-2" },
+    })).toBe(false);
+    expect(isRuntimeEvent({
+      ...validTurnStarted,
+      turn: { ...validTurnStarted.turn, id: "turn-2" },
+    })).toBe(false);
+    expect(isRuntimeEvent({
+      ...validTurnStarted,
+      turn: { ...validTurnStarted.turn, startedAt: "2026-06-08T00:00:01.000Z" },
+    })).toBe(false);
+    const validItemEvent = {
+      kind: "item_appended",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: {
+        kind: "system",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "notice",
+        level: "info",
+        createdAt: "2026-06-08T00:00:00.000Z",
+      },
+    };
+    expect(isRuntimeEvent(validItemEvent)).toBe(true);
+    expect(isRuntimeEvent({
+      ...validItemEvent,
+      item: { ...validItemEvent.item, threadId: "thread-2" },
+    })).toBe(false);
+    expect(isRuntimeEvent({
+      ...validItemEvent,
+      item: { ...validItemEvent.item, turnId: "turn-2" },
+    })).toBe(false);
     expect(
       isRuntimeEvent({
         kind: "goal_updated",
@@ -648,6 +885,18 @@ describe("shared agent contracts", () => {
           text: "Ship",
           status: "active",
           createdAt: "2026-06-08",
+          updatedAt: "2026-06-08T00:00:00.000Z",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeEvent({
+        kind: "goal_updated",
+        threadId: "thread-1",
+        goal: {
+          text: "   ",
+          status: "active",
+          createdAt: "2026-06-08T00:00:00.000Z",
           updatedAt: "2026-06-08T00:00:00.000Z",
         },
       }),

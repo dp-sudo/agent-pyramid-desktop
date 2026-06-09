@@ -2203,7 +2203,6 @@ describe("AgentRuntime", () => {
                 command: nodeCommand(
                   "const fs = require('fs'); fs.writeFileSync('started.txt', '1'); setTimeout(() => undefined, 10000);",
                 ),
-                timeout_ms: 120000,
               },
             },
           ],

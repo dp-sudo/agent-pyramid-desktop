@@ -4,6 +4,7 @@ import {
   getActiveThreadInFlightTurn,
   useWorkbench,
 } from "../../store/WorkbenchContext";
+import { RUNTIME_READ_ONLY_TOOL_NAMES } from "../../../../../shared/agent-contracts";
 import { ChatBlock } from "./ChatBlock";
 import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
 import { groupTimelineTurns } from "./timeline-model";
@@ -74,7 +75,9 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
           const isActiveTurn = activeInFlightTurn?.id === turn.id;
           const processItems = showReadOnlyToolRecords
             ? turn.processItems
-            : turn.processItems.filter((item) => !isReadOnlyToolRecord(item));
+            : turn.processItems.filter((item) =>
+                shouldShowTimelineProcessItem(item, showReadOnlyToolRecords),
+              );
           const processCount = processItems.length;
           const hasProcess = processCount > 0;
           const processOpen = isTimelineProcessOpen({
@@ -150,17 +153,21 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
   );
 }
 
-const READ_ONLY_TOOL_RECORD_NAMES = new Set([
-  "list_files",
-  "read_file",
-  "search_files",
-  "diagnose_file",
-]);
+const READ_ONLY_TOOL_RECORD_NAMES = new Set<string>(RUNTIME_READ_ONLY_TOOL_NAMES);
 
 function isReadOnlyToolRecord(
   item: ReturnType<typeof groupTimelineTurns>[number]["processItems"][number],
 ): boolean {
   return item.kind === "tool" && READ_ONLY_TOOL_RECORD_NAMES.has(item.name);
+}
+
+export function shouldShowTimelineProcessItem(
+  item: ReturnType<typeof groupTimelineTurns>[number]["processItems"][number],
+  showReadOnlyToolRecords: boolean,
+): boolean {
+  if (showReadOnlyToolRecords) return true;
+  if (!isReadOnlyToolRecord(item)) return true;
+  return item.kind === "tool" && item.status === "failed";
 }
 
 export function shouldStickToTimelineBottom({

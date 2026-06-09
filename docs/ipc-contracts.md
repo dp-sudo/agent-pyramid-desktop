@@ -99,6 +99,9 @@ Notes:
   the request. Explicit request values still win.
 - `thread:update` rejects empty patches before store access and blocks
   archiving an in-flight thread.
+- `thread:update` accepts `goal` patches only as a complete `ThreadGoal` object
+  or `null`; malformed goal objects, including blank `text` or `summary`,
+  fail before store access.
 - `thread:delete` blocks deleting an in-flight thread.
 - `JsonlThreadStore` validates thread ids, patch fields, and boolean list
   filters such as `includeArchived` / `archivedOnly`.
@@ -116,10 +119,11 @@ Notes:
 - `turn:start` returns while the turn is still running.
 - Completion and streamed output are delivered through SSE runtime events.
 - `turn:get` replays JSONL and dedupes by item id, keeping the latest version.
-- `turn:start` validates request field shapes before a turn is created:
-  `text` must be string, `mode` must be `agent | plan`, `reasoningEffort` must
-  be supported, `attachmentIds` must be `string[]`, and `goalMode` must be
-  boolean.
+- `turn:start` delegates to `AgentRuntime.startTurn()`, whose request
+  normalization validates field shapes before a turn is created: `threadId`
+  and `text` must be non-empty strings, `mode` must be `agent | plan`,
+  `reasoningEffort` must be supported, `attachmentIds` must be `string[]`, and
+  `goalMode` must be boolean.
 - `turn:interrupt` validates that the renderer payload is a non-empty string
   before calling runtime; malformed payloads return `TURN_INTERRUPT_FAILED`.
 - `turn:get` validates that the renderer payload is a non-empty string
@@ -348,7 +352,10 @@ Current `RuntimeEvent.kind` values:
 
 `turn_started` carries `turn: TurnRecord` in addition to `threadId`, `turnId`,
 and `startedAt`; renderer consumers should use `event.turn` as the authoritative
-in-flight turn metadata.
+in-flight turn metadata. The shared runtime event guard requires those repeated
+top-level fields to match `turn.threadId`, `turn.id`, and `turn.startedAt`; for
+`item_appended` / `item_updated`, `event.threadId` and `event.turnId` must match
+the nested `item.threadId` and `item.turnId`.
 
 When adding a runtime event, update:
 

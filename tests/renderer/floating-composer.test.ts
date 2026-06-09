@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canAddComposerImageFromSource,
   canSubmitComposerDraft,
   getAttachmentThumbnailSrc,
   getClipboardImageFiles,
@@ -7,9 +8,11 @@ import {
   getContainSize,
   getDeleteShortcutAttachmentId,
   isAttachmentRemovalDisabled,
+  nextAttachmentPendingCount,
   normalizeSupportedComposerImageMimeType,
   partitionComposerImageFilesBySize,
 } from "../../src/renderer/src/ui/components/composer/FloatingComposer";
+import { DEFAULT_BASIC_PREFERENCES } from "../../src/renderer/src/ui/preferences";
 import type { ComposerAttachment } from "../../src/renderer/src/ui/store/WorkbenchContext";
 
 describe("FloatingComposer", () => {
@@ -131,6 +134,32 @@ describe("FloatingComposer", () => {
       acceptedFiles: [{ file: small, mimeType: "image/png" }],
       rejectedCount: 1,
     });
+  });
+
+  it("gates image attachment entry points by composer preferences", () => {
+    expect(canAddComposerImageFromSource(DEFAULT_BASIC_PREFERENCES, "picker"))
+      .toBe(true);
+    expect(canAddComposerImageFromSource(DEFAULT_BASIC_PREFERENCES, "paste"))
+      .toBe(true);
+    expect(
+      canAddComposerImageFromSource(
+        { ...DEFAULT_BASIC_PREFERENCES, allowComposerImageUpload: false },
+        "picker",
+      ),
+    ).toBe(false);
+    expect(
+      canAddComposerImageFromSource(
+        { ...DEFAULT_BASIC_PREFERENCES, allowComposerImagePaste: false },
+        "paste",
+      ),
+    ).toBe(false);
+  });
+
+  it("tracks pending attachment count by accepted files only", () => {
+    expect(nextAttachmentPendingCount(1, 2, "add")).toBe(3);
+    expect(nextAttachmentPendingCount(3, 1, "remove")).toBe(2);
+    expect(nextAttachmentPendingCount(1, 2, "remove")).toBe(0);
+    expect(nextAttachmentPendingCount(-1, -2, "add")).toBe(0);
   });
 
   it("creates stable names for pasted images without file names", () => {

@@ -217,7 +217,9 @@ export function FloatingComposer({
     }
     if (acceptedFiles.length === 0) return;
 
-    setAttachmentPendingCount((count) => count + acceptedFiles.length);
+    setAttachmentPendingCount((count) =>
+      nextAttachmentPendingCount(count, acceptedFiles.length, "add"),
+    );
     try {
       for (const [index, imageFile] of acceptedFiles.entries()) {
         const previewUrl = createPreviewUrl(imageFile.file);
@@ -252,7 +254,9 @@ export function FloatingComposer({
         }
       }
     } finally {
-      setAttachmentPendingCount((count) => Math.max(0, count - files.length));
+      setAttachmentPendingCount((count) =>
+        nextAttachmentPendingCount(count, acceptedFiles.length, "remove"),
+      );
     }
   }
 
@@ -633,6 +637,18 @@ export function canSubmitComposerDraft({
     !attachmentPending &&
     (text.trim().length > 0 || attachmentCount > 0)
   );
+}
+
+export function nextAttachmentPendingCount(
+  currentCount: number,
+  processedFileCount: number,
+  operation: "add" | "remove",
+): number {
+  const normalizedCurrentCount = Math.max(0, currentCount);
+  const normalizedProcessedFileCount = Math.max(0, processedFileCount);
+  return operation === "add"
+    ? normalizedCurrentCount + normalizedProcessedFileCount
+    : Math.max(0, normalizedCurrentCount - normalizedProcessedFileCount);
 }
 
 export function isAttachmentRemovalDisabled({

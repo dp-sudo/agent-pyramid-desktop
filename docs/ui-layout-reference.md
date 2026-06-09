@@ -307,8 +307,9 @@ Purpose:
 
 - Edit and send prompt text.
 - Interrupt in-flight turn.
-- Add image attachments.
-- Paste image attachments directly from the clipboard.
+- Add image attachments when Workbench Settings allows picker uploads.
+- Paste image attachments directly from the clipboard when Workbench Settings
+  allows clipboard image paste.
 - Preview image attachments as thumbnails with an overlaid remove button.
 - Toggle plan mode and goal mode.
 - Select model profile and reasoning effort.
@@ -338,10 +339,11 @@ States:
 - Attachment removal is disabled while a send is pending or the active thread is
   running, so runtime attachment reads cannot race with composer cleanup.
 - `menuOpen`, `pickerOpen`: popovers close on outside pointer down or Escape.
-- Clipboard paste filters to PNG/JPEG/WebP/GIF files, creates the same
-  renderer attachment records as the picker path, generates a bounded thumbnail
-  for the composer preview, and keeps normal text paste behavior when clipboard
-  text is present.
+- When enabled, clipboard paste filters to PNG/JPEG/WebP/GIF files, creates the
+  same renderer attachment records as the picker path, generates a bounded
+  thumbnail for the composer preview, and keeps normal text paste behavior when
+  clipboard text is present. When disabled, clipboard image files are ignored
+  before attachment processing and normal text paste remains untouched.
 - Backspace/Delete removes the newest attachment only when the textarea is empty
   and removal is not disabled.
 
@@ -627,7 +629,7 @@ Category ownership:
 | `model` | `profiles`, `connection`, `context`, `reasoning` | Main `ModelConfigStore` through `modelConfig.*` IPC. |
 | `agent` | `compaction` | Config-backed `RuntimePreferencesStore`; consumed by `AgentRuntime.prepareMessagesForRequest()`. |
 | `tools` | `permissions`, `toolAccess`, `commandLimits` | Config-backed `RuntimePreferencesStore`; consumed by thread creation, tool catalog filtering and command-backed tools. |
-| `workbench` | `startup`, `layout`, `session`, `modelDefaults` | Renderer `basicPreferences` for UI-only fields; config-backed `RuntimePreferencesStore` for Code/Write default model profile ids. |
+| `workbench` | `startup`, `layout`, `session`, `modelDefaults`, `attachments` | Renderer `basicPreferences` for UI-only fields and composer attachment entry points; config-backed `RuntimePreferencesStore` for Code/Write default model profile ids. |
 | `visibility` | `approvalPresentation` | Config-backed `RuntimePreferencesStore`; consumed by approval/timeline/toast presentation in renderer. |
 
 Model categories:
@@ -653,6 +655,7 @@ Workbench Settings categories:
 - `layout`
 - `session`
 - `modelDefaults`
+- `attachments`
 
 Notifications And Visibility categories:
 
@@ -700,10 +703,20 @@ Model defaults:
 - Empty selection means "use active profile"; runtime falls back to active/first
   profile if a saved default profile id no longer exists.
 
+Attachments:
+
+- Allow composer image upload: controls whether the `+` menu shows the image
+  picker row and whether stale file input changes can enter attachment
+  processing.
+- Allow composer image paste: controls whether clipboard image files can become
+  composer attachments. Regular text paste behavior is not blocked.
+
 State sinks:
 
 - Startup, layout and session settings update renderer `basicPreferences` and
   localStorage.
+- Attachment settings update renderer `basicPreferences` and are consumed by
+  `FloatingComposer`.
 - Model defaults update `runtimePreferences` through
   `window.agentApi.runtimePreferences.update()`.
 
@@ -798,7 +811,8 @@ Approval presentation:
 
 - Open approval diffs by default.
 - Scroll pending approvals into view.
-- Show or hide read-only tool process records.
+- Show or hide successful read-only tool process records; failed read-only tool
+  records remain visible so tool errors stay traceable in the timeline.
 - Show or suppress runtime failure toasts.
 
 ### Settings Primitives

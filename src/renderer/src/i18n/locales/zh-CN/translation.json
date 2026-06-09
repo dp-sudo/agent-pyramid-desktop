@@ -171,7 +171,6 @@
       "workbench": "选择启动、布局、会话和 Code/Write 模型默认值。",
       "visibility": "控制审批展示和运行时可见性偏好。"
     },
-    "comingSoon": "设置页即将推出。",
     "backToWorkbench": "返回工作台",
     "save": "保存",
     "saving": "保存中",
@@ -319,7 +318,7 @@
       "allowComposerImagePaste": "允许剪贴板图片成为 composer 附件，同时不影响普通文本粘贴。",
       "defaultApprovalPolicy": "分配给新建会话的默认审批策略。",
       "defaultSandboxMode": "分配给新建会话的默认沙盒模式。",
-      "commandTimeout": "run_command 和 diagnose_workspace 的默认超时时间，单位为毫秒。",
+      "commandTimeout": "run_command 和 diagnose_workspace 的默认超时时间，也是工具调用可使用的最大超时时间，单位为毫秒。",
       "commandMaxOutput": "命令类工具保留的 stdout 和 stderr 最大字节数。",
       "compactionEnabled": "允许运行时在模型请求前压缩或裁剪历史。",
       "compactionStrategy": "选择历史超出请求预算时优先使用的策略。",

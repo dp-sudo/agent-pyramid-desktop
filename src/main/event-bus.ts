@@ -1,6 +1,19 @@
 import { EventEmitter } from "node:events";
 import type { RuntimeEvent, RuntimeEventKind } from "../shared/agent-contracts.js";
-import { RUNTIME_EVENT_KINDS } from "../shared/agent-contracts.js";
+import {
+  RUNTIME_EVENT_KINDS,
+  isRuntimeEvent,
+  isRuntimeEventKind,
+} from "../shared/agent-contracts.js";
+
+type EventEmitterMetaEvent = "newListener" | "removeListener";
+type EventEmitterListener = (...args: unknown[]) => void;
+type EventEmitterMetaListener = (
+  eventName: string | symbol,
+  listener: EventEmitterListener,
+) => void;
+type RuntimeEventListener = (event: RuntimeEvent) => void;
+type RuntimeEventBusListener = RuntimeEventListener | EventEmitterMetaListener;
 
 /**
  * Main-process event bus. The runtime emits typed RuntimeEvent values;
@@ -8,15 +21,35 @@ import { RUNTIME_EVENT_KINDS } from "../shared/agent-contracts.js";
  * separately fans out process-level runtime errors without a threadId.
  */
 export class RuntimeEventBus extends EventEmitter {
-  override on(eventName: RuntimeEventKind, listener: (event: RuntimeEvent) => void): this {
+  override on(eventName: RuntimeEventKind, listener: RuntimeEventListener): this;
+  override on(eventName: EventEmitterMetaEvent, listener: EventEmitterMetaListener): this;
+  override on(eventName: string | symbol, listener: RuntimeEventBusListener): this {
     return super.on(eventName, listener);
   }
 
-  override off(eventName: RuntimeEventKind, listener: (event: RuntimeEvent) => void): this {
+  override off(eventName: RuntimeEventKind, listener: RuntimeEventListener): this;
+  override off(eventName: EventEmitterMetaEvent, listener: EventEmitterMetaListener): this;
+  override off(eventName: string | symbol, listener: RuntimeEventBusListener): this {
     return super.off(eventName, listener);
   }
 
-  override emit(eventName: RuntimeEventKind, event: RuntimeEvent): boolean {
+  override emit(eventName: RuntimeEventKind, event: RuntimeEvent): boolean;
+  override emit(
+    eventName: EventEmitterMetaEvent,
+    observedEventName: string | symbol,
+    listener: EventEmitterListener,
+  ): boolean;
+  override emit(eventName: string | symbol, ...args: unknown[]): boolean {
+    if (!isRuntimeEventKind(eventName)) {
+      return super.emit(eventName, ...args);
+    }
+    const [event] = args;
+    if (!isRuntimeEvent(event)) {
+      throw new Error("Runtime event shape is invalid.");
+    }
+    if (event.kind !== eventName) {
+      throw new Error("Runtime event kind does not match emitted event name.");
+    }
     return super.emit(eventName, event);
   }
 

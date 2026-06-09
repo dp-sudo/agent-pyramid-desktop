@@ -98,6 +98,28 @@ describe("WorkbenchContext reducer", () => {
     expect(removed.rightPanelMode).toBeNull();
   });
 
+  it("removes stale in-flight state when deleting a background thread", () => {
+    const selected = reducer(INITIAL_STATE, {
+      type: "selectThread",
+      thread: thread({ id: "thread-1" }),
+      items: [],
+    });
+    const firstRunning = reducer(selected, {
+      type: "turnStarted",
+      turn: turn({ id: "turn-1", threadId: "thread-1" }),
+    });
+    const secondRunning = reducer(firstRunning, {
+      type: "turnStarted",
+      turn: turn({ id: "turn-2", threadId: "thread-2" }),
+    });
+
+    const removed = reducer(secondRunning, { type: "removeThread", id: "thread-2" });
+
+    expect(getThreadInFlightTurn(removed, "thread-2")).toBeNull();
+    expect(getActiveThreadInFlightTurn(removed)?.id).toBe("turn-1");
+    expect(removed.activeThreadId).toBe("thread-1");
+  });
+
   it("tracks in-flight turns per thread while switching sessions", () => {
     const selected = reducer(INITIAL_STATE, {
       type: "selectThread",

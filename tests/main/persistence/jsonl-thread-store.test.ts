@@ -104,18 +104,122 @@ describe("JsonlThreadStore", () => {
     );
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const items: Item[] = [];
-    for await (const replayed of store.replayItems(thread.id)) {
-      items.push(replayed);
-    }
-    const events: RuntimeEvent[] = [];
-    for await (const replayed of store.replayEvents(thread.id)) {
-      events.push(replayed);
-    }
+    try {
+      const items: Item[] = [];
+      for await (const replayed of store.replayItems(thread.id)) {
+        items.push(replayed);
+      }
+      const events: RuntimeEvent[] = [];
+      for await (const replayed of store.replayEvents(thread.id)) {
+        events.push(replayed);
+      }
 
-    expect(items).toEqual([item]);
-    expect(events).toEqual([event]);
-    expect(warn).toHaveBeenCalledTimes(4);
+      expect(items).toEqual([item]);
+      expect(events).toEqual([event]);
+      expect(warn).toHaveBeenCalledTimes(4);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("skips JSONL records owned by a different thread during replay", async () => {
+    const thread = await store.createThread({
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const otherThread = await store.createThread({
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const item: Item = {
+      kind: "system",
+      id: "item-owned",
+      threadId: thread.id,
+      turnId: "turn-owned",
+      text: "owned",
+      level: "info",
+      createdAt: "2026-06-07T00:00:00.000Z",
+    };
+    const foreignItem: Item = {
+      ...item,
+      id: "item-foreign",
+      threadId: otherThread.id,
+    };
+    const event: RuntimeEvent = {
+      kind: "turn_completed",
+      threadId: thread.id,
+      turnId: "turn-owned",
+      status: "completed",
+      completedAt: "2026-06-07T00:00:01.000Z",
+    };
+    const foreignEvent: RuntimeEvent = {
+      ...event,
+      threadId: otherThread.id,
+    };
+    const nestedForeignItemEvent: RuntimeEvent = {
+      kind: "item_appended",
+      threadId: thread.id,
+      turnId: "turn-owned",
+      item: foreignItem,
+    };
+    const nestedForeignTurnEvent: RuntimeEvent = {
+      kind: "turn_started",
+      threadId: thread.id,
+      turnId: "turn-foreign",
+      startedAt: "2026-06-07T00:00:02.000Z",
+      turn: {
+        id: "turn-foreign",
+        threadId: otherThread.id,
+        status: "in-flight",
+        startedAt: "2026-06-07T00:00:02.000Z",
+        model: "test-model",
+        mode: "agent",
+      },
+    };
+
+    await store.appendItem(thread.id, item);
+    await fs.appendFile(
+      path.join(userDataDir, "threads", thread.id, "messages.jsonl"),
+      `${JSON.stringify(foreignItem)}\n`,
+      "utf8",
+    );
+    await store.appendEvent(thread.id, event);
+    await fs.appendFile(
+      path.join(userDataDir, "threads", thread.id, "events.jsonl"),
+      [
+        JSON.stringify(foreignEvent),
+        JSON.stringify(nestedForeignItemEvent),
+        JSON.stringify(nestedForeignTurnEvent),
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const items: Item[] = [];
+      for await (const replayed of store.replayItems(thread.id)) {
+        items.push(replayed);
+      }
+      const events: RuntimeEvent[] = [];
+      for await (const replayed of store.replayEvents(thread.id)) {
+        events.push(replayed);
+      }
+
+      expect(items).toEqual([item]);
+      expect(events).toEqual([event]);
+      expect(warn).toHaveBeenCalledTimes(4);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("[persistence] skipped malformed messages line"),
+        "Invalid messages JSONL record owner.",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("[persistence] skipped malformed events line"),
+        "Invalid events JSONL record owner.",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("updates thread activity time and index order when appending items", async () => {
@@ -251,6 +355,25 @@ describe("JsonlThreadStore", () => {
 
     await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
     await fs.writeFile(
+      threadPath,
+      JSON.stringify({
+        ...record,
+        goal: {
+          text: "Finish",
+          status: "active",
+          createdAt: "2026-06-07T00:00:00.000Z",
+          updatedAt: "2026-06-07T00:00:00.000Z",
+          summary: "   ",
+        },
+      }, null, 2),
+      "utf8",
+    );
+    await expect(store.getThread(thread.id)).rejects.toThrow(
+      "goal.summary is required.",
+    );
+
+    await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
+    await fs.writeFile(
       indexPath,
       JSON.stringify([{ ...index[0], status: "paused" }], null, 2),
       "utf8",
@@ -336,7 +459,16 @@ describe("JsonlThreadStore", () => {
     ).rejects.toThrow("Runtime event shape is invalid.");
     await expect(
       store.appendEvent(thread.id, { ...event, threadId: "00000000-0000-4000-8000-000000000000" }),
+    ).rejects.toThrow("Runtime event shape is invalid.");
+    await expect(
+      store.appendEvent("00000000-0000-4000-8000-000000000000", event),
     ).rejects.toThrow("Runtime event threadId does not match target thread.");
+    await expect(
+      store.appendEvent(thread.id, {
+        ...event,
+        item: { ...item, threadId: "00000000-0000-4000-8000-000000000000" },
+      }),
+    ).rejects.toThrow("Runtime event shape is invalid.");
 
     const replayedItems: Item[] = [];
     for await (const replayed of store.replayItems(thread.id)) {

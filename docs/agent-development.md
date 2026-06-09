@@ -70,6 +70,39 @@
 
 ## 变更记录
 
+### 2026-06-09 - create_plan step status validation
+- Consolidated plan step status values into shared `PLAN_STEP_STATUSES` and made `create_plan` reject unknown step statuses instead of silently downgrading them to `pending`; omitted status still defaults to `pending`.
+- Verification: shared contract and application tools tests cover the shared status list, omitted status default, and invalid status rejection; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - update_goal blank summary validation
+- Fixed `update_goal` tool input parsing so a present but blank `summary` fails even when `goal` or `status` is also provided, matching `goal:update` IPC and `AgentRuntime.updateThreadGoal()` semantics instead of silently dropping the bad field.
+- Verification: `npm test -- tests/main/application/tools.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Read-only tool name contract consolidation
+- Moved renderer read-only tool record visibility from a component-local hardcoded list to shared `RUNTIME_READ_ONLY_TOOL_NAMES`, and added a main-process tool metadata test to keep the shared list aligned with built-in `metadata.isReadOnly` tools.
+- Verification: shared contract, application tools, and message timeline tests cover the constant, metadata alignment, and failed read-only tool visibility; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - RuntimeEventBus EventEmitter meta-event compatibility
+- Fixed `RuntimeEventBus.emit()` validation so runtime events still require shared contract shape/kind consistency, while Node `EventEmitter` lifecycle meta events (`newListener` / `removeListener`) continue to pass through for listener diagnostics and cleanup hooks.
+- Verification: `npm test -- tests/main/event-bus.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Thread goal object blank text guard
+- Hardened the shared `ThreadGoal` guard and `JsonlThreadStore` normalization so complete goal objects with blank `text` or blank optional `summary` are rejected before they can enter thread update persistence or runtime events.
+- Verification: shared contract, thread IPC, and JSONL thread store tests cover the blank goal object boundary; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Command timeout preference upper bound
+- Hardened `run_command` and `diagnose_workspace` timeout handling: model-provided `timeout_ms` can now only reduce or match `RuntimePreferences.command.timeoutMs`, not raise execution time back to the global maximum.
+- Verification: `npm test -- tests/main/application/tools.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Thread goal patch IPC boundary
+- Hardened `thread:update` goal patch validation: the IPC parser now reuses the shared `ThreadGoal` guard and accepts only a complete `ThreadGoal` object or `null`, so malformed renderer payloads fail before store access instead of relying on persistence normalization.
+- Verification: `npm test -- tests/main/ipc/threads-handlers.test.ts`, `npm run typecheck`, `npm run test`, and `npm run build`.
+
+### 2026-06-09 - Settings composer attachment controls
+- Added renderer-local Workbench Settings controls for composer image upload and clipboard image paste. The controls persist through `basicPreferences` and are consumed by `FloatingComposer`: upload disabling hides the image picker row and blocks stale file input changes, while paste disabling ignores clipboard image files without blocking regular text paste.
+- Fixed composer attachment pending accounting for mixed accepted/rejected image batches: pending state now increments and decrements by accepted files only, so rejected oversized images cannot prematurely re-enable send/remove actions while another attachment upload is still running.
+- Verification plan: renderer preference/composer/settings/i18n tests cover normalization, source gating and localized labels; complete validation commands are recorded in the maintenance result.
+
 ### 2026-06-09 - Settings runtime controls polish
 - 优化工具与权限里的命令限制控件：`command.timeoutMs` / `command.maxOutputBytes` 改为本地草稿输入，失焦或 Enter 时才按 shared runtime preference 边界校验并保存，Escape 回退当前持久化值，避免用户编辑中间态把空值、`0` 或越界值提交到主进程。
 - 修复设置页新增 runtime 控件的 zh-CN 文案占位损坏，补齐协议、Code/Write 默认模型、审批/沙盒、工具、命令、压缩和审批展示相关中文标签，并新增 i18n 测试防止问号占位回归。
@@ -530,10 +563,12 @@
 - 加固 approval preview 契约：shared contract guard 和 `AgentRuntime` 本地 preview 过滤现在会校验 diff preview 的文件、行、操作与非负整数计数形状，畸形工具预览不会进入 approval item / event。
 - 收敛 thread 字段枚举与默认机制来源：`relation`、`mode`、`status`、`approvalPolicy`、`sandboxMode` 和 goal status 的允许值统一由 `src/shared/agent-contracts.ts` 的 `THREAD_*` 常量与 guard 提供；创建线程、legacy 归一化和默认 list 关系过滤复用同文件的 `DEFAULT_THREAD_*` 常量，IPC 解析和持久化归一化不再各自维护重复字面量集合。
 - 收敛 item/runtime event kind 契约：`ITEM_KINDS`、`RUNTIME_EVENT_KINDS`、`isItemKind()` 和 `isRuntimeEventKind()` 现在由 shared contract 导出并带类型级一致性断言；`RuntimeEventBus.onThread()` 复用 `RUNTIME_EVENT_KINDS`，新增 runtime event 不再需要维护第二份 bus 订阅列表。
+- 加固 runtime event 嵌套一致性：shared `isRuntimeEvent()` 现在要求 `turn_started` 顶层 `threadId/turnId/startedAt` 与嵌套 `turn.threadId/id/startedAt` 一致，并要求 `item_appended/item_updated` 顶层 `threadId/turnId` 与嵌套 `item.threadId/turnId` 一致，避免矛盾事件通过 event bus / SSE 按错误线程投递。
 - 收敛 tool access policy mode 来源：`createToolAccessPolicy()` 的冲突检测现在遍历 shared `THREAD_MODES`，不再在 runtime 内维护第二份 `code/write` mode 字面量列表。
 - 加固附件元数据契约：shared contract 现在导出 `isAttachmentRecord()`，`UserItem.attachments` 的 replay guard 和 `AttachmentStore` index 读取共同使用同一 metadata 校验，畸形 MIME / size 的附件元数据不会进入 runtime 或 renderer。
 - 收敛 UUID 校验边界：shared contract 现在导出 `UUID_PATTERN` / `isUuidString()`，线程与附件持久化路径解析、附件 metadata guard 共用同一 UUID 判断，避免 id 安全边界在多个 store 内重复漂移。
 - 加固 JSONL 写入边界：`JsonlThreadStore.appendItem()` / `appendEvent()` 现在会在写入前复用 shared `isItem()` / `isRuntimeEvent()` 并校验 record `threadId` 与目标线程一致，避免坏记录先写入成功再在 replay 阶段被跳过。
+- 加固 JSONL 所有权边界：`JsonlThreadStore.replayItems()` / `replayEvents()` 现在会跳过有效形状但 `threadId` 不属于目标线程的历史行；`appendEvent()` 同步校验 `turn_started.turn` 与 `item_appended/item_updated.item` 的嵌套 `threadId`，避免跨线程嵌套记录写入或重放。
 - 收敛 ISO 时间戳契约：shared contract 现在导出 `ISO_TIMESTAMP_PATTERN` / `isIsoTimestampString()`，`Item.createdAt`、`RuntimeEvent` 时间字段、`TurnRecord`、`ThreadGoal` 和 `AttachmentRecord.createdAt` 复用同一 `Date.prototype.toISOString()` 边界，避免坏时间字符串进入 JSONL、usage 聚合或 renderer 排序。
 - 加固 thread/index 时间读取边界：`JsonlThreadStore` 现在在读取 `thread.json` / `index.json` 时用 shared ISO timestamp 守卫校验 `createdAt`、`updatedAt`、`forkedAt` 和 goal 时间字段，避免损坏数据通过 `Date.parse()` 变成不稳定排序或活动时间比较。
 - 收敛模型配置 profile 时间边界：`ModelConfigStore` 读取 profiles 状态时会用 shared ISO timestamp 守卫归一化 `createdAt` / `updatedAt`，缺失或损坏的 legacy 时间会替换为当前 ISO 时间，不再把坏字符串传给设置页或后续持久化。
@@ -550,6 +585,7 @@
 ### 2026-06-09 - LLM streaming usage and interrupt lifecycle hardening
 - Hardened Anthropic-compatible usage mapping: `cache_read_input_tokens` and `cache_creation_input_tokens` now populate `TokenUsage.cacheHitTokens`, `cacheMissTokens`, and `cacheHitRate`; streaming usage from `message_start` and `message_delta` frames is merged before it reaches the runtime, so partial provider usage frames do not overwrite previously observed fields.
 - Hardened streaming turn cleanup: interrupted turns remain in `AgentRuntime` in-flight state until the background run loop persists truncated partial output/tool cleanup and emits `turn_completed(status: "interrupted")`; non-interrupt worker failures after text/reasoning deltas now persist the truncated assistant/reasoning output before `turn_failed`.
+- Hardened MessageTimeline visibility: disabling read-only tool process records now hides only non-failed read-only records. Failed read-only tools remain visible in the timeline so runtime/tool errors are not masked by presentation preferences.
 - Hardened worker cancellation: `LlmWorkerPool` request cleanup only clears the cancel handle installed by that request, preventing late old-request cleanup from deleting a newer same-thread cancel mapping.
 - Hardened worker diagnostics: worker protocol errors now preserve `http` / `provider` / `schema` / `internal` through `LlmWorkerPool`, `AgentRuntime` maps them to `provider_http` / `provider_error` / `schema_invalid` / `internal`, worker exit/error maps to `worker_crashed`, and worker `LlmResponse.raw` is now a bounded stream summary instead of an unbounded full chunk transcript.
 - Hardened provider SSE error handling: OpenAI-compatible and Anthropic-compatible `event: error` frames now throw a traceable provider stream error instead of being consumed as empty normal payloads.

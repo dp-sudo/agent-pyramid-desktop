@@ -62,6 +62,11 @@ function deriveTurnSections(turn: MutableTimelineTurn): TimelineTurn {
       continue;
     }
 
+    if (index >= answerStart) {
+      followupItems.push(item);
+      continue;
+    }
+
     if (isFollowupItem(item)) {
       followupItems.push(item);
       continue;

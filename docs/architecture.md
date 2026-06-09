@@ -404,9 +404,10 @@ Important state slices:
 - `inFlightTurnsByThreadId`, `activeTurnId`.
 - `composer`: text, model, profile, reasoning effort, mode, goal mode,
   attachment ids.
-- `rightPanelMode`: `changes | todo | plan | file | null`.
+- `rightPanelMode`: `changes | todo | plan | null`.
 - `basicPreferences`: theme, startup, sidebar widths, inspector default,
-  archive visibility, last workspace, delete confirmation.
+  archive visibility, last workspace, delete confirmation, composer image
+  upload and paste entry points.
 
 ## IPC Contract Map
 

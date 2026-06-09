@@ -12,7 +12,10 @@ import { createGoalTools } from "../../../src/main/application/tools/goal-tools"
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
 import type { AgentTool } from "../../../src/main/domain/agent/types";
-import type { ThreadGoalStatus } from "../../../src/shared/agent-contracts";
+import {
+  RUNTIME_READ_ONLY_TOOL_NAMES,
+  type ThreadGoalStatus,
+} from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
 const sampleTool: AgentTool = {
@@ -121,6 +124,25 @@ describe("application tools", () => {
       .rejects.toThrow("sample tool requires a string field named text.");
   });
 
+  it("keeps shared read-only tool names aligned with built-in metadata", () => {
+    const tools = [
+      ...createWorkspaceTools(),
+      ...createCommandTools(),
+      createPlanTool,
+      ...createGoalTools({ updateGoal: async () => undefined }),
+      ...createCodingTools(),
+    ];
+    const metadataReadOnlyNames = tools
+      .filter((tool) => tool.metadata?.isReadOnly)
+      .map((tool) => tool.definition.name)
+      .sort();
+
+    expect(metadataReadOnlyNames).toEqual([...RUNTIME_READ_ONLY_TOOL_NAMES].sort());
+    expect(RUNTIME_READ_ONLY_TOOL_NAMES.every((toolName) =>
+      tools.some((tool) => tool.definition.name === toolName),
+    )).toBe(true);
+  });
+
   it("keeps diagnose_file schema aligned with the language service implementation", () => {
     const diagnoseFile = createCommandTools()
       .find((tool) => tool.definition.name === "diagnose_file");
@@ -167,7 +189,7 @@ describe("application tools", () => {
     const runCommand = tools.find((tool) => tool.definition.name === "run_command");
     const diagnoseWorkspace = tools.find((tool) => tool.definition.name === "diagnose_workspace");
     const timeoutDescription =
-      "Maximum runtime in milliseconds. Defaults to the runtime command preference (30000), minimum 100, maximum 120000.";
+      "Maximum runtime in milliseconds. Defaults to the runtime command preference (30000). Overrides must be between 100 and the current runtime command preference, which cannot exceed 120000.";
 
     expect(toolSchemaProperties(runCommand).timeout_ms).toMatchObject({
       type: "number",
@@ -185,7 +207,7 @@ describe("application tools", () => {
         title: " Review ",
         steps: [
           { title: " Read code ", status: "in_progress" },
-          { title: "Patch tests", status: "unknown" },
+          { title: "Patch tests" },
         ],
       },
       { threadId: "thread-1", turnId: "turn-1" },
@@ -204,6 +226,12 @@ describe("application tools", () => {
     await expect(
       createPlanTool.execute({ steps: [] }, { threadId: "thread-1", turnId: "turn-1" }),
     ).rejects.toThrow("create_plan requires a non-empty steps array.");
+    await expect(
+      createPlanTool.execute(
+        { steps: [{ title: "Patch tests", status: "unknown" }] },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).rejects.toThrow("create_plan step status must be pending, in_progress, or completed.");
 
     const updateGoal = vi.fn<
       (threadId: string, update: {
@@ -258,6 +286,18 @@ describe("application tools", () => {
         { threadId: "thread-1", turnId: "turn-1" },
       ),
     ).rejects.toThrow("summary must be a string.");
+    await expect(
+      goalTool.execute(
+        { status: "complete", summary: " " },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).rejects.toThrow("summary must be a non-empty string.");
+    await expect(
+      goalTool.execute(
+        { goal: "Ship tests", summary: " " },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).rejects.toThrow("summary must be a non-empty string.");
   });
 
   it("reads, lists, and searches workspace files without escaping the workspace", async () => {
@@ -1708,6 +1748,51 @@ describe("application tools", () => {
         ).content,
       ) as { stdoutTruncated: boolean; stderrTruncated: boolean };
       expect(diagnostics.stdoutTruncated || diagnostics.stderrTruncated).toBe(true);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects command timeout overrides above the runtime command preference", async () => {
+    const workspace = await makeTempDir("command-tools-timeout-policy-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        workspace,
+        commandDefaults: {
+          timeoutMs: 100,
+          maxOutputBytes: 2048,
+        },
+      };
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-run-command-timeout",
+            name: "run_command",
+            arguments: {
+              command: nodeCommand("process.stdout.write('ok');"),
+              timeout_ms: 101,
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("timeout_ms must be an integer between 100 and 100.");
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-diagnose-timeout",
+            name: "diagnose_workspace",
+            arguments: {
+              timeout_ms: 101,
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("timeout_ms must be an integer between 100 and 100.");
     } finally {
       await removeTempDir(workspace);
     }

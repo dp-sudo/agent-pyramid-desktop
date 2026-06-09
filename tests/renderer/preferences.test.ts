@@ -28,6 +28,8 @@ describe("workbench basic preferences", () => {
         showArchivedThreadsByDefault: true,
         restoreLastWorkspaceOnStartup: true,
         confirmThreadDelete: false,
+        allowComposerImageUpload: false,
+        allowComposerImagePaste: false,
       }),
     ).toEqual({
       ...DEFAULT_BASIC_PREFERENCES,
@@ -38,6 +40,8 @@ describe("workbench basic preferences", () => {
       showArchivedThreadsByDefault: true,
       restoreLastWorkspaceOnStartup: true,
       confirmThreadDelete: false,
+      allowComposerImageUpload: false,
+      allowComposerImagePaste: false,
     });
   });
 

@@ -149,7 +149,8 @@ Important semantics:
 - JSONL appends use fsync.
 - Malformed JSONL lines are warned and skipped during replay. This includes
   lines that parse as JSON but fail the shared `Item` / `RuntimeEvent` shape
-  guards.
+  guards, and lines whose record or nested `turn` / `item` ownership does not
+  match the replayed thread.
 
 ## Goal Model
 
@@ -183,6 +184,9 @@ Goal clearing is represented as `goal: null` at the patch boundary and becomes
 Goal updates must include at least one effective field. Empty updates, blank
 goal/summary text, and clear operations combined with status or summary fail
 before persistence so goal timestamps are not refreshed by no-op requests.
+Complete `ThreadGoal` objects supplied through lower-level thread update paths
+must also use non-blank `text`; optional `summary` must be non-blank when
+present.
 
 ## Turn Model
 
@@ -300,6 +304,10 @@ Append-only update rule:
 - `JsonlThreadStore.appendItem()` / `appendEvent()` validate the shared
   `Item` / `RuntimeEvent` shape and require the record `threadId` to match the
   target thread before writing JSONL.
+- Runtime events that carry nested thread-owned records, such as
+  `turn_started.turn` and `item_appended.item`, must keep those nested
+  `threadId` values aligned with the target thread before writing or replaying
+  JSONL.
 - `Item.createdAt` and runtime event timestamp fields must use the
   `Date.prototype.toISOString()` shape validated by shared
   `isIsoTimestampString()`.
@@ -370,6 +378,10 @@ Current event kinds:
 `tool_failed`, `approval_timeout`, `persistence_error`, or `internal`.
 
 `turn_started` carries the complete runtime-created `TurnRecord` as `turn`.
+The shared `isRuntimeEvent()` guard requires repeated top-level fields to stay
+aligned with nested records: `turn_started.threadId/turnId/startedAt` must match
+`turn.threadId/id/startedAt`, and `item_appended` / `item_updated` must match
+the nested `item.threadId/turnId`.
 Usage data lives on `turn_completed.usage` and is aggregated by `usage:daily`.
 Runtime event timestamps such as `startedAt`, `completedAt`, `failedAt`, and
 `reachedAt` must use `Date.prototype.toISOString()` format.
@@ -378,7 +390,9 @@ token count fields must be non-negative integers, `cacheHitRate` must be
 `null` or a `0..1` ratio, and malformed token fields are skipped with the rest
 of the bad event row.
 
-`RuntimeEventBus.onThread()` must include every thread-scoped event kind that renderer subscribers need to receive.
+`RUNTIME_EVENT_KINDS` is the single event-kind authority used by
+`RuntimeEventBus.onThread()`, `RuntimeEventKind`, and `isRuntimeEventKind()`.
+Adding an event kind must update that shared list and the event guard.
 
 ## Model Config Model
 
@@ -483,6 +497,8 @@ Key semantics:
 - `approvalExperience` is consumed by renderer presentation only; it controls
   approval diff expansion, pending-approval scrolling, read-only tool record
   visibility and failure toasts without bypassing runtime approval enforcement.
+  Read-only tool record visibility uses shared `RUNTIME_READ_ONLY_TOOL_NAMES`,
+  which is tested against built-in tool metadata.
 
 ## Renderer State Model
 
@@ -529,6 +545,7 @@ Examples:
 - archived thread visibility
 - delete confirmation behavior
 - restore last workspace
+- composer image upload and paste entry points
 
 If a preference must influence Agent runtime behavior, do not hide it in renderer localStorage. Promote it into `RuntimePreferences`, the `userData/config` runtime preferences section and a typed IPC API.
 
@@ -583,7 +600,8 @@ Preferred migration style:
 - Changing model config constraints without updating settings UI and tests.
 - Writing model profiles and runtime preferences through independent
   read-modify-write paths instead of the shared config-file queue.
-- Adding event kinds without updating `RuntimeEventBus.onThread()`.
+- Adding event kinds without updating `RUNTIME_EVENT_KINDS` and
+  `isRuntimeEvent()`.
 
 ## Verification
 

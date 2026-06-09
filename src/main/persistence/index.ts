@@ -191,7 +191,11 @@ export class JsonlThreadStore {
     if (!isRuntimeEvent(event)) {
       throw new Error("Runtime event shape is invalid.");
     }
-    if (!("threadId" in event) || event.threadId !== threadId) {
+    if (
+      !("threadId" in event) ||
+      event.threadId !== threadId ||
+      !ownsNestedEventRecords(event, threadId)
+    ) {
       throw new Error("Runtime event threadId does not match target thread.");
     }
     return this.serialized(threadId, async () => {
@@ -199,10 +203,15 @@ export class JsonlThreadStore {
     });
   }
 
-  /** 2.6 replay: readline-based, skips malformed lines. */
+  /** 2.6 replay: readline-based, skips malformed or cross-thread-owned lines. */
   async *replayItems(threadId: string): AsyncIterable<Item> {
     assertSafeId(threadId, "Thread id");
-    yield* this.replayJsonl<Item>(this.messagesPath(threadId), "messages", isItem);
+    yield* this.replayJsonl<Item>(
+      this.messagesPath(threadId),
+      "messages",
+      isItem,
+      (item) => item.threadId === threadId,
+    );
   }
 
   async *replayEvents(threadId: string): AsyncIterable<RuntimeEvent> {
@@ -211,6 +220,7 @@ export class JsonlThreadStore {
       this.eventsPath(threadId),
       "events",
       isRuntimeEvent,
+      (event) => event.threadId === threadId && ownsNestedEventRecords(event, threadId),
     );
   }
 
@@ -411,6 +421,7 @@ export class JsonlThreadStore {
     target: string,
     label: "messages" | "events",
     validate: (value: unknown) => value is T,
+    ownsRecord: (value: T) => boolean,
   ): AsyncIterable<T> {
     if (!existsSync(target)) return;
     const stream = createReadStream(target, { encoding: "utf8" });
@@ -425,6 +436,9 @@ export class JsonlThreadStore {
           const parsed = JSON.parse(trimmed) as unknown;
           if (!validate(parsed)) {
             throw new Error(`Invalid ${label} JSONL record shape.`);
+          }
+          if (!ownsRecord(parsed)) {
+            throw new Error(`Invalid ${label} JSONL record owner.`);
           }
           yield parsed;
         } catch (error) {
@@ -514,6 +528,18 @@ function optionalBoolean(value: unknown, field: string): boolean {
     throw new Error(`${field} must be a boolean.`);
   }
   return value;
+}
+
+function ownsNestedEventRecords(event: RuntimeEvent, threadId: string): boolean {
+  switch (event.kind) {
+    case "turn_started":
+      return event.turn.threadId === threadId;
+    case "item_appended":
+    case "item_updated":
+      return event.item.threadId === threadId;
+    default:
+      return true;
+  }
 }
 
 function normalizeRelationFilter(value: unknown): ThreadRelation[] {
@@ -608,7 +634,7 @@ function normalizeGoalObject(value: unknown): NonNullable<ThreadRecord["goal"]> 
       ? { blockedAt: requiredIsoTimestampString(goal.blockedAt, "goal.blockedAt") }
       : {}),
     ...(goal.summary !== undefined
-      ? { summary: optionalTrimmedString(goal.summary, "goal.summary") }
+      ? { summary: requiredTrimmedString(goal.summary, "goal.summary") }
       : {}),
   };
 }

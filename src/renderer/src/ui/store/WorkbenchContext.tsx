@@ -280,16 +280,20 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       return { ...state, threads: action.threads };
     case "removeThread": {
       const removingActive = state.activeThreadId === action.id;
+      const inFlightTurnsByThreadId = omitRecordKey(
+        state.inFlightTurnsByThreadId,
+        action.id,
+      );
       return {
         ...state,
         threads: state.threads.filter((thread) => thread.id !== action.id),
+        inFlightTurnsByThreadId,
         ...(removingActive
           ? {
               activeThread: null,
               activeThreadId: null,
               activeTurnId: null,
               items: [],
-              inFlightTurnsByThreadId: omitRecordKey(state.inFlightTurnsByThreadId, action.id),
               rightPanelMode: null,
             }
           : {}),

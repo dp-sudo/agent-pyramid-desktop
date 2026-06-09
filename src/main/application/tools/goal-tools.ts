@@ -84,8 +84,12 @@ function parseGoalUpdate(input: Record<string, unknown>): {
   if ("summary" in input && typeof input.summary !== "string") {
     throw new Error("summary must be a string.");
   }
-  if (typeof input.summary === "string" && input.summary.trim()) {
-    update.summary = input.summary.trim();
+  if (typeof input.summary === "string") {
+    const summary = input.summary.trim();
+    if (!summary) {
+      throw new Error("summary must be a non-empty string.");
+    }
+    update.summary = summary;
   }
   if (
     update.goal === undefined &&

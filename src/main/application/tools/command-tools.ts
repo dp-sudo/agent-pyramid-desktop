@@ -29,8 +29,8 @@ const MAX_COMMAND_BYTES = 4_096;
 const KILL_GRACE_MS = 1_000;
 const COMMAND_TIMEOUT_DESCRIPTION =
   `Maximum runtime in milliseconds. Defaults to the runtime command preference ` +
-  `(${DEFAULT_COMMAND_TIMEOUT_MS}), ` +
-  `minimum ${MIN_COMMAND_TIMEOUT_MS}, maximum ${MAX_COMMAND_TIMEOUT_MS}.`;
+  `(${DEFAULT_COMMAND_TIMEOUT_MS}). Overrides must be between ${MIN_COMMAND_TIMEOUT_MS} ` +
+  `and the current runtime command preference, which cannot exceed ${MAX_COMMAND_TIMEOUT_MS}.`;
 
 interface CommandRunResult {
   command: string;
@@ -215,7 +215,7 @@ async function executeRunCommand(
   const timeoutMs = numberInRange(
     input.timeout_ms,
     MIN_COMMAND_TIMEOUT_MS,
-    MAX_COMMAND_TIMEOUT_MS,
+    commandTimeoutMs(context),
     commandTimeoutMs(context),
     "timeout_ms",
   );
@@ -289,7 +289,7 @@ async function executeDiagnoseWorkspace(
   const timeoutMs = numberInRange(
     input.timeout_ms,
     MIN_COMMAND_TIMEOUT_MS,
-    MAX_COMMAND_TIMEOUT_MS,
+    commandTimeoutMs(context),
     commandTimeoutMs(context),
     "timeout_ms",
   );

@@ -273,6 +273,14 @@ export const RUNTIME_TOOL_NAMES = [
 ] as const;
 export type RuntimeToolName = (typeof RUNTIME_TOOL_NAMES)[number];
 
+export const RUNTIME_READ_ONLY_TOOL_NAMES = [
+  "list_files",
+  "read_file",
+  "search_files",
+  "diagnose_file",
+] as const satisfies readonly RuntimeToolName[];
+export type RuntimeReadOnlyToolName = (typeof RUNTIME_READ_ONLY_TOOL_NAMES)[number];
+
 export const RUNTIME_COMPACTION_STRATEGIES = [
   "balanced",
   "recent-only",
@@ -602,7 +610,8 @@ export interface UserInputItem {
   createdAt: string;
 }
 
-export type PlanStepStatus = "pending" | "in_progress" | "completed";
+export const PLAN_STEP_STATUSES = ["pending", "in_progress", "completed"] as const;
+export type PlanStepStatus = (typeof PLAN_STEP_STATUSES)[number];
 
 export interface PlanStep {
   id: string;
@@ -921,10 +930,10 @@ type ExactUnion<Left, Right> = [Left] extends [Right]
     : false
   : false;
 type AssertTrue<T extends true> = T;
-type _ItemKindContract = AssertTrue<ExactUnion<Item["kind"], ItemKind>>;
-type _RuntimeEventKindContract = AssertTrue<
-  ExactUnion<RuntimeEvent["kind"], RuntimeEventKind>
->;
+export type AgentContractKindAssertions = [
+  AssertTrue<ExactUnion<Item["kind"], ItemKind>>,
+  AssertTrue<ExactUnion<RuntimeEvent["kind"], RuntimeEventKind>>,
+];
 
 export function isItemKind(value: unknown): value is ItemKind {
   return typeof value === "string" && ITEM_KINDS.includes(value as ItemKind);
@@ -1000,7 +1009,7 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
         isIsoTimestampString(v.startedAt) &&
-        isTurnRecord(v.turn);
+        isTurnStartedEventConsistent(v);
     case "turn_completed":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
@@ -1016,7 +1025,7 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
     case "item_updated":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
-        isItem(v.item);
+        isItemRuntimeEventConsistent(v);
     case "approval_requested":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
@@ -1048,18 +1057,33 @@ export function isThreadRecord(value: unknown): value is ThreadRecord {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
   return (
-    typeof v.id === "string" &&
+    isUuidString(v.id) &&
     typeof v.title === "string" &&
-    typeof v.workspace === "string" &&
+    v.title.trim().length > 0 &&
+    isAbsolutePathString(v.workspace) &&
     isThreadMode(v.mode) &&
     (v.status === undefined || isThreadStatus(v.status)) &&
     isThreadRelation(v.relation) &&
+    isThreadParentRelationValid(v) &&
     (v.approvalPolicy === undefined || isThreadApprovalPolicy(v.approvalPolicy)) &&
     (v.sandboxMode === undefined || isThreadSandboxMode(v.sandboxMode)) &&
     (v.forkedAt === undefined || isIsoTimestampString(v.forkedAt)) &&
+    (v.goal === undefined || isThreadGoal(v.goal)) &&
     isIsoTimestampString(v.createdAt) &&
     isIsoTimestampString(v.updatedAt)
   );
+}
+
+function isThreadParentRelationValid(value: Record<string, unknown>): boolean {
+  if (value.parentThreadId !== undefined && !isUuidString(value.parentThreadId)) {
+    return false;
+  }
+  return value.relation !== "fork" || isUuidString(value.parentThreadId);
+}
+
+function isAbsolutePathString(value: unknown): value is string {
+  if (typeof value !== "string" || !value.trim()) return false;
+  return value.startsWith("/") || value.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(value);
 }
 
 function isRuntimeToolAvailabilityPreferences(
@@ -1131,15 +1155,28 @@ function isTurnRecord(value: unknown): value is TurnRecord {
     isOptionalTokenUsage(value.usage);
 }
 
-function isThreadGoal(value: unknown): value is ThreadGoal {
+function isTurnStartedEventConsistent(value: Record<string, unknown>): boolean {
+  if (!isTurnRecord(value.turn)) return false;
+  return value.threadId === value.turn.threadId &&
+    value.turnId === value.turn.id &&
+    value.startedAt === value.turn.startedAt;
+}
+
+function isItemRuntimeEventConsistent(value: Record<string, unknown>): boolean {
+  if (!isItem(value.item)) return false;
+  return value.threadId === value.item.threadId &&
+    value.turnId === value.item.turnId;
+}
+
+export function isThreadGoal(value: unknown): value is ThreadGoal {
   if (!isRecord(value)) return false;
-  return hasString(value, "text") &&
+  return hasNonBlankString(value, "text") &&
     isThreadGoalStatus(value.status) &&
     isIsoTimestampString(value.createdAt) &&
     isIsoTimestampString(value.updatedAt) &&
     isOptionalIsoTimestampString(value.completedAt) &&
     isOptionalIsoTimestampString(value.blockedAt) &&
-    isOptionalString(value.summary);
+    (value.summary === undefined || hasNonBlankString(value, "summary"));
 }
 
 function isPlanStep(value: unknown): value is PlanStep {
@@ -1151,6 +1188,11 @@ function isPlanStep(value: unknown): value is PlanStep {
 
 function hasString(value: Record<string, unknown>, key: string): boolean {
   return typeof value[key] === "string";
+}
+
+function hasNonBlankString(value: Record<string, unknown>, key: string): boolean {
+  const text = value[key];
+  return typeof text === "string" && text.trim().length > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1283,7 +1325,7 @@ function isCacheHitRate(value: unknown): value is number {
 }
 
 function isPlanStepStatus(value: unknown): value is PlanStepStatus {
-  return value === "pending" || value === "in_progress" || value === "completed";
+  return typeof value === "string" && PLAN_STEP_STATUSES.includes(value as PlanStepStatus);
 }
 
 function isSystemLevel(value: unknown): value is SystemItem["level"] {

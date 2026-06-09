@@ -233,7 +233,7 @@ Two workbenches plus settings:
 - **Workbench switch** —— the Code sidebar footer exposes a compact Code/Write
   switch that calls the existing `setRoute("code" | "write")` path; Settings
   remains a separate footer action.
-- **Composer attachments** —— Code composer supports text+image and image-only turns; image-only sends use a visible localized prompt as the timeline text and thread title, while empty drafts without attachments remain disabled. Image attachments can be selected or pasted from the clipboard, generate bounded thumbnail previews inside the composer, and expose an overlaid remove control for quick deletion.
+- **Composer attachments** —— Code composer supports text+image and image-only turns; image-only sends use a visible localized prompt as the timeline text and thread title, while empty drafts without attachments remain disabled. Image attachments can be selected or pasted from the clipboard when the corresponding Workbench Settings controls allow those entry points, generate bounded thumbnail previews inside the composer, and expose an overlaid remove control for quick deletion.
 
 ## 2. Layout grammar
 

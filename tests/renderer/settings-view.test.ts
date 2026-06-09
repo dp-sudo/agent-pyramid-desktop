@@ -55,6 +55,8 @@ describe("SettingsView helpers", () => {
     expect(isSettingsCategoryInSection("tools", "toolAccess")).toBe(true);
     expect(isSettingsCategoryInSection("tools", "commandLimits")).toBe(true);
     expect(isSettingsCategoryInSection("workbench", "modelDefaults")).toBe(true);
+    expect(isSettingsCategoryInSection("workbench", "attachments")).toBe(true);
+    expect(isSettingsCategoryInSection("basic", "attachments")).toBe(false);
     expect(isSettingsCategoryInSection("visibility", "approvalPresentation")).toBe(true);
   });
 

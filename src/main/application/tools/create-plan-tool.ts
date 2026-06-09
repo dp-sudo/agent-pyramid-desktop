@@ -1,4 +1,8 @@
 import type { AgentTool } from "../../domain/agent/types";
+import {
+  PLAN_STEP_STATUSES,
+  type PlanStepStatus,
+} from "../../../shared/agent-contracts.js";
 
 export const createPlanTool: AgentTool = {
   definition: {
@@ -24,7 +28,7 @@ export const createPlanTool: AgentTool = {
               },
               status: {
                 type: "string",
-                enum: ["pending", "in_progress", "completed"],
+                enum: [...PLAN_STEP_STATUSES],
               },
             },
             required: ["title"],
@@ -44,7 +48,7 @@ export const createPlanTool: AgentTool = {
   },
 };
 
-function parseSteps(value: unknown): Array<{ title: string; status: string }> {
+function parseSteps(value: unknown): Array<{ title: string; status: PlanStepStatus }> {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error("create_plan requires a non-empty steps array.");
   }
@@ -64,9 +68,12 @@ function parseSteps(value: unknown): Array<{ title: string; status: string }> {
   });
 }
 
-function parseStatus(value: unknown): string {
-  if (value === "in_progress" || value === "completed" || value === "pending") {
-    return value;
+function parseStatus(value: unknown): PlanStepStatus {
+  if (value === undefined) {
+    return "pending";
   }
-  return "pending";
+  if (typeof value === "string" && PLAN_STEP_STATUSES.includes(value as PlanStepStatus)) {
+    return value as PlanStepStatus;
+  }
+  throw new Error("create_plan step status must be pending, in_progress, or completed.");
 }
