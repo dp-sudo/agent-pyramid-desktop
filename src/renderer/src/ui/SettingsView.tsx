@@ -44,7 +44,7 @@ import type {
   ThemePreference,
 } from "./preferences";
 
-interface SettingsFormState {
+export interface SettingsFormState {
   model_provide: string;
   model: string;
   base_url: string;
@@ -59,6 +59,7 @@ interface SettingsFormState {
 
 type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
 type SettingsSection = "basic" | "model";
+type SettingsTranslator = (key: string, options?: Record<string, unknown>) => string;
 
 interface SettingsSectionItem {
   id: SettingsSection;
@@ -108,9 +109,15 @@ export function SettingsView(): ReactElement {
   const [profileBusy, setProfileBusy] = useState<string>("");
   const [pendingDeleteProfileId, setPendingDeleteProfileId] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [settingsSearch, setSettingsSearch] = useState("");
 
   const activeProfile = profilesState ? findActiveProfile(profilesState) : null;
   const hasAgentApi = Boolean(window.agentApi);
+  const profileHasUnsavedChanges = hasUnsavedProfileChanges(
+    activeProfile,
+    profileName,
+    form,
+  );
   const settingsSectionItems = useMemo<SettingsSectionItem[]>(
     () => [
       {
@@ -176,6 +183,10 @@ export function SettingsView(): ReactElement {
       },
     ];
   }, [section, t]);
+  const visibleSettingsNavItems = useMemo(
+    () => filterSettingsSidebarItems(settingsNavItems, settingsSearch),
+    [settingsNavItems, settingsSearch],
+  );
   const sidebarFooterTitle =
     section === "basic"
       ? t("settings.sidebarFooter.basicTitle")
@@ -211,6 +222,20 @@ export function SettingsView(): ReactElement {
       cancelled = true;
     };
   }, [actions]);
+
+  useEffect(() => {
+    if (!shouldBlockSettingsNavigation(saveState, profileHasUnsavedChanges)) {
+      return undefined;
+    }
+
+    function handleBeforeUnload(event: BeforeUnloadEvent): void {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [profileHasUnsavedChanges, saveState]);
 
   function applyProfilesState(state: ModelConfigProfilesState): void {
     const active = findActiveProfile(state);
@@ -299,7 +324,7 @@ export function SettingsView(): ReactElement {
   }
 
   function ensureNoUnsavedProfileChanges(): boolean {
-    if (!shouldBlockSettingsNavigation(saveState, hasUnsavedProfileChanges(activeProfile, profileName, form))) {
+    if (!shouldBlockSettingsNavigation(saveState, profileHasUnsavedChanges)) {
       return true;
     }
     setError(t("settings.unsavedChanges"));
@@ -398,6 +423,12 @@ export function SettingsView(): ReactElement {
       setError(t("settings.profiles.noActive"));
       return;
     }
+    const validationError = validateModelSettingsForm(form, activeProfile.config, t);
+    if (validationError) {
+      setSaveState("error");
+      setError(validationError);
+      return;
+    }
     setSaveState("saving");
     setError("");
     try {
@@ -451,16 +482,21 @@ export function SettingsView(): ReactElement {
   return (
     <main className="ds-settings-root">
       <SettingsSidebar
-        items={settingsNavItems}
+        items={visibleSettingsNavItems}
         activeCategory={category}
         navLabel={t("settings.navLabel")}
+        searchLabel={t("settings.searchLabel")}
+        searchPlaceholder={t("settings.searchPlaceholder")}
+        searchValue={settingsSearch}
+        emptyLabel={t("settings.searchEmpty")}
         footerTitle={sidebarFooterTitle}
         footerDescription={sidebarFooterDescription}
         backLabel={t("settings.backToWorkbench")}
+        onSearch={setSettingsSearch}
         onSelect={setCategory}
         onBack={() => {
           if (ensureNoUnsavedProfileChanges()) {
-            actions.setRoute("code");
+            actions.setRoute(state.lastWorkbenchRoute);
           }
         }}
       />
@@ -529,6 +565,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.locale")}
                 description={t("settings.descriptions.locale")}
+                controlId="settings_locale"
                 control={
                   <select
                     id="settings_locale"
@@ -584,6 +621,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.defaultStartupView")}
                 description={t("settings.descriptions.defaultStartupView")}
+                controlId="default_startup_view"
                 control={
                   <select
                     id="default_startup_view"
@@ -627,6 +665,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.defaultInspectorMode")}
                 description={t("settings.descriptions.defaultInspectorMode")}
+                controlId="default_inspector_mode"
                 control={
                   <select
                     id="default_inspector_mode"
@@ -851,6 +890,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.profileName")}
                 description={t("settings.descriptions.profileName")}
+                controlId="profile_name"
                 control={
                   <input
                     id="profile_name"
@@ -863,6 +903,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.modelProvide")}
                 description={t("settings.descriptions.modelProvide")}
+                controlId="model_provide"
                 control={
                   <input
                     id="model_provide"
@@ -875,6 +916,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.model")}
                 description={t("settings.descriptions.model")}
+                controlId="model"
                 control={
                   <input
                     id="model"
@@ -887,6 +929,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.baseUrl")}
                 description={t("settings.descriptions.baseUrl")}
+                controlId="base_url"
                 wide
                 control={
                   <input
@@ -900,6 +943,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.apiKey")}
                 description={t("settings.descriptions.apiKey")}
+                controlId="OPENAI_API_KEY"
                 wide
                 control={
                   <SecretInput
@@ -926,6 +970,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.contextWindow")}
                 description={t("settings.descriptions.contextWindow")}
+                controlId="model_context_window"
                 control={
                   <input
                     id="model_context_window"
@@ -939,6 +984,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.compactLimit")}
                 description={t("settings.descriptions.compactLimit")}
+                controlId="model_auto_compact_token_limit"
                 control={
                   <input
                     id="model_auto_compact_token_limit"
@@ -952,6 +998,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.maxTokens")}
                 description={t("settings.descriptions.maxTokens")}
+                controlId="max_tokens"
                 control={
                   <input
                     id="max_tokens"
@@ -984,6 +1031,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.reasoningEffort")}
                 description={t("settings.descriptions.reasoningEffort")}
+                controlId="model_reasoning_effort"
                 control={
                   <select
                     id="model_reasoning_effort"
@@ -1001,6 +1049,7 @@ export function SettingsView(): ReactElement {
               <SettingRow
                 title={t("settings.fields.agentAutonomy")}
                 description={t("settings.descriptions.agentAutonomy")}
+                controlId="agent_autonomy"
                 control={
                   <select
                     id="agent_autonomy"
@@ -1064,6 +1113,47 @@ function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
   };
 }
 
+export function validateModelSettingsForm(
+  form: SettingsFormState,
+  currentConfig: ModelConfig,
+  t: SettingsTranslator,
+): string | null {
+  const contextWindow = parseOptionalPositiveIntegerForValidation(
+    form.model_context_window,
+    t("settings.fields.contextWindow"),
+    t,
+  );
+  if (!contextWindow.ok) return contextWindow.message;
+
+  const compactLimit = parseOptionalPositiveIntegerForValidation(
+    form.model_auto_compact_token_limit,
+    t("settings.fields.compactLimit"),
+    t,
+  );
+  if (!compactLimit.ok) return compactLimit.message;
+
+  const maxTokens = parseOptionalPositiveIntegerForValidation(
+    form.max_tokens,
+    t("settings.fields.maxTokens"),
+    t,
+  );
+  if (!maxTokens.ok) return maxTokens.message;
+
+  const effectiveContextWindow =
+    contextWindow.value ?? currentConfig.model_context_window;
+  const effectiveCompactLimit =
+    compactLimit.value ?? currentConfig.model_auto_compact_token_limit;
+  const effectiveMaxTokens = maxTokens.value ?? currentConfig.max_tokens;
+
+  if (effectiveCompactLimit > effectiveContextWindow) {
+    return t("settings.errors.compactLimitTooLarge");
+  }
+  if (effectiveMaxTokens >= effectiveContextWindow) {
+    return t("settings.errors.maxTokensTooLarge");
+  }
+  return null;
+}
+
 function parseOptionalInteger(raw: string, field: string): number | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
@@ -1072,6 +1162,27 @@ function parseOptionalInteger(raw: string, field: string): number | undefined {
     throw new Error(`${field} must be a positive integer.`);
   }
   return parsed;
+}
+
+type IntegerValidationResult =
+  | { ok: true; value: number | undefined }
+  | { ok: false; message: string };
+
+function parseOptionalPositiveIntegerForValidation(
+  raw: string,
+  fieldLabel: string,
+  t: SettingsTranslator,
+): IntegerValidationResult {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: undefined };
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return {
+      ok: false,
+      message: t("settings.errors.positiveInteger", { field: fieldLabel }),
+    };
+  }
+  return { ok: true, value: parsed };
 }
 
 function findActiveProfile(
@@ -1168,4 +1279,16 @@ export function isSettingsCategoryInSection(
     case "model":
       return MODEL_SETTINGS_CATEGORIES.includes(category);
   }
+}
+
+export function filterSettingsSidebarItems(
+  items: readonly SettingsSidebarItem[],
+  query: string,
+): SettingsSidebarItem[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return [...items];
+  return items.filter((item) =>
+    [item.label, item.description, item.id]
+      .some((value) => value.toLocaleLowerCase().includes(normalizedQuery)),
+  );
 }

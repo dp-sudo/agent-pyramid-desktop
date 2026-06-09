@@ -51,6 +51,15 @@ describe("FloatingComposer", () => {
         sendPending: true,
       }),
     ).toBe(false);
+    expect(
+      canSubmitComposerDraft({
+        text: "Hello",
+        attachmentCount: 0,
+        disabled: false,
+        sendPending: false,
+        attachmentPending: true,
+      }),
+    ).toBe(false);
   });
 
   it("blocks attachment removal while a send or active turn can still need the blob", () => {
@@ -73,6 +82,14 @@ describe("FloatingComposer", () => {
         disabled: false,
         runtimeBusy: true,
         sendPending: false,
+      }),
+    ).toBe(true);
+    expect(
+      isAttachmentRemovalDisabled({
+        disabled: false,
+        runtimeBusy: false,
+        sendPending: false,
+        attachmentPending: true,
       }),
     ).toBe(true);
   });

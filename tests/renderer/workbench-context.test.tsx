@@ -46,6 +46,16 @@ function turn(overrides: Partial<TurnRecord> = {}): TurnRecord {
 }
 
 describe("WorkbenchContext reducer", () => {
+  it("remembers the last code or write workbench while visiting settings", () => {
+    const fromWrite = reducer(INITIAL_STATE, { type: "setRoute", route: "write" });
+    const settings = reducer(fromWrite, { type: "setRoute", route: "settings" });
+    const backToCode = reducer(settings, { type: "setRoute", route: "code" });
+
+    expect(fromWrite.lastWorkbenchRoute).toBe("write");
+    expect(settings.lastWorkbenchRoute).toBe("write");
+    expect(backToCode.lastWorkbenchRoute).toBe("code");
+  });
+
   it("selects and removes active threads without leaving stale state", () => {
     const selected = reducer(INITIAL_STATE, {
       type: "selectThread",

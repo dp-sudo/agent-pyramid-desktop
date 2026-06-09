@@ -146,6 +146,8 @@
     "sending": "Sending…",
     "reasoningEffort": "Reasoning",
     "removeAttachment": "Remove attachment",
+    "attachmentsProcessing": "Processing {{count}} image(s)",
+    "noModelProfiles": "No model profiles available. Add one in Settings.",
     "unsupportedImage": "Only PNG, JPEG, WebP, and GIF images can be attached.",
     "attachmentAddBlocked": "Wait for the current turn to finish before adding images.",
     "attachmentOnlyMessageSingle": "Please analyze the attached image.",
@@ -166,6 +168,9 @@
     "unsavedChanges": "This model profile has unsaved changes. Save before switching or deleting profiles.",
     "preloadMissing": "Preload script not loaded. Open this page through the Electron app.",
     "navLabel": "Settings sections",
+    "searchLabel": "Find settings",
+    "searchPlaceholder": "Search this section",
+    "searchEmpty": "No settings match this search.",
     "sectionNavLabel": "Settings categories",
     "sidebarFooterTitle": "Runtime config",
     "sidebarFooterDescription": "Saved to userData/config",
@@ -177,6 +182,11 @@
     },
     "showSecret": "Show key",
     "hideSecret": "Hide key",
+    "errors": {
+      "positiveInteger": "{{field}} must be a positive whole number.",
+      "compactLimitTooLarge": "Auto compact limit must be less than or equal to the context window.",
+      "maxTokensTooLarge": "Max output tokens must be less than the context window."
+    },
     "status": {
       "idle": "Ready",
       "dirty": "Modified",

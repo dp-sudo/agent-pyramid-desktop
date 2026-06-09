@@ -20,9 +20,14 @@ interface SettingsSidebarProps {
   items: SettingsSidebarItem[];
   activeCategory: SettingsCategory;
   navLabel: string;
+  searchLabel: string;
+  searchPlaceholder: string;
+  searchValue: string;
+  emptyLabel: string;
   footerTitle: string;
   footerDescription: string;
   backLabel: string;
+  onSearch(value: string): void;
   onSelect(category: SettingsCategory): void;
   onBack(): void;
 }
@@ -31,9 +36,14 @@ export function SettingsSidebar({
   items,
   activeCategory,
   navLabel,
+  searchLabel,
+  searchPlaceholder,
+  searchValue,
+  emptyLabel,
   footerTitle,
   footerDescription,
   backLabel,
+  onSearch,
   onSelect,
   onBack,
 }: SettingsSidebarProps): ReactElement {
@@ -45,7 +55,19 @@ export function SettingsSidebar({
           {backLabel}
         </button>
       </div>
+      <label className="ds-settings-search">
+        <span>{searchLabel}</span>
+        <input
+          type="search"
+          value={searchValue}
+          placeholder={searchPlaceholder}
+          onChange={(event) => onSearch(event.target.value)}
+        />
+      </label>
       <nav className="ds-settings-nav" aria-label={navLabel}>
+        {items.length === 0 ? (
+          <div className="ds-settings-nav-empty">{emptyLabel}</div>
+        ) : null}
         {items.map((item) => (
           <button
             key={item.id}

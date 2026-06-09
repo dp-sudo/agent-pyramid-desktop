@@ -34,6 +34,7 @@
 - 修复设置页模型档案状态机：profile 保存失败后如果表单仍与 active profile 不一致，切换 section/profile、复制、删除或返回工作台会继续触发未保存修改守卫，避免把失败后的用户修改静默丢弃。
 - 修复 SSE IPC envelope 边界：`sse:subscribe` / `sse:unsubscribe` 对坏请求返回 `SSE_SUBSCRIBE_FAILED` / `SSE_UNSUBSCRIBE_FAILED`，不再让 ipcMain handler 直接 throw。
 - 设置页采用两级导航：顶部切换设置大类，左侧切换当前大类下的小类，中间展示详细配置；当前“基础设置”大类承载外观与语言、启动与布局、会话与工作区偏好，“大模型设置”大类承载模型档案、连接信息、上下文和推理行为。
+- 打磨前端可用性与可访问性：设置页左侧导航支持当前大类内搜索，设置表单的 `input/select` 通过 `SettingRow` 建立真实 label 关联，模型 profile 脏表单和 Write 工作台脏文档会在窗口刷新/关闭前触发未保存提示；Composer 附件处理新增 pending 反馈并阻止处理中发送，模型选择器补充空态；Write 工作台搜索改为短防抖，减少高频 IPC 抖动。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
 - 建立 Vitest 自动化测试体系：`vitest.config.ts`、`tsconfig.test.json`、`tests/`，覆盖共享契约、主进程持久化、模型配置、附件、工具、事件总线、LLM 网关、AgentRuntime 和渲染端 reducer。
 
@@ -68,6 +69,14 @@
 - 新增或修改 Agent 运行框架、LLM 接入、工具、IPC、持久化、UI 状态或 i18n 时，应优先补充对应 `tests/` 用例，再运行上述命令。
 
 ## 变更记录
+
+### 2026-06-09 - 前端设置与 Write 工作台可用性收口
+
+- 修复 Settings 返回路径：`WorkbenchContext` 记录最近一次 code/write 工作台路由，设置页返回时回到来源工作台，避免从 Write 进入设置后被固定带回 Code。
+- 加固 Write 工作台离开路径：从 Write 切到 Code 或 Settings 前会复用当前 Markdown 文档保存闸门；保存失败时保留在 Write 并暴露错误，避免自动保存尚未完成时静默离开。
+- 优化 Settings 表单反馈：模型 token 配置在 renderer 提交前先做本地化正整数、自动压缩阈值和最大输出 token 关系校验，减少等待 IPC 后才看到英文错误的情况。
+- 补齐可访问性与资源清理：设计 token 新增 `--ds-focus-ring` 并统一设置页表单焦点反馈；Composer 在卸载时释放仍被追踪的 blob 预览 URL。
+- 验证方式：补充 renderer 单元测试覆盖 settings 校验、Write 离开保存判断和最近工作台路由；完整验证命令见本次实现结果。
 
 ### 2026-06-09 - Code/Write 工作台与 tool 权限隔离
 

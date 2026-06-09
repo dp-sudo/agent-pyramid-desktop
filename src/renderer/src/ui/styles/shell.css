@@ -32,6 +32,14 @@ textarea {
   color: inherit;
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: 2px;
+}
+
 ::selection {
   background: var(--ds-selection);
 }
@@ -594,6 +602,15 @@ textarea {
   font-size: var(--ds-size-caption);
 }
 
+.ds-composer-empty {
+  border: 1px dashed var(--ds-border-muted);
+  border-radius: var(--ds-radius-sm);
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  line-height: 1.45;
+  padding: 8px;
+}
+
 .ds-composer-menu-row {
   display: flex;
   min-height: 32px;
@@ -658,7 +675,8 @@ textarea {
 }
 
 .ds-message-attachments span,
-.ds-composer-mode-chip {
+.ds-composer-mode-chip,
+.ds-composer-status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1907,11 +1925,46 @@ textarea {
   color: var(--ds-text-faint);
 }
 
+.ds-settings-search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px 12px;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-label);
+}
+
+.ds-settings-search input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-card);
+  color: var(--ds-text);
+  font: inherit;
+  padding: 0 10px;
+  outline: none;
+}
+
+.ds-settings-search input:focus-visible {
+  border-color: var(--ds-border-strong);
+  box-shadow: var(--ds-focus-ring);
+}
+
 .ds-settings-nav {
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 0 8px;
+}
+
+.ds-settings-nav-empty {
+  border: 1px dashed var(--ds-border-muted);
+  border-radius: var(--ds-radius-xl);
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-body);
+  line-height: 1.5;
+  padding: 12px;
 }
 
 .ds-settings-nav-item {
@@ -2297,7 +2350,7 @@ textarea {
 .ds-setting-row-control select:focus,
 .ds-secret-input:focus-within {
   border-color: var(--ds-accent);
-  box-shadow: 0 0 0 3px var(--ds-accent-soft);
+  box-shadow: var(--ds-focus-ring);
 }
 
 .ds-secret-input {

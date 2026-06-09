@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from "react";
+import { useId, type ReactElement, type ReactNode } from "react";
 
 interface SettingsCardProps {
   title: string;
@@ -28,6 +28,7 @@ interface SettingRowProps {
   title: string;
   description?: string;
   control: ReactNode;
+  controlId?: string;
   wide?: boolean;
 }
 
@@ -35,13 +36,21 @@ export function SettingRow({
   title,
   description,
   control,
+  controlId,
   wide = false,
 }: SettingRowProps): ReactElement {
+  const descriptionId = useId();
   return (
     <div className={`ds-setting-row${wide ? " is-wide" : ""}`}>
       <div className="ds-setting-row-copy">
-        <div className="ds-setting-row-title">{title}</div>
-        {description ? <p>{description}</p> : null}
+        {controlId ? (
+          <label className="ds-setting-row-title" htmlFor={controlId}>
+            {title}
+          </label>
+        ) : (
+          <div className="ds-setting-row-title">{title}</div>
+        )}
+        {description ? <p id={descriptionId}>{description}</p> : null}
       </div>
       <div className="ds-setting-row-control">{control}</div>
     </div>
@@ -135,7 +144,12 @@ export function StatusBadge({
   title,
 }: StatusBadgeProps): ReactElement {
   return (
-    <span className={`ds-settings-status-badge is-${tone}`} title={title}>
+    <span
+      className={`ds-settings-status-badge is-${tone}`}
+      role="status"
+      aria-live="polite"
+      title={title}
+    >
       {children}
     </span>
   );

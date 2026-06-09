@@ -55,18 +55,22 @@ export function FloatingComposer({
   const trackedPreviewUrlsRef = useRef(new Set<string>());
   const [draftText, setDraftText] = useState(state.composer.text);
   const [sendPending, setSendPending] = useState(false);
+  const [attachmentPendingCount, setAttachmentPendingCount] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const attachmentPending = attachmentPendingCount > 0;
   const attachmentRemovalDisabled = isAttachmentRemovalDisabled({
     disabled: Boolean(disabled),
     runtimeBusy,
     sendPending,
+    attachmentPending,
   });
   const sendDisabled = !canSubmitComposerDraft({
     text: draftText,
     attachmentCount: state.composer.attachmentIds.length,
     disabled: Boolean(disabled),
     sendPending,
+    attachmentPending,
   });
 
   useEffect(() => {
@@ -89,6 +93,15 @@ export function FloatingComposer({
       }
     }
   }, [state.composer.attachments]);
+
+  useEffect(() => {
+    return () => {
+      for (const previewUrl of trackedPreviewUrlsRef.current) {
+        revokeTrackedPreviewUrl(previewUrl);
+      }
+      trackedPreviewUrlsRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!menuOpen && !pickerOpen) return undefined;
@@ -155,6 +168,7 @@ export function FloatingComposer({
         attachmentCount: state.composer.attachmentIds.length,
         disabled: Boolean(disabled),
         sendPending,
+        attachmentPending,
       })
     ) {
       return;
@@ -186,42 +200,47 @@ export function FloatingComposer({
     source: "picker" | "paste",
   ): Promise<void> {
     if (files.length === 0) return;
-    if (disabled || runtimeBusy || sendPending) {
+    if (disabled || runtimeBusy || sendPending || attachmentPending) {
       actions.setError(t("composer.attachmentAddBlocked"));
       return;
     }
 
-    for (const [index, imageFile] of files.entries()) {
-      const previewUrl = createPreviewUrl(imageFile.file);
-      try {
-        const dataBase64 = await readFileAsBase64(imageFile.file);
-        const result = await window.agentApi.attachments.create({
-          name: getComposerImageAttachmentName(imageFile.file, index, source),
-          mimeType: imageFile.mimeType,
-          dataBase64,
-        });
-        if (!result.ok) {
+    setAttachmentPendingCount((count) => count + files.length);
+    try {
+      for (const [index, imageFile] of files.entries()) {
+        const previewUrl = createPreviewUrl(imageFile.file);
+        try {
+          const dataBase64 = await readFileAsBase64(imageFile.file);
+          const result = await window.agentApi.attachments.create({
+            name: getComposerImageAttachmentName(imageFile.file, index, source),
+            mimeType: imageFile.mimeType,
+            dataBase64,
+          });
+          if (!result.ok) {
+            revokeTrackedPreviewUrl(previewUrl);
+            actions.setError(result.message);
+            continue;
+          }
+          const thumbnailUrl = await createThumbnailUrl(
+            imageFile.file,
+            previewUrl,
+            COMPOSER_THUMBNAIL_MAX_EDGE,
+          ).catch(() => undefined);
+          if (thumbnailUrl) {
+            revokeTrackedPreviewUrl(previewUrl);
+          }
+          actions.addComposerAttachment({
+            ...result.value,
+            ...(!thumbnailUrl && previewUrl ? { previewUrl } : {}),
+            ...(thumbnailUrl ? { thumbnailUrl } : {}),
+          });
+        } catch (error) {
           revokeTrackedPreviewUrl(previewUrl);
-          actions.setError(result.message);
-          continue;
+          actions.setError(error instanceof Error ? error.message : String(error));
         }
-        const thumbnailUrl = await createThumbnailUrl(
-          imageFile.file,
-          previewUrl,
-          COMPOSER_THUMBNAIL_MAX_EDGE,
-        ).catch(() => undefined);
-        if (thumbnailUrl) {
-          revokeTrackedPreviewUrl(previewUrl);
-        }
-        actions.addComposerAttachment({
-          ...result.value,
-          ...(!thumbnailUrl && previewUrl ? { previewUrl } : {}),
-          ...(thumbnailUrl ? { thumbnailUrl } : {}),
-        });
-      } catch (error) {
-        revokeTrackedPreviewUrl(previewUrl);
-        actions.setError(error instanceof Error ? error.message : String(error));
       }
+    } finally {
+      setAttachmentPendingCount((count) => Math.max(0, count - files.length));
     }
   }
 
@@ -293,6 +312,7 @@ export function FloatingComposer({
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         placeholder={t("composer.placeholder")}
+        aria-label={t("composer.placeholder")}
         disabled={disabled}
       />
       <div
@@ -315,6 +335,8 @@ export function FloatingComposer({
             disabled={disabled || runtimeBusy || sendPending}
             title={t("composer.more")}
             aria-label={t("composer.more")}
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
           >
             +
           </button>
@@ -358,6 +380,9 @@ export function FloatingComposer({
           <button
             type="button"
             className="ds-composer-model-button"
+            aria-label={t("composer.model")}
+            aria-expanded={pickerOpen}
+            aria-haspopup="dialog"
             onClick={() => {
               setPickerOpen((value) => !value);
               setMenuOpen(false);
@@ -380,6 +405,11 @@ export function FloatingComposer({
           ) : null}
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {attachmentPending ? (
+            <span className="ds-composer-status" role="status" aria-live="polite">
+              {t("composer.attachmentsProcessing", { count: attachmentPendingCount })}
+            </span>
+          ) : null}
           {state.composer.mode === "plan" ? (
             <span className="ds-composer-mode-chip">{t("composer.planMode")}</span>
           ) : null}
@@ -552,25 +582,34 @@ export function canSubmitComposerDraft({
   attachmentCount,
   disabled,
   sendPending,
+  attachmentPending = false,
 }: {
   text: string;
   attachmentCount: number;
   disabled: boolean;
   sendPending: boolean;
+  attachmentPending?: boolean;
 }): boolean {
-  return !disabled && !sendPending && (text.trim().length > 0 || attachmentCount > 0);
+  return (
+    !disabled &&
+    !sendPending &&
+    !attachmentPending &&
+    (text.trim().length > 0 || attachmentCount > 0)
+  );
 }
 
 export function isAttachmentRemovalDisabled({
   disabled,
   runtimeBusy,
   sendPending,
+  attachmentPending = false,
 }: {
   disabled: boolean;
   runtimeBusy: boolean;
   sendPending: boolean;
+  attachmentPending?: boolean;
 }): boolean {
-  return disabled || runtimeBusy || sendPending;
+  return disabled || runtimeBusy || sendPending || attachmentPending;
 }
 
 export function getDeleteShortcutAttachmentId({

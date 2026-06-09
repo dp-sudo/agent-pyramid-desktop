@@ -27,6 +27,7 @@ palette:
     text_placeholder: "#949dad"
     accent: "#0088ff"
     accent_soft: "rgba(0,136,255,0.14)"
+    focus_ring: "0 0 0 3px rgba(0,136,255,0.18)"
     bubble_user: "rgba(0,0,0,0.06)"
     bubble_user_fg: "#222222"
     success: "#128a4a"
@@ -60,6 +61,7 @@ palette:
     text_placeholder: "#7a7a7a"
     accent: "#339cff"
     accent_soft: "rgba(51,156,255,0.18)"
+    focus_ring: "0 0 0 3px rgba(51,156,255,0.24)"
     bubble_user: "rgba(255,255,255,0.08)"
     bubble_user_fg: "#ffffff"
     success: "#40c977"
@@ -289,6 +291,7 @@ Topbar exposes the Right Inspector modes as a segmented control for Changes / To
 
 - Markdown 文件列表必须显示加载、未打开工作区、空列表和搜索无结果状态；文件行使用可聚焦 button，并展示简短元信息帮助扫描。
 - 搜索框应提供一键清空入口；保存按钮只在当前文件存在且内容有变更时可用，避免把“无变化”表现成可执行保存。
+- 从 Write 切换到 Code 或 Settings 前必须先 flush 当前脏文档保存；保存失败时保留在 Write，并通过状态栏暴露错误。
 
 ## 9. Settings
 
@@ -297,3 +300,4 @@ Topbar exposes the Right Inspector modes as a segmented control for Changes / To
 - 当前“大模型设置”大类包含模型档案、连接信息、上下文和推理行为四个小类；新增其它大类时必须在入口层分流，不把不同大类的配置项混入同一组小类。
 - 模型 profile 删除必须使用卡片内行内确认态，不使用系统 `confirm`，并提供明确的确认、取消和删除中状态。
 - 模型 profile 表单处于 dirty 状态时，切换/创建/复制/删除 profile 或返回工作台必须先提示保存，不能静默丢弃未保存修改。
+- Settings 返回工作台必须回到进入设置前的最近 code/write 工作台；模型 token 表单提交前必须在 renderer 做本地化正整数与上下限校验。

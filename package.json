@@ -13,10 +13,10 @@
     "preview": "electron-vite preview"
   },
   "dependencies": {
-    "i18next": "^24.2.3",
+    "i18next": "^26.3.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-i18next": "^15.7.4",
+    "react-i18next": "^17.0.8",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "typescript": "^6.0.3"

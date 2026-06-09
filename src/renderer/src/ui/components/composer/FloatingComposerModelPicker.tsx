@@ -28,6 +28,9 @@ export function FloatingComposerModelPicker({
     <div className="ds-composer-popover is-model-picker">
       <div className="ds-composer-popover-section">
         <div className="ds-composer-popover-label">{t("composer.model")}</div>
+        {profiles.length === 0 ? (
+          <div className="ds-composer-empty">{t("composer.noModelProfiles")}</div>
+        ) : null}
         {profiles.map((profile) => {
           const active = selectedProfileId
             ? profile.id === selectedProfileId

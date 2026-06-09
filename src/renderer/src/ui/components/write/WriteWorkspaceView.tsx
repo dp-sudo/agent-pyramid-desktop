@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../../store/WorkbenchContext";
+import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
 import type { WriteFileEntry } from "../../../../../shared/agent-contracts";
 
 const AUTOSAVE_DELAY_MS = 800;
 const COMPLETION_DELAY_MS = 650;
+const WRITE_SEARCH_DEBOUNCE_MS = 250;
 const COMPLETION_MIN_TRAILING_CHARS = 10;
 type WriteStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
@@ -35,6 +36,7 @@ export function WriteWorkspaceView({
   const savedContentRef = useRef("");
   const saveInFlightRef = useRef(false);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
+  const searchDebounceTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     activePathRef.current = activePath;
@@ -108,7 +110,14 @@ export function WriteWorkspaceView({
     }
   }
 
+  function clearSearchDebounceTimer(): void {
+    if (searchDebounceTimerRef.current === null) return;
+    window.clearTimeout(searchDebounceTimerRef.current);
+    searchDebounceTimerRef.current = null;
+  }
+
   function handleClearSearch(): void {
+    clearSearchDebounceTimer();
     setSearch("");
     if (state.workspaceRoot) {
       void loadList(state.workspaceRoot, "", { saveBeforeLoad: false });
@@ -156,6 +165,29 @@ export function WriteWorkspaceView({
     const timer = window.setTimeout(() => setStatus("idle"), 1500);
     return () => window.clearTimeout(timer);
   }, [status]);
+
+  useEffect(() => {
+    return () => clearSearchDebounceTimer();
+  }, []);
+
+  useEffect(() => {
+    if (!shouldWarnBeforeLeavingWriteDocument({
+      activePath,
+      workspaceRoot: state.workspaceRoot,
+      content,
+      savedContent,
+    })) {
+      return undefined;
+    }
+
+    function handleBeforeUnload(event: BeforeUnloadEvent): void {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [activePath, content, savedContent, state.workspaceRoot]);
 
   useEffect(() => {
     if (!activePath || !state.workspaceRoot) return;
@@ -208,6 +240,13 @@ export function WriteWorkspaceView({
       return contentRef.current === savedContentRef.current;
     }
     return flushSave();
+  }
+
+  async function navigateFromWrite(
+    route: Extract<WorkbenchRoute, "code" | "settings">,
+  ): Promise<void> {
+    if (!(await saveCurrentFileBeforeSwitch())) return;
+    actions.setRoute(route);
   }
 
   async function flushSave(): Promise<boolean> {
@@ -323,14 +362,14 @@ export function WriteWorkspaceView({
           <button
             type="button"
             className="ds-pill"
-            onClick={() => actions.setRoute("code")}
+            onClick={() => void navigateFromWrite("code")}
           >
             {t("routes.code")}
           </button>
           <button
             type="button"
             className="ds-pill"
-            onClick={() => actions.setRoute("settings")}
+            onClick={() => void navigateFromWrite("settings")}
           >
             {t("common.settings")}
           </button>
@@ -364,10 +403,15 @@ export function WriteWorkspaceView({
               const nextSearch = event.target.value;
               setSearch(nextSearch);
               if (state.workspaceRoot) {
-                void loadList(state.workspaceRoot, nextSearch, { saveBeforeLoad: false });
+                clearSearchDebounceTimer();
+                searchDebounceTimerRef.current = window.setTimeout(() => {
+                  searchDebounceTimerRef.current = null;
+                  void loadList(state.workspaceRoot, nextSearch, { saveBeforeLoad: false });
+                }, WRITE_SEARCH_DEBOUNCE_MS);
               }
             }}
             placeholder={t("write.searchPlaceholder")}
+            aria-label={t("write.searchPlaceholder")}
           />
           {search ? (
             <button
@@ -455,6 +499,13 @@ export interface WriteSaveStateInput {
   status: WriteStatus;
 }
 
+export interface WriteDirtyDocumentInput {
+  activePath: string | null;
+  workspaceRoot: string;
+  content: string;
+  savedContent: string;
+}
+
 export function shouldDisableWriteSave(input: WriteSaveStateInput): boolean {
   return (
     !input.activePath ||
@@ -465,13 +516,16 @@ export function shouldDisableWriteSave(input: WriteSaveStateInput): boolean {
   );
 }
 
-export function shouldSaveWriteFileBeforeSwitch(input: {
-  activePath: string | null;
-  workspaceRoot: string;
-  content: string;
-  savedContent: string;
-}): boolean {
+export function shouldSaveWriteFileBeforeSwitch(input: WriteDirtyDocumentInput): boolean {
   return Boolean(input.activePath && input.workspaceRoot && input.content !== input.savedContent);
+}
+
+export function shouldSaveWriteFileBeforeRouteChange(input: WriteDirtyDocumentInput): boolean {
+  return shouldSaveWriteFileBeforeSwitch(input);
+}
+
+export function shouldWarnBeforeLeavingWriteDocument(input: WriteDirtyDocumentInput): boolean {
+  return shouldSaveWriteFileBeforeSwitch(input);
 }
 
 export function shouldApplyWriteOpenResult(input: {

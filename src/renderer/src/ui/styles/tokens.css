@@ -35,6 +35,7 @@
   /* Semantic */
   --ds-accent: #0088ff;
   --ds-accent-soft: rgba(0, 136, 255, 0.14);
+  --ds-focus-ring: 0 0 0 3px rgba(0, 136, 255, 0.18);
   --ds-success: #128a4a;
   --ds-success-soft: rgba(17, 185, 129, 0.14);
   --ds-danger: #c92a2a;
@@ -117,6 +118,7 @@
 
   --ds-accent: #339cff;
   --ds-accent-soft: rgba(51, 156, 255, 0.18);
+  --ds-focus-ring: 0 0 0 3px rgba(51, 156, 255, 0.24);
   --ds-success: #40c977;
   --ds-success-soft: rgba(64, 201, 119, 0.18);
   --ds-danger: #fa423e;

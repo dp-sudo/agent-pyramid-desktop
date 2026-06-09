@@ -50,6 +50,7 @@ export interface ComposerState {
 
 export interface WorkbenchState {
   route: WorkbenchRoute;
+  lastWorkbenchRoute: Extract<WorkbenchRoute, "code" | "write">;
   modelConfig: ModelConfig;
   modelProfiles: ModelConfigProfilesState | null;
   workspaceRoot: string;
@@ -72,6 +73,7 @@ const initialBasicPreferences = loadBasicPreferences();
 
 export const INITIAL_STATE: WorkbenchState = {
   route: initialBasicPreferences.defaultStartupView,
+  lastWorkbenchRoute: initialBasicPreferences.defaultStartupView,
   modelConfig: DEFAULT_MODEL_CONFIG,
   modelProfiles: null,
   workspaceRoot: initialBasicPreferences.restoreLastWorkspaceOnStartup
@@ -182,7 +184,13 @@ type BasicPreferenceAction = {
 export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
   switch (action.type) {
     case "setRoute":
-      return { ...state, route: action.route };
+      return {
+        ...state,
+        route: action.route,
+        lastWorkbenchRoute: isWorkbenchRoute(action.route)
+          ? action.route
+          : state.lastWorkbenchRoute,
+      };
     case "setModelConfig":
       return {
         ...state,
@@ -577,11 +585,8 @@ export function useWorkbench(): WorkbenchContextValue {
   return ctx;
 }
 
-function useWorkbenchActions(): WorkbenchActions {
-  return useWorkbench().actions;
-}
-
-// Convenience for component code that only needs the current active thread id.
-function useActiveThreadId(): string | null {
-  return useWorkbench().state.activeThreadId;
+function isWorkbenchRoute(
+  route: WorkbenchRoute,
+): route is Extract<WorkbenchRoute, "code" | "write"> {
+  return route === "code" || route === "write";
 }
