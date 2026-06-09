@@ -209,7 +209,7 @@ export function parseModelConfigUpdateRequest(request: unknown): ModelConfigUpda
     }
     parsed.agent_autonomy = value.agent_autonomy;
   }
-  return parsed as ModelConfigUpdate;
+  return parsed;
 }
 
 function requiredTrimmedString(value: unknown, field: string): string {

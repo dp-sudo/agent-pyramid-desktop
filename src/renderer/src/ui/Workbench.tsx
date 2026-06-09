@@ -12,7 +12,10 @@ import { FloatingComposer } from "./components/composer/FloatingComposer";
 import { MessageTimeline } from "./components/chat/MessageTimeline";
 import { PendingApprovalPanel } from "./components/chat/PendingApprovalPanel";
 import { RightInspector } from "./components/inspector/RightInspector";
-import { WriteWorkspaceView } from "./components/write/WriteWorkspaceView";
+import {
+  WriteWorkspaceView,
+  type WriteAssistantPromptPayload,
+} from "./components/write/WriteWorkspaceView";
 import {
   LEFT_SIDEBAR_MAX_WIDTH,
   LEFT_SIDEBAR_MIN_WIDTH,
@@ -211,7 +214,7 @@ export function Workbench(): ReactElement {
         return;
       }
       const items = itemsResult.ok ? itemsResult.value.items : [];
-      actions.selectThread(threadResult.value as ThreadRecord, items);
+      actions.selectThread(threadResult.value, items);
     },
     [actions],
   );
@@ -255,7 +258,7 @@ export function Workbench(): ReactElement {
       }
       activeThreadIdRef.current = created.value.id;
       if (!await subscribeThreadEvents(created.value.id)) return false;
-      actions.selectThread(created.value as ThreadRecord, []);
+      actions.selectThread(created.value, []);
       void refreshThreads();
       return true;
     },
@@ -299,7 +302,7 @@ export function Workbench(): ReactElement {
     }
     activeThreadIdRef.current = result.value.id;
     if (!await subscribeThreadEvents(result.value.id)) return;
-    actions.selectThread(result.value as ThreadRecord, []);
+    actions.selectThread(result.value, []);
     actions.setError(null);
     void refreshThreads();
   }, [actions, ensureWorkspaceRoot, refreshThreads, subscribeThreadEvents]);
@@ -412,7 +415,7 @@ export function Workbench(): ReactElement {
         }
         threadId = threadResult.value.id;
         activeThreadIdRef.current = threadId;
-        actions.selectThread(threadResult.value as ThreadRecord, []);
+        actions.selectThread(threadResult.value, []);
         if (!await subscribeThreadEvents(threadId)) return false;
         void refreshThreads();
       }
@@ -424,7 +427,7 @@ export function Workbench(): ReactElement {
           status: "active",
         });
         if (goalResult.ok) {
-          actions.updateActiveThread(goalResult.value as ThreadRecord);
+          actions.updateActiveThread(goalResult.value);
         } else {
           actions.setError(goalResult.message);
           return false;
@@ -468,6 +471,86 @@ export function Workbench(): ReactElement {
     subscribeThreadEvents,
     t,
   ]);
+
+  const onSendWriteAssistantPrompt = useCallback(
+    async (payload: WriteAssistantPromptPayload): Promise<boolean> => {
+      const sendPayload = normalizeWriteAssistantSendPayload(payload);
+      if (!sendPayload) return false;
+      if (activeThreadArchived) {
+        actions.setError(t("threads.sendBlockedArchived"));
+        return false;
+      }
+      if (sendInProgressRef.current) {
+        return false;
+      }
+
+      sendInProgressRef.current = true;
+      actions.setError(null);
+      try {
+        let threadId = state.activeThread?.mode === "write"
+          ? state.activeThreadId
+          : null;
+        if (!threadId) {
+          const workspace = await ensureWorkspaceRoot();
+          if (!workspace) return false;
+          const title =
+            sendPayload.threadTitle.length > 60
+              ? `${sendPayload.threadTitle.slice(0, 57)}...`
+              : sendPayload.threadTitle;
+          const threadResult = await window.agentApi.threads.create({
+            title,
+            workspace,
+            mode: "write",
+          });
+          if (!threadResult.ok) {
+            actions.setError(threadResult.message);
+            return false;
+          }
+          threadId = threadResult.value.id;
+          activeThreadIdRef.current = threadId;
+          actions.selectThread(threadResult.value, []);
+          if (!await subscribeThreadEvents(threadId)) return false;
+          void refreshThreads();
+        }
+
+        const result = await window.agentApi.turns.start({
+          threadId,
+          text: sendPayload.text,
+          displayText: sendPayload.displayText,
+          model: state.composer.model,
+          modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
+          reasoningEffort:
+            state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
+          attachmentIds: [],
+          mode: "agent",
+          goalMode: false,
+        });
+        if (!result.ok) {
+          actions.setError(result.message);
+          return false;
+        }
+        actions.turnStarted(result.value);
+        return true;
+      } finally {
+        sendInProgressRef.current = false;
+      }
+    },
+    [
+      state.activeThread,
+      state.activeThreadId,
+      state.composer.model,
+      state.composer.modelProfileId,
+      state.composer.reasoningEffort,
+      state.modelConfig.model_reasoning_effort,
+      state.modelProfiles,
+      activeThreadArchived,
+      actions,
+      ensureWorkspaceRoot,
+      refreshThreads,
+      subscribeThreadEvents,
+      t,
+    ],
+  );
 
   const onInterrupt = useCallback(async () => {
     if (!activeThreadInFlightTurn) return;
@@ -572,11 +655,21 @@ export function Workbench(): ReactElement {
       ) : null}
       <main className="ds-stage-surface">
         {state.route === "write" ? (
-          <WriteWorkspaceView
-            onWorkspaceSelected={(workspace) =>
-              selectOrCreateThreadForWorkspace(workspace, "write")
-            }
-          />
+          <>
+            <WriteWorkspaceView
+              onWorkspaceSelected={(workspace) =>
+                selectOrCreateThreadForWorkspace(workspace, "write")
+              }
+              onSendAssistantPrompt={onSendWriteAssistantPrompt}
+              onInterruptAssistant={() => void onInterrupt()}
+              assistantBusy={Boolean(activeThreadInFlightTurn)}
+            />
+            <WorkbenchErrorToast
+              message={state.errorMessage}
+              onDismiss={() => actions.setError(null)}
+              floating
+            />
+          </>
         ) : (
           <section className="ds-chat-stage">
             <div style={{ padding: 12 }}>
@@ -593,19 +686,10 @@ export function Workbench(): ReactElement {
                       onInterrupt={() => void onInterrupt()}
                       disabled={activeThreadArchived}
                     />
-                    {state.errorMessage ? (
-                      <div className="ds-error-toast" role="status">
-                        <span>{state.errorMessage}</span>
-                        <button
-                          type="button"
-                          onClick={() => actions.setError(null)}
-                          aria-label={t("common.dismiss")}
-                          title={t("common.dismiss")}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ) : null}
+                    <WorkbenchErrorToast
+                      message={state.errorMessage}
+                      onDismiss={() => actions.setError(null)}
+                    />
                   </div>
                 </div>
               </div>
@@ -616,6 +700,36 @@ export function Workbench(): ReactElement {
       </main>
     </>
   );
+}
+
+function WorkbenchErrorToast({
+  message,
+  onDismiss,
+  floating = false,
+}: {
+  message: string | null;
+  onDismiss: () => void;
+  floating?: boolean;
+}): ReactElement | null {
+  const { t } = useTranslation();
+  if (!shouldShowWorkbenchErrorToast(message)) return null;
+  return (
+    <div className={`ds-error-toast ${floating ? "is-floating" : ""}`} role="status">
+      <span>{message}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label={t("common.dismiss")}
+        title={t("common.dismiss")}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+export function shouldShowWorkbenchErrorToast(message: string | null): boolean {
+  return Boolean(message);
 }
 
 export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): string | null {
@@ -697,4 +811,14 @@ export function buildComposerSendPayload(
     displayText: attachmentOnlyText,
     threadTitle: attachmentOnlyText,
   };
+}
+
+export function normalizeWriteAssistantSendPayload(
+  payload: WriteAssistantPromptPayload,
+): WriteAssistantPromptPayload | null {
+  const text = payload.text.trim();
+  const displayText = payload.displayText.trim();
+  const threadTitle = payload.threadTitle.trim();
+  if (!text || !displayText || !threadTitle) return null;
+  return { text, displayText, threadTitle };
 }

@@ -399,7 +399,10 @@ Key classes:
 
 ### Error Toast
 
-Location: bottom composer area in code route.
+Location:
+
+- Code route: bottom composer area.
+- Write route: floating bottom-right toast over the Write stage.
 
 Class: `ds-error-toast`.
 
@@ -425,10 +428,16 @@ flowchart LR
   Editor["Markdown Editor"]
   Ghost["Inline completion ghost"]
   Status["Save/status bar"]
+  Assistant["Write Assistant"]
+  Messages["Thread messages"]
+  Prompt["Explicit assistant input"]
 
   Sidebar --> Editor
   Editor --> Ghost
   Editor --> Status
+  Editor --> Assistant
+  Assistant --> Messages
+  Assistant --> Prompt
 ```
 
 Top-level:
@@ -436,6 +445,8 @@ Top-level:
 - Shares `ds-stage-surface` from `Workbench`.
 - `WriteWorkspaceView` renders its own sidebar inside the stage.
 - Sidebar width uses the same `state.leftSidebarWidth`.
+- Main area uses `ds-write-main`: editor remains the primary pane and the
+  right assistant pane stays inside the Write route, not the Code composer.
 
 ### Write Sidebar
 
@@ -490,6 +501,9 @@ Purpose:
 
 Key classes:
 
+- `ds-write-workspace`
+- `ds-write-sidebar`
+- `ds-write-main`
 - `ds-write-editor`
 - `ds-write-editor-frame`
 - `ds-write-ghost`
@@ -508,6 +522,36 @@ Behavior constants:
   under the new workspace root.
 - Open-file responses are request-id guarded, so a slower `write.get` response
   from an earlier click cannot overwrite the later active file.
+
+### Write Assistant
+
+Purpose:
+
+- Send explicit writing requests from the Write route through the active
+  `mode: "write"` thread.
+- Display recent user, assistant, and system items for that Write thread.
+- Include current Markdown file path and save state in the prompt context
+  without mirroring the full document body into the global Code composer.
+
+Key classes:
+
+- `ds-write-assistant`
+- `ds-write-assistant-header`
+- `ds-write-assistant-messages`
+- `ds-write-assistant-empty`
+- `ds-write-assistant-form`
+- `ds-write-assistant-actions`
+
+Behavior:
+
+- Submit is enabled only when there is an open workspace, non-empty assistant
+  input, and no Write assistant send is already in progress.
+- `Workbench` sends Write assistant turns with `attachmentIds: []`,
+  `mode: "agent"`, and `goalMode: false`; it does not clear or read the global
+  composer draft as the prompt source.
+- The assistant may suggest text or guidance, but current Write IPC file
+  services remain renderer-owned; model replies do not directly save Markdown
+  files.
 - `write.get`, `write.put`, and inline completion only accept Markdown file
   paths (`.md`, `.mdx`, `.markdown`), matching the file list.
 - `write.get` returns only strict UTF-8 Markdown content; invalid local bytes

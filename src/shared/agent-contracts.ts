@@ -19,10 +19,10 @@ export interface ModelConfig {
 }
 
 export interface ModelConfigUpdate {
-  model_provide: string;
-  model: string;
-  base_url: string;
-  OPENAI_API_KEY: string;
+  model_provide?: string;
+  model?: string;
+  base_url?: string;
+  OPENAI_API_KEY?: string;
   model_context_window?: number;
   model_auto_compact_token_limit?: number;
   max_tokens?: number;
@@ -715,7 +715,8 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
         isTerminalTurnStatus(v.status) &&
-        hasString(v, "completedAt");
+        hasString(v, "completedAt") &&
+        isOptionalTokenUsage(v.usage);
     case "turn_failed":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
@@ -785,7 +786,8 @@ function isTurnRecord(value: unknown): value is TurnRecord {
     (value.reasoningEffort === undefined || isModelReasoningEffort(value.reasoningEffort)) &&
     hasString(value, "mode") &&
     (value.mode === "agent" || value.mode === "plan") &&
-    isOptionalBoolean(value.goalMode);
+    isOptionalBoolean(value.goalMode) &&
+    isOptionalTokenUsage(value.usage);
 }
 
 function isThreadGoal(value: unknown): value is ThreadGoal {
@@ -824,6 +826,23 @@ function isOptionalString(value: unknown): boolean {
 
 function isOptionalBoolean(value: unknown): boolean {
   return value === undefined || typeof value === "boolean";
+}
+
+function isOptionalTokenUsage(value: unknown): value is TokenUsage | undefined {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return isOptionalFiniteNumber(value.inputTokens) &&
+    isOptionalFiniteNumber(value.outputTokens) &&
+    isOptionalFiniteNumber(value.totalTokens) &&
+    isOptionalFiniteNumber(value.cacheHitTokens) &&
+    isOptionalFiniteNumber(value.cacheMissTokens) &&
+    (value.cacheHitRate === undefined ||
+      value.cacheHitRate === null ||
+      isFiniteNumber(value.cacheHitRate));
+}
+
+function isOptionalFiniteNumber(value: unknown): value is number | undefined {
+  return value === undefined || isFiniteNumber(value);
 }
 
 function isOptionalStringArray(value: unknown): boolean {

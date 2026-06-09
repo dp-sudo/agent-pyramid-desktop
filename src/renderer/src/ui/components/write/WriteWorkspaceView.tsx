@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
-import type { WriteFileEntry } from "../../../../../shared/agent-contracts";
+import { ChatBlock } from "../chat/ChatBlock";
+import type { Item, WriteFileEntry } from "../../../../../shared/agent-contracts";
 
 const AUTOSAVE_DELAY_MS = 800;
 const COMPLETION_DELAY_MS = 650;
@@ -9,12 +10,24 @@ const WRITE_SEARCH_DEBOUNCE_MS = 250;
 const COMPLETION_MIN_TRAILING_CHARS = 10;
 type WriteStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
+export interface WriteAssistantPromptPayload {
+  text: string;
+  displayText: string;
+  threadTitle: string;
+}
+
 export interface WriteWorkspaceViewProps {
   onWorkspaceSelected?: (workspace: string) => boolean | void | Promise<boolean | void>;
+  onSendAssistantPrompt?: (payload: WriteAssistantPromptPayload) => Promise<boolean>;
+  onInterruptAssistant?: () => void;
+  assistantBusy?: boolean;
 }
 
 export function WriteWorkspaceView({
   onWorkspaceSelected,
+  onSendAssistantPrompt,
+  onInterruptAssistant,
+  assistantBusy = false,
 }: WriteWorkspaceViewProps = {}): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
@@ -24,6 +37,8 @@ export function WriteWorkspaceView({
   const [savedContent, setSavedContent] = useState("");
   const [search, setSearch] = useState("");
   const [completion, setCompletion] = useState("");
+  const [assistantDraft, setAssistantDraft] = useState("");
+  const [assistantSending, setAssistantSending] = useState(false);
   const [status, setStatus] = useState<WriteStatus>("idle");
   const [listLoading, setListLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -37,6 +52,7 @@ export function WriteWorkspaceView({
   const saveInFlightRef = useRef(false);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const searchDebounceTimerRef = useRef<number | null>(null);
+  const assistantMessagesRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     activePathRef.current = activePath;
@@ -44,6 +60,22 @@ export function WriteWorkspaceView({
     contentRef.current = content;
     savedContentRef.current = savedContent;
   }, [activePath, content, savedContent, state.workspaceRoot]);
+
+  const assistantItems = getWriteAssistantVisibleItems(state.items);
+  const assistantSubmitDisabled = (
+    !onSendAssistantPrompt ||
+    !canSubmitWriteAssistantPrompt({
+      prompt: assistantDraft,
+      workspaceRoot: state.workspaceRoot,
+      sending: assistantSending || assistantBusy,
+    })
+  );
+
+  useEffect(() => {
+    const element = assistantMessagesRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+  }, [assistantBusy, state.items]);
 
   async function pickWorkspace(): Promise<string | null> {
     const result = await window.agentApi.workspace.pickDirectory();
@@ -339,6 +371,28 @@ export function WriteWorkspaceView({
     }
   }
 
+  async function sendAssistantPrompt(): Promise<void> {
+    if (!onSendAssistantPrompt || assistantSending || assistantBusy) return;
+    const payload = buildWriteAssistantPrompt({
+      prompt: assistantDraft,
+      activePath,
+      content,
+      savedContent,
+    });
+    if (!payload) return;
+
+    setAssistantSending(true);
+    try {
+      const sent = await onSendAssistantPrompt(payload);
+      if (sent) setAssistantDraft("");
+    } catch (error) {
+      setErrorMessage(messageOf(error));
+      setStatus("error");
+    } finally {
+      setAssistantSending(false);
+    }
+  }
+
   const saveDisabled = shouldDisableWriteSave({
     activePath,
     workspaceRoot: state.workspaceRoot,
@@ -354,8 +408,9 @@ export function WriteWorkspaceView({
   });
 
   return (
-    <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+    <div className="ds-write-workspace">
       <aside
+        className="ds-write-sidebar"
         style={{
           width: state.leftSidebarWidth,
           background: "var(--ds-bg-sidebar)",
@@ -363,6 +418,7 @@ export function WriteWorkspaceView({
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
+          flex: `0 0 ${state.leftSidebarWidth}px`,
         }}
       >
         <div className="ds-write-route-actions">
@@ -459,36 +515,96 @@ export function WriteWorkspaceView({
           ))}
         </div>
       </aside>
-      <div className="ds-write-editor">
-        <div className="ds-write-editor-frame">
-          <textarea
-            value={content}
-            onChange={(event) => {
-              const nextState = getWriteDocumentEditState(event.target.value);
-              contentRef.current = nextState.content;
-              setContent(nextState.content);
-              setCompletion(nextState.completion);
+      <div className="ds-write-main">
+        <section className="ds-write-editor">
+          <div className="ds-write-editor-frame">
+            <textarea
+              value={content}
+              onChange={(event) => {
+                const nextState = getWriteDocumentEditState(event.target.value);
+                contentRef.current = nextState.content;
+                setContent(nextState.content);
+                setCompletion(nextState.completion);
+              }}
+              onKeyDown={handleEditorKeyDown}
+              placeholder={t("write.editorPlaceholder")}
+            />
+            {completion ? <div className="ds-write-ghost">{completion}</div> : null}
+          </div>
+          <div className="ds-write-status">
+            {status === "saving" ? t("write.saving") : null}
+            {status === "saved" ? t("write.saved") : null}
+            {status === "error" ? `${t("write.error")}: ${errorMessage ?? ""}` : null}
+            {status === "idle" && activePath ? t("write.activeFile", { path: activePath }) : null}
+            {status === "idle" && !activePath ? t("write.noActiveFile") : null}
+            <button
+              className="ds-pill is-accent"
+              style={{ float: "right" }}
+              onClick={() => void save()}
+              disabled={saveDisabled}
+            >
+              {content !== savedContent ? t("write.save") : t("write.saved")}
+            </button>
+          </div>
+        </section>
+        <aside className="ds-write-assistant">
+          <div className="ds-write-assistant-header">
+            <div>
+              <strong>{t("write.assistantTitle")}</strong>
+              <span>
+                {activePath
+                  ? t("write.assistantCurrentFile", { path: activePath })
+                  : t("write.assistantNoFile")}
+              </span>
+            </div>
+            {assistantBusy ? <span className="ds-shiny-text">{t("chat.running")}</span> : null}
+          </div>
+          <div ref={assistantMessagesRef} className="ds-write-assistant-messages">
+            {assistantItems.length > 0 ? (
+              assistantItems.map((item) => (
+                <ChatBlock
+                  key={item.id}
+                  item={item}
+                  {...(item.turnId === state.activeTurnId ? { isLive: true } : {})}
+                />
+              ))
+            ) : (
+              <div className="ds-write-assistant-empty">{t("write.assistantEmpty")}</div>
+            )}
+          </div>
+          <form
+            className="ds-write-assistant-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendAssistantPrompt();
             }}
-            onKeyDown={handleEditorKeyDown}
-            placeholder={t("write.editorPlaceholder")}
-          />
-          {completion ? <div className="ds-write-ghost">{completion}</div> : null}
-        </div>
-        <div className="ds-write-status">
-          {status === "saving" ? t("write.saving") : null}
-          {status === "saved" ? t("write.saved") : null}
-          {status === "error" ? `${t("write.error")}: ${errorMessage ?? ""}` : null}
-          {status === "idle" && activePath ? t("write.activeFile", { path: activePath }) : null}
-          {status === "idle" && !activePath ? t("write.noActiveFile") : null}
-          <button
-            className="ds-pill is-accent"
-            style={{ float: "right" }}
-            onClick={() => void save()}
-            disabled={saveDisabled}
           >
-            {content !== savedContent ? t("write.save") : t("write.saved")}
-          </button>
-        </div>
+            <textarea
+              value={assistantDraft}
+              onChange={(event) => setAssistantDraft(event.target.value)}
+              placeholder={t("write.assistantPlaceholder")}
+              aria-label={t("write.assistantPlaceholder")}
+            />
+            <div className="ds-write-assistant-actions">
+              {assistantBusy && onInterruptAssistant ? (
+                <button
+                  type="button"
+                  className="ds-pill"
+                  onClick={onInterruptAssistant}
+                >
+                  {t("composer.interrupt")}
+                </button>
+              ) : null}
+              <button
+                type="submit"
+                className="ds-pill is-accent"
+                disabled={assistantSubmitDisabled}
+              >
+                {assistantSending ? t("write.assistantSending") : t("write.assistantSend")}
+              </button>
+            </div>
+          </form>
+        </aside>
       </div>
     </div>
   );
@@ -607,6 +723,58 @@ export function getWriteCompletionAcceptState(
     content: `${content}${completion}`,
     completion: "",
   };
+}
+
+export interface WriteAssistantPromptInput {
+  prompt: string;
+  activePath: string | null;
+  content: string;
+  savedContent: string;
+}
+
+export function buildWriteAssistantPrompt(
+  input: WriteAssistantPromptInput,
+): WriteAssistantPromptPayload | null {
+  const prompt = input.prompt.trim();
+  if (!prompt) return null;
+
+  const currentFile = input.activePath ?? "none";
+  const saveState = input.content === input.savedContent ? "saved" : "unsaved changes";
+  return {
+    text: [
+      "Write workbench request:",
+      prompt,
+      "",
+      "Context:",
+      `- Current Markdown file: ${currentFile}`,
+      `- Current file save state: ${saveState}`,
+      "",
+      "Respond with writing guidance or draft text. Do not claim that you changed files directly.",
+    ].join("\n"),
+    displayText: prompt,
+    threadTitle: prompt,
+  };
+}
+
+export function canSubmitWriteAssistantPrompt(input: {
+  prompt: string;
+  workspaceRoot: string;
+  sending: boolean;
+}): boolean {
+  return Boolean(input.prompt.trim() && input.workspaceRoot.trim() && !input.sending);
+}
+
+export function getWriteAssistantVisibleItems(
+  items: readonly Item[],
+  limit = 12,
+): Item[] {
+  return items
+    .filter((item) =>
+      item.kind === "user" ||
+      item.kind === "assistant" ||
+      item.kind === "system"
+    )
+    .slice(-limit);
 }
 
 function formatDate(value: string): string {

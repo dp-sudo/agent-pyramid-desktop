@@ -75,7 +75,14 @@
     "workspaceSelectionFailed": "Could not bind this workspace to a Write thread.",
     "emptyFiles": "No Markdown files in this workspace.",
     "emptySearch": "No Markdown files match \"{{search}}\".",
-    "noActiveFile": "No file open"
+    "noActiveFile": "No file open",
+    "assistantTitle": "Writing assistant",
+    "assistantCurrentFile": "Current file: {{path}}",
+    "assistantNoFile": "No file selected",
+    "assistantEmpty": "Send a writing request and replies will appear here.",
+    "assistantPlaceholder": "Enter a writing request…",
+    "assistantSend": "Send",
+    "assistantSending": "Sending…"
   },
   "threads": {
     "newChat": "New thread",

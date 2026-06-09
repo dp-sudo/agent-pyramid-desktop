@@ -75,7 +75,14 @@
     "workspaceSelectionFailed": "无法将该工作区绑定到写作线程。",
     "emptyFiles": "这个工作区里暂无 Markdown 文件。",
     "emptySearch": "没有匹配“{{search}}”的 Markdown 文件。",
-    "noActiveFile": "未打开文件"
+    "noActiveFile": "未打开文件",
+    "assistantTitle": "写作助手",
+    "assistantCurrentFile": "当前文件：{{path}}",
+    "assistantNoFile": "未选择文件",
+    "assistantEmpty": "输入写作请求后，回复会显示在这里。",
+    "assistantPlaceholder": "输入写作请求…",
+    "assistantSend": "发送",
+    "assistantSending": "发送中…"
   },
   "threads": {
     "newChat": "新建会话",

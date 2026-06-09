@@ -102,9 +102,15 @@ Important semantics:
 - Thread ids must be UUIDs.
 - `JsonlThreadStore.createThread()` defaults `status` to `active`.
 - `ThreadRecord.workspace` must be an absolute path; create rejects relative workspace input before writing `thread.json` or `index.json`.
-- Missing `status` in old thread records is normalized to `active`.
+- Threads with `relation: "fork"` must carry `parentThreadId`; the dedicated
+  `forkThread()` path supplies it and orphan fork records are rejected on read.
+- Missing `status`, `approvalPolicy`, and `sandboxMode` in old thread records are normalized to `active`, `on-request`, and `workspace-write`.
 - Missing `mode` in old thread records or summaries is normalized to `code`;
   invalid stored mode values still fail instead of being silently accepted.
+- Persisted thread records and index summaries validate required text fields,
+  UUID ids, absolute workspace paths, status, relation, policy, sandbox mode,
+  and goal shape on read; invalid stored values fail instead of entering
+  runtime policy decisions.
 - Thread list filters validate `includeArchived` and `archivedOnly` as booleans
   before applying status visibility rules.
 - Same-thread writes are serialized with a per-thread mutex.
@@ -144,7 +150,9 @@ renderer
   -> RuntimeEventBus.emit("goal_updated")
 ```
 
-Goal clearing is represented as `goal: null` at the patch boundary and becomes `undefined` in persisted `ThreadRecord`.
+Goal clearing is represented as `goal: null` at the patch boundary and becomes
+`undefined` in persisted `ThreadRecord`; `thread.json` must not store
+`goal: null`.
 
 ## Turn Model
 
@@ -316,6 +324,8 @@ Current event kinds:
 
 `turn_started` carries the complete runtime-created `TurnRecord` as `turn`.
 Usage data lives on `turn_completed.usage` and is aggregated by `usage:daily`.
+Persisted event replay validates `usage` as a `TokenUsage` object when present;
+malformed token fields are skipped with the rest of the bad event row.
 
 `RuntimeEventBus.onThread()` must include every thread-scoped event kind that renderer subscribers need to receive.
 
@@ -329,6 +339,9 @@ Profile state contract:
 
 - `ModelConfigProfilesState`
 - `ModelConfigProfile`
+- `ModelConfigUpdate` is a partial update payload; stores merge it with the
+  active, default, or existing profile config and persist a complete
+  `ModelConfig`.
 
 Storage file:
 

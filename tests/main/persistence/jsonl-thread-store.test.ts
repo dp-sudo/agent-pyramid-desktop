@@ -88,7 +88,18 @@ describe("JsonlThreadStore", () => {
     await store.appendEvent(thread.id, event);
     await fs.appendFile(
       path.join(userDataDir, "threads", thread.id, "events.jsonl"),
-      `${JSON.stringify({ kind: "turn_completed", threadId: thread.id })}\n`,
+      [
+        JSON.stringify({ kind: "turn_completed", threadId: thread.id }),
+        JSON.stringify({
+          kind: "turn_completed",
+          threadId: thread.id,
+          turnId: "turn-1",
+          status: "completed",
+          completedAt: "2026-06-08T00:00:00.000Z",
+          usage: { inputTokens: "8" },
+        }),
+        "",
+      ].join("\n"),
       "utf8",
     );
 
@@ -104,7 +115,7 @@ describe("JsonlThreadStore", () => {
 
     expect(items).toEqual([item]);
     expect(events).toEqual([event]);
-    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(4);
   });
 
   it("updates thread activity time and index order when appending items", async () => {
@@ -139,7 +150,7 @@ describe("JsonlThreadStore", () => {
     expect(listed.map((thread) => thread.id)).toEqual([older.id, newer.id]);
   });
 
-  it("normalizes legacy thread records and summaries without mode to code", async () => {
+  it("normalizes legacy thread records and summaries with missing safe defaults", async () => {
     const thread = await store.createThread({
       title: "Legacy",
       workspace: "/workspace",
@@ -154,17 +165,69 @@ describe("JsonlThreadStore", () => {
       await fs.readFile(indexPath, "utf8"),
     ) as Array<Partial<ThreadSummary>>;
     delete legacyRecord.mode;
+    delete legacyRecord.status;
+    delete legacyRecord.approvalPolicy;
+    delete legacyRecord.sandboxMode;
     delete legacyIndex[0].mode;
+    delete legacyIndex[0].status;
     await fs.writeFile(threadPath, JSON.stringify(legacyRecord, null, 2), "utf8");
     await fs.writeFile(indexPath, JSON.stringify(legacyIndex, null, 2), "utf8");
 
     await expect(store.getThread(thread.id)).resolves.toMatchObject({
       id: thread.id,
       mode: "code",
+      status: "active",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
     });
     await expect(store.listThreads()).resolves.toEqual([
-      expect.objectContaining({ id: thread.id, mode: "code" }),
+      expect.objectContaining({ id: thread.id, mode: "code", status: "active" }),
     ]);
+  });
+
+  it("rejects invalid persisted thread policy and summary fields on read", async () => {
+    const thread = await store.createThread({
+      title: "Bad persisted state",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const threadPath = path.join(userDataDir, "threads", thread.id, "thread.json");
+    const indexPath = path.join(userDataDir, "threads", "index.json");
+    const record = JSON.parse(await fs.readFile(threadPath, "utf8")) as ThreadRecord;
+    const index = JSON.parse(await fs.readFile(indexPath, "utf8")) as ThreadSummary[];
+
+    await fs.writeFile(
+      threadPath,
+      JSON.stringify({ ...record, approvalPolicy: "sometimes" }, null, 2),
+      "utf8",
+    );
+    await expect(store.getThread(thread.id)).rejects.toThrow("approvalPolicy is invalid.");
+
+    await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
+    await fs.writeFile(
+      threadPath,
+      JSON.stringify({ ...record, relation: "fork" }, null, 2),
+      "utf8",
+    );
+    await expect(store.getThread(thread.id)).rejects.toThrow(
+      "parentThreadId is required for fork threads.",
+    );
+
+    await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
+    await fs.writeFile(
+      threadPath,
+      JSON.stringify({ ...record, goal: null }, null, 2),
+      "utf8",
+    );
+    await expect(store.getThread(thread.id)).rejects.toThrow("goal must be an object.");
+
+    await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
+    await fs.writeFile(
+      indexPath,
+      JSON.stringify([{ ...index[0], status: "paused" }], null, 2),
+      "utf8",
+    );
+    await expect(store.listThreads()).rejects.toThrow("status is invalid.");
   });
 
   it("serializes concurrent appends for the same thread", async () => {
@@ -235,6 +298,14 @@ describe("JsonlThreadStore", () => {
         mode: "invalid" as "code",
       }),
     ).rejects.toThrow("mode is invalid.");
+
+    await expect(
+      store.createThread({
+        workspace: "/workspace",
+        mode: "code",
+        relation: "fork",
+      }),
+    ).rejects.toThrow("parentThreadId is required for fork threads.");
 
     await expect(store.listThreads({ include: ["primary", "invalid" as "side"] }))
       .rejects.toThrow("include is invalid.");

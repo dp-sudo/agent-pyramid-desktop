@@ -142,7 +142,7 @@ export function parseThreadListFilter(filter: unknown): ThreadListFilter {
 
 export function parseThreadCreateInput(input: unknown): ThreadCreateInput {
   const value = requestObject(input, "Thread create input");
-  return {
+  const parsed: ThreadCreateInput = {
     ...optionalStringField(value, "title", "Thread create title must be a string."),
     workspace: requiredString(value.workspace, "Thread create workspace is required."),
     mode: requiredEnum(value.mode, THREAD_MODES, "Thread create mode is invalid."),
@@ -158,6 +158,10 @@ export function parseThreadCreateInput(input: unknown): ThreadCreateInput {
       "Thread create parentThreadId must be a string.",
     ),
   };
+  if (parsed.relation === "fork" && !parsed.parentThreadId) {
+    throw new Error("Thread create fork requires parentThreadId.");
+  }
+  return parsed;
 }
 
 export function parseThreadUpdatePatch(patch: unknown): ThreadUpdatePatch {

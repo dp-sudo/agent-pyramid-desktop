@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildWriteAssistantPrompt,
+  canSubmitWriteAssistantPrompt,
   formatWriteFileMeta,
+  getWriteAssistantVisibleItems,
   getWriteCompletionAcceptState,
   getWriteDocumentEditState,
   getWriteWorkspaceSwitchState,
@@ -226,4 +229,96 @@ describe("WriteWorkspaceView helpers", () => {
     });
     expect(nextState).not.toHaveProperty("composerText");
   });
+
+  it("builds explicit assistant prompts without mirroring the full document", () => {
+    const payload = buildWriteAssistantPrompt({
+      prompt: "  帮我润色这一段  ",
+      activePath: "drafts/intro.md",
+      content: "full private draft body",
+      savedContent: "older draft body",
+    });
+
+    expect(payload).toEqual({
+      text: [
+        "Write workbench request:",
+        "帮我润色这一段",
+        "",
+        "Context:",
+        "- Current Markdown file: drafts/intro.md",
+        "- Current file save state: unsaved changes",
+        "",
+        "Respond with writing guidance or draft text. Do not claim that you changed files directly.",
+      ].join("\n"),
+      displayText: "帮我润色这一段",
+      threadTitle: "帮我润色这一段",
+    });
+    expect(payload?.text).not.toContain("full private draft body");
+    expect(buildWriteAssistantPrompt({
+      prompt: "   ",
+      activePath: "drafts/intro.md",
+      content: "",
+      savedContent: "",
+    })).toBeNull();
+  });
+
+  it("allows assistant submit only for explicit prompts in an open workspace", () => {
+    expect(canSubmitWriteAssistantPrompt({
+      prompt: "润色标题",
+      workspaceRoot: "/workspace",
+      sending: false,
+    })).toBe(true);
+    expect(canSubmitWriteAssistantPrompt({
+      prompt: "",
+      workspaceRoot: "/workspace",
+      sending: false,
+    })).toBe(false);
+    expect(canSubmitWriteAssistantPrompt({
+      prompt: "润色标题",
+      workspaceRoot: "",
+      sending: false,
+    })).toBe(false);
+    expect(canSubmitWriteAssistantPrompt({
+      prompt: "润色标题",
+      workspaceRoot: "/workspace",
+      sending: true,
+    })).toBe(false);
+  });
+
+  it("keeps the write assistant panel focused on conversational items", () => {
+    const items = [
+      makeItem("system", "system-1"),
+      makeItem("user", "user-1"),
+      makeItem("tool", "tool-1"),
+      makeItem("assistant", "assistant-1"),
+    ];
+
+    expect(getWriteAssistantVisibleItems(items).map((item) => item.id))
+      .toEqual(["system-1", "user-1", "assistant-1"]);
+  });
 });
+
+function makeItem(kind: "system" | "user" | "assistant" | "tool", id: string) {
+  const base = {
+    id,
+    threadId: "thread-1",
+    turnId: "turn-1",
+    createdAt: "2026-06-08T00:00:00.000Z",
+  };
+  if (kind === "system") {
+    return { ...base, kind, level: "info" as const, text: "system" };
+  }
+  if (kind === "user") {
+    return { ...base, kind, text: "user" };
+  }
+  if (kind === "assistant") {
+    return { ...base, kind, text: "assistant" };
+  }
+  return {
+    ...base,
+    kind,
+    toolCallId: "call-1",
+    name: "read_file",
+    args: {},
+    status: "completed" as const,
+  };
+}

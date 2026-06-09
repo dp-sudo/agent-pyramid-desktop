@@ -8,6 +8,8 @@ import {
   formatInitialLoadErrors,
   getNextSidebarWidth,
   isGlobalRuntimeErrorEvent,
+  normalizeWriteAssistantSendPayload,
+  shouldShowWorkbenchErrorToast,
   shouldUnsubscribeRemovedThread,
   workbenchThreadModeForRoute,
 } from "../../src/renderer/src/ui/Workbench";
@@ -58,6 +60,28 @@ describe("Workbench", () => {
       displayText: "Analyze attached images",
       threadTitle: "Analyze attached images",
     });
+  });
+
+  it("normalizes write assistant payloads without accepting empty fields", () => {
+    expect(normalizeWriteAssistantSendPayload({
+      text: "  internal prompt  ",
+      displayText: "  visible prompt  ",
+      threadTitle: "  title  ",
+    })).toEqual({
+      text: "internal prompt",
+      displayText: "visible prompt",
+      threadTitle: "title",
+    });
+    expect(normalizeWriteAssistantSendPayload({
+      text: "internal prompt",
+      displayText: "",
+      threadTitle: "title",
+    })).toBeNull();
+  });
+
+  it("shows the shared Workbench error toast only when an error is present", () => {
+    expect(shouldShowWorkbenchErrorToast(null)).toBe(false);
+    expect(shouldShowWorkbenchErrorToast("Runtime failed")).toBe(true);
   });
 
   it("cleans up only threads with retained SSE subscriptions", () => {

@@ -96,6 +96,9 @@ export class JsonlThreadStore {
       input.parentThreadId === undefined
         ? undefined
         : assertSafeId(input.parentThreadId, "parentThreadId");
+    if (relation === "fork" && !parentThreadId) {
+      throw new Error("parentThreadId is required for fork threads.");
+    }
     const now = new Date().toISOString();
     const record: ThreadRecord = {
       id: randomUUID(),
@@ -270,18 +273,51 @@ export class JsonlThreadStore {
   }
 
   private normalizeThreadRecord(record: ThreadRecord): ThreadRecord {
+    const {
+      goal: rawGoal,
+      parentThreadId: rawParentThreadId,
+      forkedAt: rawForkedAt,
+      ...base
+    } = record;
+    const goal = normalizeStoredGoal(rawGoal);
+    const relation = assertEnum(record.relation, THREAD_RELATIONS, "relation");
+    const parentThreadId =
+      rawParentThreadId === undefined
+        ? undefined
+        : assertSafeId(rawParentThreadId, "parentThreadId");
+    if (relation === "fork" && !parentThreadId) {
+      throw new Error("parentThreadId is required for fork threads.");
+    }
     return {
-      ...record,
+      ...base,
+      id: assertSafeId(record.id, "id"),
+      title: requiredTrimmedString(record.title, "title"),
+      workspace: requiredAbsolutePath(record.workspace, "workspace"),
       mode: normalizeStoredThreadMode(record.mode),
-      status: record.status ?? "active",
+      status: normalizeStoredThreadStatus(record.status),
+      relation,
+      ...(parentThreadId !== undefined ? { parentThreadId } : {}),
+      ...(rawForkedAt !== undefined
+        ? { forkedAt: requiredTrimmedString(rawForkedAt, "forkedAt") }
+        : {}),
+      createdAt: requiredTrimmedString(record.createdAt, "createdAt"),
+      updatedAt: requiredTrimmedString(record.updatedAt, "updatedAt"),
+      approvalPolicy: normalizeStoredApprovalPolicy(record.approvalPolicy),
+      sandboxMode: normalizeStoredSandboxMode(record.sandboxMode),
+      ...(goal !== undefined ? { goal } : {}),
     };
   }
 
   private normalizeThreadSummary(summary: ThreadSummary): ThreadSummary {
     return {
       ...summary,
+      id: assertSafeId(summary.id, "id"),
+      title: requiredTrimmedString(summary.title, "title"),
+      workspace: requiredAbsolutePath(summary.workspace, "workspace"),
       mode: normalizeStoredThreadMode(summary.mode),
-      status: summary.status ?? "active",
+      status: normalizeStoredThreadStatus(summary.status),
+      relation: assertEnum(summary.relation, THREAD_RELATIONS, "relation"),
+      updatedAt: requiredTrimmedString(summary.updatedAt, "updatedAt"),
     };
   }
 
@@ -474,6 +510,26 @@ function normalizeStoredThreadMode(value: unknown): ThreadRecord["mode"] {
   return assertEnum(value, THREAD_MODES, "mode");
 }
 
+function normalizeStoredThreadStatus(value: unknown): ThreadRecord["status"] {
+  if (value === undefined) return "active";
+  return assertEnum(value, THREAD_STATUSES, "status");
+}
+
+function normalizeStoredApprovalPolicy(value: unknown): ThreadRecord["approvalPolicy"] {
+  if (value === undefined) return "on-request";
+  return assertEnum(value, APPROVAL_POLICIES, "approvalPolicy");
+}
+
+function normalizeStoredSandboxMode(value: unknown): ThreadRecord["sandboxMode"] {
+  if (value === undefined) return "workspace-write";
+  return assertEnum(value, SANDBOX_MODES, "sandboxMode");
+}
+
+function normalizeStoredGoal(value: unknown): ThreadRecord["goal"] {
+  if (value === undefined) return undefined;
+  return normalizeGoalObject(value);
+}
+
 function normalizeThreadPatch(patch: ThreadUpdatePatch): ThreadUpdatePatch {
   if (!patch || typeof patch !== "object") {
     throw new Error("patch is required.");
@@ -503,26 +559,31 @@ function normalizeThreadPatch(patch: ThreadUpdatePatch): ThreadUpdatePatch {
 
 function normalizeGoal(value: ThreadUpdatePatch["goal"]): ThreadUpdatePatch["goal"] {
   if (value === null) return null;
+  return normalizeGoalObject(value);
+}
+
+function normalizeGoalObject(value: unknown): NonNullable<ThreadRecord["goal"]> {
   if (!value || typeof value !== "object") {
-    throw new Error("goal must be an object or null.");
+    throw new Error("goal must be an object.");
   }
-  const text = requiredTrimmedString(value.text, "goal.text");
-  const status = assertEnum(value.status, GOAL_STATUSES, "goal.status");
-  const createdAt = requiredTrimmedString(value.createdAt, "goal.createdAt");
-  const updatedAt = requiredTrimmedString(value.updatedAt, "goal.updatedAt");
+  const goal = value as Partial<NonNullable<ThreadRecord["goal"]>>;
+  const text = requiredTrimmedString(goal.text, "goal.text");
+  const status = assertEnum(goal.status, GOAL_STATUSES, "goal.status");
+  const createdAt = requiredTrimmedString(goal.createdAt, "goal.createdAt");
+  const updatedAt = requiredTrimmedString(goal.updatedAt, "goal.updatedAt");
   return {
     text,
     status,
     createdAt,
     updatedAt,
-    ...(value.completedAt !== undefined
-      ? { completedAt: requiredTrimmedString(value.completedAt, "goal.completedAt") }
+    ...(goal.completedAt !== undefined
+      ? { completedAt: requiredTrimmedString(goal.completedAt, "goal.completedAt") }
       : {}),
-    ...(value.blockedAt !== undefined
-      ? { blockedAt: requiredTrimmedString(value.blockedAt, "goal.blockedAt") }
+    ...(goal.blockedAt !== undefined
+      ? { blockedAt: requiredTrimmedString(goal.blockedAt, "goal.blockedAt") }
       : {}),
-    ...(value.summary !== undefined
-      ? { summary: optionalTrimmedString(value.summary, "goal.summary") }
+    ...(goal.summary !== undefined
+      ? { summary: optionalTrimmedString(goal.summary, "goal.summary") }
       : {}),
   };
 }

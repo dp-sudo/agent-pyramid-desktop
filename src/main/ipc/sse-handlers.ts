@@ -134,7 +134,7 @@ function parseThreadId(request: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${field} is required.`);
   }
-  return value;
+  return value.trim();
 }
 
 function messageOf(error: unknown): string {

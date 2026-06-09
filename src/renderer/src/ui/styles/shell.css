@@ -494,6 +494,16 @@ textarea:focus-visible {
   background: var(--ds-danger-soft);
 }
 
+.ds-error-toast.is-floating {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 20;
+  width: min(520px, calc(100vw - 36px));
+  margin-top: 0;
+  box-shadow: var(--ds-shadow-card-soft);
+}
+
 /* ---------- Composer ---------- */
 .ds-composer-shell {
   position: relative;
@@ -1705,6 +1715,18 @@ textarea:focus-visible {
 }
 
 /* ---------- Write editor ---------- */
+.ds-write-workspace {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ds-write-sidebar {
+  min-width: 180px;
+  max-width: 420px;
+}
+
 .ds-write-route-actions {
   display: flex;
   gap: 6px;
@@ -1805,12 +1827,20 @@ textarea:focus-visible {
   font-size: var(--ds-size-caption);
 }
 
+.ds-write-main {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  background: var(--ds-bg-canvas);
+}
+
 .ds-write-editor {
   display: flex;
+  min-width: 0;
+  flex: 1 1 0;
   flex-direction: column;
   min-height: 0;
-  flex: 1 1 0;
-  background: var(--ds-bg-canvas);
 }
 
 .ds-write-editor-frame {
@@ -1855,6 +1885,106 @@ textarea:focus-visible {
   border-top: 1px solid var(--ds-border-muted);
 }
 
+.ds-write-assistant {
+  display: flex;
+  width: clamp(300px, 28vw, 420px);
+  min-width: 280px;
+  min-height: 0;
+  flex: 0 0 clamp(300px, 28vw, 420px);
+  flex-direction: column;
+  border-left: 1px solid var(--ds-border-muted);
+  background: var(--ds-surface);
+}
+
+.ds-write-assistant-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--ds-border-muted);
+  padding: 14px 16px 12px;
+}
+
+.ds-write-assistant-header div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ds-write-assistant-header strong {
+  color: var(--ds-text);
+  font-size: var(--ds-size-title);
+  font-weight: 650;
+}
+
+.ds-write-assistant-header span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-write-assistant-messages {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.ds-write-assistant-messages .ds-user-bubble,
+.ds-write-assistant-messages .ds-assistant-bubble {
+  max-width: 100%;
+  width: 100%;
+}
+
+.ds-write-assistant-empty {
+  margin: auto;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-body);
+  line-height: 1.55;
+  text-align: center;
+}
+
+.ds-write-assistant-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--ds-border-muted);
+  padding: 12px;
+}
+
+.ds-write-assistant-form textarea {
+  width: 100%;
+  min-height: 92px;
+  max-height: 180px;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-card);
+  color: var(--ds-text);
+  font: inherit;
+  font-size: var(--ds-size-body);
+  line-height: 1.5;
+  outline: none;
+  padding: 10px;
+  resize: vertical;
+}
+
+.ds-write-assistant-form textarea:focus {
+  border-color: var(--ds-accent);
+}
+
+.ds-write-assistant-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ---------- Pill button primitive ---------- */
 .ds-pill {
   display: inline-flex;
@@ -1878,6 +2008,34 @@ textarea:focus-visible {
   background: var(--ds-accent);
   color: white;
   border-color: transparent;
+}
+
+@media (max-width: 1080px) {
+  .ds-write-main {
+    flex-direction: column;
+  }
+
+  .ds-write-assistant {
+    width: 100%;
+    min-height: 260px;
+    flex: 0 0 34%;
+    border-left: 0;
+    border-top: 1px solid var(--ds-border-muted);
+  }
+}
+
+@media (max-width: 760px) {
+  .ds-write-workspace {
+    flex-direction: column;
+  }
+
+  .ds-write-sidebar {
+    width: 100% !important;
+    max-width: none;
+    flex: 0 0 230px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--ds-border-muted);
+  }
 }
 
 /* ---------- Settings ---------- */

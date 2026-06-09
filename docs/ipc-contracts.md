@@ -91,6 +91,8 @@ Notes:
   booleans before store/runtime access; malformed payloads return the existing
   `THREAD_*_FAILED` envelope, with invalid update status preserving
   `THREAD_STATUS_INVALID`.
+- `thread:create` rejects `relation: "fork"` without `parentThreadId`; normal
+  fork creation should use the dedicated `thread:fork` channel.
 - `thread:update` blocks archiving an in-flight thread.
 - `thread:delete` blocks deleting an in-flight thread.
 - `JsonlThreadStore` validates thread ids, patch fields, and boolean list
@@ -132,6 +134,7 @@ Notes:
 - One `webContents` can keep multiple thread subscriptions at the same time.
   Re-subscribing the same thread replaces that thread's existing subscription
   without dropping other subscribed threads.
+- Subscribe and unsubscribe trim `threadId` before using it as the subscription key.
 - New subscribe drops the previous subscription for the same `webContents`.
 - Subscriptions are live-only; the current handler does not replay historical events.
 
@@ -255,6 +258,9 @@ Notes:
 - Profile update/delete/activate handlers validate non-empty profile ids before
   store access. Profile update rejects non-object `config` payloads instead of
   treating them as no-op updates.
+- `config:model:update` and profile `config` payloads validate primitive field
+  types at the IPC boundary, including `thinking`, `OPENAI_API_KEY`, reasoning
+  effort, autonomy and positive integer token settings.
 
 ## Runtime Event Push Contract
 

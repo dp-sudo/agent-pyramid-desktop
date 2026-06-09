@@ -132,6 +132,9 @@ describe("thread handlers", () => {
     );
     expect(() => parseThreadCreateInput({ workspace: "/workspace", mode: "invalid" }))
       .toThrow("Thread create mode is invalid.");
+    expect(() =>
+      parseThreadCreateInput({ workspace: "/workspace", mode: "code", relation: "fork" })
+    ).toThrow("Thread create fork requires parentThreadId.");
     expect(() => parseThreadUpdatePatch({ status: "paused" }))
       .toThrow("Thread status must be active or archived.");
   });

@@ -215,6 +215,33 @@ describe("shared agent contracts", () => {
     ).toBe(false);
     expect(
       isRuntimeEvent({
+        kind: "turn_completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "completed",
+        completedAt: "2026-06-08T00:00:00.000Z",
+        usage: {
+          inputTokens: 8,
+          outputTokens: 3,
+          totalTokens: 11,
+          cacheHitRate: null,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRuntimeEvent({
+        kind: "turn_completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "completed",
+        completedAt: "2026-06-08T00:00:00.000Z",
+        usage: {
+          inputTokens: "8",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeEvent({
         kind: "turn_started",
         threadId: "thread-1",
         turnId: "turn-1",
@@ -226,7 +253,8 @@ describe("shared agent contracts", () => {
           startedAt: "2026-06-08T00:00:00.000Z",
           model: "MiniMax-M3",
           mode: "agent",
-          goalMode: "false",
+          goalMode: false,
+          usage: { totalTokens: "11" },
         },
       }),
     ).toBe(false);

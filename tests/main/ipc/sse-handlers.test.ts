@@ -114,6 +114,22 @@ describe("sse handlers", () => {
     expect(sender.listenerCount("destroyed")).toBe(0);
   });
 
+  it("normalizes subscription thread ids before storing unsubscribe keys", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const subscribe = electronMock.handlers.get(SSE_SUBSCRIBE_CHANNEL);
+    const unsubscribe = electronMock.handlers.get(SSE_UNSUBSCRIBE_CHANNEL);
+    if (!subscribe || !unsubscribe) throw new Error("Expected SSE handlers.");
+
+    const sender = new FakeWebContents();
+    const subscribed = await subscribe({ sender }, { threadId: " thread-1 " });
+    const unsubscribed = await unsubscribe({ sender }, { threadId: "thread-1" });
+
+    expect(subscribed).toEqual({ ok: true, value: { subscribed: "thread-1" } });
+    expect(unsubscribed).toEqual({ ok: true, value: { unsubscribed: true } });
+    expect(sender.listenerCount("destroyed")).toBe(0);
+  });
+
   it("unsubscribes one thread without dropping other thread subscriptions", async () => {
     const bus = new RuntimeEventBus();
     registerSseHandlers(bus);
