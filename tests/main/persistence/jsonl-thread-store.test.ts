@@ -255,6 +255,52 @@ describe("JsonlThreadStore", () => {
     expect(new Set(replayed.map((item) => item.id)).size).toBe(items.length);
   });
 
+  it("rejects invalid item and event records before appending JSONL", async () => {
+    const thread = await store.createThread({
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const item: Item = {
+      kind: "system",
+      id: "item-1",
+      threadId: thread.id,
+      turnId: "turn-1",
+      text: "message",
+      level: "info",
+      createdAt: "2026-06-07T00:00:00.000Z",
+    };
+    const event: RuntimeEvent = {
+      kind: "item_appended",
+      threadId: thread.id,
+      turnId: "turn-1",
+      item,
+    };
+
+    await expect(
+      store.appendItem(thread.id, { ...item, level: "notice" } as unknown as Item),
+    ).rejects.toThrow("Item shape is invalid.");
+    await expect(
+      store.appendItem(thread.id, { ...item, threadId: "00000000-0000-4000-8000-000000000000" }),
+    ).rejects.toThrow("Item threadId does not match target thread.");
+    await expect(
+      store.appendEvent(thread.id, { ...event, item: { kind: "assistant" } } as unknown as RuntimeEvent),
+    ).rejects.toThrow("Runtime event shape is invalid.");
+    await expect(
+      store.appendEvent(thread.id, { ...event, threadId: "00000000-0000-4000-8000-000000000000" }),
+    ).rejects.toThrow("Runtime event threadId does not match target thread.");
+
+    const replayedItems: Item[] = [];
+    for await (const replayed of store.replayItems(thread.id)) {
+      replayedItems.push(replayed);
+    }
+    const replayedEvents: RuntimeEvent[] = [];
+    for await (const replayed of store.replayEvents(thread.id)) {
+      replayedEvents.push(replayed);
+    }
+    expect(replayedItems).toEqual([]);
+    expect(replayedEvents).toEqual([]);
+  });
+
   it("rejects non-UUID thread ids before resolving persistence paths", async () => {
     await expect(store.getThread("../outside")).rejects.toThrow("Thread id must be a UUID.");
     await expect(store.deleteThread("../outside")).rejects.toThrow("Thread id must be a UUID.");
@@ -318,6 +364,10 @@ describe("JsonlThreadStore", () => {
       workspace: "/workspace",
       mode: "code",
     });
+
+    await expect(store.updateThread(thread.id, {})).rejects.toThrow(
+      "Thread update patch must include at least one field.",
+    );
 
     await expect(
       store.updateThread(thread.id, {

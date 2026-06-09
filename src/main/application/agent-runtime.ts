@@ -38,7 +38,12 @@ import type {
   TerminalTurnStatus,
   UserItem,
 } from "../../shared/agent-contracts.js";
-import { isModelReasoningEffort, isThreadGoalStatus } from "../../shared/agent-contracts.js";
+import {
+  THREAD_MODES,
+  isNonNegativeInteger,
+  isModelReasoningEffort,
+  isThreadGoalStatus,
+} from "../../shared/agent-contracts.js";
 
 interface RuntimeDeps {
   store: JsonlThreadStore;
@@ -178,7 +183,7 @@ function assertNoToolAccessConflicts(
   allowByMode: Partial<Record<ThreadRecord["mode"], ReadonlySet<string>>>,
   denyByMode: Partial<Record<ThreadRecord["mode"], ReadonlySet<string>>>,
 ): void {
-  for (const mode of ["code", "write"] as const) {
+  for (const mode of THREAD_MODES) {
     const allow = allowByMode[mode];
     const deny = denyByMode[mode];
     if (!allow || !deny) {
@@ -347,9 +352,7 @@ export class AgentRuntime {
       summary?: string;
     },
   ): Promise<ThreadRecord> {
-    if (update.status !== undefined && !isThreadGoalStatus(update.status)) {
-      throw new Error("Goal status must be active, complete, or blocked.");
-    }
+    const normalizedUpdate = normalizeThreadGoalUpdate(update);
     const thread = await this.deps.store.getThread(threadId);
     if (!thread) throw new Error(`Thread ${threadId} not found`);
     if (thread.status === "archived") {
@@ -358,12 +361,12 @@ export class AgentRuntime {
 
     const now = new Date().toISOString();
     let nextGoal: ThreadGoal | undefined;
-    if (update.goal === null) {
+    if (normalizedUpdate.goal === null) {
       nextGoal = undefined;
     } else {
       const current = thread.goal;
-      const status = update.status ?? current?.status ?? "active";
-      const text = update.goal ?? current?.text;
+      const status = normalizedUpdate.status ?? current?.status ?? "active";
+      const text = normalizedUpdate.goal ?? current?.text;
       if (!text?.trim()) {
         throw new Error("Goal text is required.");
       }
@@ -378,7 +381,9 @@ export class AgentRuntime {
         ...(status === "blocked"
           ? { blockedAt: current?.status === "blocked" && current.blockedAt ? current.blockedAt : now }
           : {}),
-        ...(update.summary ? { summary: update.summary } : current?.summary ? { summary: current.summary } : {}),
+        ...(normalizedUpdate.summary
+          ? { summary: normalizedUpdate.summary }
+          : current?.summary ? { summary: current.summary } : {}),
       };
     }
 
@@ -1442,6 +1447,51 @@ export class AgentRuntime {
   }
 }
 
+function normalizeThreadGoalUpdate(update: {
+  goal?: string | null;
+  status?: ThreadGoal["status"];
+  summary?: string;
+}): {
+  goal?: string | null;
+  status?: ThreadGoal["status"];
+  summary?: string;
+} {
+  const normalized: {
+    goal?: string | null;
+    status?: ThreadGoal["status"];
+    summary?: string;
+  } = {};
+  if (update.goal !== undefined) {
+    if (update.goal === null) {
+      if (update.status !== undefined || update.summary !== undefined) {
+        throw new Error("Goal clear cannot be combined with status or summary.");
+      }
+      normalized.goal = null;
+    } else {
+      if (typeof update.goal !== "string" || !update.goal.trim()) {
+        throw new Error("Goal text is required.");
+      }
+      normalized.goal = update.goal.trim();
+    }
+  }
+  if (update.status !== undefined) {
+    if (!isThreadGoalStatus(update.status)) {
+      throw new Error("Goal status must be active, complete, or blocked.");
+    }
+    normalized.status = update.status;
+  }
+  if (update.summary !== undefined) {
+    if (typeof update.summary !== "string" || !update.summary.trim()) {
+      throw new Error("Goal summary must be a non-empty string.");
+    }
+    normalized.summary = update.summary.trim();
+  }
+  if (Object.keys(normalized).length === 0) {
+    throw new Error("Goal update must include at least one of goal, status, or summary.");
+  }
+  return normalized;
+}
+
 function parsePlanToolContent(rawContent: string): { title?: string; steps: PlanStep[] } {
   const parsed = JSON.parse(rawContent) as unknown;
   if (!parsed || typeof parsed !== "object") {
@@ -1602,10 +1652,6 @@ function isFileDiffLine(value: unknown): boolean {
     (line.type === "context" || line.type === "added" || line.type === "removed") &&
     typeof line.text === "string"
   );
-}
-
-function isNonNegativeInteger(value: unknown): value is number {
-  return Number.isInteger(value) && Number(value) >= 0;
 }
 
 function prepareMessagesForRequest(

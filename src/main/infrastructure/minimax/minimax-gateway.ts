@@ -14,6 +14,7 @@ import {
   normalizeAnthropicUsage,
   normalizeOpenAiUsage,
   normalizeToolDefinitions,
+  mapAnthropicUsageFields,
   mapOpenAiUsageFields,
   parseAnthropicToolCalls,
   parseOpenAiToolCalls,
@@ -468,13 +469,13 @@ function consumeAnthropicStreamPayload(
     return {
       chunks,
       stopReason: mapAnthropicStopReason(payload.delta?.stop_reason),
-      usage: payload.usage ? mapAnthropicUsage(payload.usage) : undefined
+      usage: payload.usage ? mapAnthropicUsageFields(payload.usage) : undefined
     };
   }
 
   return {
     chunks,
-    usage: payload.usage ? mapAnthropicUsage(payload.usage) : undefined
+    usage: payload.usage ? mapAnthropicUsageFields(payload.usage) : undefined
   };
 }
 
@@ -924,19 +925,6 @@ function normalizeMaybeCumulativeDelta(value: string | undefined, previous: stri
     return value.slice(previous.length);
   }
   return value;
-}
-
-function mapAnthropicUsage(usage: NonNullable<AnthropicStreamPayload["usage"]>): AgentUsage {
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens:
-      typeof inputTokens === "number" && typeof outputTokens === "number"
-        ? inputTokens + outputTokens
-        : undefined
-  };
 }
 
 function mapOpenAiStopReason(reason: string | undefined | null): LlmStopReason {

@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AttachmentStore } from "../../../src/main/persistence/attachment-store";
+import { MAX_ATTACHMENT_BYTES } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
 const ONE_PIXEL_PNG_BASE64 =
@@ -38,6 +39,16 @@ describe("AttachmentStore", () => {
     await store.delete(record.id);
     expect(await store.list()).toEqual([]);
     expect(await store.get(record.id)).toBeNull();
+  });
+
+  it("normalizes supported image MIME types at the store boundary", async () => {
+    const record = await store.create({
+      name: "avatar.png",
+      mimeType: " IMAGE/PNG ",
+      dataBase64: ONE_PIXEL_PNG_BASE64,
+    });
+
+    expect(record.mimeType).toBe("image/png");
   });
 
   it("serializes concurrent creates so the attachment index keeps every record", async () => {
@@ -85,6 +96,37 @@ describe("AttachmentStore", () => {
         dataBase64: "!!!!",
       }),
     ).rejects.toThrow("Attachment dataBase64 must be valid base64.");
+  });
+
+  it("rejects attachments above the shared size limit", async () => {
+    await expect(
+      store.create({
+        name: "large.png",
+        mimeType: "image/png",
+        dataBase64: Buffer.alloc(MAX_ATTACHMENT_BYTES + 1).toString("base64"),
+      }),
+    ).rejects.toThrow("Attachment exceeds the 12MB size limit.");
+  });
+
+  it("filters malformed attachment index records with the shared metadata contract", async () => {
+    const valid = await store.create({
+      name: "avatar.png",
+      mimeType: "image/png",
+      dataBase64: ONE_PIXEL_PNG_BASE64,
+    });
+    const indexPath = path.join(userDataDir, "attachments", "index.json");
+    await fs.writeFile(
+      indexPath,
+      JSON.stringify([
+        valid,
+        { ...valid, id: "bad-id" },
+        { ...valid, id: "bad-mime", mimeType: "image/svg+xml" },
+        { ...valid, id: "bad-size", size: MAX_ATTACHMENT_BYTES + 1 },
+      ], null, 2),
+      "utf8",
+    );
+
+    await expect(store.list()).resolves.toEqual([valid]);
   });
 
   it("removes the attachment blob if indexing the new record fails", async () => {

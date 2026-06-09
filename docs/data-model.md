@@ -100,6 +100,15 @@ threads/
 Important semantics:
 
 - Thread ids must be UUIDs.
+- UUID validation uses shared `isUuidString()` in
+  `src/shared/agent-contracts.ts`; thread and attachment persistence reuse this
+  boundary before resolving filesystem paths.
+- Thread field domains are centralized in `src/shared/agent-contracts.ts`
+  (`THREAD_RELATIONS`, `THREAD_MODES`, `THREAD_STATUSES`,
+  `THREAD_APPROVAL_POLICIES`, `THREAD_SANDBOX_MODES`,
+  `THREAD_GOAL_STATUSES`) and reused by IPC parsing and persistence
+  normalization. Thread defaults are centralized in the same file as
+  `DEFAULT_THREAD_*` constants.
 - `JsonlThreadStore.createThread()` defaults `status` to `active`.
 - `ThreadRecord.workspace` must be an absolute path; create rejects relative workspace input before writing `thread.json` or `index.json`.
 - Threads with `relation: "fork"` must carry `parentThreadId`; the dedicated
@@ -113,6 +122,8 @@ Important semantics:
   runtime policy decisions.
 - Thread list filters validate `includeArchived` and `archivedOnly` as booleans
   before applying status visibility rules.
+- Thread update patches must contain at least one supported field; empty or
+  unknown-only updates fail instead of only refreshing `updatedAt`.
 - Same-thread writes are serialized with a per-thread mutex.
 - Appending an `Item` updates `ThreadRecord.updatedAt` and the matching
   `ThreadSummary.updatedAt` when the item timestamp is newer, so list sorting
@@ -153,6 +164,9 @@ renderer
 Goal clearing is represented as `goal: null` at the patch boundary and becomes
 `undefined` in persisted `ThreadRecord`; `thread.json` must not store
 `goal: null`.
+Goal updates must include at least one effective field. Empty updates, blank
+goal/summary text, and clear operations combined with status or summary fail
+before persistence so goal timestamps are not refreshed by no-op requests.
 
 ## Turn Model
 
@@ -267,6 +281,9 @@ classDiagram
 
 Append-only update rule:
 
+- `JsonlThreadStore.appendItem()` / `appendEvent()` validate the shared
+  `Item` / `RuntimeEvent` shape and require the record `threadId` to match the
+  target thread before writing JSONL.
 - Streaming assistant/reasoning items emit `item_updated` before final persistence.
 - Tool and approval status updates are appended as a new JSONL row with the same item id.
 - Replay consumers dedupe by `item.id` and keep the latest row.
@@ -300,8 +317,14 @@ Rules:
 
 - Attachment ids must be UUIDs.
 - File names are normalized with `path.basename()`.
-- Supported mime types: `image/png`, `image/jpeg`, `image/webp`, `image/gif`.
-- Maximum size is 12 MB.
+- Supported mime types are defined by
+  `SUPPORTED_ATTACHMENT_MIME_TYPES` in `src/shared/agent-contracts.ts`:
+  `image/png`, `image/jpeg`, `image/webp`, `image/gif`.
+- Maximum size is `MAX_ATTACHMENT_BYTES` in `src/shared/agent-contracts.ts`
+  (12 MB).
+- Attachment metadata validation is centralized in shared `isAttachmentRecord()`;
+  both `AttachmentStore` index reads and `UserItem.attachments` replay guards use
+  this contract.
 - `AttachmentStore.get()` returns metadata plus `dataBase64`.
 - `UserItem` stores attachment ids and metadata, not image bytes.
 - Runtime reads attachment bytes and sends them to the LLM as `AgentContentBlock[]`.
@@ -325,7 +348,9 @@ Current event kinds:
 `turn_started` carries the complete runtime-created `TurnRecord` as `turn`.
 Usage data lives on `turn_completed.usage` and is aggregated by `usage:daily`.
 Persisted event replay validates `usage` as a `TokenUsage` object when present;
-malformed token fields are skipped with the rest of the bad event row.
+token count fields must be non-negative integers, `cacheHitRate` must be
+`null` or a `0..1` ratio, and malformed token fields are skipped with the rest
+of the bad event row.
 
 `RuntimeEventBus.onThread()` must include every thread-scoped event kind that renderer subscribers need to receive.
 
@@ -358,6 +383,10 @@ Key semantics:
 - At least one profile must remain.
 - Profile creation treats `activate` as a strict boolean; non-boolean values are
   rejected instead of being interpreted by truthiness.
+- Active config updates and profile updates must include at least one recognized
+  config field; profile updates may alternatively include a non-empty name.
+  Empty or unknown-only update payloads fail instead of only refreshing
+  `updatedAt`.
 - `model_auto_compact_token_limit <= model_context_window`.
 - `max_tokens < model_context_window`.
 - `OPENAI_API_KEY` is a generic field name; provider fallback may use environment variables in the gateway/runtime path.

@@ -18,20 +18,18 @@ import type {
 import { err, ok } from "../../shared/agent-contracts.js";
 import { decodeUtf8TextBuffer } from "../application/tools/text-file.js";
 import {
-  isPathInsideOrEqual,
-  toPortableRelativePath,
-} from "../application/path-utils.js";
+  resolveWorkspacePathForAccess as resolveSharedWorkspacePathForAccess,
+  resolveWorkspacePathLexically,
+  resolveWorkspaceRoot,
+  shouldSkipEntry,
+  toWorkspaceRelative,
+} from "../application/tools/workspace-policy.js";
 
 const MARKDOWN_EXT = [".md", ".mdx", ".markdown"];
-const SKIPPED_DIRECTORIES = new Set([
-  ".git",
-  ".idea",
-  ".vscode",
-  "DeepSeek",
-  "dist",
-  "node_modules",
-  "out",
-]);
+const WRITE_WORKSPACE_POLICY_OPTIONS = {
+  skippedPathMessage: (relativePath: string) =>
+    `Path is skipped by write service policy: ${relativePath}`,
+};
 
 export function registerWriteHandlers(): void {
   // Write IPC is a renderer file-service boundary, not an agent tool surface.
@@ -147,27 +145,13 @@ export async function resolveWritePathForAccess(
   relative: string,
   access: "read" | "write",
 ): Promise<string> {
-  const root = resolveWorkspaceRoot(workspace);
-  const resolved = resolveWritePath(workspace, relative);
-  const realRoot = await fs.realpath(root);
-  assertWithinWorkspace(realRoot, realRoot, relative);
-  assertAllowedWorkspacePath(realRoot, realRoot, relative);
-
-  try {
-    const realResolved = await fs.realpath(resolved);
-    assertWithinWorkspace(realRoot, realResolved, relative);
-    assertAllowedWorkspacePath(realRoot, realResolved, relative);
-    return resolved;
-  } catch (error) {
-    if (getErrorCode(error) !== "ENOENT" || access === "read") {
-      throw error;
-    }
-    await assertTargetIsNotSymlink(resolved, relative);
-  }
-
-  const realParent = await resolveExistingParentRealpath(root, resolved, relative);
-  assertWithinWorkspace(realRoot, realParent, relative);
-  assertAllowedWorkspacePath(realRoot, realParent, relative);
+  const resolved = await resolveSharedWorkspacePathForAccess(
+    workspace,
+    relative,
+    access,
+    WRITE_WORKSPACE_POLICY_OPTIONS,
+  );
+  assertMarkdownFilePath(relative);
   return resolved;
 }
 
@@ -245,49 +229,13 @@ async function walk(dir: string, onFile: (file: string) => Promise<void>): Promi
 }
 
 export function resolveWritePath(workspace: string, relative: string): string {
-  const root = resolveWorkspaceRoot(workspace);
-  const resolved = path.resolve(root, relative);
-  assertWithinWorkspace(root, resolved, relative);
-  assertAllowedWorkspacePath(root, resolved, relative);
+  const resolved = resolveWorkspacePathLexically(
+    workspace,
+    relative,
+    WRITE_WORKSPACE_POLICY_OPTIONS,
+  );
   assertMarkdownFilePath(relative);
   return resolved;
-}
-
-function resolveWorkspaceRoot(workspace: string): string {
-  if (!workspace.trim()) {
-    throw new Error("Workspace path is required.");
-  }
-  if (!path.isAbsolute(workspace.trim())) {
-    throw new Error("Workspace path must be absolute.");
-  }
-  return path.resolve(workspace);
-}
-
-function assertWithinWorkspace(root: string, resolved: string, relativePath: string): void {
-  if (!isPathInsideOrEqual(root, resolved)) {
-    throw new Error(`Path escapes workspace: ${relativePath}`);
-  }
-}
-
-function assertAllowedWorkspacePath(root: string, resolved: string, relativePath: string): void {
-  const relative = path.relative(root, resolved);
-  if (!relative) return;
-  const segments = relative.split(path.sep).filter(Boolean);
-  if (segments.some(isSkippedSegment)) {
-    throw new Error(`Path is skipped by write service policy: ${relativePath}`);
-  }
-}
-
-function toWorkspaceRelative(workspace: string, fullPath: string): string {
-  return toPortableRelativePath(workspace, fullPath);
-}
-
-function shouldSkipEntry(name: string): boolean {
-  return isSkippedSegment(name);
-}
-
-function isSkippedSegment(name: string): boolean {
-  return name.startsWith(".") || SKIPPED_DIRECTORIES.has(name);
 }
 
 function assertMarkdownFilePath(relativePath: string): void {
@@ -298,46 +246,6 @@ function assertMarkdownFilePath(relativePath: string): void {
 
 function emptyCompletion(): WriteCompleteResponse {
   return { completion: "", score: 0, truncated: false };
-}
-
-async function resolveExistingParentRealpath(
-  lexicalRoot: string,
-  targetPath: string,
-  relativePath: string,
-): Promise<string> {
-  let current = path.dirname(targetPath);
-  while (current !== path.dirname(current)) {
-    assertWithinWorkspace(lexicalRoot, current, relativePath);
-    try {
-      return await fs.realpath(current);
-    } catch (error) {
-      if (getErrorCode(error) !== "ENOENT") {
-        throw error;
-      }
-      current = path.dirname(current);
-    }
-  }
-  throw new Error(`Path escapes workspace: ${relativePath}`);
-}
-
-async function assertTargetIsNotSymlink(targetPath: string, relativePath: string): Promise<void> {
-  try {
-    const stat = await fs.lstat(targetPath);
-    if (stat.isSymbolicLink()) {
-      throw new Error(`Path escapes workspace: ${relativePath}`);
-    }
-  } catch (error) {
-    if (getErrorCode(error) === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
-}
-
-function getErrorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error
-    ? String((error as { code?: unknown }).code)
-    : undefined;
 }
 
 function messageOf(error: unknown): string {

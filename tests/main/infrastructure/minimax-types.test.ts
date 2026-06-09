@@ -135,6 +135,17 @@ describe("minimax protocol type helpers", () => {
       cacheHitRate: 0.375,
     });
     expect(
+      normalizeOpenAiUsage({
+        usage: {
+          prompt_tokens: 1.5,
+          completion_tokens: -1,
+          total_tokens: 0,
+          prompt_cache_hit_tokens: 2.5,
+          prompt_cache_miss_tokens: -1,
+        },
+      }),
+    ).toEqual({ totalTokens: 0 });
+    expect(
       normalizeAnthropicUsage({
         usage: {
           input_tokens: 5,
@@ -142,6 +153,22 @@ describe("minimax protocol type helpers", () => {
         },
       }),
     ).toEqual({ inputTokens: 5, outputTokens: 7, totalTokens: 12 });
+    expect(
+      normalizeAnthropicUsage({
+        usage: {
+          input_tokens: -1,
+          output_tokens: 7,
+        },
+      }),
+    ).toEqual({ outputTokens: 7 });
+    expect(
+      normalizeAnthropicUsage({
+        usage: {
+          input_tokens: -1,
+          output_tokens: 7.5,
+        },
+      }),
+    ).toBeUndefined();
   });
 
   it("parses tool calls and rejects invalid OpenAI tool arguments", () => {

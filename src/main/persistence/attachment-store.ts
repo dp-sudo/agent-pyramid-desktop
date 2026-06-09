@@ -6,20 +6,16 @@ import type {
   AttachmentCreateRequest,
   AttachmentRecord,
 } from "../../shared/agent-contracts.js";
+import {
+  MAX_ATTACHMENT_BYTES,
+  isAttachmentRecord,
+  isUuidString,
+  normalizeSupportedAttachmentMimeType,
+} from "../../shared/agent-contracts.js";
 
 const ATTACHMENTS_DIRNAME = "attachments";
 const INDEX_FILENAME = "index.json";
 const TMP_SUFFIX = ".tmp";
-const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SUPPORTED_IMAGE_MIME_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-]);
-
 export interface AttachmentContent extends AttachmentRecord {
   dataBase64: string;
 }
@@ -154,7 +150,7 @@ export class AttachmentStore {
 }
 
 function assertSafeId(value: string, label: string): string {
-  if (!UUID_PATTERN.test(value)) {
+  if (!isUuidString(value)) {
     throw new Error(`${label} must be a UUID.`);
   }
   return value;
@@ -168,10 +164,14 @@ function assertSafeName(value: unknown): string {
 }
 
 function assertImageMimeType(value: unknown): string {
-  if (typeof value !== "string" || !SUPPORTED_IMAGE_MIME_TYPES.has(value)) {
+  if (typeof value !== "string") {
     throw new Error("Only PNG, JPEG, WebP, and GIF images are supported.");
   }
-  return value;
+  const normalized = normalizeSupportedAttachmentMimeType(value);
+  if (!normalized) {
+    throw new Error("Only PNG, JPEG, WebP, and GIF images are supported.");
+  }
+  return normalized;
 }
 
 function decodeBase64(value: unknown): Buffer {
@@ -187,16 +187,4 @@ function decodeBase64(value: unknown): Buffer {
     throw new Error("Attachment dataBase64 must be valid base64.");
   }
   return data;
-}
-
-function isAttachmentRecord(value: unknown): value is AttachmentRecord {
-  if (!value || typeof value !== "object") return false;
-  const v = value as Partial<AttachmentRecord>;
-  return (
-    typeof v.id === "string" &&
-    typeof v.name === "string" &&
-    typeof v.mimeType === "string" &&
-    typeof v.size === "number" &&
-    typeof v.createdAt === "string"
-  );
 }

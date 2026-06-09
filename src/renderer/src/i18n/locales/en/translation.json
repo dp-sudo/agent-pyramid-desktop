@@ -155,6 +155,7 @@
     "attachmentsProcessing": "Processing {{count}} image(s)",
     "noModelProfiles": "No model profiles available. Add one in Settings.",
     "unsupportedImage": "Only PNG, JPEG, WebP, and GIF images can be attached.",
+    "attachmentTooLarge": "Images must be {{limit}} or smaller.",
     "attachmentAddBlocked": "Wait for the current turn to finish before adding images.",
     "attachmentOnlyMessageSingle": "Please analyze the attached image.",
     "attachmentOnlyMessageMultiple": "Please analyze the attached images."

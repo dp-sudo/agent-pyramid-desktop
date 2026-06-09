@@ -135,6 +135,9 @@ describe("thread handlers", () => {
     expect(() =>
       parseThreadCreateInput({ workspace: "/workspace", mode: "code", relation: "fork" })
     ).toThrow("Thread create fork requires parentThreadId.");
+    expect(() => parseThreadUpdatePatch({})).toThrow(
+      "Thread update patch must include at least one field.",
+    );
     expect(() => parseThreadUpdatePatch({ status: "paused" }))
       .toThrow("Thread status must be active or archived.");
   });
@@ -197,6 +200,23 @@ describe("thread handlers", () => {
       ok: false,
       code: "THREAD_STATUS_INVALID",
       message: "Thread status must be active or archived.",
+    });
+    expect(store.getThread).not.toHaveBeenCalled();
+    expect(store.updateThread).not.toHaveBeenCalled();
+  });
+
+  it("returns an error envelope for empty update patches before store access", async () => {
+    const store = createStore();
+    registerThreadHandlers(store);
+    const handler = electronMock.handlers.get(THREAD_UPDATE_CHANNEL);
+    if (!handler) throw new Error("Expected thread update handler.");
+
+    const result = await handler({}, "thread-1", {});
+
+    expect(result).toEqual({
+      ok: false,
+      code: "THREAD_UPDATE_FAILED",
+      message: "Thread update patch must include at least one field.",
     });
     expect(store.getThread).not.toHaveBeenCalled();
     expect(store.updateThread).not.toHaveBeenCalled();

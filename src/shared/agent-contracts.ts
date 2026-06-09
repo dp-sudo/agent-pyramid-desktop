@@ -1,5 +1,12 @@
 export type LlmProtocol = "openai-compatible" | "anthropic-compatible";
 
+export const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isUuidString(value: unknown): value is string {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
 export const MODEL_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
 export type ModelReasoningEffort = (typeof MODEL_REASONING_EFFORTS)[number];
 export const AGENT_AUTONOMY_LEVELS = ["conservative", "balanced", "deep"] as const;
@@ -102,10 +109,40 @@ export function isAgentAutonomyLevel(value: unknown): value is AgentAutonomyLeve
 // Threading + multi-turn
 // ============================================================================
 
-/** A conversation lineage marker. See design.md D4. */
-export type ThreadRelation = "primary" | "fork" | "side";
+/** Thread field domains are exported so IPC, persistence, and guards cannot drift. */
+export const THREAD_RELATIONS = ["primary", "fork", "side"] as const;
+export type ThreadRelation = (typeof THREAD_RELATIONS)[number];
 
-export type ThreadGoalStatus = "active" | "complete" | "blocked";
+export const THREAD_GOAL_STATUSES = ["active", "complete", "blocked"] as const;
+export type ThreadGoalStatus = (typeof THREAD_GOAL_STATUSES)[number];
+
+export const THREAD_STATUSES = ["active", "archived"] as const;
+export type ThreadStatus = (typeof THREAD_STATUSES)[number];
+
+export const THREAD_MODES = ["code", "write"] as const;
+export type ThreadMode = (typeof THREAD_MODES)[number];
+
+export const THREAD_APPROVAL_POLICIES = [
+  "auto",
+  "on-request",
+  "untrusted",
+  "never",
+] as const;
+export type ThreadApprovalPolicy = (typeof THREAD_APPROVAL_POLICIES)[number];
+
+export const THREAD_SANDBOX_MODES = [
+  "read-only",
+  "workspace-write",
+  "danger-full-access",
+] as const;
+export type ThreadSandboxMode = (typeof THREAD_SANDBOX_MODES)[number];
+
+export const DEFAULT_THREAD_RELATION: ThreadRelation = "primary";
+export const DEFAULT_THREAD_MODE: ThreadMode = "code";
+export const DEFAULT_THREAD_STATUS: ThreadStatus = "active";
+export const DEFAULT_THREAD_APPROVAL_POLICY: ThreadApprovalPolicy = "on-request";
+export const DEFAULT_THREAD_SANDBOX_MODE: ThreadSandboxMode = "workspace-write";
+export const DEFAULT_THREAD_LIST_RELATIONS: readonly ThreadRelation[] = ["primary", "fork"];
 
 export interface ThreadGoal {
   text: string;
@@ -117,22 +154,20 @@ export interface ThreadGoal {
   summary?: string;
 }
 
-export type ThreadStatus = "active" | "archived";
-
 /** A persisted conversation. */
 export interface ThreadRecord {
   id: string;
   title: string;
   workspace: string; // absolute workspace path for code and write flows
-  mode: "code" | "write";
+  mode: ThreadMode;
   status: ThreadStatus;
   relation: ThreadRelation;
   parentThreadId?: string;
   forkedAt?: string; // ISO timestamp
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
-  approvalPolicy: "auto" | "on-request" | "untrusted" | "never";
-  sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy: ThreadApprovalPolicy;
+  sandboxMode: ThreadSandboxMode;
   goal?: ThreadGoal;
 }
 
@@ -143,14 +178,14 @@ export interface ThreadSummary {
   workspace: string;
   status: ThreadStatus;
   relation: ThreadRelation;
-  mode: "code" | "write";
+  mode: ThreadMode;
   updatedAt: string;
 }
 
 export interface ThreadCreateInput {
   title?: string;
   workspace: string;
-  mode: "code" | "write";
+  mode: ThreadMode;
   relation?: ThreadRelation;
   parentThreadId?: string;
 }
@@ -166,9 +201,34 @@ export interface ThreadUpdatePatch {
 export interface ThreadListFilter {
   include?: ThreadRelation[]; // default excludes 'side'
   search?: string; // case-insensitive title match
-  mode?: "code" | "write";
+  mode?: ThreadMode;
   includeArchived?: boolean;
   archivedOnly?: boolean;
+}
+
+export function isThreadRelation(value: unknown): value is ThreadRelation {
+  return typeof value === "string" && THREAD_RELATIONS.includes(value as ThreadRelation);
+}
+
+export function isThreadGoalStatus(value: unknown): value is ThreadGoalStatus {
+  return typeof value === "string" && THREAD_GOAL_STATUSES.includes(value as ThreadGoalStatus);
+}
+
+export function isThreadStatus(value: unknown): value is ThreadStatus {
+  return typeof value === "string" && THREAD_STATUSES.includes(value as ThreadStatus);
+}
+
+export function isThreadMode(value: unknown): value is ThreadMode {
+  return typeof value === "string" && THREAD_MODES.includes(value as ThreadMode);
+}
+
+export function isThreadApprovalPolicy(value: unknown): value is ThreadApprovalPolicy {
+  return typeof value === "string" &&
+    THREAD_APPROVAL_POLICIES.includes(value as ThreadApprovalPolicy);
+}
+
+export function isThreadSandboxMode(value: unknown): value is ThreadSandboxMode {
+  return typeof value === "string" && THREAD_SANDBOX_MODES.includes(value as ThreadSandboxMode);
 }
 
 // ----------------------------------------------------------------------------
@@ -221,6 +281,38 @@ export interface AttachmentCreateRequest {
   name: string;
   mimeType: string;
   dataBase64: string;
+}
+
+export const SUPPORTED_ATTACHMENT_MIME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+] as const;
+export type SupportedAttachmentMimeType = (typeof SUPPORTED_ATTACHMENT_MIME_TYPES)[number];
+export const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
+
+export function normalizeSupportedAttachmentMimeType(
+  mimeType: string,
+): SupportedAttachmentMimeType | null {
+  const normalized = mimeType.trim().toLowerCase();
+  return SUPPORTED_ATTACHMENT_MIME_TYPES.includes(normalized as SupportedAttachmentMimeType)
+    ? (normalized as SupportedAttachmentMimeType)
+    : null;
+}
+
+export function isAttachmentRecord(value: unknown): value is AttachmentRecord {
+  if (!isRecord(value)) return false;
+  const size = value.size;
+  return isUuidString(value.id) &&
+    hasString(value, "name") &&
+    typeof value.mimeType === "string" &&
+    normalizeSupportedAttachmentMimeType(value.mimeType) !== null &&
+    typeof size === "number" &&
+    Number.isInteger(size) &&
+    size >= 0 &&
+    size <= MAX_ATTACHMENT_BYTES &&
+    hasString(value, "createdAt");
 }
 
 export interface AttachmentDeleteRequest {
@@ -372,7 +464,18 @@ export type Item =
   | PlanItem
   | SystemItem;
 
-export type ItemKind = Item["kind"];
+export const ITEM_KINDS = [
+  "user",
+  "assistant",
+  "reasoning",
+  "tool",
+  "compaction",
+  "approval",
+  "user_input",
+  "plan",
+  "system",
+] as const;
+export type ItemKind = (typeof ITEM_KINDS)[number];
 
 // ============================================================================
 // Runtime events (emitted on the bus, forwarded to subscribers via IPC)
@@ -470,7 +573,18 @@ export type RuntimeEvent =
   | GoalUpdatedEvent
   | RuntimeErrorEvent;
 
-export type RuntimeEventKind = RuntimeEvent["kind"];
+export const RUNTIME_EVENT_KINDS = [
+  "turn_started",
+  "turn_completed",
+  "turn_failed",
+  "item_appended",
+  "item_updated",
+  "approval_requested",
+  "tool_budget_reached",
+  "goal_updated",
+  "runtime_error",
+] as const;
+export type RuntimeEventKind = (typeof RUNTIME_EVENT_KINDS)[number];
 
 // ============================================================================
 // Turn start payload
@@ -622,40 +736,37 @@ export function err(code: string, message: string): IpcErr {
 // Type guards (TypeScript-native validation, zod-equivalent for runtime checks)
 // ============================================================================
 
-const ITEM_KINDS: ItemKind[] = [
-  "user",
-  "assistant",
-  "reasoning",
-  "tool",
-  "compaction",
-  "approval",
-  "user_input",
-  "plan",
-  "system",
-];
+type ExactUnion<Left, Right> = [Left] extends [Right]
+  ? [Right] extends [Left]
+    ? true
+    : false
+  : false;
+type AssertTrue<T extends true> = T;
+type _ItemKindContract = AssertTrue<ExactUnion<Item["kind"], ItemKind>>;
+type _RuntimeEventKindContract = AssertTrue<
+  ExactUnion<RuntimeEvent["kind"], RuntimeEventKind>
+>;
 
-const RUNTIME_EVENT_KINDS: RuntimeEventKind[] = [
-  "turn_started",
-  "turn_completed",
-  "turn_failed",
-  "item_appended",
-  "item_updated",
-  "approval_requested",
-  "tool_budget_reached",
-  "goal_updated",
-  "runtime_error",
-];
+export function isItemKind(value: unknown): value is ItemKind {
+  return typeof value === "string" && ITEM_KINDS.includes(value as ItemKind);
+}
+
+export function isRuntimeEventKind(value: unknown): value is RuntimeEventKind {
+  return typeof value === "string" &&
+    RUNTIME_EVENT_KINDS.includes(value as RuntimeEventKind);
+}
 
 export function isItem(value: unknown): value is Item {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  if (!hasBaseItemFields(v) || !ITEM_KINDS.includes(v.kind as ItemKind)) return false;
+  if (!hasBaseItemFields(v) || !isItemKind(v.kind)) return false;
   switch (v.kind) {
     case "user":
       return hasString(v, "turnId") &&
         hasString(v, "text") &&
         isOptionalString(v.displayText) &&
-        isOptionalStringArray(v.attachmentIds);
+        isOptionalStringArray(v.attachmentIds) &&
+        isOptionalAttachmentRecords(v.attachments);
     case "assistant":
       return hasString(v, "turnId") &&
         hasString(v, "text") &&
@@ -671,7 +782,7 @@ export function isItem(value: unknown): value is Item {
     case "compaction":
       return hasString(v, "turnId") &&
         hasString(v, "summary") &&
-        isFiniteNumber(v.replacedItemCount);
+        isNonNegativeInteger(v.replacedItemCount);
     case "approval":
       return hasString(v, "turnId") &&
         hasString(v, "approvalId") &&
@@ -702,7 +813,7 @@ export function isItem(value: unknown): value is Item {
 export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  if (typeof v.kind !== "string" || !RUNTIME_EVENT_KINDS.includes(v.kind as RuntimeEventKind)) {
+  if (!isRuntimeEventKind(v.kind)) {
     return false;
   }
   switch (v.kind) {
@@ -737,8 +848,8 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
     case "tool_budget_reached":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
-        isFiniteNumber(v.maxToolRounds) &&
-        isFiniteNumber(v.attemptedToolCalls) &&
+        isPositiveInteger(v.maxToolRounds) &&
+        isPositiveInteger(v.attemptedToolCalls) &&
         hasString(v, "message") &&
         hasString(v, "reachedAt");
     case "goal_updated":
@@ -761,9 +872,11 @@ export function isThreadRecord(value: unknown): value is ThreadRecord {
     typeof v.id === "string" &&
     typeof v.title === "string" &&
     typeof v.workspace === "string" &&
-    (v.mode === "code" || v.mode === "write") &&
-    (v.status === undefined || v.status === "active" || v.status === "archived") &&
-    (v.relation === "primary" || v.relation === "fork" || v.relation === "side") &&
+    isThreadMode(v.mode) &&
+    (v.status === undefined || isThreadStatus(v.status)) &&
+    isThreadRelation(v.relation) &&
+    (v.approvalPolicy === undefined || isThreadApprovalPolicy(v.approvalPolicy)) &&
+    (v.sandboxMode === undefined || isThreadSandboxMode(v.sandboxMode)) &&
     typeof v.createdAt === "string" &&
     typeof v.updatedAt === "string"
   );
@@ -816,10 +929,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
 }
@@ -831,23 +940,28 @@ function isOptionalBoolean(value: unknown): boolean {
 function isOptionalTokenUsage(value: unknown): value is TokenUsage | undefined {
   if (value === undefined) return true;
   if (!isRecord(value)) return false;
-  return isOptionalFiniteNumber(value.inputTokens) &&
-    isOptionalFiniteNumber(value.outputTokens) &&
-    isOptionalFiniteNumber(value.totalTokens) &&
-    isOptionalFiniteNumber(value.cacheHitTokens) &&
-    isOptionalFiniteNumber(value.cacheMissTokens) &&
+  return isOptionalTokenCount(value.inputTokens) &&
+    isOptionalTokenCount(value.outputTokens) &&
+    isOptionalTokenCount(value.totalTokens) &&
+    isOptionalTokenCount(value.cacheHitTokens) &&
+    isOptionalTokenCount(value.cacheMissTokens) &&
     (value.cacheHitRate === undefined ||
       value.cacheHitRate === null ||
-      isFiniteNumber(value.cacheHitRate));
+      isCacheHitRate(value.cacheHitRate));
 }
 
-function isOptionalFiniteNumber(value: unknown): value is number | undefined {
-  return value === undefined || isFiniteNumber(value);
+function isOptionalTokenCount(value: unknown): value is number | undefined {
+  return value === undefined || isNonNegativeInteger(value);
 }
 
 function isOptionalStringArray(value: unknown): boolean {
   return value === undefined ||
     (Array.isArray(value) && value.every((item) => typeof item === "string"));
+}
+
+function isOptionalAttachmentRecords(value: unknown): value is AttachmentRecord[] | undefined {
+  return value === undefined ||
+    (Array.isArray(value) && value.every(isAttachmentRecord));
 }
 
 function isTurnStatus(value: unknown): value is TurnStatus {
@@ -863,10 +977,6 @@ function isTerminalTurnStatus(value: unknown): value is TerminalTurnStatus {
     value === "failed" ||
     value === "interrupted" ||
     value === "needs_continuation";
-}
-
-export function isThreadGoalStatus(value: unknown): value is ThreadGoalStatus {
-  return value === "active" || value === "complete" || value === "blocked";
 }
 
 function isToolStatus(value: unknown): value is ToolItem["status"] {
@@ -918,8 +1028,19 @@ function isFileDiffLineType(value: unknown): value is FileDiffLine["type"] {
   return value === "context" || value === "added" || value === "removed";
 }
 
-function isNonNegativeInteger(value: unknown): value is number {
-  return Number.isInteger(value) && Number(value) >= 0;
+export function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return isNonNegativeInteger(value) && value > 0;
+}
+
+function isCacheHitRate(value: unknown): value is number {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1;
 }
 
 function isPlanStepStatus(value: unknown): value is PlanStepStatus {

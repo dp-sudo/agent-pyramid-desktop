@@ -8,11 +8,41 @@ import {
 import {
   DEFAULT_DEEPSEEK_MODEL_CONFIG,
   DEFAULT_MODEL_CONFIG,
+  DEFAULT_THREAD_APPROVAL_POLICY,
+  DEFAULT_THREAD_LIST_RELATIONS,
+  DEFAULT_THREAD_MODE,
+  DEFAULT_THREAD_RELATION,
+  DEFAULT_THREAD_SANDBOX_MODE,
+  DEFAULT_THREAD_STATUS,
+  ITEM_KINDS,
+  MAX_ATTACHMENT_BYTES,
+  RUNTIME_EVENT_KINDS,
+  SUPPORTED_ATTACHMENT_MIME_TYPES,
+  THREAD_APPROVAL_POLICIES,
+  THREAD_GOAL_STATUSES,
+  THREAD_MODES,
+  THREAD_RELATIONS,
+  THREAD_SANDBOX_MODES,
+  THREAD_STATUSES,
+  UUID_PATTERN,
   err,
   isAgentAutonomyLevel,
+  isAttachmentRecord,
   isItem,
+  isItemKind,
   isModelReasoningEffort,
+  isNonNegativeInteger,
   isRuntimeEvent,
+  isRuntimeEventKind,
+  isThreadApprovalPolicy,
+  isThreadGoalStatus,
+  isThreadMode,
+  isThreadRecord,
+  isThreadRelation,
+  isThreadSandboxMode,
+  isThreadStatus,
+  isUuidString,
+  normalizeSupportedAttachmentMimeType,
   ok,
   type WritePutRequest,
 } from "../../src/shared/agent-contracts";
@@ -44,6 +74,15 @@ describe("shared agent contracts", () => {
     });
   });
 
+  it("keeps UUID validation as a shared persistence boundary", () => {
+    expect(UUID_PATTERN.test("00000000-0000-4000-8000-000000000000")).toBe(true);
+    expect(isUuidString("00000000-0000-4000-8000-000000000000")).toBe(true);
+    expect(isNonNegativeInteger(0)).toBe(true);
+    expect(isNonNegativeInteger(1.5)).toBe(false);
+    expect(isUuidString("../outside")).toBe(false);
+    expect(isUuidString("attachment-1")).toBe(false);
+  });
+
   it("keeps key renderer-invoked channels in the allowlist", () => {
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(TURN_START_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(ATTACHMENT_DELETE_CHANNEL);
@@ -65,6 +104,124 @@ describe("shared agent contracts", () => {
     expect(DEFAULT_DEEPSEEK_MODEL_CONFIG.base_url).toBe("https://api.deepseek.com");
   });
 
+  it("keeps supported attachment MIME types as a shared contract", () => {
+    expect(MAX_ATTACHMENT_BYTES).toBe(12 * 1024 * 1024);
+    expect(SUPPORTED_ATTACHMENT_MIME_TYPES).toEqual([
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/gif",
+    ]);
+    expect(normalizeSupportedAttachmentMimeType(" IMAGE/PNG ")).toBe("image/png");
+    expect(normalizeSupportedAttachmentMimeType("image/svg+xml")).toBeNull();
+    expect(isAttachmentRecord({
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "avatar.png",
+      mimeType: "image/png",
+      size: 128,
+      createdAt: "2026-06-08T00:00:00.000Z",
+    })).toBe(true);
+    expect(isAttachmentRecord({
+      id: "00000000-0000-4000-8000-000000000002",
+      name: "avatar.svg",
+      mimeType: "image/svg+xml",
+      size: 128,
+      createdAt: "2026-06-08T00:00:00.000Z",
+    })).toBe(false);
+    expect(isAttachmentRecord({
+      id: "attachment-1",
+      name: "avatar.png",
+      mimeType: "image/png",
+      size: 128,
+      createdAt: "2026-06-08T00:00:00.000Z",
+    })).toBe(false);
+  });
+
+  it("keeps thread field domains as a shared contract", () => {
+    expect(THREAD_RELATIONS).toEqual(["primary", "fork", "side"]);
+    expect(THREAD_GOAL_STATUSES).toEqual(["active", "complete", "blocked"]);
+    expect(THREAD_STATUSES).toEqual(["active", "archived"]);
+    expect(THREAD_MODES).toEqual(["code", "write"]);
+    expect(THREAD_APPROVAL_POLICIES).toEqual(["auto", "on-request", "untrusted", "never"]);
+    expect(THREAD_SANDBOX_MODES).toEqual([
+      "read-only",
+      "workspace-write",
+      "danger-full-access",
+    ]);
+    expect(DEFAULT_THREAD_RELATION).toBe("primary");
+    expect(DEFAULT_THREAD_MODE).toBe("code");
+    expect(DEFAULT_THREAD_STATUS).toBe("active");
+    expect(DEFAULT_THREAD_APPROVAL_POLICY).toBe("on-request");
+    expect(DEFAULT_THREAD_SANDBOX_MODE).toBe("workspace-write");
+    expect(DEFAULT_THREAD_LIST_RELATIONS).toEqual(["primary", "fork"]);
+
+    expect(isThreadRelation("primary")).toBe(true);
+    expect(isThreadRelation("branch")).toBe(false);
+    expect(isThreadGoalStatus("blocked")).toBe(true);
+    expect(isThreadGoalStatus("paused")).toBe(false);
+    expect(isThreadStatus("archived")).toBe(true);
+    expect(isThreadStatus("deleted")).toBe(false);
+    expect(isThreadMode("write")).toBe(true);
+    expect(isThreadMode("chat")).toBe(false);
+    expect(isThreadApprovalPolicy("on-request")).toBe(true);
+    expect(isThreadApprovalPolicy("sometimes")).toBe(false);
+    expect(isThreadSandboxMode("workspace-write")).toBe(true);
+    expect(isThreadSandboxMode("full-access")).toBe(false);
+    expect(isThreadRecord({
+      id: "thread-1",
+      title: "Thread",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(true);
+    expect(isThreadRecord({
+      id: "thread-1",
+      title: "Thread",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "sometimes",
+      sandboxMode: "workspace-write",
+    })).toBe(false);
+  });
+
+  it("keeps item and runtime event kinds as shared contracts", () => {
+    expect(ITEM_KINDS).toEqual([
+      "user",
+      "assistant",
+      "reasoning",
+      "tool",
+      "compaction",
+      "approval",
+      "user_input",
+      "plan",
+      "system",
+    ]);
+    expect(RUNTIME_EVENT_KINDS).toEqual([
+      "turn_started",
+      "turn_completed",
+      "turn_failed",
+      "item_appended",
+      "item_updated",
+      "approval_requested",
+      "tool_budget_reached",
+      "goal_updated",
+      "runtime_error",
+    ]);
+    expect(isItemKind("plan")).toBe(true);
+    expect(isItemKind("unknown")).toBe(false);
+    expect(isRuntimeEventKind("tool_budget_reached")).toBe(true);
+    expect(isRuntimeEventKind("tool_started")).toBe(false);
+  });
+
   it("keeps write put requests limited to the implemented plain write contract", () => {
     const request = {
       workspace: "/workspace",
@@ -80,8 +237,7 @@ describe("shared agent contracts", () => {
   });
 
   it("recognizes tool budget runtime events", () => {
-    expect(
-      isRuntimeEvent({
+    const event = {
         kind: "tool_budget_reached",
         threadId: "thread-1",
         turnId: "turn-1",
@@ -89,8 +245,11 @@ describe("shared agent contracts", () => {
         attemptedToolCalls: 1,
         message: "Continue",
         reachedAt: "2026-06-08T00:00:00.000Z",
-      }),
-    ).toBe(true);
+    };
+    expect(isRuntimeEvent(event)).toBe(true);
+    expect(isRuntimeEvent({ ...event, maxToolRounds: 0 })).toBe(false);
+    expect(isRuntimeEvent({ ...event, attemptedToolCalls: -1 })).toBe(false);
+    expect(isRuntimeEvent({ ...event, attemptedToolCalls: 1.5 })).toBe(false);
   });
 
   it("validates approval preview shapes on items and events", () => {
@@ -203,6 +362,67 @@ describe("shared agent contracts", () => {
         createdAt: "2026-06-08T00:00:00.000Z",
       }),
     ).toBe(true);
+    expect(
+      isItem({
+        kind: "compaction",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        summary: "Compact",
+        replacedItemCount: 2,
+        createdAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      isItem({
+        kind: "compaction",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        summary: "Compact",
+        replacedItemCount: 1.5,
+        createdAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      isItem({
+        kind: "user",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "See attached",
+        attachmentIds: ["attachment-1"],
+        attachments: [
+          {
+            id: "00000000-0000-4000-8000-000000000001",
+            name: "avatar.png",
+            mimeType: "image/png",
+            size: 128,
+            createdAt: "2026-06-08T00:00:00.000Z",
+          },
+        ],
+        createdAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      isItem({
+        kind: "user",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "See attached",
+        attachments: [
+          {
+            id: "00000000-0000-4000-8000-000000000002",
+            name: "avatar.svg",
+            mimeType: "image/svg+xml",
+            size: 128,
+            createdAt: "2026-06-08T00:00:00.000Z",
+          },
+        ],
+        createdAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(false);
     expect(isRuntimeEvent({ kind: "turn_completed", threadId: "thread-1" })).toBe(false);
     expect(
       isRuntimeEvent({
@@ -237,6 +457,42 @@ describe("shared agent contracts", () => {
         completedAt: "2026-06-08T00:00:00.000Z",
         usage: {
           inputTokens: "8",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeEvent({
+        kind: "turn_completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "completed",
+        completedAt: "2026-06-08T00:00:00.000Z",
+        usage: {
+          inputTokens: -1,
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeEvent({
+        kind: "turn_completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "completed",
+        completedAt: "2026-06-08T00:00:00.000Z",
+        usage: {
+          outputTokens: 1.5,
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRuntimeEvent({
+        kind: "turn_completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "completed",
+        completedAt: "2026-06-08T00:00:00.000Z",
+        usage: {
+          cacheHitRate: 1.1,
         },
       }),
     ).toBe(false);

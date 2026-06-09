@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { RuntimeEvent, RuntimeEventKind } from "../shared/agent-contracts.js";
+import { RUNTIME_EVENT_KINDS } from "../shared/agent-contracts.js";
 
 /**
  * Main-process event bus. The runtime emits typed RuntimeEvent values;
@@ -24,31 +25,11 @@ export class RuntimeEventBus extends EventEmitter {
     const wrapped = (event: RuntimeEvent): void => {
       if ("threadId" in event && event.threadId === threadId) listener(event);
     };
-    for (const kind of [
-      "turn_started",
-      "turn_completed",
-      "turn_failed",
-      "item_appended",
-      "item_updated",
-      "approval_requested",
-      "tool_budget_reached",
-      "goal_updated",
-      "runtime_error",
-    ] as RuntimeEventKind[]) {
+    for (const kind of RUNTIME_EVENT_KINDS) {
       this.on(kind, wrapped);
     }
     return () => {
-      for (const kind of [
-        "turn_started",
-        "turn_completed",
-        "turn_failed",
-        "item_appended",
-        "item_updated",
-        "approval_requested",
-        "tool_budget_reached",
-        "goal_updated",
-        "runtime_error",
-      ] as RuntimeEventKind[]) {
+      for (const kind of RUNTIME_EVENT_KINDS) {
         this.off(kind, wrapped);
       }
     };

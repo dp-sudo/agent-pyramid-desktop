@@ -17,6 +17,9 @@ const MAX_COMMAND_TIMEOUT_MS = 120_000;
 const MAX_COMMAND_BYTES = 4_096;
 const MAX_OUTPUT_BYTES = 32 * 1024;
 const KILL_GRACE_MS = 1_000;
+const COMMAND_TIMEOUT_DESCRIPTION =
+  `Maximum runtime in milliseconds. Defaults to ${DEFAULT_COMMAND_TIMEOUT_MS}, ` +
+  `minimum ${MIN_COMMAND_TIMEOUT_MS}, maximum ${MAX_COMMAND_TIMEOUT_MS}.`;
 
 interface CommandRunResult {
   command: string;
@@ -90,7 +93,7 @@ const runCommandTool: AgentTool = {
         },
         timeout_ms: {
           type: "number",
-          description: "Maximum runtime in milliseconds. Defaults to 30000, maximum 120000.",
+          description: COMMAND_TIMEOUT_DESCRIPTION,
         },
       },
       required: ["command"],
@@ -124,7 +127,7 @@ const diagnoseWorkspaceTool: AgentTool = {
         },
         timeout_ms: {
           type: "number",
-          description: "Maximum runtime in milliseconds. Defaults to 30000, maximum 120000.",
+          description: COMMAND_TIMEOUT_DESCRIPTION,
         },
       },
     },

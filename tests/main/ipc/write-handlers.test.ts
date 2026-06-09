@@ -108,6 +108,9 @@ describe("write handlers helpers", () => {
       expect(() => resolveWritePath(workspace, "out/build.md")).toThrow(
         "Path is skipped by write service policy: out/build.md",
       );
+      expect(() => resolveWritePath(workspace, ".vscode/settings.md")).toThrow(
+        "Path is skipped by write service policy: .vscode/settings.md",
+      );
     } finally {
       await removeTempDir(workspace);
     }

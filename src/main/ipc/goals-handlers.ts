@@ -37,19 +37,37 @@ export function parseGoalUpdateRequest(request: unknown): {
   if (value.goal !== undefined && value.goal !== null && typeof value.goal !== "string") {
     throw new Error("Goal update goal must be a string or null.");
   }
+  if (value.clear === true && ("goal" in value || "status" in value || "summary" in value)) {
+    throw new Error("Goal update clear cannot be combined with goal, status, or summary.");
+  }
+  if (value.goal === null && ("status" in value || "summary" in value)) {
+    throw new Error("Goal update clear cannot be combined with status or summary.");
+  }
+  if (typeof value.goal === "string" && !value.goal.trim()) {
+    throw new Error("Goal update goal must be a non-empty string or null.");
+  }
   if (value.status !== undefined && !isThreadGoalStatus(value.status)) {
     throw new Error("Goal update status must be active, complete, or blocked.");
   }
   if (value.summary !== undefined && typeof value.summary !== "string") {
     throw new Error("Goal update summary must be a string.");
   }
+  if (typeof value.summary === "string" && !value.summary.trim()) {
+    throw new Error("Goal update summary must be a non-empty string.");
+  }
+  const update = {
+    ...(value.clear === true ? { goal: null } : value.goal !== undefined
+      ? { goal: value.goal === null ? null : value.goal.trim() }
+      : {}),
+    ...(value.status !== undefined ? { status: value.status } : {}),
+    ...(typeof value.summary === "string" ? { summary: value.summary.trim() } : {}),
+  };
+  if (Object.keys(update).length === 0) {
+    throw new Error("Goal update must include at least one of goal, status, or summary.");
+  }
   return {
     threadId: value.threadId.trim(),
-    update: {
-      ...(value.clear === true ? { goal: null } : value.goal !== undefined ? { goal: value.goal } : {}),
-      ...(value.status !== undefined ? { status: value.status } : {}),
-      ...(value.summary !== undefined ? { summary: value.summary } : {}),
-    },
+    update,
   };
 }
 

@@ -14,7 +14,12 @@ import {
 } from "../../store/WorkbenchContext";
 import { Pill } from "../primitives/Pill";
 import { FloatingComposerModelPicker } from "./FloatingComposerModelPicker";
-import type { ModelConfigProfile } from "../../../../../shared/agent-contracts";
+import {
+  MAX_ATTACHMENT_BYTES,
+  normalizeSupportedAttachmentMimeType,
+  SUPPORTED_ATTACHMENT_MIME_TYPES,
+  type ModelConfigProfile,
+} from "../../../../../shared/agent-contracts";
 
 interface FloatingComposerProps {
   onSend: (text: string) => Promise<boolean>;
@@ -22,13 +27,7 @@ interface FloatingComposerProps {
   disabled?: boolean;
 }
 
-const COMPOSER_IMAGE_MIME_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-]);
-const COMPOSER_IMAGE_ACCEPT = Array.from(COMPOSER_IMAGE_MIME_TYPES).join(",");
+const COMPOSER_IMAGE_ACCEPT = SUPPORTED_ATTACHMENT_MIME_TYPES.join(",");
 const COMPOSER_THUMBNAIL_MAX_EDGE = 192;
 
 export interface ComposerImageFile {
@@ -204,10 +203,17 @@ export function FloatingComposer({
       actions.setError(t("composer.attachmentAddBlocked"));
       return;
     }
+    const { acceptedFiles, rejectedCount } = partitionComposerImageFilesBySize(files);
+    if (rejectedCount > 0) {
+      actions.setError(t("composer.attachmentTooLarge", {
+        limit: formatBytes(MAX_ATTACHMENT_BYTES),
+      }));
+    }
+    if (acceptedFiles.length === 0) return;
 
-    setAttachmentPendingCount((count) => count + files.length);
+    setAttachmentPendingCount((count) => count + acceptedFiles.length);
     try {
-      for (const [index, imageFile] of files.entries()) {
+      for (const [index, imageFile] of acceptedFiles.entries()) {
         const previewUrl = createPreviewUrl(imageFile.file);
         try {
           const dataBase64 = await readFileAsBase64(imageFile.file);
@@ -533,8 +539,7 @@ function formatBytes(value: number): string {
 export function normalizeSupportedComposerImageMimeType(
   mimeType: string,
 ): string | null {
-  const normalized = mimeType.trim().toLowerCase();
-  return COMPOSER_IMAGE_MIME_TYPES.has(normalized) ? normalized : null;
+  return normalizeSupportedAttachmentMimeType(mimeType);
 }
 
 function toComposerImageFile(file: File): ComposerImageFile | null {
@@ -556,6 +561,17 @@ export function getClipboardImageFiles(
     }
   }
   return files;
+}
+
+export function partitionComposerImageFilesBySize(
+  files: ComposerImageFile[],
+  maxBytes = MAX_ATTACHMENT_BYTES,
+): { acceptedFiles: ComposerImageFile[]; rejectedCount: number } {
+  const acceptedFiles = files.filter((imageFile) => imageFile.file.size <= maxBytes);
+  return {
+    acceptedFiles,
+    rejectedCount: files.length - acceptedFiles.length,
+  };
 }
 
 export function getComposerImageAttachmentName(

@@ -43,6 +43,14 @@ function asStringToolResult(result: string | { content: string }): string {
   return typeof result === "string" ? result : result.content;
 }
 
+function toolSchemaProperties(tool: AgentTool | undefined): Record<string, unknown> {
+  const properties = tool?.definition.inputSchema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+    throw new Error(`Expected ${tool?.definition.name ?? "missing"} tool schema properties.`);
+  }
+  return properties as Record<string, unknown>;
+}
+
 function nodeCommand(script: string): string {
   if (process.platform === "win32") {
     const encoded = Buffer.from(script, "utf8").toString("base64");
@@ -128,6 +136,47 @@ describe("application tools", () => {
     });
     expect(Object.keys(diagnoseFile?.definition.inputSchema.properties ?? {}))
       .toEqual(["path"]);
+  });
+
+  it("keeps workspace tool limit schema aligned with runtime bounds", () => {
+    const tools = createWorkspaceTools();
+    const listFiles = tools.find((tool) => tool.definition.name === "list_files");
+    const readFile = tools.find((tool) => tool.definition.name === "read_file");
+    const searchFiles = tools.find((tool) => tool.definition.name === "search_files");
+
+    expect(toolSchemaProperties(listFiles).max_entries).toMatchObject({
+      type: "number",
+      description: "Maximum entries to return. Defaults to 120, maximum 500.",
+    });
+    expect(toolSchemaProperties(readFile).max_bytes).toMatchObject({
+      type: "number",
+      description: "Maximum bytes to read. Defaults to 80000, maximum 240000.",
+    });
+    expect(toolSchemaProperties(readFile).offset_bytes).toMatchObject({
+      type: "number",
+      description: "Byte offset to start reading from. Defaults to 0.",
+    });
+    expect(toolSchemaProperties(searchFiles).max_results).toMatchObject({
+      type: "number",
+      description: "Maximum matching lines to return. Defaults to 80, maximum 300.",
+    });
+  });
+
+  it("keeps command timeout schema aligned with runtime bounds", () => {
+    const tools = createCommandTools();
+    const runCommand = tools.find((tool) => tool.definition.name === "run_command");
+    const diagnoseWorkspace = tools.find((tool) => tool.definition.name === "diagnose_workspace");
+    const timeoutDescription =
+      "Maximum runtime in milliseconds. Defaults to 30000, minimum 100, maximum 120000.";
+
+    expect(toolSchemaProperties(runCommand).timeout_ms).toMatchObject({
+      type: "number",
+      description: timeoutDescription,
+    });
+    expect(toolSchemaProperties(diagnoseWorkspace).timeout_ms).toMatchObject({
+      type: "number",
+      description: timeoutDescription,
+    });
   });
 
   it("normalizes create_plan input into visible plan payloads", async () => {

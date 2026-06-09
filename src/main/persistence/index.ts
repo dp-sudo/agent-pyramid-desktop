@@ -15,8 +15,21 @@ import type {
   ThreadUpdatePatch,
 } from "../../shared/agent-contracts.js";
 import {
+  DEFAULT_THREAD_APPROVAL_POLICY,
+  DEFAULT_THREAD_LIST_RELATIONS,
+  DEFAULT_THREAD_MODE,
+  DEFAULT_THREAD_RELATION,
+  DEFAULT_THREAD_SANDBOX_MODE,
+  DEFAULT_THREAD_STATUS,
+  THREAD_APPROVAL_POLICIES,
+  THREAD_GOAL_STATUSES,
+  THREAD_MODES,
+  THREAD_RELATIONS,
+  THREAD_SANDBOX_MODES,
+  THREAD_STATUSES,
   isItem,
   isRuntimeEvent,
+  isUuidString,
 } from "../../shared/agent-contracts.js";
 
 const THREADS_DIRNAME = "threads";
@@ -25,27 +38,6 @@ const THREAD_FILENAME = "thread.json";
 const MESSAGES_FILENAME = "messages.jsonl";
 const EVENTS_FILENAME = "events.jsonl";
 const TMP_SUFFIX = ".tmp";
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const THREAD_RELATIONS: ReadonlySet<ThreadRelation> = new Set(["primary", "fork", "side"]);
-const THREAD_MODES: ReadonlySet<ThreadRecord["mode"]> = new Set(["code", "write"]);
-const THREAD_STATUSES: ReadonlySet<ThreadRecord["status"]> = new Set(["active", "archived"]);
-const APPROVAL_POLICIES: ReadonlySet<ThreadRecord["approvalPolicy"]> = new Set([
-  "auto",
-  "on-request",
-  "untrusted",
-  "never",
-]);
-const SANDBOX_MODES: ReadonlySet<ThreadRecord["sandboxMode"]> = new Set([
-  "read-only",
-  "workspace-write",
-  "danger-full-access",
-]);
-const GOAL_STATUSES: ReadonlySet<NonNullable<ThreadRecord["goal"]>["status"]> = new Set([
-  "active",
-  "complete",
-  "blocked",
-]);
 
 export class JsonlThreadStore {
   private readonly threadsDir: string;
@@ -90,7 +82,7 @@ export class JsonlThreadStore {
     const mode = assertEnum(input.mode, THREAD_MODES, "mode");
     const relation =
       input.relation === undefined
-        ? "primary"
+        ? DEFAULT_THREAD_RELATION
         : assertEnum(input.relation, THREAD_RELATIONS, "relation");
     const parentThreadId =
       input.parentThreadId === undefined
@@ -105,13 +97,13 @@ export class JsonlThreadStore {
       title,
       workspace,
       mode,
-      status: "active",
+      status: DEFAULT_THREAD_STATUS,
       relation,
       ...(parentThreadId ? { parentThreadId } : {}),
       createdAt: now,
       updatedAt: now,
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      approvalPolicy: DEFAULT_THREAD_APPROVAL_POLICY,
+      sandboxMode: DEFAULT_THREAD_SANDBOX_MODE,
     };
     if (relation === "fork" && parentThreadId) {
       record.forkedAt = now;
@@ -159,7 +151,7 @@ export class JsonlThreadStore {
       .filter((row) => include.includes(row.relation))
       .filter((row) => (mode ? row.mode === mode : true))
       .filter((row) => {
-        const status = row.status ?? "active";
+        const status = row.status ?? DEFAULT_THREAD_STATUS;
         if (archivedOnly) return status === "archived";
         if (includeArchived) return true;
         return status !== "archived";
@@ -173,6 +165,12 @@ export class JsonlThreadStore {
   /** 2.5 appendItem / appendEvent with per-thread mutex + fsync. */
   async appendItem(threadId: string, item: Item): Promise<void> {
     assertSafeId(threadId, "Thread id");
+    if (!isItem(item)) {
+      throw new Error("Item shape is invalid.");
+    }
+    if (item.threadId !== threadId) {
+      throw new Error("Item threadId does not match target thread.");
+    }
     return this.serialized(threadId, async () => {
       await this.appendJsonl(this.messagesPath(threadId), item);
       await this.touchThreadActivity(threadId, item.createdAt);
@@ -181,6 +179,12 @@ export class JsonlThreadStore {
 
   async appendEvent(threadId: string, event: RuntimeEvent): Promise<void> {
     assertSafeId(threadId, "Thread id");
+    if (!isRuntimeEvent(event)) {
+      throw new Error("Runtime event shape is invalid.");
+    }
+    if (!("threadId" in event) || event.threadId !== threadId) {
+      throw new Error("Runtime event threadId does not match target thread.");
+    }
     return this.serialized(threadId, async () => {
       await this.appendJsonl(this.eventsPath(threadId), event);
     });
@@ -265,7 +269,7 @@ export class JsonlThreadStore {
       id: record.id,
       title: record.title,
       workspace: record.workspace,
-      status: record.status ?? "active",
+      status: record.status ?? DEFAULT_THREAD_STATUS,
       relation: record.relation,
       mode: record.mode,
       updatedAt: record.updatedAt,
@@ -447,7 +451,7 @@ export class JsonlThreadStore {
 }
 
 function assertSafeId(value: string, label: string): string {
-  if (!UUID_PATTERN.test(value)) {
+  if (!isUuidString(value)) {
     throw new Error(`${label} must be a UUID.`);
   }
   return value;
@@ -455,10 +459,10 @@ function assertSafeId(value: string, label: string): string {
 
 function assertEnum<T extends string>(
   value: unknown,
-  allowed: ReadonlySet<T>,
+  allowed: readonly T[],
   field: string,
 ): T {
-  if (typeof value !== "string" || !allowed.has(value as T)) {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
     throw new Error(`${field} is invalid.`);
   }
   return value as T;
@@ -496,7 +500,7 @@ function optionalBoolean(value: unknown, field: string): boolean {
 }
 
 function normalizeRelationFilter(value: unknown): ThreadRelation[] {
-  if (value === undefined) return ["primary", "fork"];
+  if (value === undefined) return [...DEFAULT_THREAD_LIST_RELATIONS];
   if (!Array.isArray(value)) {
     throw new Error("include must be an array.");
   }
@@ -506,23 +510,23 @@ function normalizeRelationFilter(value: unknown): ThreadRelation[] {
 // Code/Write mode was added after early thread records existed; missing mode
 // replays as Code so legacy sessions keep the stricter Code tool boundary.
 function normalizeStoredThreadMode(value: unknown): ThreadRecord["mode"] {
-  if (value === undefined) return "code";
+  if (value === undefined) return DEFAULT_THREAD_MODE;
   return assertEnum(value, THREAD_MODES, "mode");
 }
 
 function normalizeStoredThreadStatus(value: unknown): ThreadRecord["status"] {
-  if (value === undefined) return "active";
+  if (value === undefined) return DEFAULT_THREAD_STATUS;
   return assertEnum(value, THREAD_STATUSES, "status");
 }
 
 function normalizeStoredApprovalPolicy(value: unknown): ThreadRecord["approvalPolicy"] {
-  if (value === undefined) return "on-request";
-  return assertEnum(value, APPROVAL_POLICIES, "approvalPolicy");
+  if (value === undefined) return DEFAULT_THREAD_APPROVAL_POLICY;
+  return assertEnum(value, THREAD_APPROVAL_POLICIES, "approvalPolicy");
 }
 
 function normalizeStoredSandboxMode(value: unknown): ThreadRecord["sandboxMode"] {
-  if (value === undefined) return "workspace-write";
-  return assertEnum(value, SANDBOX_MODES, "sandboxMode");
+  if (value === undefined) return DEFAULT_THREAD_SANDBOX_MODE;
+  return assertEnum(value, THREAD_SANDBOX_MODES, "sandboxMode");
 }
 
 function normalizeStoredGoal(value: unknown): ThreadRecord["goal"] {
@@ -534,7 +538,7 @@ function normalizeThreadPatch(patch: ThreadUpdatePatch): ThreadUpdatePatch {
   if (!patch || typeof patch !== "object") {
     throw new Error("patch is required.");
   }
-  return {
+  const normalized: ThreadUpdatePatch = {
     ...(patch.title !== undefined
       ? { title: optionalTrimmedString(patch.title, "title") || "New thread" }
       : {}),
@@ -542,19 +546,23 @@ function normalizeThreadPatch(patch: ThreadUpdatePatch): ThreadUpdatePatch {
       ? {
           approvalPolicy: assertEnum(
             patch.approvalPolicy,
-            APPROVAL_POLICIES,
+            THREAD_APPROVAL_POLICIES,
             "approvalPolicy",
           ),
         }
       : {}),
     ...(patch.sandboxMode !== undefined
-      ? { sandboxMode: assertEnum(patch.sandboxMode, SANDBOX_MODES, "sandboxMode") }
+      ? { sandboxMode: assertEnum(patch.sandboxMode, THREAD_SANDBOX_MODES, "sandboxMode") }
       : {}),
     ...(patch.status !== undefined
       ? { status: assertEnum(patch.status, THREAD_STATUSES, "status") }
       : {}),
     ...(patch.goal !== undefined ? { goal: normalizeGoal(patch.goal) } : {}),
   };
+  if (Object.keys(normalized).length === 0) {
+    throw new Error("Thread update patch must include at least one field.");
+  }
+  return normalized;
 }
 
 function normalizeGoal(value: ThreadUpdatePatch["goal"]): ThreadUpdatePatch["goal"] {
@@ -568,7 +576,7 @@ function normalizeGoalObject(value: unknown): NonNullable<ThreadRecord["goal"]> 
   }
   const goal = value as Partial<NonNullable<ThreadRecord["goal"]>>;
   const text = requiredTrimmedString(goal.text, "goal.text");
-  const status = assertEnum(goal.status, GOAL_STATUSES, "goal.status");
+  const status = assertEnum(goal.status, THREAD_GOAL_STATUSES, "goal.status");
   const createdAt = requiredTrimmedString(goal.createdAt, "goal.createdAt");
   const updatedAt = requiredTrimmedString(goal.updatedAt, "goal.updatedAt");
   return {

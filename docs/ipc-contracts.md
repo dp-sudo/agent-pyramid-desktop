@@ -93,7 +93,8 @@ Notes:
   `THREAD_STATUS_INVALID`.
 - `thread:create` rejects `relation: "fork"` without `parentThreadId`; normal
   fork creation should use the dedicated `thread:fork` channel.
-- `thread:update` blocks archiving an in-flight thread.
+- `thread:update` rejects empty patches before store access and blocks
+  archiving an in-flight thread.
 - `thread:delete` blocks deleting an in-flight thread.
 - `JsonlThreadStore` validates thread ids, patch fields, and boolean list
   filters such as `includeArchived` / `archivedOnly`.
@@ -161,6 +162,8 @@ Notes:
 
 - `request.clear === true` maps to `goal: null`; non-boolean `clear` values return
   `GOAL_UPDATE_FAILED` instead of using JavaScript truthiness.
+- `goal:update` rejects empty updates, blank goal/summary text, and `clear`
+  combined with `goal`, `status`, or `summary`.
 - Handler validates `threadId`, `goal`, `status` and `summary` before calling
   runtime; `status` must be `active`, `complete` or `blocked`.
 - Runtime emits `goal_updated` after persistence succeeds.
@@ -179,7 +182,12 @@ Notes:
 - Attachment IPC handlers validate request objects and id/string fields before
   store access so malformed create/get/delete payloads return the existing
   `ATTACHMENT_*_FAILED` envelope without touching persistence.
-- Store accepts only image mime types: PNG, JPEG, WebP, GIF.
+- Store and renderer composer share `SUPPORTED_ATTACHMENT_MIME_TYPES` from
+  `src/shared/agent-contracts.ts`; accepted image mime types are PNG, JPEG,
+  WebP, and GIF.
+- Store and renderer composer share `MAX_ATTACHMENT_BYTES` from
+  `src/shared/agent-contracts.ts`; the renderer pre-check avoids reading or
+  uploading images over the same 12 MB limit that the store enforces.
 - Attachment data is stored as binary files, not in `UserItem.attachments`.
 
 ### Usage
@@ -191,7 +199,7 @@ Notes:
 Notes:
 
 - Omitted request uses the default window; a present request must be an object,
-  and `days`, when provided, must be an integer before aggregation starts.
+  and `days`, when provided, must be a positive integer before aggregation starts.
 - Default window is 30 days.
 - Maximum window is 180 days.
 - Handler uses a 10-second cache per store and day count.
@@ -231,7 +239,8 @@ Notes:
 - Write `workspace` must be an absolute path.
 - Write file paths are workspace-relative.
 - Write file paths must target `.md`, `.mdx`, or `.markdown` files.
-- Access uses workspace path checks and realpath checks to prevent path escape.
+- Access uses the shared workspace path policy and realpath checks to prevent
+  path escape; Write IPC adds only the Markdown file constraint on top.
 - Skipped directories include dot directories, `DeepSeek`, `dist`, `node_modules`, and `out`.
 - Inline complete is currently local Markdown pattern completion, not an LLM request.
 
@@ -261,6 +270,9 @@ Notes:
 - `config:model:update` and profile `config` payloads validate primitive field
   types at the IPC boundary, including `thinking`, `OPENAI_API_KEY`, reasoning
   effort, autonomy and positive integer token settings.
+- Store-level active config and profile updates also reject empty or unknown-only
+  payloads so direct persistence calls cannot report a save that only changes
+  `updatedAt`.
 
 ## Runtime Event Push Contract
 

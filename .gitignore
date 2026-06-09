@@ -62,3 +62,6 @@ DeepSeek
 .agents
 .codex
 .claude
+.codegraph
+.reasonix
+openspec

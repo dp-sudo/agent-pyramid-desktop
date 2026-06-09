@@ -1,4 +1,5 @@
 import type { AgentToolCall, AgentToolDefinition, AgentUsage } from "../../domain/agent/types";
+import { isNonNegativeInteger } from "../../../shared/agent-contracts.js";
 
 export interface OpenAiChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -164,17 +165,7 @@ export function normalizeAnthropicUsage(response: AnthropicMessageResponse): Age
     return undefined;
   }
 
-  const inputTokens = response.usage.input_tokens;
-  const outputTokens = response.usage.output_tokens;
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens:
-      typeof inputTokens === "number" && typeof outputTokens === "number"
-        ? inputTokens + outputTokens
-        : undefined
-  };
+  return mapAnthropicUsageFields(response.usage);
 }
 
 export function parseOpenAiToolCalls(response: OpenAiChatResponse): AgentToolCall[] {
@@ -232,63 +223,79 @@ function requiredToolName(value: unknown, label: string): string {
 
 type OpenAiUsageFields = NonNullable<OpenAiChatResponse["usage"]>;
 
-export function mapOpenAiUsageFields(usage: OpenAiUsageFields): AgentUsage {
-  const inputTokens = usage.prompt_tokens;
-  const outputTokens = usage.completion_tokens;
+export function mapOpenAiUsageFields(usage: OpenAiUsageFields): AgentUsage | undefined {
+  const inputTokens = tokenCountOrUndefined(usage.prompt_tokens);
+  const outputTokens = tokenCountOrUndefined(usage.completion_tokens);
   const fallbackTotal =
-    typeof inputTokens === "number" && typeof outputTokens === "number"
+    inputTokens !== undefined && outputTokens !== undefined
       ? inputTokens + outputTokens
       : undefined;
+  const totalTokens = tokenCountOrUndefined(usage.total_tokens) ?? fallbackTotal;
   const cacheHitTokens = resolveCacheHitTokens(usage);
-  const cacheMissTokens = resolveCacheMissTokens(usage, cacheHitTokens);
+  const cacheMissTokens = resolveCacheMissTokens(usage, cacheHitTokens, inputTokens);
   const cacheTotal = (cacheHitTokens ?? 0) + (cacheMissTokens ?? 0);
+  const mapped: AgentUsage = {};
 
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: usage.total_tokens ?? fallbackTotal,
-    ...(cacheHitTokens !== undefined ? { cacheHitTokens } : {}),
-    ...(cacheMissTokens !== undefined ? { cacheMissTokens } : {}),
-    ...(cacheHitTokens !== undefined
-      ? { cacheHitRate: cacheTotal > 0 ? cacheHitTokens / cacheTotal : null }
-      : {}),
-  };
+  if (inputTokens !== undefined) mapped.inputTokens = inputTokens;
+  if (outputTokens !== undefined) mapped.outputTokens = outputTokens;
+  if (totalTokens !== undefined) mapped.totalTokens = totalTokens;
+  if (cacheHitTokens !== undefined) mapped.cacheHitTokens = cacheHitTokens;
+  if (cacheMissTokens !== undefined) mapped.cacheMissTokens = cacheMissTokens;
+  if (cacheHitTokens !== undefined) {
+    mapped.cacheHitRate = cacheTotal > 0 ? cacheHitTokens / cacheTotal : null;
+  }
+
+  return Object.keys(mapped).length > 0 ? mapped : undefined;
+}
+
+type AnthropicUsageFields = NonNullable<AnthropicMessageResponse["usage"]>;
+
+export function mapAnthropicUsageFields(usage: AnthropicUsageFields): AgentUsage | undefined {
+  const inputTokens = tokenCountOrUndefined(usage.input_tokens);
+  const outputTokens = tokenCountOrUndefined(usage.output_tokens);
+  const mapped: AgentUsage = {};
+
+  if (inputTokens !== undefined) mapped.inputTokens = inputTokens;
+  if (outputTokens !== undefined) mapped.outputTokens = outputTokens;
+  if (inputTokens !== undefined && outputTokens !== undefined) {
+    mapped.totalTokens = inputTokens + outputTokens;
+  }
+
+  return Object.keys(mapped).length > 0 ? mapped : undefined;
 }
 
 function resolveCacheHitTokens(usage: OpenAiUsageFields): number | undefined {
-  const nativeHit = nonNegativeIntegerOrUndefined(usage.prompt_cache_hit_tokens);
-  const nativeMiss = nonNegativeIntegerOrUndefined(usage.prompt_cache_miss_tokens);
+  const nativeHit = tokenCountOrUndefined(usage.prompt_cache_hit_tokens);
+  const nativeMiss = tokenCountOrUndefined(usage.prompt_cache_miss_tokens);
   if (nativeHit !== undefined || nativeMiss !== undefined) {
     return nativeHit ?? 0;
   }
 
   return (
-    nonNegativeIntegerOrUndefined(usage.prompt_tokens_details?.cached_tokens) ??
-    nonNegativeIntegerOrUndefined(usage.cache_read_input_tokens)
+    tokenCountOrUndefined(usage.prompt_tokens_details?.cached_tokens) ??
+    tokenCountOrUndefined(usage.cache_read_input_tokens)
   );
 }
 
 function resolveCacheMissTokens(
   usage: OpenAiUsageFields,
   cacheHitTokens: number | undefined,
+  inputTokens: number | undefined,
 ): number | undefined {
-  const nativeHit = nonNegativeIntegerOrUndefined(usage.prompt_cache_hit_tokens);
-  const nativeMiss = nonNegativeIntegerOrUndefined(usage.prompt_cache_miss_tokens);
+  const nativeHit = tokenCountOrUndefined(usage.prompt_cache_hit_tokens);
+  const nativeMiss = tokenCountOrUndefined(usage.prompt_cache_miss_tokens);
   if (nativeHit !== undefined || nativeMiss !== undefined) {
     return nativeMiss ?? 0;
   }
 
-  if (cacheHitTokens === undefined || typeof usage.prompt_tokens !== "number") {
+  if (cacheHitTokens === undefined || inputTokens === undefined) {
     return undefined;
   }
-  return Math.max(0, Math.floor(usage.prompt_tokens) - cacheHitTokens);
+  return Math.max(0, inputTokens - cacheHitTokens);
 }
 
-function nonNegativeIntegerOrUndefined(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return undefined;
-  }
-  return Math.floor(value);
+function tokenCountOrUndefined(value: unknown): number | undefined {
+  return isNonNegativeInteger(value) ? value : undefined;
 }
 
 function canonicalizeSchema(value: unknown): Record<string, unknown> {

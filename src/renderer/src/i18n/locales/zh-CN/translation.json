@@ -155,6 +155,7 @@
     "attachmentsProcessing": "正在处理 {{count}} 张图片",
     "noModelProfiles": "暂无可用模型档案。请先在设置中添加。",
     "unsupportedImage": "仅支持添加 PNG、JPEG、WebP 和 GIF 图片。",
+    "attachmentTooLarge": "图片大小不能超过 {{limit}}。",
     "attachmentAddBlocked": "请等待当前对话完成后再添加图片。",
     "attachmentOnlyMessageSingle": "请分析这张附件图片。",
     "attachmentOnlyMessageMultiple": "请分析这些附件图片。"

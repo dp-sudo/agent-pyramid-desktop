@@ -14,10 +14,16 @@ import {
   decodeUtf8TextPrefix,
 } from "./text-file.js";
 
+const LIST_LIMIT_MIN = 1;
+const LIST_LIMIT_MAX = 500;
 const DEFAULT_LIST_LIMIT = 120;
+const SEARCH_LIMIT_MIN = 1;
+const SEARCH_LIMIT_MAX = 300;
 const DEFAULT_SEARCH_LIMIT = 80;
-const DEFAULT_READ_LIMIT_BYTES = 80_000;
+const READ_LIMIT_MIN_BYTES = 1;
 const MAX_READ_LIMIT_BYTES = 240_000;
+const DEFAULT_READ_LIMIT_BYTES = 80_000;
+const DEFAULT_READ_OFFSET_BYTES = 0;
 const MAX_SEARCH_FILE_BYTES = 1_000_000;
 
 const listFilesTool: AgentTool = {
@@ -38,7 +44,8 @@ const listFilesTool: AgentTool = {
         },
         max_entries: {
           type: "number",
-          description: "Maximum entries to return. Defaults to 120.",
+          description:
+            `Maximum entries to return. Defaults to ${DEFAULT_LIST_LIMIT}, maximum ${LIST_LIMIT_MAX}.`,
         },
       },
     },
@@ -46,7 +53,12 @@ const listFilesTool: AgentTool = {
   async execute(input, context) {
     const workspace = requireWorkspace(context);
     const relativePath = optionalString(input.path) ?? ".";
-    const limit = numberInRange(input.max_entries, 1, 500, DEFAULT_LIST_LIMIT);
+    const limit = numberInRange(
+      input.max_entries,
+      LIST_LIMIT_MIN,
+      LIST_LIMIT_MAX,
+      DEFAULT_LIST_LIMIT,
+    );
     const directory = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(directory);
     if (!stat.isDirectory()) {
@@ -101,11 +113,12 @@ const readFileTool: AgentTool = {
         },
         max_bytes: {
           type: "number",
-          description: "Maximum bytes to read. Defaults to 80000.",
+          description:
+            `Maximum bytes to read. Defaults to ${DEFAULT_READ_LIMIT_BYTES}, maximum ${MAX_READ_LIMIT_BYTES}.`,
         },
         offset_bytes: {
           type: "number",
-          description: "Byte offset to start reading from. Defaults to 0.",
+          description: `Byte offset to start reading from. Defaults to ${DEFAULT_READ_OFFSET_BYTES}.`,
         },
       },
       required: ["path"],
@@ -114,8 +127,18 @@ const readFileTool: AgentTool = {
   async execute(input, context) {
     const workspace = requireWorkspace(context);
     const relativePath = requiredString(input.path, "read_file requires a string path.");
-    const maxBytes = numberInRange(input.max_bytes, 1, MAX_READ_LIMIT_BYTES, DEFAULT_READ_LIMIT_BYTES);
-    const offsetBytes = numberInRange(input.offset_bytes, 0, Number.MAX_SAFE_INTEGER, 0);
+    const maxBytes = numberInRange(
+      input.max_bytes,
+      READ_LIMIT_MIN_BYTES,
+      MAX_READ_LIMIT_BYTES,
+      DEFAULT_READ_LIMIT_BYTES,
+    );
+    const offsetBytes = numberInRange(
+      input.offset_bytes,
+      DEFAULT_READ_OFFSET_BYTES,
+      Number.MAX_SAFE_INTEGER,
+      DEFAULT_READ_OFFSET_BYTES,
+    );
     const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) {
@@ -195,7 +218,8 @@ const searchFilesTool: AgentTool = {
         },
         max_results: {
           type: "number",
-          description: "Maximum matching lines to return. Defaults to 80.",
+          description:
+            `Maximum matching lines to return. Defaults to ${DEFAULT_SEARCH_LIMIT}, maximum ${SEARCH_LIMIT_MAX}.`,
         },
       },
       required: ["query"],
@@ -205,7 +229,12 @@ const searchFilesTool: AgentTool = {
     const workspace = requireWorkspace(context);
     const query = requiredString(input.query, "search_files requires a string query.");
     const relativePath = optionalString(input.path) ?? ".";
-    const limit = numberInRange(input.max_results, 1, 300, DEFAULT_SEARCH_LIMIT);
+    const limit = numberInRange(
+      input.max_results,
+      SEARCH_LIMIT_MIN,
+      SEARCH_LIMIT_MAX,
+      DEFAULT_SEARCH_LIMIT,
+    );
     const root = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(root);
     if (!stat.isDirectory() && !stat.isFile()) {

@@ -11,27 +11,20 @@ import type {
   ThreadCreateInput,
   ThreadListFilter,
   ThreadRecord,
-  ThreadRelation,
   ThreadUpdatePatch,
 } from "../../shared/agent-contracts.js";
-import { err, ok } from "../../shared/agent-contracts.js";
+import {
+  THREAD_APPROVAL_POLICIES,
+  THREAD_MODES,
+  THREAD_RELATIONS,
+  THREAD_SANDBOX_MODES,
+  THREAD_STATUSES,
+  err,
+  isThreadRelation,
+  ok,
+} from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
 import type { JsonlThreadStore } from "../persistence/index.js";
-
-const THREAD_RELATIONS: ReadonlySet<ThreadRelation> = new Set(["primary", "fork", "side"]);
-const THREAD_MODES: ReadonlySet<ThreadRecord["mode"]> = new Set(["code", "write"]);
-const THREAD_STATUSES: ReadonlySet<ThreadRecord["status"]> = new Set(["active", "archived"]);
-const APPROVAL_POLICIES: ReadonlySet<ThreadRecord["approvalPolicy"]> = new Set([
-  "auto",
-  "on-request",
-  "untrusted",
-  "never",
-]);
-const SANDBOX_MODES: ReadonlySet<ThreadRecord["sandboxMode"]> = new Set([
-  "read-only",
-  "workspace-write",
-  "danger-full-access",
-]);
 
 export function registerThreadHandlers(store: JsonlThreadStore, runtime?: AgentRuntime): void {
   ipcMain.handle(THREAD_LIST_CHANNEL, async (_event, filter?: unknown) => {
@@ -166,23 +159,27 @@ export function parseThreadCreateInput(input: unknown): ThreadCreateInput {
 
 export function parseThreadUpdatePatch(patch: unknown): ThreadUpdatePatch {
   const value = requestObject(patch, "Thread update patch");
-  return {
+  const parsed: ThreadUpdatePatch = {
     ...optionalStringField(value, "title", "Thread update title must be a string."),
     ...optionalEnumField(
       value,
       "approvalPolicy",
-      APPROVAL_POLICIES,
+      THREAD_APPROVAL_POLICIES,
       "Thread update approvalPolicy is invalid.",
     ),
     ...optionalEnumField(
       value,
       "sandboxMode",
-      SANDBOX_MODES,
+      THREAD_SANDBOX_MODES,
       "Thread update sandboxMode is invalid.",
     ),
     ...optionalEnumField(value, "status", THREAD_STATUSES, "Thread status must be active or archived."),
     ...(value.goal !== undefined ? { goal: value.goal as ThreadUpdatePatch["goal"] } : {}),
   };
+  if (Object.keys(parsed).length === 0) {
+    throw new Error("Thread update patch must include at least one field.");
+  }
+  return parsed;
 }
 
 export function parseThreadId(request: unknown, label: string): string {
@@ -221,10 +218,10 @@ function optionalStringField(
 
 function requiredEnum<T extends string>(
   value: unknown,
-  options: ReadonlySet<T>,
+  options: readonly T[],
   message: string,
 ): T {
-  if (typeof value !== "string" || !options.has(value as T)) {
+  if (typeof value !== "string" || !options.includes(value as T)) {
     throw new Error(message);
   }
   return value as T;
@@ -233,7 +230,7 @@ function requiredEnum<T extends string>(
 function optionalEnumField<T extends string>(
   value: Record<string, unknown>,
   field: string,
-  options: ReadonlySet<T>,
+  options: readonly T[],
   message: string,
 ): Record<string, T> {
   const raw = value[field];
@@ -252,10 +249,6 @@ function optionalBooleanField(
     throw new Error(message);
   }
   return { [field]: raw };
-}
-
-function isThreadRelation(value: unknown): value is ThreadRelation {
-  return typeof value === "string" && THREAD_RELATIONS.has(value as ThreadRelation);
 }
 
 function messageOf(error: unknown): string {

@@ -8,6 +8,7 @@ import {
   getDeleteShortcutAttachmentId,
   isAttachmentRemovalDisabled,
   normalizeSupportedComposerImageMimeType,
+  partitionComposerImageFilesBySize,
 } from "../../src/renderer/src/ui/components/composer/FloatingComposer";
 import type { ComposerAttachment } from "../../src/renderer/src/ui/store/WorkbenchContext";
 
@@ -110,7 +111,26 @@ describe("FloatingComposer", () => {
   it("normalizes supported composer image mime types", () => {
     expect(normalizeSupportedComposerImageMimeType("image/png")).toBe("image/png");
     expect(normalizeSupportedComposerImageMimeType("image/jpeg")).toBe("image/jpeg");
+    expect(normalizeSupportedComposerImageMimeType(" IMAGE/WEBP ")).toBe("image/webp");
     expect(normalizeSupportedComposerImageMimeType("image/svg+xml")).toBeNull();
+  });
+
+  it("partitions image files by the shared attachment size limit before upload", () => {
+    const small = new File(["small"], "small.png", { type: "image/png" });
+    const large = new File(["large-content"], "large.png", { type: "image/png" });
+
+    expect(
+      partitionComposerImageFilesBySize(
+        [
+          { file: small, mimeType: "image/png" },
+          { file: large, mimeType: "image/png" },
+        ],
+        small.size,
+      ),
+    ).toEqual({
+      acceptedFiles: [{ file: small, mimeType: "image/png" }],
+      rejectedCount: 1,
+    });
   });
 
   it("creates stable names for pasted images without file names", () => {

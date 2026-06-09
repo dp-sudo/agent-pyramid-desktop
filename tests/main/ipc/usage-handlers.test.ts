@@ -50,6 +50,12 @@ describe("usage handlers", () => {
     expect(() => parseUsageDailyRequest({ days: 1.5 })).toThrow(
       "Usage daily days must be an integer.",
     );
+    expect(() => parseUsageDailyRequest({ days: 0 })).toThrow(
+      "Usage daily days must be at least 1.",
+    );
+    expect(() => parseUsageDailyRequest({ days: -7 })).toThrow(
+      "Usage daily days must be at least 1.",
+    );
   });
 
   it("returns an error envelope for malformed usage requests", async () => {
@@ -64,6 +70,22 @@ describe("usage handlers", () => {
       ok: false,
       code: "USAGE_DAILY_FAILED",
       message: "Usage daily days must be an integer.",
+    });
+    expect(replayEvents).not.toHaveBeenCalled();
+  });
+
+  it("returns an error envelope for non-positive usage windows", async () => {
+    const replayEvents = vi.spyOn(store, "replayEvents");
+    registerUsageHandlers(store);
+    const handler = electronMock.handlers.get(USAGE_DAILY_CHANNEL);
+    if (!handler) throw new Error("Expected usage daily handler.");
+
+    const result = await handler({}, { days: 0 });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "USAGE_DAILY_FAILED",
+      message: "Usage daily days must be at least 1.",
     });
     expect(replayEvents).not.toHaveBeenCalled();
   });

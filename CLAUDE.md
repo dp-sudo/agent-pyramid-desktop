@@ -15,6 +15,8 @@ Read in this order before making a non-trivial change:
 
 `docs/architecture.md` is the diagram-first architecture reference. `docs/agent-development.md` is the long-running development log and must be updated when Agent framework capabilities change.
 
+If a task belongs to an OpenSpec change, inspect `openspec/changes/<change-id>/proposal.md`, `design.md`, `tasks.md` and `specs/` before editing. Keep `tasks.md` checked off as implementation work lands.
+
 ## External Reference Boundary
 
 This repository does not contain DeepSeek GUI or Claude Code source. External directories under `/mnt/f/cc_src/*` are read-only learning references only.
@@ -144,8 +146,11 @@ Tool rules:
 
 - Tools implement `AgentTool` and are registered through `InMemoryToolRegistry` in `src/main/index.ts`.
 - `list_files`, `read_file` and `search_files` are read-only workspace tools and skip approval.
+- `edit_file`, `write_file`, `apply_patch` and `rollback_file` are coding write tools; they require approval, workspace path validation and strict UTF-8 text handling.
+- `run_command` and `diagnose_workspace` execute workspace commands and require approval. `diagnose_file` uses TypeScript Language Service for one file and remains read-only.
 - `create_plan` is enabled only in plan mode and skips approval.
 - `update_goal` is enabled only in goal mode or active-goal threads and skips approval.
+- Write threads hide and reject Code-only coding/command tools by default. Tool access policy may allow or deny tool names per `code` / `write` mode, but approval and sandbox checks still run after catalog filtering.
 - Other enabled tool calls go through the approval gate.
 - Disallowed or failing tool calls must fail visibly through `ToolItem` state and/or `runtime_error`.
 
@@ -257,7 +262,7 @@ Adding IPC requires updating:
 
 - Keep Electron `contextIsolation: true` and `nodeIntegration: false`.
 - Main process owns filesystem and external navigation.
-- Write-mode file access uses `resolveWritePathForAccess()` / `resolveWritePath()`, realpath checks and skipped directory policy to prevent path escape.
+- Write-mode file access uses `resolveWritePathForAccess()` / `resolveWritePath()` and reuses the shared workspace path policy for lexical checks, realpath checks, symlink escape protection and skipped directory enforcement.
 - Workspace tools also enforce workspace boundaries and skip hidden/generated directories.
 - Do not expand preload APIs casually.
 - Do not place secrets in docs, tests, config or commits.

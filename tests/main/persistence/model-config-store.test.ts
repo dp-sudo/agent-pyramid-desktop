@@ -106,6 +106,40 @@ describe("ModelConfigStore", () => {
     expect(profiles.profiles).toHaveLength(1);
   });
 
+  it("rejects empty active config updates at the store boundary", async () => {
+    const before = await store.listProfiles();
+
+    await expect(store.update({})).rejects.toThrow(
+      "Model config update must include at least one field.",
+    );
+    await expect(
+      store.update(
+        { unknown: "value" } as unknown as Parameters<ModelConfigStore["update"]>[0],
+      ),
+    ).rejects.toThrow("Model config update must include at least one field.");
+
+    await expect(store.listProfiles()).resolves.toEqual(before);
+  });
+
+  it("rejects empty profile updates at the store boundary", async () => {
+    const before = await store.listProfiles();
+
+    await expect(store.updateProfile({ id: "default" })).rejects.toThrow(
+      "Model config profile update must include name or config.",
+    );
+    await expect(store.updateProfile({ id: "default", config: {} })).rejects.toThrow(
+      "Model config update must include at least one field.",
+    );
+    await expect(
+      store.updateProfile({
+        id: "default",
+        config: { unknown: "value" } as unknown as Parameters<ModelConfigStore["update"]>[0],
+      }),
+    ).rejects.toThrow("Model config update must include at least one field.");
+
+    await expect(store.listProfiles()).resolves.toEqual(before);
+  });
+
   it("normalizes a legacy single-config file into profile state", async () => {
     const legacyConfig: ModelConfig = {
       ...DEFAULT_MODEL_CONFIG,

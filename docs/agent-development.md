@@ -70,6 +70,32 @@
 
 ## 变更记录
 
+### 2026-06-09 - Write IPC 路径策略硬编码收敛
+
+- 收敛 Write IPC 文件服务的 workspace 路径策略：`write-handlers.ts` 不再复制 skipped directory、path escape、realpath 与 symlink 防护逻辑，改为复用 `workspace-policy.ts` 的共享策略；Write 层只保留 Markdown 扩展名限制和自己的 `WRITE_*_FAILED` envelope。
+- 验证方式：扩展 Write IPC path 测试覆盖点目录跳过，复用既有 DeepSeek/out/node_modules、path escape、symlink 和 Markdown 限制测试；完整验证命令见本次维护结果。
+
+### 2026-06-09 - Attachment MIME 类型硬编码收敛
+
+- 收敛附件图片 MIME 类型规则：`SUPPORTED_ATTACHMENT_MIME_TYPES` 和 `normalizeSupportedAttachmentMimeType()` 现在由 `src/shared/agent-contracts.ts` 提供，`AttachmentStore` 与 `FloatingComposer` 共同使用该契约，避免 renderer 允许类型和主进程持久化允许类型漂移。
+- 收敛附件大小上限：`MAX_ATTACHMENT_BYTES` 现在同样由 shared contract 提供；`AttachmentStore` 继续强校验，`FloatingComposer` 在读取 base64 和调用 `attachments.create` 前用同一上限拦截超大图片并显示本地化错误。
+- 验证方式：扩展 shared contract、AttachmentStore 和 FloatingComposer 单元测试覆盖 MIME 类型列表、大小写/空白归一化、大小上限和 renderer 上传前分流；完整验证命令见本次维护结果。
+
+### 2026-06-09 - Tool schema 数值契约硬编码收敛
+
+- 收敛 workspace/command 工具 schema 中的参数默认值和上限说明：`list_files.max_entries`、`read_file.max_bytes`、`search_files.max_results` 与 `run_command` / `diagnose_workspace.timeout_ms` 的描述现在由执行时使用的同一组常量生成，避免模型看到的工具契约与运行时校验漂移。
+- 验证方式：扩展 application tools 单元测试覆盖 workspace limit schema 与 command timeout schema；完整验证命令见本次维护结果。
+
+### 2026-06-09 - Goal update 空更新与 clear 冲突边界加固
+
+- 对齐 `goal:update` IPC、`update_goal` 工具和 `AgentRuntime.updateThreadGoal()` 的输入语义：空更新、空白 goal/summary、以及 clear 与 status/summary 混用现在都会失败，避免无业务变化只刷新 goal `updatedAt` 或冲突字段被静默忽略。
+- 验证方式：扩展 goal IPC 和 AgentRuntime 单元测试覆盖空更新、clear 冲突和空白 summary；完整验证命令见本次维护结果。
+
+### 2026-06-09 - Thread update 空 patch 边界加固
+
+- 修复 `thread:update` 空 patch 假成功问题：IPC parser 与 `JsonlThreadStore.updateThread()` 现在都会拒绝 `{}` 或只包含未知字段的更新，避免无业务字段变化却刷新线程 `updatedAt` 或向 renderer 报告保存成功。
+- 验证方式：扩展 thread IPC 和 JSONL thread store 单元测试覆盖空 update patch；完整验证命令见本次维护结果。
+
 ### 2026-06-09 - SSE 全局运行时错误投递修复
 
 - 修复 SSE push 兼容边界：`sse-handlers.ts` 现在为每个已订阅窗口维护单一全局 `runtime_error` 监听器，无 `threadId` 的进程级错误会投递一次；带 `threadId` 的错误继续走原有 thread subscription，避免多 thread 订阅窗口收到重复全局错误。
@@ -88,6 +114,7 @@
 ### 2026-06-09 - Model config no-op 更新边界加固
 
 - 修复 model config IPC parser 的空更新问题：`config:model:update` 现在拒绝 `{}`，profile update 也会拒绝只有 `id` 或 `config: {}` 的 payload，避免无业务字段变化却写入新的 `updatedAt` 或向用户报告保存成功；profile create 仍允许 `config: {}` 作为创建默认配置 profile。
+- 同步加固 `ModelConfigStore` 持久化边界：直接调用 active config update 或 profile update 时，空对象、只有未知字段的对象、以及 profile `config: {}` 都会失败，避免绕过 IPC parser 后仍产生 false-success。
 - 验证方式：扩展 model-config IPC 单元测试覆盖空 update、空 profile update、空 config update envelope，以及 create 默认配置 profile；完整验证命令见本次实现结果。
 
 ### 2026-06-09 - Renderer 半成品 Inspector 与绑定状态清理
@@ -131,8 +158,9 @@
 - 加固 threads IPC：`thread:list/create/get/update/delete/fork` 现在会在进入 `JsonlThreadStore` 或 runtime busy gate 前校验请求对象、id、简单枚举与布尔字段，坏 payload 返回既有 thread error envelope；非法 update status 继续保留 `THREAD_STATUS_INVALID`。
 - 加固 turns IPC：`turn:interrupt` 现在要求非空字符串 turnId，坏 payload 返回 `TURN_INTERRUPT_FAILED`，避免 malformed request 被 runtime no-op 包装成成功；`turn:get` 要求非空字符串 threadId，坏 payload 返回 `TURN_GET_FAILED` 且不会进入 store replay。
 - 加固 attachments IPC：`attachment:create/get/delete` 现在会在进入 `AttachmentStore` 前校验请求对象和 id/string 字段，坏 payload 通过既有 `ATTACHMENT_*_FAILED` envelope 暴露且不会触发附件持久化初始化。
-- 加固 usage IPC：`usage:daily` 仅在省略 request 时使用默认窗口；存在 request 时必须是对象且 `days` 必须为整数，坏 payload 返回 `USAGE_DAILY_FAILED`，不再静默降级成成功查询。
+- 加固 usage IPC：`usage:daily` 仅在省略 request 时使用默认窗口；存在 request 时必须是对象且 `days` 必须为正整数，坏 payload 返回 `USAGE_DAILY_FAILED`，不再静默降级成成功查询。
 - 加固 runtime event usage 守卫：`turn_completed.usage` 和 `TurnRecord.usage` 现在会按 `TokenUsage` 数值字段校验，坏 events JSONL 行会在 replay 边界跳过，避免 usage 聚合被字符串字段污染。
+- 进一步收紧 usage/预算统计契约：`TokenUsage` 计数字段现在必须是非负整数，`cacheHitRate` 只能是 `null` 或 `0..1` 比例；OpenAI-compatible 与 Anthropic-compatible usage 映射复用同一非负整数边界，`tool_budget_reached` 的预算轮数和尝试调用数也按正整数校验。
 - 加固 approval IPC：`approval:respond` 现在要求对象 payload、非空 approvalId 与 `allow | deny` decision，坏 payload 返回 `APPROVAL_RESPOND_FAILED` 且不会进入 runtime pending-approval 状态。
 - 加固 model config profile IPC：`profiles:update/delete/activate` 现在会先校验非空 profile id；`profiles:update` 会拒绝 `config: null` / array 等坏 payload，避免被 store 当作 no-op 更新并写入新的 `updatedAt`。
 - 加固 model config 字段输入：`config:model:update` 与 profile `config` payload 现在会在 IPC 边界校验 `thinking`、`OPENAI_API_KEY`、reasoning effort、autonomy 和 token 数值类型，避免 malformed 字段被 store normalize 成默认 thinking 或空 API key。
@@ -245,7 +273,7 @@
 
 ### 协议层
 
-- 扩展 `src/shared/agent-contracts.ts`：新增 `ThreadRecord / ThreadSummary / ThreadRelation / TurnRecord / TurnStatus`、8 种 `Item`（`user | assistant | reasoning | tool | compaction | approval | user_input | system`）、7 种 `RuntimeEvent`、IPC `Request / Response` 类型、`IpcResult<T>` 通用包壳 + `isItem / isRuntimeEvent / isThreadRecord` 类型守卫（替代 zod）。
+- 扩展 `src/shared/agent-contracts.ts`：新增 `ThreadRecord / ThreadSummary / ThreadRelation / TurnRecord / TurnStatus`、9 种 `Item`（`user | assistant | reasoning | tool | compaction | approval | user_input | plan | system`）、9 种 `RuntimeEvent`、IPC `Request / Response` 类型、`IpcResult<T>` 通用包壳 + `isItem / isRuntimeEvent / isThreadRecord` 类型守卫（替代 zod）。
 - 扩展 `src/shared/ipc.ts`：新增 16 个 channel（`THREAD_LIST/CREATE/GET/UPDATE/DELETE/FORK`、`TURN_START/INTERRUPT/GET`、`SSE_SUBSCRIBE/UNSUBSCRIBE/PUSH`、`APPROVAL_RESPOND`、`WRITE_LIST/GET/PUT/COMPLETE`）。
 
 ### 主进程
@@ -495,4 +523,10 @@
 - 加固线程持久化读取边界：`JsonlThreadStore.getThread()` / `listThreads()` 现在会校验 persisted thread/index 的 UUID、workspace、status、relation、approvalPolicy、sandboxMode 和 goal 形状；`relation: "fork"` 必须带 `parentThreadId`，旧记录缺失的安全默认值继续单向补齐，坏值会明确失败，不再进入 runtime 策略判断。
 - 加固 thread create 谱系边界：`thread:create` 现在拒绝没有 `parentThreadId` 的 `relation: "fork"` payload，普通 fork 创建继续通过专用 `thread:fork` channel 进入 `JsonlThreadStore.forkThread()`。
 - 加固 approval preview 契约：shared contract guard 和 `AgentRuntime` 本地 preview 过滤现在会校验 diff preview 的文件、行、操作与非负整数计数形状，畸形工具预览不会进入 approval item / event。
+- 收敛 thread 字段枚举与默认机制来源：`relation`、`mode`、`status`、`approvalPolicy`、`sandboxMode` 和 goal status 的允许值统一由 `src/shared/agent-contracts.ts` 的 `THREAD_*` 常量与 guard 提供；创建线程、legacy 归一化和默认 list 关系过滤复用同文件的 `DEFAULT_THREAD_*` 常量，IPC 解析和持久化归一化不再各自维护重复字面量集合。
+- 收敛 item/runtime event kind 契约：`ITEM_KINDS`、`RUNTIME_EVENT_KINDS`、`isItemKind()` 和 `isRuntimeEventKind()` 现在由 shared contract 导出并带类型级一致性断言；`RuntimeEventBus.onThread()` 复用 `RUNTIME_EVENT_KINDS`，新增 runtime event 不再需要维护第二份 bus 订阅列表。
+- 收敛 tool access policy mode 来源：`createToolAccessPolicy()` 的冲突检测现在遍历 shared `THREAD_MODES`，不再在 runtime 内维护第二份 `code/write` mode 字面量列表。
+- 加固附件元数据契约：shared contract 现在导出 `isAttachmentRecord()`，`UserItem.attachments` 的 replay guard 和 `AttachmentStore` index 读取共同使用同一 metadata 校验，畸形 MIME / size 的附件元数据不会进入 runtime 或 renderer。
+- 收敛 UUID 校验边界：shared contract 现在导出 `UUID_PATTERN` / `isUuidString()`，线程与附件持久化路径解析、附件 metadata guard 共用同一 UUID 判断，避免 id 安全边界在多个 store 内重复漂移。
+- 加固 JSONL 写入边界：`JsonlThreadStore.appendItem()` / `appendEvent()` 现在会在写入前复用 shared `isItem()` / `isRuntimeEvent()` 并校验 record `threadId` 与目标线程一致，避免坏记录先写入成功再在 replay 阶段被跳过。
 - 验证方式：`npm run typecheck`、`npm run test`、`npm run build`。

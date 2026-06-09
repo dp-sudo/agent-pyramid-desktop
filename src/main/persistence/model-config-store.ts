@@ -16,6 +16,18 @@ import {
 
 const CONFIG_FILENAME = "config";
 const TMP_SUFFIX = ".tmp";
+const MODEL_CONFIG_UPDATE_FIELDS: readonly (keyof ModelConfigUpdate)[] = [
+  "model_provide",
+  "model",
+  "base_url",
+  "OPENAI_API_KEY",
+  "model_context_window",
+  "model_auto_compact_token_limit",
+  "max_tokens",
+  "thinking",
+  "model_reasoning_effort",
+  "agent_autonomy",
+];
 
 export class ModelConfigStore {
   private readonly configPath: string;
@@ -57,6 +69,10 @@ export class ModelConfigStore {
   }
 
   async update(update: ModelConfigUpdate): Promise<ModelConfig> {
+    assertModelConfigUpdateHasFields(
+      update,
+      "Model config update must include at least one field.",
+    );
     await this.init();
     return this.serialized(async () => {
       const state = await this.readState();
@@ -124,6 +140,7 @@ export class ModelConfigStore {
   async updateProfile(
     request: ModelConfigProfileUpdateRequest,
   ): Promise<ModelConfigProfile> {
+    assertProfileUpdateHasFields(request);
     await this.init();
     return this.serialized(async () => {
       const state = await this.readState();
@@ -217,6 +234,40 @@ export class ModelConfigStore {
     const next = this.queue.then(work, work);
     this.queue = next.catch(() => undefined);
     return next;
+  }
+}
+
+// Store methods can be called directly by runtime/tests, so they mirror the IPC
+// no-op guard and require at least one recognized config/profile field before
+// mutating `updatedAt`.
+function assertProfileUpdateHasFields(request: ModelConfigProfileUpdateRequest): void {
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    throw new Error("Model config profile update request must be an object.");
+  }
+  if (typeof request.id !== "string" || !request.id.trim()) {
+    throw new Error("Model config profile id is required.");
+  }
+  if (request.config !== undefined) {
+    assertModelConfigUpdateHasFields(
+      request.config,
+      "Model config update must include at least one field.",
+    );
+  }
+  if (request.name === undefined && request.config === undefined) {
+    throw new Error("Model config profile update must include name or config.");
+  }
+}
+
+function assertModelConfigUpdateHasFields(
+  update: ModelConfigUpdate,
+  message: string,
+): void {
+  if (!update || typeof update !== "object" || Array.isArray(update)) {
+    throw new Error(message);
+  }
+  const candidate = update as Record<keyof ModelConfigUpdate, unknown>;
+  if (!MODEL_CONFIG_UPDATE_FIELDS.some((field) => candidate[field] !== undefined)) {
+    throw new Error(message);
   }
 }
 

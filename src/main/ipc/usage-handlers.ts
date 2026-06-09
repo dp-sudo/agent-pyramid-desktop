@@ -42,6 +42,9 @@ export function parseUsageDailyRequest(request: unknown): UsageDailyRequest {
   if (typeof days !== "number" || !Number.isInteger(days)) {
     throw new Error("Usage daily days must be an integer.");
   }
+  if (days < 1) {
+    throw new Error("Usage daily days must be at least 1.");
+  }
   return { days };
 }
 

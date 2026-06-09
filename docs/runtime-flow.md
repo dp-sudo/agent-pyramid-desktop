@@ -301,7 +301,8 @@ If the model keeps requesting tools after the budget:
 
 - Runtime appends failed `ToolItem` records for the unexecuted calls.
 - Runtime appends a warning `SystemItem`.
-- Runtime persists and emits `tool_budget_reached`.
+- Runtime persists and emits `tool_budget_reached`; `maxToolRounds` and
+  `attemptedToolCalls` are positive integer audit counts.
 - Turn status becomes `needs_continuation`.
 
 ## Approval Lifecycle
@@ -446,10 +447,11 @@ from the current composer state.
 When adding an event:
 
 1. Add the type in `src/shared/agent-contracts.ts`.
-2. Ensure `RuntimeEventKind` includes it.
-3. Update `RuntimeEventBus.onThread()` event list.
-4. Forward or consume it in `src/main/ipc/sse-handlers.ts` and renderer logic if needed.
-5. Add tests around producer and consumer behavior.
+2. Add its kind to the shared `RUNTIME_EVENT_KINDS` contract so
+   `RuntimeEventKind`, `isRuntimeEvent()`, and `RuntimeEventBus.onThread()`
+   stay aligned.
+3. Forward or consume it in `src/main/ipc/sse-handlers.ts` and renderer logic if needed.
+4. Add tests around producer and consumer behavior.
 
 ## Change Checklist
 

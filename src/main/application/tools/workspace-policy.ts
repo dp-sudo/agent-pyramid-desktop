@@ -18,8 +18,12 @@ const SKIPPED_DIRECTORIES = new Set([
 
 export type WorkspacePathAccess = "read" | "write";
 
+export interface WorkspacePathPolicyOptions {
+  skippedPathMessage?: (relativePath: string) => string;
+}
+
 /**
- * Workspace tools share one path policy so read and write capabilities cannot
+ * Workspace file access shares one path policy so tools and IPC services cannot
  * drift. The lexical check catches obvious traversal before realpath, then the
  * realpath/parent checks close symlink escape paths for existing and new files.
  */
@@ -27,20 +31,19 @@ export async function resolveWorkspacePathForAccess(
   workspace: string,
   relativePath: string,
   access: WorkspacePathAccess,
+  options: WorkspacePathPolicyOptions = {},
 ): Promise<string> {
   const root = resolveWorkspaceRoot(workspace);
-  const resolved = path.resolve(root, relativePath);
-  assertWithinWorkspace(root, resolved, relativePath);
-  assertAllowedWorkspacePath(root, resolved, relativePath);
+  const resolved = resolveWorkspacePathFromRoot(root, relativePath, options);
 
   const realRoot = await fs.realpath(root);
   assertWithinWorkspace(realRoot, realRoot, relativePath);
-  assertAllowedWorkspacePath(realRoot, realRoot, relativePath);
+  assertAllowedWorkspacePath(realRoot, realRoot, relativePath, options);
 
   try {
     const realResolved = await fs.realpath(resolved);
     assertWithinWorkspace(realRoot, realResolved, relativePath);
-    assertAllowedWorkspacePath(realRoot, realResolved, relativePath);
+    assertAllowedWorkspacePath(realRoot, realResolved, relativePath, options);
     return resolved;
   } catch (error) {
     if (getErrorCode(error) !== "ENOENT" || access === "read") {
@@ -50,7 +53,7 @@ export async function resolveWorkspacePathForAccess(
 
   const realParent = await resolveExistingParentRealpath(root, resolved, relativePath);
   assertWithinWorkspace(realRoot, realParent, relativePath);
-  assertAllowedWorkspacePath(realRoot, realParent, relativePath);
+  assertAllowedWorkspacePath(realRoot, realParent, relativePath, options);
   await assertTargetIsNotSymlink(resolved, relativePath);
   return resolved;
 }
@@ -62,7 +65,15 @@ export function requireWorkspace(context: AgentToolContext): string {
   return resolveWorkspaceRoot(context.workspace);
 }
 
-function resolveWorkspaceRoot(workspace: string): string {
+export function resolveWorkspacePathLexically(
+  workspace: string,
+  relativePath: string,
+  options: WorkspacePathPolicyOptions = {},
+): string {
+  return resolveWorkspacePathFromRoot(resolveWorkspaceRoot(workspace), relativePath, options);
+}
+
+export function resolveWorkspaceRoot(workspace: string): string {
   if (!workspace.trim()) {
     throw new Error("Workspace path is required.");
   }
@@ -70,6 +81,17 @@ function resolveWorkspaceRoot(workspace: string): string {
     throw new Error("Workspace path must be absolute.");
   }
   return path.resolve(workspace);
+}
+
+function resolveWorkspacePathFromRoot(
+  root: string,
+  relativePath: string,
+  options: WorkspacePathPolicyOptions,
+): string {
+  const resolved = path.resolve(root, relativePath);
+  assertWithinWorkspace(root, resolved, relativePath);
+  assertAllowedWorkspacePath(root, resolved, relativePath, options);
+  return resolved;
 }
 
 export function toWorkspaceRelative(workspace: string, fullPath: string): string {
@@ -84,12 +106,13 @@ function assertAllowedWorkspacePath(
   root: string,
   resolved: string,
   relativePath: string,
+  options: WorkspacePathPolicyOptions,
 ): void {
   const relative = path.relative(root, resolved);
   if (!relative) return;
   const segments = relative.split(path.sep).filter(Boolean);
   if (segments.some(isSkippedSegment)) {
-    throw new Error(`Path is skipped by workspace tool policy: ${relativePath}`);
+    throw new Error(formatSkippedPathMessage(relativePath, options));
   }
 }
 
@@ -101,6 +124,14 @@ function assertWithinWorkspace(root: string, resolved: string, relativePath: str
 
 function isSkippedSegment(name: string): boolean {
   return name.startsWith(".") || SKIPPED_DIRECTORIES.has(name);
+}
+
+function formatSkippedPathMessage(
+  relativePath: string,
+  options: WorkspacePathPolicyOptions,
+): string {
+  return options.skippedPathMessage?.(relativePath) ??
+    `Path is skipped by workspace tool policy: ${relativePath}`;
 }
 
 async function resolveExistingParentRealpath(

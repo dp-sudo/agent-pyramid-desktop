@@ -1901,6 +1901,15 @@ describe("AgentRuntime", () => {
       summary: "Edited summary",
       completedAt,
     });
+    await expect(runtime.updateThreadGoal(thread.id, {})).rejects.toThrow(
+      "Goal update must include at least one of goal, status, or summary.",
+    );
+    await expect(runtime.updateThreadGoal(thread.id, { summary: " " })).rejects.toThrow(
+      "Goal summary must be a non-empty string.",
+    );
+    await expect(
+      runtime.updateThreadGoal(thread.id, { goal: null, status: "active" }),
+    ).rejects.toThrow("Goal clear cannot be combined with status or summary.");
 
     const reactivated = await runtime.updateThreadGoal(thread.id, {
       status: "active",
