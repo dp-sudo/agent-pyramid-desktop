@@ -70,6 +70,21 @@
 
 ## 变更记录
 
+### 2026-06-09 - Renderer SSE 后台生命周期投影修复
+
+- 修复 Workbench runtime event 分发边界：保留的后台 thread SSE subscription 即使在 Code/Write route 切换后清空 active thread，也会继续消费 `turn_started` / `turn_completed` / `turn_failed` 生命周期事件并维护 `inFlightTurnsByThreadId`；timeline item 仍只写入当前 active thread，避免后台内容污染当前对话。
+- 验证方式：新增 renderer 单元测试覆盖无 active thread 时的后台 turn 生命周期事件，以及后台 item 不进入 active timeline；完整验证命令见本次实现结果。
+
+### 2026-06-09 - Runtime turn start 必填字段边界加固
+
+- 收紧 `AgentRuntime.startTurn()` 请求归一化：`threadId` 与 `text` 必须在 trim 后非空，避免畸形 IPC payload 依赖下游 UUID 校验或写入空白 user item；正常 renderer 发送路径已在进入 runtime 前 trim 文本，行为保持一致。
+- 验证方式：扩展 AgentRuntime malformed turn start 测试覆盖空白 `threadId` / `text` 且失败后不产生 worker 请求或持久化 item；完整验证命令见本次实现结果。
+
+### 2026-06-09 - Model config no-op 更新边界加固
+
+- 修复 model config IPC parser 的空更新问题：`config:model:update` 现在拒绝 `{}`，profile update 也会拒绝只有 `id` 或 `config: {}` 的 payload，避免无业务字段变化却写入新的 `updatedAt` 或向用户报告保存成功；profile create 仍允许 `config: {}` 作为创建默认配置 profile。
+- 验证方式：扩展 model-config IPC 单元测试覆盖空 update、空 profile update、空 config update envelope，以及 create 默认配置 profile；完整验证命令见本次实现结果。
+
 ### 2026-06-09 - Windows 运行兼容优化
 
 - 新增主进程路径比较辅助：workspace tools、coding tools 和 Write IPC 的路径边界判断改为按宿主平台语义比较，Windows 下兼容盘符/路径大小写差异，同时保留 path escape 与 skipped directory 防护。

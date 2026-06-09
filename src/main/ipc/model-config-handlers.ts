@@ -113,7 +113,7 @@ export function parseModelConfigProfileCreateRequest(
   }
   return {
     name: value.name,
-    config: parseModelConfigUpdateRequest(value.config),
+    config: parseModelConfigUpdateRequest(value.config, { allowEmpty: true }),
     ...(value.activate !== undefined ? { activate: value.activate } : {}),
   };
 }
@@ -132,10 +132,16 @@ export function parseModelConfigProfileUpdateRequest(
   ) {
     throw new Error("Model config profile config must be an object.");
   }
+  const parsedConfig = source.config !== undefined
+    ? parseModelConfigUpdateRequest(source.config)
+    : undefined;
+  if (source.name === undefined && parsedConfig === undefined) {
+    throw new Error("Model config profile update must include name or config.");
+  }
   return {
     id: value.id,
     ...(source.name !== undefined ? { name: source.name } : {}),
-    ...(source.config !== undefined ? { config: parseModelConfigUpdateRequest(source.config) } : {}),
+    ...(parsedConfig !== undefined ? { config: parsedConfig } : {}),
   };
 }
 
@@ -155,7 +161,10 @@ export function parseModelConfigProfileIdRequest(
 // Model config normalization is allowed to fill omitted fields from the active
 // profile, but malformed provided fields must fail here so bad IPC payloads do
 // not silently reset booleans or API keys through store defaults.
-export function parseModelConfigUpdateRequest(request: unknown): ModelConfigUpdate {
+export function parseModelConfigUpdateRequest(
+  request: unknown,
+  options: { allowEmpty?: boolean } = {},
+): ModelConfigUpdate {
   if (!request || typeof request !== "object" || Array.isArray(request)) {
     throw new Error("Model config update request must be an object.");
   }
@@ -208,6 +217,9 @@ export function parseModelConfigUpdateRequest(request: unknown): ModelConfigUpda
       throw new Error("agent_autonomy must be one of conservative, balanced, deep.");
     }
     parsed.agent_autonomy = value.agent_autonomy;
+  }
+  if (!options.allowEmpty && Object.keys(parsed).length === 0) {
+    throw new Error("Model config update request must include at least one field.");
   }
   return parsed;
 }

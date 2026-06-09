@@ -72,6 +72,8 @@ describe("model config handlers", () => {
 
     expect(() => parseModelConfigUpdateRequest(null))
       .toThrow("Model config update request must be an object.");
+    expect(() => parseModelConfigUpdateRequest({}))
+      .toThrow("Model config update request must include at least one field.");
     expect(() => parseModelConfigUpdateRequest({ thinking: "false" }))
       .toThrow("thinking must be a boolean.");
     expect(() => parseModelConfigUpdateRequest({ OPENAI_API_KEY: false }))
@@ -112,6 +114,16 @@ describe("model config handlers", () => {
         activate: "false",
       }),
     ).toThrow("Model config profile activate must be a boolean.");
+
+    expect(
+      parseModelConfigProfileCreateRequest({
+        name: "Defaults",
+        config: {},
+      }),
+    ).toEqual({
+      name: "Defaults",
+      config: {},
+    });
   });
 
   it("rejects malformed profile create requests at the IPC boundary", () => {
@@ -145,6 +157,10 @@ describe("model config handlers", () => {
       .toThrow("Model config profile config must be an object.");
     expect(() => parseModelConfigProfileUpdateRequest({ id: "profile-1", config: [] }))
       .toThrow("Model config profile config must be an object.");
+    expect(() => parseModelConfigProfileUpdateRequest({ id: "profile-1" }))
+      .toThrow("Model config profile update must include name or config.");
+    expect(() => parseModelConfigProfileUpdateRequest({ id: "profile-1", config: {} }))
+      .toThrow("Model config update request must include at least one field.");
     expect(() => parseModelConfigProfileUpdateRequest({
       id: "profile-1",
       config: { OPENAI_API_KEY: false },
@@ -157,12 +173,12 @@ describe("model config handlers", () => {
     const handler = electronMock.handlers.get(MODEL_CONFIG_UPDATE_CHANNEL);
     if (!handler) throw new Error("Expected model config update handler.");
 
-    const result = await handler({}, { thinking: "false" });
+    const result = await handler({}, {});
 
     expect(result).toEqual({
       ok: false,
       code: "MODEL_CONFIG_UPDATE_FAILED",
-      message: "thinking must be a boolean.",
+      message: "Model config update request must include at least one field.",
     });
     expect(store.update).not.toHaveBeenCalled();
   });
@@ -173,12 +189,12 @@ describe("model config handlers", () => {
     const handler = electronMock.handlers.get(MODEL_CONFIG_PROFILES_UPDATE_CHANNEL);
     if (!handler) throw new Error("Expected model config profile update handler.");
 
-    const result = await handler({}, { id: "profile-1", config: null });
+    const result = await handler({}, { id: "profile-1", config: {} });
 
     expect(result).toEqual({
       ok: false,
       code: "MODEL_CONFIG_PROFILES_UPDATE_FAILED",
-      message: "Model config profile config must be an object.",
+      message: "Model config update request must include at least one field.",
     });
     expect(store.updateProfile).not.toHaveBeenCalled();
   });

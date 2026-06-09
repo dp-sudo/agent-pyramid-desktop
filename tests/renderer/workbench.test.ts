@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "../../src/shared/agent-contracts";
 import {
+  applyWorkbenchRuntimeEvent,
   buildComposerSendPayload,
   clampSidebarWidth,
   filterThreadsForWorkbench,
@@ -13,6 +14,11 @@ import {
   shouldUnsubscribeRemovedThread,
   workbenchThreadModeForRoute,
 } from "../../src/renderer/src/ui/Workbench";
+import type {
+  AssistantItem,
+  ThreadRecord,
+  TurnRecord,
+} from "../../src/shared/agent-contracts";
 
 describe("Workbench", () => {
   it("formats initial load IPC errors instead of silently ignoring them", () => {
@@ -129,6 +135,65 @@ describe("Workbench", () => {
     expect(findLatestThreadForWorkspace(threads, "/missing", "write")).toBeNull();
   });
 
+  it("applies subscribed thread lifecycle events when no thread is active", () => {
+    const actions = makeRuntimeEventActions();
+    const turn = makeTurnRecord({ threadId: "background-thread" });
+
+    applyWorkbenchRuntimeEvent(
+      {
+        kind: "turn_started",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        startedAt: turn.startedAt,
+        turn,
+      },
+      { activeThread: null, activeThreadId: null },
+      actions,
+    );
+    applyWorkbenchRuntimeEvent(
+      {
+        kind: "turn_completed",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        status: "completed",
+        completedAt: "2026-06-09T00:01:00.000Z",
+      },
+      { activeThread: null, activeThreadId: null },
+      actions,
+    );
+
+    expect(actions.turnStarted).toHaveBeenCalledWith(turn);
+    expect(actions.turnEnded).toHaveBeenCalledWith("background-thread", "completed");
+  });
+
+  it("keeps subscribed background items out of the active timeline", () => {
+    const actions = makeRuntimeEventActions();
+    const item: AssistantItem = {
+      kind: "assistant",
+      id: "assistant-1",
+      threadId: "background-thread",
+      turnId: "turn-1",
+      text: "background",
+      createdAt: "2026-06-09T00:00:00.000Z",
+    };
+
+    applyWorkbenchRuntimeEvent(
+      {
+        kind: "item_appended",
+        threadId: "background-thread",
+        turnId: "turn-1",
+        item,
+      },
+      {
+        activeThread: makeThreadRecord({ id: "active-thread" }),
+        activeThreadId: "active-thread",
+      },
+      actions,
+    );
+
+    expect(actions.appendItem).not.toHaveBeenCalled();
+  });
+
   it("keeps Code sidebar thread lists limited to Code threads", () => {
     const threads = [
       makeThreadSummary("code-1", "/workspace", "code", "2026-06-08T08:00:00.000Z"),
@@ -141,6 +206,45 @@ describe("Workbench", () => {
       .toEqual(["write-1"]);
   });
 });
+
+function makeRuntimeEventActions() {
+  return {
+    appendItem: vi.fn(),
+    setError: vi.fn(),
+    turnEnded: vi.fn(),
+    turnStarted: vi.fn(),
+    updateActiveThread: vi.fn(),
+    updateItem: vi.fn(),
+  };
+}
+
+function makeTurnRecord(overrides: Partial<TurnRecord> = {}): TurnRecord {
+  return {
+    id: "turn-1",
+    threadId: "thread-1",
+    status: "in-flight",
+    startedAt: "2026-06-09T00:00:00.000Z",
+    model: "MiniMax-M3",
+    mode: "agent",
+    ...overrides,
+  };
+}
+
+function makeThreadRecord(overrides: Partial<ThreadRecord> = {}): ThreadRecord {
+  return {
+    id: "thread-1",
+    title: "Thread",
+    workspace: "/workspace",
+    mode: "code",
+    status: "active",
+    relation: "primary",
+    createdAt: "2026-06-09T00:00:00.000Z",
+    updatedAt: "2026-06-09T00:00:00.000Z",
+    approvalPolicy: "on-request",
+    sandboxMode: "workspace-write",
+    ...overrides,
+  };
+}
 
 function makeThreadSummary(
   id: string,

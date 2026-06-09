@@ -1965,6 +1965,14 @@ describe("AgentRuntime", () => {
         message: "Turn text is required.",
       },
       {
+        request: { threadId: " ", text: "Run" },
+        message: "Turn threadId is required.",
+      },
+      {
+        request: { threadId: thread.id, text: " " },
+        message: "Turn text is required.",
+      },
+      {
         request: { threadId: thread.id, text: "Run", mode: "planning" },
         message: "Turn mode must be agent or plan.",
       },

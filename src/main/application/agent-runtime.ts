@@ -1530,7 +1530,9 @@ function normalizeTurnStartRequest(request: unknown): NormalizedTurnStartRequest
 
 function requiredString(value: unknown, message: string): string {
   if (typeof value !== "string") throw new Error(message);
-  return value;
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error(message);
+  return trimmed;
 }
 
 function optionalString(value: unknown, message: string): string | undefined {
