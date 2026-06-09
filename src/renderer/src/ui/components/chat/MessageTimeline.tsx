@@ -4,18 +4,22 @@ import {
   getActiveThreadInFlightTurn,
   useWorkbench,
 } from "../../store/WorkbenchContext";
-import { RUNTIME_READ_ONLY_TOOL_NAMES } from "../../../../../shared/agent-contracts";
-import { ChatBlock } from "./ChatBlock";
+import { RUNTIME_READ_ONLY_TOOL_NAMES, type Item } from "../../../../../shared/agent-contracts";
+import { ChatBlock, type ApprovalPendingDecision } from "./ChatBlock";
 import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
 import { groupTimelineTurns } from "./timeline-model";
 
 interface MessageTimelineProps {
   onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  pendingApprovalResponses?: Record<string, ApprovalPendingDecision>;
 }
 
 const TIMELINE_BOTTOM_STICKY_THRESHOLD_PX = 96;
 
-export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactElement {
+export function MessageTimeline({
+  onApprove,
+  pendingApprovalResponses = {},
+}: MessageTimelineProps): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -96,6 +100,10 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
                 <ChatBlock
                   item={turn.user}
                   {...(onApprove ? { onApprove } : {})}
+                  approvalPendingDecision={getApprovalPendingDecision(
+                    turn.user,
+                    pendingApprovalResponses,
+                  )}
                 />
               ) : null}
 
@@ -105,6 +113,10 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
                   open={processOpen}
                   onToggle={(event) => {
                     const open = event.currentTarget.open;
+                    if (!shouldRecordTimelineProcessToggle({
+                      currentOpen: processOpen,
+                      nextOpen: open,
+                    })) return;
                     setProcessOpenByTurnId((current) => ({
                       ...current,
                       [turn.id]: open,
@@ -123,6 +135,10 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
                         nested
                         {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
                         {...(onApprove ? { onApprove } : {})}
+                        approvalPendingDecision={getApprovalPendingDecision(
+                          item,
+                          pendingApprovalResponses,
+                        )}
                       />
                     ))}
                   </div>
@@ -135,6 +151,10 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
                   item={item}
                   {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
                   {...(onApprove ? { onApprove } : {})}
+                  approvalPendingDecision={getApprovalPendingDecision(
+                    item,
+                    pendingApprovalResponses,
+                  )}
                 />
               ))}
 
@@ -143,6 +163,10 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
                   key={item.id}
                   item={item}
                   {...(onApprove ? { onApprove } : {})}
+                  approvalPendingDecision={getApprovalPendingDecision(
+                    item,
+                    pendingApprovalResponses,
+                  )}
                 />
               ))}
             </section>
@@ -151,6 +175,15 @@ export function MessageTimeline({ onApprove }: MessageTimelineProps): ReactEleme
       </div>
     </div>
   );
+}
+
+export function getApprovalPendingDecision(
+  item: Item,
+  pendingApprovalResponses: Record<string, ApprovalPendingDecision>,
+): ApprovalPendingDecision {
+  return item.kind === "approval"
+    ? pendingApprovalResponses[item.approvalId] ?? null
+    : null;
 }
 
 const READ_ONLY_TOOL_RECORD_NAMES = new Set<string>(RUNTIME_READ_ONLY_TOOL_NAMES);
@@ -196,4 +229,14 @@ export function isTimelineProcessOpen({
   const explicit = openByTurnId[turnId];
   if (explicit !== undefined) return explicit;
   return turnId === activeTurnId;
+}
+
+export function shouldRecordTimelineProcessToggle({
+  currentOpen,
+  nextOpen,
+}: {
+  currentOpen: boolean;
+  nextOpen: boolean;
+}): boolean {
+  return currentOpen !== nextOpen;
 }

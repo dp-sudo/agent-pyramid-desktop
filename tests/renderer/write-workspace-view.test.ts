@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   buildWriteAssistantPrompt,
   canSubmitWriteAssistantPrompt,
@@ -14,9 +16,20 @@ import {
   shouldWarnBeforeLeavingWriteDocument,
   shouldUseSelectedWriteWorkspace,
   WRITE_SEARCH_CLEAR_BUTTON_TEXT,
+  WriteWorkspaceView,
 } from "../../src/renderer/src/ui/components/write/WriteWorkspaceView";
+import { WorkbenchProvider } from "../../src/renderer/src/ui/store/WorkbenchContext";
 
 describe("WriteWorkspaceView helpers", () => {
+  it("labels the main markdown editor independently from placeholder text", () => {
+    const html = renderToStaticMarkup(
+      createElement(WorkbenchProvider, null, createElement(WriteWorkspaceView)),
+    );
+
+    expect(html).toContain("aria-label=\"write.editorPlaceholder\"");
+    expect(html).toContain("placeholder=\"write.editorPlaceholder\"");
+  });
+
   it("disables save when there is no file, no workspace, a busy state, or no changes", () => {
     expect(
       shouldDisableWriteSave({

@@ -301,6 +301,8 @@ Worker rules:
 - Request cleanup only clears the cancel handle it installed, so a settling old
   request cannot remove a newer same-thread cancel mapping.
 - Worker exit clears stale thread affinity and creates a replacement worker.
+- Initial worker `postMessage(chat)` failures clean request listeners and cancel
+  state before surfacing `worker_crashed` to runtime.
 - Worker stream chunks become `LlmStreamChunk` events for runtime consumption.
 - Worker protocol errors keep their category through the pool and are mapped to
   runtime errors such as `provider_http`, `provider_error`, `schema_invalid`,
@@ -435,7 +437,8 @@ Every renderer-invoked IPC handler returns:
 The push event channel is separate:
 
 - `SSE_PUSH_CHANNEL = "sse:push"` sends `RuntimeEvent` payloads from main to
-  preload to renderer listeners.
+  preload; preload validates each pushed payload with `isRuntimeEvent()` before
+  forwarding it to renderer listeners.
 
 ## Module Ownership
 

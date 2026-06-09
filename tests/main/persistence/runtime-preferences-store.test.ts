@@ -42,6 +42,34 @@ describe("RuntimePreferencesStore", () => {
   });
 
   it("updates runtime preferences with nested values", async () => {
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify({
+      activeProfileId: "default",
+      profiles: [
+        {
+          id: "default",
+          name: "MiniMax",
+          config: DEFAULT_MODEL_CONFIG,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "code-profile",
+          name: "Code",
+          config: DEFAULT_MODEL_CONFIG,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "write-profile",
+          name: "Write",
+          config: DEFAULT_MODEL_CONFIG,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      runtimePreferences: DEFAULT_RUNTIME_PREFERENCES,
+    }));
+
     const updated = await store.update({
       defaultApprovalPolicy: "never",
       defaultSandboxMode: "read-only",
@@ -77,6 +105,15 @@ describe("RuntimePreferencesStore", () => {
     );
     expect(updated.compaction.enabled).toBe(false);
     expect(updated.compaction.strategy).toBe("recent-only");
+  });
+
+  it("rejects runtime default profile ids that do not exist", async () => {
+    await expect(
+      store.update({ codeDefaultModelProfileId: "missing-profile" }),
+    ).rejects.toThrow("codeDefaultModelProfileId must reference an existing model profile.");
+    await expect(
+      store.update({ writeDefaultModelProfileId: "missing-profile" }),
+    ).rejects.toThrow("writeDefaultModelProfileId must reference an existing model profile.");
   });
 
   it("preserves model profiles when runtime preferences are updated", async () => {
@@ -230,7 +267,7 @@ describe("RuntimePreferencesStore", () => {
     expect(preferences.toolAvailability.write.diagnose_workspace).toBe(
       DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.diagnose_workspace,
     );
-    expect(preferences.codeDefaultModelProfileId).toBe("code-profile");
+    expect(preferences.codeDefaultModelProfileId).toBeNull();
     expect(preferences.writeDefaultModelProfileId).toBeNull();
     expect(preferences.approvalExperience.showDiffByDefault).toBe(false);
     expect(preferences.approvalExperience.autoScrollOnRequest).toBe(

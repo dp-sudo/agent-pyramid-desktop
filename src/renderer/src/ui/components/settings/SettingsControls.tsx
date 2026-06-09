@@ -63,6 +63,7 @@ interface SecretInputProps {
   visible: boolean;
   placeholder?: string;
   autoComplete?: string;
+  disabled?: boolean;
   showLabel: string;
   hideLabel: string;
   onChange(value: string): void;
@@ -75,6 +76,7 @@ export function SecretInput({
   visible,
   placeholder,
   autoComplete,
+  disabled = false,
   showLabel,
   hideLabel,
   onChange,
@@ -90,12 +92,14 @@ export function SecretInput({
         value={value}
         placeholder={placeholder}
         autoComplete={autoComplete}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       />
       <button
         type="button"
         aria-label={label}
         title={label}
+        disabled={disabled}
         onClick={onToggleVisibility}
       >
         {label}

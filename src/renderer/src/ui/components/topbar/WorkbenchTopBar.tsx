@@ -5,6 +5,7 @@ import {
   useWorkbench,
   type RightPanelMode,
 } from "../../store/WorkbenchContext";
+import { RIGHT_INSPECTOR_REGION_ID } from "../inspector/RightInspector";
 
 export function WorkbenchTopBar(): ReactElement {
   const { t } = useTranslation();
@@ -45,6 +46,7 @@ export function WorkbenchTopBar(): ReactElement {
               type="button"
               className={state.rightPanelMode === mode ? "is-active" : ""}
               aria-pressed={state.rightPanelMode === mode}
+              aria-controls={RIGHT_INSPECTOR_REGION_ID}
               onClick={() => actions.openRightPanel(mode)}
             >
               {t(`inspector.${mode}`)}
@@ -57,12 +59,18 @@ export function WorkbenchTopBar(): ReactElement {
           onClick={state.rightPanelMode === null
             ? () => actions.openRightPanel("changes")
             : () => actions.closeRightPanel()}
+          aria-controls={RIGHT_INSPECTOR_REGION_ID}
+          aria-expanded={isInspectorExpanded(state.rightPanelMode)}
         >
           {getInspectorToggleLabel(state.rightPanelMode, t)}
         </button>
       </div>
     </header>
   );
+}
+
+export function isInspectorExpanded(mode: RightPanelMode): boolean {
+  return mode !== null;
 }
 
 export function getInspectorToggleLabel(

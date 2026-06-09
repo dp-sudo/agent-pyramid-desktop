@@ -439,11 +439,16 @@ export function WriteWorkspaceView({
           </button>
         </div>
         <div style={{ padding: 12, display: "flex", gap: 6 }}>
-          <button className="ds-pill" onClick={() => void loadList(undefined, search, { saveBeforeLoad: true })}>
+          <button
+            type="button"
+            className="ds-pill"
+            onClick={() => void loadList(undefined, search, { saveBeforeLoad: true })}
+          >
             {t("write.openWorkspace")}
           </button>
           {state.workspaceRoot ? (
             <button
+              type="button"
               className="ds-pill"
               onClick={() => void loadList(state.workspaceRoot, search, { saveBeforeLoad: true })}
             >
@@ -508,6 +513,7 @@ export function WriteWorkspaceView({
               type="button"
               className={`ds-write-file-row ${file.path === activePath ? "is-active" : ""}`}
               onClick={() => void openFile(file.path)}
+              aria-current={file.path === activePath ? "page" : undefined}
               title={`${file.path} · ${formatWriteFileMeta(file)}`}
             >
               <span>{file.path}</span>
@@ -529,6 +535,7 @@ export function WriteWorkspaceView({
               }}
               onKeyDown={handleEditorKeyDown}
               placeholder={t("write.editorPlaceholder")}
+              aria-label={t("write.editorPlaceholder")}
             />
             {completion ? <div className="ds-write-ghost">{completion}</div> : null}
           </div>
@@ -539,6 +546,7 @@ export function WriteWorkspaceView({
             {status === "idle" && activePath ? t("write.activeFile", { path: activePath }) : null}
             {status === "idle" && !activePath ? t("write.noActiveFile") : null}
             <button
+              type="button"
               className="ds-pill is-accent"
               style={{ float: "right" }}
               onClick={() => void save()}

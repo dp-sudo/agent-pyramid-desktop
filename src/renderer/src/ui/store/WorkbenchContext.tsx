@@ -45,6 +45,7 @@ export interface ComposerState {
   text: string;
   model: string;
   modelProfileId?: string;
+  modelProfileSelection: "auto" | "explicit";
   reasoningEffort?: ModelReasoningEffort;
   mode: "agent" | "plan";
   goalMode: boolean;
@@ -96,6 +97,7 @@ export const INITIAL_STATE: WorkbenchState = {
   composer: {
     text: "",
     model: DEFAULT_MODEL_CONFIG.model,
+    modelProfileSelection: "auto",
     reasoningEffort: DEFAULT_MODEL_CONFIG.model_reasoning_effort,
     mode: "agent",
     goalMode: false,
@@ -173,7 +175,12 @@ export type Action =
       status: TerminalTurnStatus;
     }
   | { type: "setComposerText"; text: string }
-  | { type: "setComposerModel"; model: string; modelProfileId?: string }
+  | {
+      type: "setComposerModel";
+      model: string;
+      modelProfileId?: string;
+      modelProfileSelection?: ComposerState["modelProfileSelection"];
+    }
   | { type: "setComposerReasoningEffort"; reasoningEffort: ModelReasoningEffort }
   | { type: "setComposerMode"; mode: "agent" | "plan" }
   | { type: "setComposerGoalMode"; enabled: boolean }
@@ -225,10 +232,8 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
         },
       };
     case "setModelProfiles": {
-      const activeProfileChanged =
-        state.modelProfiles?.activeProfileId !== undefined &&
-        state.modelProfiles.activeProfileId !== action.profiles.activeProfileId;
-      const currentProfile = state.composer.modelProfileId
+      const currentExplicitProfile = state.composer.modelProfileId &&
+        state.composer.modelProfileSelection === "explicit"
         ? action.profiles.profiles.find(
             (profile) => profile.id === state.composer.modelProfileId,
           )
@@ -237,9 +242,7 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
         action.profiles.profiles.find(
           (profile) => profile.id === action.profiles.activeProfileId,
         ) ?? action.profiles.profiles[0];
-      const selectedProfile = activeProfileChanged
-        ? activeProfile
-        : currentProfile ?? activeProfile;
+      const selectedProfile = currentExplicitProfile ?? activeProfile;
       return {
         ...state,
         modelProfiles: action.profiles,
@@ -249,6 +252,7 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
                 ...state.composer,
                 model: selectedProfile.config.model,
                 modelProfileId: selectedProfile.id,
+                modelProfileSelection: currentExplicitProfile ? "explicit" : "auto",
                 reasoningEffort: selectedProfile.config.model_reasoning_effort,
               },
             }
@@ -364,6 +368,9 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
           ...state.composer,
           model: action.model,
           modelProfileId: action.modelProfileId,
+          modelProfileSelection:
+            action.modelProfileSelection ??
+            (action.modelProfileId ? "explicit" : "auto"),
         },
       };
     case "setComposerReasoningEffort":
@@ -535,7 +542,11 @@ export interface WorkbenchActions {
     status: TerminalTurnStatus,
   ): void;
   setComposerText(text: string): void;
-  setComposerModel(model: string, modelProfileId?: string): void;
+  setComposerModel(
+    model: string,
+    modelProfileId?: string,
+    modelProfileSelection?: ComposerState["modelProfileSelection"],
+  ): void;
   setComposerReasoningEffort(reasoningEffort: ModelReasoningEffort): void;
   setComposerMode(mode: "agent" | "plan"): void;
   setComposerGoalMode(enabled: boolean): void;
@@ -584,8 +595,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }): ReactE
       turnStarted: (turn) => dispatch({ type: "turnStarted", turn }),
       turnEnded: (threadId, status) => dispatch({ type: "turnEnded", threadId, status }),
       setComposerText: (text) => dispatch({ type: "setComposerText", text }),
-      setComposerModel: (model, modelProfileId) =>
-        dispatch({ type: "setComposerModel", model, modelProfileId }),
+      setComposerModel: (model, modelProfileId, modelProfileSelection) =>
+        dispatch({ type: "setComposerModel", model, modelProfileId, modelProfileSelection }),
       setComposerReasoningEffort: (reasoningEffort) =>
         dispatch({ type: "setComposerReasoningEffort", reasoningEffort }),
       setComposerMode: (mode) => dispatch({ type: "setComposerMode", mode }),

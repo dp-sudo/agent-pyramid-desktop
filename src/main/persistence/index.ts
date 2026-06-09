@@ -276,9 +276,12 @@ export class JsonlThreadStore {
       const indexRaw = await fs.readFile(this.indexPath, "utf8");
       const all = JSON.parse(indexRaw) as ThreadSummary[];
       const next = all.filter((row) => row.id !== id);
+      // Keep index membership as the retry handle until the thread directory is
+      // gone. If recursive deletion fails, callers can retry the same id instead
+      // of leaving an unreachable orphan session directory.
+      await fs.rm(this.threadDir(id), { recursive: true, force: true });
       await this.atomicWriteJson(this.indexPath, next);
     });
-    await fs.rm(this.threadDir(id), { recursive: true, force: true });
   }
 
   // --------------------------------------------------------------------------

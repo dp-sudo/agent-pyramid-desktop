@@ -277,6 +277,7 @@ describe("WorkbenchContext reducer", () => {
     expect(selectedProfile.composer).toMatchObject({
       model: "deepseek-v4-flash",
       modelProfileId: "profile-2",
+      modelProfileSelection: "explicit",
     });
   });
 
@@ -325,6 +326,7 @@ describe("WorkbenchContext reducer", () => {
     expect(synced.composer).toMatchObject({
       model: "active-model",
       modelProfileId: "profile-2",
+      modelProfileSelection: "auto",
       reasoningEffort: "xhigh",
     });
   });
@@ -368,6 +370,7 @@ describe("WorkbenchContext reducer", () => {
     expect(refreshed.composer).toMatchObject({
       model: "selected-model-updated",
       modelProfileId: "profile-1",
+      modelProfileSelection: "explicit",
       reasoningEffort: "medium",
     });
   });
@@ -414,6 +417,7 @@ describe("WorkbenchContext reducer", () => {
     expect(switched.composer).toMatchObject({
       model: "active-model",
       modelProfileId: "profile-2",
+      modelProfileSelection: "auto",
       reasoningEffort: "xhigh",
     });
   });

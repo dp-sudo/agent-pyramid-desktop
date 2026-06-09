@@ -7,6 +7,7 @@ import type {
 } from "../../../../../shared/agent-contracts";
 
 interface FloatingComposerModelPickerProps {
+  id?: string;
   profiles: ModelConfigProfile[];
   selectedModel: string;
   selectedProfileId?: string;
@@ -16,6 +17,7 @@ interface FloatingComposerModelPickerProps {
 }
 
 export function FloatingComposerModelPicker({
+  id,
   profiles,
   selectedModel,
   selectedProfileId,
@@ -25,7 +27,12 @@ export function FloatingComposerModelPicker({
 }: FloatingComposerModelPickerProps): ReactElement {
   const { t } = useTranslation();
   return (
-    <div className="ds-composer-popover is-model-picker">
+    <div
+      id={id}
+      className="ds-composer-popover is-model-picker"
+      role="dialog"
+      aria-label={t("composer.model")}
+    >
       <div className="ds-composer-popover-section">
         <div className="ds-composer-popover-label">{t("composer.model")}</div>
         {profiles.length === 0 ? (
@@ -40,6 +47,7 @@ export function FloatingComposerModelPicker({
               key={profile.id}
               type="button"
               className={`ds-composer-menu-row ${active ? "is-active" : ""}`}
+              aria-pressed={active}
               onClick={() => onSelectModel(profile)}
             >
               <span>{profile.name}</span>
@@ -58,6 +66,7 @@ export function FloatingComposerModelPicker({
               key={effort}
               type="button"
               className={effort === selectedReasoningEffort ? "is-active" : ""}
+              aria-pressed={effort === selectedReasoningEffort}
               onClick={() => onSelectReasoningEffort(effort)}
             >
               {t(`settings.efforts.${effort}`)}

@@ -83,6 +83,7 @@ export function SettingsSidebar({
             className={`ds-settings-nav-item${
               activeCategory === item.id ? " is-active" : ""
             }`}
+            aria-current={activeCategory === item.id ? "page" : undefined}
             onClick={() => onSelect(item.id)}
           >
             <span className="ds-settings-nav-marker" aria-hidden="true">

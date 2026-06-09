@@ -15,6 +15,7 @@ describe("JsonlThreadStore", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await removeTempDir(userDataDir);
   });
 
@@ -53,6 +54,38 @@ describe("JsonlThreadStore", () => {
 
     await store.deleteThread(fork.id);
     expect(await store.getThread(fork.id)).toBeNull();
+  });
+
+  it("keeps the index row when thread directory deletion fails so cleanup can be retried", async () => {
+    const thread = await store.createThread({
+      title: "Retry delete",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const realRm = fs.rm.bind(fs);
+    let failNextThreadDelete = true;
+    vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
+      if (
+        failNextThreadDelete &&
+        typeof target === "string" &&
+        path.basename(target) === thread.id
+      ) {
+        failNextThreadDelete = false;
+        throw new Error("simulated thread directory delete failure");
+      }
+      return realRm(target, options);
+    });
+
+    await expect(store.deleteThread(thread.id)).rejects.toThrow(
+      "simulated thread directory delete failure",
+    );
+    await expect(store.listThreads()).resolves.toEqual([
+      expect.objectContaining({ id: thread.id }),
+    ]);
+
+    await expect(store.deleteThread(thread.id)).resolves.toBeUndefined();
+    await expect(store.listThreads()).resolves.toEqual([]);
+    await expect(store.getThread(thread.id)).resolves.toBeNull();
   });
 
   it("appends and replays items and events while skipping malformed JSONL lines", async () => {

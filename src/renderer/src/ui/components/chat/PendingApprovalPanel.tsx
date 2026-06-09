@@ -2,14 +2,16 @@ import { useEffect, useRef, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { Item } from "../../../../../shared/agent-contracts";
 import { useWorkbench } from "../../store/WorkbenchContext";
-import { ApprovalCard } from "./ChatBlock";
+import { ApprovalCard, type ApprovalPendingDecision } from "./ChatBlock";
 
 interface PendingApprovalPanelProps {
   onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  pendingApprovalResponses?: Record<string, ApprovalPendingDecision>;
 }
 
 export function PendingApprovalPanel({
   onApprove,
+  pendingApprovalResponses = {},
 }: PendingApprovalPanelProps): ReactElement | null {
   const { t } = useTranslation();
   const { state } = useWorkbench();
@@ -36,7 +38,12 @@ export function PendingApprovalPanel({
       </div>
       <div className="ds-pending-approval-list">
         {approvals.map((item) => (
-          <ApprovalCard key={item.id} item={item} onApprove={onApprove} />
+          <ApprovalCard
+            key={item.id}
+            item={item}
+            onApprove={onApprove}
+            pendingDecision={pendingApprovalResponses[item.approvalId] ?? null}
+          />
         ))}
       </div>
     </section>

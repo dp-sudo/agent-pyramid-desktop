@@ -11,6 +11,7 @@ import {
   readMarkdownFileContent,
   resolveWritePathForAccess,
   resolveWritePath,
+  writeMarkdownFileContent,
 } from "../../../src/main/ipc/write-handlers";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
@@ -183,6 +184,39 @@ describe("write handlers helpers", () => {
       await expect(resolveWritePathForAccess(workspace, "dangling.md", "write"))
         .rejects.toThrow("Path escapes workspace: dangling.md");
       await expect(fs.stat(outsideFile)).rejects.toThrow();
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
+    }
+  });
+
+  it("rejects writes when created parent directories become symlinks before commit", async () => {
+    const workspace = await makeTempDir("write-parent-symlink-race-");
+    const outside = await makeTempDir("write-parent-symlink-race-outside-");
+    try {
+      const parentPath = path.join(workspace, "drafts");
+      const outsideTargetPath = path.join(outside, "note.md");
+      const originalMkdir = fs.mkdir.bind(fs);
+      const mkdirSpy = vi.spyOn(fs, "mkdir").mockImplementation((async (
+        ...args: Parameters<typeof fs.mkdir>
+      ) => {
+        const result = await originalMkdir(...args);
+        const target = args[0];
+        if (typeof target === "string" && path.resolve(target) === parentPath) {
+          await fs.rm(parentPath, { recursive: true, force: true });
+          await fs.symlink(outside, parentPath);
+        }
+        return result;
+      }) as typeof fs.mkdir);
+      try {
+        await expect(
+          writeMarkdownFileContent(workspace, "drafts/note.md", "# Draft\n"),
+        ).rejects.toThrow("Path escapes workspace: drafts/note.md");
+      } finally {
+        mkdirSpy.mockRestore();
+      }
+
+      await expect(fs.access(outsideTargetPath)).rejects.toThrow();
     } finally {
       await removeTempDir(workspace);
       await removeTempDir(outside);

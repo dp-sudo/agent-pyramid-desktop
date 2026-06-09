@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "../../src/shared/agent-contracts";
 import {
   applyWorkbenchRuntimeEvent,
+  beginPendingApprovalResponse,
   buildComposerSendPayload,
   clampSidebarWidth,
+  clearResolvedApprovalResponses,
+  explicitComposerModelProfileId,
   filterThreadsForWorkbench,
   findLatestThreadForWorkspace,
   formatInitialLoadErrors,
@@ -19,6 +22,7 @@ import {
 } from "../../src/renderer/src/ui/Workbench";
 import type {
   AssistantItem,
+  Item,
   ThreadRecord,
   TurnRecord,
 } from "../../src/shared/agent-contracts";
@@ -52,6 +56,35 @@ describe("Workbench", () => {
       err("RENDERER_IPC_REJECTED", "preload bridge unavailable"),
     );
     expect(messageOfWorkbenchError(new Error("runtime failed"))).toBe("runtime failed");
+  });
+
+  it("keeps only one in-flight approval response per approval id", () => {
+    const first = beginPendingApprovalResponse({}, "approval-1", "allow");
+
+    expect(first).toEqual({ "approval-1": "allow" });
+    expect(beginPendingApprovalResponse(first ?? {}, "approval-1", "deny")).toBeNull();
+    expect(beginPendingApprovalResponse(first ?? {}, "approval-2", "deny")).toEqual({
+      "approval-1": "allow",
+      "approval-2": "deny",
+    });
+  });
+
+  it("clears pending approval responses only after resolved approval items arrive", () => {
+    const pending = {
+      "approval-1": "allow" as const,
+      "approval-2": "deny" as const,
+    };
+    const unresolved = approvalItem("item-1", "approval-1");
+    const resolved: Extract<Item, { kind: "approval" }> = {
+      ...approvalItem("item-2", "approval-2"),
+      decision: "deny",
+      resolvedAt: "2026-01-01T00:00:01.000Z",
+    };
+
+    expect(clearResolvedApprovalResponses(pending, [unresolved])).toBe(pending);
+    expect(clearResolvedApprovalResponses(pending, [unresolved, resolved])).toEqual({
+      "approval-1": "allow",
+    });
   });
 
   it("keeps sidebar width inside the supported drag range", () => {
@@ -141,6 +174,41 @@ describe("Workbench", () => {
     expect(workbenchThreadModeForRoute("code")).toBe("code");
     expect(workbenchThreadModeForRoute("write")).toBe("write");
     expect(workbenchThreadModeForRoute("settings")).toBe("code");
+  });
+
+  it("only sends a model profile id after an explicit composer model selection", () => {
+    expect(explicitComposerModelProfileId({
+      text: "",
+      model: "active-model",
+      modelProfileSelection: "auto",
+      reasoningEffort: "medium",
+      mode: "agent",
+      goalMode: false,
+      attachmentIds: [],
+      attachments: [],
+    })).toBeUndefined();
+    expect(explicitComposerModelProfileId({
+      text: "",
+      model: "active-model",
+      modelProfileId: "active-profile",
+      modelProfileSelection: "auto",
+      reasoningEffort: "medium",
+      mode: "agent",
+      goalMode: false,
+      attachmentIds: [],
+      attachments: [],
+    })).toBeUndefined();
+    expect(explicitComposerModelProfileId({
+      text: "",
+      model: "selected-model",
+      modelProfileId: "selected-profile",
+      modelProfileSelection: "explicit",
+      reasoningEffort: "medium",
+      mode: "agent",
+      goalMode: false,
+      attachmentIds: [],
+      attachments: [],
+    })).toBe("selected-profile");
   });
 
   it("prefers the latest active thread that matches workspace and route mode", () => {
@@ -283,6 +351,22 @@ function makeThreadSummary(
     relation: "primary" as const,
     mode,
     updatedAt,
+  };
+}
+
+function approvalItem(
+  id: string,
+  approvalId: string,
+): Extract<Item, { kind: "approval" }> {
+  return {
+    kind: "approval",
+    id,
+    threadId: "thread-1",
+    turnId: "turn-1",
+    approvalId,
+    toolName: "write_file",
+    args: {},
+    createdAt: "2026-01-01T00:00:00.000Z",
   };
 }
 

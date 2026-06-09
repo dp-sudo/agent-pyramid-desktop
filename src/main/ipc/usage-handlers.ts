@@ -92,10 +92,10 @@ async function collectDailyUsageForDays(
   store: JsonlThreadStore,
   days: number,
 ): Promise<UsageDailyBucket[]> {
-  const start = startOfLocalDay(Date.now() - (days - 1) * 24 * 60 * 60 * 1000);
+  const start = shiftLocalDate(startOfLocalDay(Date.now()), -(days - 1));
   const buckets = new Map<string, UsageDailyBucket>();
   for (let offset = 0; offset < days; offset += 1) {
-    const date = formatLocalDate(start + offset * 24 * 60 * 60 * 1000);
+    const date = formatLocalDate(shiftLocalDate(start, offset));
     buckets.set(date, {
       date,
       inputTokens: 0,
@@ -142,6 +142,13 @@ function clampDays(value: unknown): number {
 
 function startOfLocalDay(timestamp: number): number {
   const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function shiftLocalDate(timestamp: number, days: number): number {
+  const date = new Date(timestamp);
+  date.setDate(date.getDate() + days);
   date.setHours(0, 0, 0, 0);
   return date.getTime();
 }

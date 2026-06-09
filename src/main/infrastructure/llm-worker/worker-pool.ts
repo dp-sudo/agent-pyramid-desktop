@@ -136,8 +136,16 @@ export class LlmWorkerPool {
       entry.worker.on("message", messageHandler);
       entry.worker.on("error", errorHandler);
       entry.worker.on("exit", exitHandler);
-      entry.worker.postMessage(chatMsg);
       this.threadToCancel.set(thread.id, cancelMsg);
+      try {
+        entry.worker.postMessage(chatMsg);
+      } catch (error) {
+        cleanup();
+        reject(new LlmWorkerError(
+          error instanceof Error ? error.message : String(error),
+          "worker_crashed",
+        ));
+      }
     });
   }
 

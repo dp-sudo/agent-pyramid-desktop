@@ -145,6 +145,9 @@ Important semantics:
   `ThreadSummary.updatedAt` when the item timestamp is newer, so list sorting
   follows visible thread activity.
 - `index.json` writes use an index queue.
+- Thread deletion removes the thread directory before removing its index row. If
+  recursive directory deletion fails, the index row remains as the retry handle
+  so the session directory does not become an unreachable orphan.
 - JSON writes use temp file + fsync + rename.
 - JSONL appends use fsync.
 - Malformed JSONL lines are warned and skipped during replay. This includes
@@ -354,6 +357,9 @@ Rules:
   this contract. `AttachmentRecord.createdAt` uses the same shared ISO timestamp
   boundary as item and event records.
 - `AttachmentStore.get()` returns metadata plus `dataBase64`.
+- Attachment deletion removes the blob before removing its index entry. If blob
+  deletion fails, the index entry remains as the retry handle so the file does
+  not become an unreachable orphan.
 - `UserItem` stores attachment ids and metadata, not image bytes.
 - Runtime reads attachment bytes and sends them to the LLM as `AgentContentBlock[]`.
 
@@ -383,6 +389,9 @@ aligned with nested records: `turn_started.threadId/turnId/startedAt` must match
 `turn.threadId/id/startedAt`, and `item_appended` / `item_updated` must match
 the nested `item.threadId/turnId`.
 Usage data lives on `turn_completed.usage` and is aggregated by `usage:daily`.
+Daily usage buckets use local calendar-date stepping instead of fixed 24-hour
+millisecond offsets, so daylight-saving time transitions cannot duplicate or
+skip date labels.
 Runtime event timestamps such as `startedAt`, `completedAt`, `failedAt`, and
 `reachedAt` must use `Date.prototype.toISOString()` format.
 Persisted event replay validates `usage` as a `TokenUsage` object when present;
@@ -428,6 +437,11 @@ Key semantics:
 - `ModelConfigStore.listProfiles()` returns all profiles.
 - Model profile writes preserve `runtimePreferences`; runtime preference writes
   preserve model profiles. Both stores use a shared config-file write queue.
+- Deleting a model profile clears Code/Write default profile ids in
+  `runtimePreferences` when they point at the deleted profile, avoiding
+  persisted dangling profile references.
+- Shared config normalization also clears stored Code/Write default profile ids
+  that do not match any normalized profile in `profiles[]`.
 - Store normalizes older single-config files into profile state.
 - Store normalizes missing profile `protocol` to `openai-compatible`.
 - Stored profile `createdAt` / `updatedAt` values use the shared
@@ -482,6 +496,8 @@ Key semantics:
   `DEFAULT_RUNTIME_PREFERENCES`.
 - Updates must include at least one recognized field; unknown-only or malformed
   update payloads fail before persistence.
+- Updates that set Code/Write default profile ids must reference existing
+  `profiles[]` entries or use `null`; stale stored values are normalized on read.
 - `toolAvailability` is currently consumed by `AgentRuntime` as a catalog-level
   tool switch. Disabled tools are omitted from LLM tool definitions and forced
   calls to disabled tools produce failed tool items.

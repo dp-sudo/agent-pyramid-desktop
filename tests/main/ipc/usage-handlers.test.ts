@@ -154,6 +154,29 @@ describe("usage handlers", () => {
     });
   });
 
+  it("keeps usage buckets on consecutive local dates across DST changes", async () => {
+    const previousTimezone = process.env.TZ;
+    try {
+      process.env.TZ = "America/New_York";
+      vi.setSystemTime(new Date("2026-11-02T12:00:00-05:00"));
+
+      const buckets = await collectDailyUsage(store, 3);
+
+      expect(buckets.map((bucket) => bucket.date)).toEqual([
+        "2026-10-31",
+        "2026-11-01",
+        "2026-11-02",
+      ]);
+    } finally {
+      if (previousTimezone === undefined) {
+        process.env.TZ = "UTC";
+      } else {
+        process.env.TZ = previousTimezone;
+      }
+      vi.setSystemTime(new Date("2026-06-07T12:00:00.000Z"));
+    }
+  });
+
   it("reuses recent usage scans for repeated empty-session heatmap requests", async () => {
     await appendCompletedTurnUsage(store, 8);
     const replayEvents = vi.spyOn(store, "replayEvents");

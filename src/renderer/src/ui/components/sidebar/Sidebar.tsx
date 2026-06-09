@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
 import type { ThreadSummary } from "../../../../../shared/agent-contracts";
@@ -40,6 +40,10 @@ export function Sidebar({
   const { state } = useWorkbench();
   const groups = groupThreadsByWorkspace(threads);
   const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingDeleteThreadId((current) => prunePendingThreadDeleteId(current, threads));
+  }, [threads]);
 
   return (
     <aside className="ds-sidebar">
@@ -237,6 +241,16 @@ export function isThreadDeletePending(
   threadId: string,
 ): boolean {
   return pendingDeleteThreadId === threadId;
+}
+
+export function prunePendingThreadDeleteId(
+  pendingDeleteThreadId: string | null,
+  threads: readonly Pick<ThreadSummary, "id">[],
+): string | null {
+  if (!pendingDeleteThreadId) return null;
+  return threads.some((thread) => thread.id === pendingDeleteThreadId)
+    ? pendingDeleteThreadId
+    : null;
 }
 
 export function getThreadDeleteClickMode(

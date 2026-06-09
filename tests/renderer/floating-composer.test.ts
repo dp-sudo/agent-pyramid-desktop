@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   canAddComposerImageFromSource,
   canSubmitComposerDraft,
+  COMPOSER_MODEL_PICKER_POPOVER_ID,
   COMPOSER_REMOVE_ATTACHMENT_BUTTON_TEXT,
+  COMPOSER_TOOL_MENU_POPOVER_ID,
   getAttachmentThumbnailSrc,
   getClipboardImageFiles,
   getComposerImageAttachmentName,
@@ -17,6 +19,11 @@ import { DEFAULT_BASIC_PREFERENCES } from "../../src/renderer/src/ui/preferences
 import type { ComposerAttachment } from "../../src/renderer/src/ui/store/WorkbenchContext";
 
 describe("FloatingComposer", () => {
+  it("uses stable popover ids for composer menu controls", () => {
+    expect(COMPOSER_TOOL_MENU_POPOVER_ID).toBe("composer-tool-menu");
+    expect(COMPOSER_MODEL_PICKER_POPOVER_ID).toBe("composer-model-picker");
+  });
+
   it("allows attachment-only drafts to be submitted", () => {
     expect(
       canSubmitComposerDraft({

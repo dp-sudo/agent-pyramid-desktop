@@ -164,6 +164,7 @@ export function SettingsView(): ReactElement {
   const [showApiKey, setShowApiKey] = useState(false);
   const [settingsSearch, setSettingsSearch] = useState("");
   const runtimeSaveInProgressRef = useRef(false);
+  const pendingRuntimePreferencesUpdateRef = useRef<RuntimePreferencesUpdate | null>(null);
 
   const activeProfile = profilesState ? findActiveProfile(profilesState) : null;
   const hasAgentApi = Boolean(window.agentApi);
@@ -221,6 +222,11 @@ export function SettingsView(): ReactElement {
   const runtimeControlsDisabled = shouldDisableRuntimePreferenceControls(
     hasAgentApi,
     runtimeSaveState,
+  );
+  const modelProfileControlsDisabled = shouldDisableModelProfileControls(
+    hasAgentApi,
+    saveState,
+    profileBusy,
   );
 
   useEffect(() => {
@@ -283,6 +289,12 @@ export function SettingsView(): ReactElement {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [profileHasUnsavedChanges, saveState]);
+
+  useEffect(() => {
+    setPendingDeleteProfileId((current) =>
+      prunePendingProfileDeleteId(current, profilesState?.profiles ?? []),
+    );
+  }, [profilesState?.profiles]);
 
   function applyProfilesState(state: ModelConfigProfilesState): void {
     const active = findActiveProfile(state);
@@ -383,7 +395,13 @@ export function SettingsView(): ReactElement {
       setRuntimeError(i18n.t("settings.preloadMissing"));
       return;
     }
-    if (runtimeSaveInProgressRef.current) return;
+    if (runtimeSaveInProgressRef.current) {
+      pendingRuntimePreferencesUpdateRef.current = mergeRuntimePreferencesUpdates(
+        pendingRuntimePreferencesUpdateRef.current,
+        update,
+      );
+      return;
+    }
     runtimeSaveInProgressRef.current = true;
     setRuntimeSaveState("saving");
     setRuntimeError("");
@@ -401,6 +419,11 @@ export function SettingsView(): ReactElement {
       setRuntimeError(messageOfUnknownError(updateError));
     } finally {
       runtimeSaveInProgressRef.current = false;
+      const pendingUpdate = pendingRuntimePreferencesUpdateRef.current;
+      pendingRuntimePreferencesUpdateRef.current = null;
+      if (pendingUpdate) {
+        void updateRuntimePreferences(pendingUpdate);
+      }
     }
   }
 
@@ -531,6 +554,18 @@ export function SettingsView(): ReactElement {
         return;
       }
       applyProfilesState(result.value);
+      const runtimeResult = await window.agentApi.runtimePreferences.get();
+      if (runtimeResult.ok) {
+        applyRuntimePreferences(runtimeResult.value);
+        setRuntimeSaveState("idle");
+        setRuntimeError("");
+      } else {
+        applyRuntimePreferences(
+          clearDeletedDefaultProfileReferences(runtimePreferences, profile.id),
+        );
+        setRuntimeSaveState("error");
+        setRuntimeError(runtimeResult.message);
+      }
       setSaveState("saved");
     } finally {
       setProfileBusy("");
@@ -587,6 +622,18 @@ export function SettingsView(): ReactElement {
         return;
       }
       applyProfilesState(result.value);
+      const runtimeResult = await window.agentApi.runtimePreferences.get();
+      if (runtimeResult.ok) {
+        applyRuntimePreferences(runtimeResult.value);
+        setRuntimeSaveState("idle");
+        setRuntimeError("");
+      } else {
+        applyRuntimePreferences(
+          clearDeletedDefaultProfileReferences(runtimePreferences, profile.id),
+        );
+        setRuntimeSaveState("error");
+        setRuntimeError(runtimeResult.message);
+      }
       setSaveState("saved");
     } finally {
       setProfileBusy("");
@@ -595,7 +642,7 @@ export function SettingsView(): ReactElement {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (section !== "model") return;
+    if (!canSubmitModelSettingsSection(section, category)) return;
     if (!activeProfile) {
       setSaveState("error");
       setError(t("settings.profiles.noActive"));
@@ -1102,6 +1149,7 @@ export function SettingsView(): ReactElement {
                         className="ds-profile-card-main"
                         type="button"
                         disabled={isBusy || isActive}
+                        aria-current={isActive ? "true" : undefined}
                         onClick={() => void handleActivateProfile(profile)}
                       >
                         <span className="ds-profile-card-topline">
@@ -1189,6 +1237,7 @@ export function SettingsView(): ReactElement {
                     id="profile_name"
                     value={profileName}
                     onChange={(event) => updateProfileName(event.target.value)}
+                    disabled={modelProfileControlsDisabled}
                     required
                   />
                 }
@@ -1202,6 +1251,7 @@ export function SettingsView(): ReactElement {
                     id="model_provide"
                     value={form.model_provide}
                     onChange={updateText("model_provide")}
+                    disabled={modelProfileControlsDisabled}
                     required
                   />
                 }
@@ -1215,6 +1265,7 @@ export function SettingsView(): ReactElement {
                     id="model"
                     value={form.model}
                     onChange={updateText("model")}
+                    disabled={modelProfileControlsDisabled}
                     required
                   />
                 }
@@ -1228,6 +1279,7 @@ export function SettingsView(): ReactElement {
                     id="protocol"
                     value={form.protocol}
                     onChange={updateProtocol}
+                    disabled={modelProfileControlsDisabled}
                   >
                     {LLM_PROTOCOLS.map((protocol) => (
                       <option key={protocol} value={protocol}>
@@ -1247,6 +1299,7 @@ export function SettingsView(): ReactElement {
                     id="base_url"
                     value={form.base_url}
                     onChange={updateText("base_url")}
+                    disabled={modelProfileControlsDisabled}
                     required
                   />
                 }
@@ -1263,6 +1316,7 @@ export function SettingsView(): ReactElement {
                     visible={showApiKey}
                     autoComplete="off"
                     placeholder={t("settings.placeholders.apiKey")}
+                    disabled={modelProfileControlsDisabled}
                     showLabel={t("settings.showSecret")}
                     hideLabel={t("settings.hideSecret")}
                     onChange={updateSecret}
@@ -1287,6 +1341,7 @@ export function SettingsView(): ReactElement {
                     id="model_context_window"
                     value={form.model_context_window}
                     onChange={updateText("model_context_window")}
+                    disabled={modelProfileControlsDisabled}
                     inputMode="numeric"
                     placeholder={String(DEFAULT_MODEL_CONFIG.model_context_window)}
                   />
@@ -1301,6 +1356,7 @@ export function SettingsView(): ReactElement {
                     id="model_auto_compact_token_limit"
                     value={form.model_auto_compact_token_limit}
                     onChange={updateText("model_auto_compact_token_limit")}
+                    disabled={modelProfileControlsDisabled}
                     inputMode="numeric"
                     placeholder={t("settings.placeholders.compactLimit")}
                   />
@@ -1315,6 +1371,7 @@ export function SettingsView(): ReactElement {
                     id="max_tokens"
                     value={form.max_tokens}
                     onChange={updateText("max_tokens")}
+                    disabled={modelProfileControlsDisabled}
                     inputMode="numeric"
                     placeholder={String(DEFAULT_MODEL_CONFIG.max_tokens)}
                   />
@@ -1335,6 +1392,7 @@ export function SettingsView(): ReactElement {
                   <Toggle
                     checked={form.thinking}
                     label={t("settings.fields.thinking")}
+                    disabled={modelProfileControlsDisabled}
                     onChange={updateThinking}
                   />
                 }
@@ -1348,6 +1406,7 @@ export function SettingsView(): ReactElement {
                     id="model_reasoning_effort"
                     value={form.model_reasoning_effort}
                     onChange={updateEffort}
+                    disabled={modelProfileControlsDisabled}
                   >
                     {MODEL_REASONING_EFFORTS.map((effort) => (
                       <option key={effort} value={effort}>
@@ -1366,6 +1425,7 @@ export function SettingsView(): ReactElement {
                     id="agent_autonomy"
                     value={form.agent_autonomy}
                     onChange={updateAutonomy}
+                    disabled={modelProfileControlsDisabled}
                   >
                     {AGENT_AUTONOMY_LEVELS.map((level) => (
                       <option key={level} value={level}>
@@ -1782,6 +1842,55 @@ export function shouldDisableRuntimePreferenceControls(
   return !hasAgentApi || runtimeSaveState === "loading" || runtimeSaveState === "saving";
 }
 
+export function mergeRuntimePreferencesUpdates(
+  current: RuntimePreferencesUpdate | null,
+  update: RuntimePreferencesUpdate,
+): RuntimePreferencesUpdate {
+  if (!current) {
+    return cloneRuntimePreferencesUpdate(update);
+  }
+  return {
+    ...current,
+    ...update,
+    ...(current.toolAvailability || update.toolAvailability
+      ? {
+          toolAvailability: {
+            ...current.toolAvailability,
+            ...update.toolAvailability,
+            code: {
+              ...current.toolAvailability?.code,
+              ...update.toolAvailability?.code,
+            },
+            write: {
+              ...current.toolAvailability?.write,
+              ...update.toolAvailability?.write,
+            },
+          },
+        }
+      : {}),
+    ...(current.approvalExperience || update.approvalExperience
+      ? {
+          approvalExperience: {
+            ...current.approvalExperience,
+            ...update.approvalExperience,
+          },
+        }
+      : {}),
+    ...(current.command || update.command
+      ? { command: { ...current.command, ...update.command } }
+      : {}),
+    ...(current.compaction || update.compaction
+      ? { compaction: { ...current.compaction, ...update.compaction } }
+      : {}),
+  };
+}
+
+function cloneRuntimePreferencesUpdate(
+  update: RuntimePreferencesUpdate,
+): RuntimePreferencesUpdate {
+  return mergeRuntimePreferencesUpdates({}, update);
+}
+
 export function messageOfUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1856,11 +1965,64 @@ export function isProfileDeletePending(
   return pendingDeleteProfileId === profileId;
 }
 
+export function prunePendingProfileDeleteId(
+  pendingDeleteProfileId: string | null,
+  profiles: readonly Pick<ModelConfigProfile, "id">[],
+): string | null {
+  if (!pendingDeleteProfileId) return null;
+  return profiles.some((profile) => profile.id === pendingDeleteProfileId)
+    ? pendingDeleteProfileId
+    : null;
+}
+
 export function shouldBlockSettingsNavigation(
   saveState: SaveState,
   hasUnsavedChanges = false,
 ): boolean {
   return saveState === "dirty" || (saveState === "error" && hasUnsavedChanges);
+}
+
+export function shouldDisableModelProfileControls(
+  hasAgentApi: boolean,
+  saveState: SaveState,
+  profileBusy: string,
+): boolean {
+  return !hasAgentApi ||
+    saveState === "loading" ||
+    saveState === "saving" ||
+    Boolean(profileBusy);
+}
+
+export function canSubmitModelSettingsSection(
+  section: SettingsSection,
+  category: SettingsCategory,
+): boolean {
+  return section === "model" && category !== "profiles";
+}
+
+export function clearDeletedDefaultProfileReferences(
+  preferences: RuntimePreferences,
+  deletedProfileId: string,
+): RuntimePreferences {
+  const codeDefaultModelProfileId =
+    preferences.codeDefaultModelProfileId === deletedProfileId
+      ? null
+      : preferences.codeDefaultModelProfileId;
+  const writeDefaultModelProfileId =
+    preferences.writeDefaultModelProfileId === deletedProfileId
+      ? null
+      : preferences.writeDefaultModelProfileId;
+  if (
+    codeDefaultModelProfileId === preferences.codeDefaultModelProfileId &&
+    writeDefaultModelProfileId === preferences.writeDefaultModelProfileId
+  ) {
+    return preferences;
+  }
+  return {
+    ...preferences,
+    codeDefaultModelProfileId,
+    writeDefaultModelProfileId,
+  };
 }
 
 function hasUnsavedProfileChanges(

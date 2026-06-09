@@ -71,11 +71,12 @@ export function InitialSessionUsageHeatmap(): ReactElement {
     <div className="ds-empty-session">
       <div className="ds-empty-session-title">{t("empty.title")}</div>
       <div className="ds-empty-session-subtitle">{t("empty.subtitle")}</div>
-      <div className="ds-usage-heatmap" aria-label={t("usage.heatmap")}>
+      <div className="ds-usage-heatmap" role="img" aria-label={t("usage.heatmap")}>
         {cells.map((cell) => (
           <div
             key={cell.key}
             className="ds-usage-cell"
+            aria-hidden="true"
             title={cell.title}
             style={{ opacity: cell.opacity }}
           />

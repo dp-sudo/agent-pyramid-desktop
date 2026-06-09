@@ -14,6 +14,9 @@ import type {
 } from "../../../../../shared/agent-contracts";
 
 const RIGHT_INSPECTOR_KEYBOARD_STEP = 24;
+export const RIGHT_INSPECTOR_REGION_ID = "workbench-right-inspector";
+export const RIGHT_INSPECTOR_TITLE_ID = "workbench-right-inspector-title";
+export const RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT = "x";
 
 export function RightInspector(): ReactElement | null {
   const { t } = useTranslation();
@@ -21,7 +24,12 @@ export function RightInspector(): ReactElement | null {
   if (!state.rightPanelMode) return null;
 
   return (
-    <aside className="ds-right-inspector" style={{ width: state.rightSidebarWidth }}>
+    <aside
+      id={RIGHT_INSPECTOR_REGION_ID}
+      className="ds-right-inspector"
+      style={{ width: state.rightSidebarWidth }}
+      aria-labelledby={RIGHT_INSPECTOR_TITLE_ID}
+    >
       <div
         className="ds-right-inspector-resizer"
         role="separator"
@@ -54,7 +62,7 @@ export function RightInspector(): ReactElement | null {
         }}
       />
       <div className="ds-right-inspector-header">
-        <strong className="ds-right-inspector-title">
+        <strong id={RIGHT_INSPECTOR_TITLE_ID} className="ds-right-inspector-title">
           {state.rightPanelMode === "changes"
             ? t("inspector.changes")
             : state.rightPanelMode === "todo"
@@ -68,7 +76,7 @@ export function RightInspector(): ReactElement | null {
           aria-label={t("inspector.close")}
           title={t("inspector.close")}
         >
-          ✕
+          {RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT}
         </button>
       </div>
       <div className="ds-right-inspector-body">

@@ -70,6 +70,170 @@
 
 ## 变更记录
 
+### 2026-06-10 - Shared approval pending response state
+- Lifted renderer approval response pending state to `Workbench` so the durable
+  timeline approval block and composer-adjacent pending approval panel share the
+  same `approvalId` submission state.
+- Duplicate allow/deny clicks for the same approval id are ignored before a
+  second IPC request can be sent. Failed IPC responses release the local pending
+  state; successful responses remain disabled until the resolved approval item is
+  pushed back through runtime events.
+- Verification plan: renderer Workbench, MessageTimeline and ChatBlock helper
+  tests cover duplicate pending registration, resolved-item cleanup and shared
+  pending button rendering; full `typecheck/test/build` verification is run
+  before handoff.
+
+### 2026-06-10 - Settings runtime preference save queue
+- Replaced the Settings runtime preference in-flight drop with a merged pending
+  update queue. Runtime preference controls still allow only one active IPC save,
+  but rapid subsequent changes are deep-merged by setting group and flushed after
+  the active save settles instead of being silently discarded.
+- Verification: `npm test -- tests/renderer/settings-view.test.ts` and
+  `npm run typecheck`.
+
+### 2026-06-10 - Preload SSE payload guard
+- Hardened the preload `sse:push` bridge so it validates pushed payloads with
+  shared `isRuntimeEvent()` before notifying renderer listeners. Malformed
+  runtime event payloads are now dropped with a traceable preload warning instead
+  of entering Workbench state through `agentApi.sse.onEvent()`.
+- Verification: `npm test -- tests/preload/index.test.ts`, `npm test --
+  tests/preload/index.test.ts tests/main/ipc/sse-handlers.test.ts
+  tests/renderer/workbench.test.ts`, `npm run typecheck`, `npm run test`,
+  `npm run build`, and `git diff --check`.
+
+### 2026-06-10 - Worker postMessage failure cleanup
+- Hardened `LlmWorkerPool.chat()` so synchronous failures while posting the
+  initial worker chat message clean request listeners, active request counts and
+  cancel handles before rejecting as `worker_crashed`. This prevents a closed or
+  broken worker port from leaving stale request state that can affect later
+  routing or cancellation for the same thread.
+- Verification: `npm test -- tests/main/infrastructure/worker-pool.test.ts`,
+  `npm test -- tests/main/application/agent-runtime.test.ts
+  tests/main/infrastructure/worker-pool.test.ts`, `npm run typecheck`,
+  `npm run test`, `npm run build`, and `git diff --check`.
+
+### 2026-06-10 - Turn interrupt stale id boundary
+- Hardened `AgentRuntime.interruptTurn()` so unknown or already completed turn
+  ids throw instead of being reported as successful no-op interrupts through
+  IPC. Repeated interrupts for the same in-flight turn that is already marked
+  `interrupted` remain idempotent and do not append duplicate interrupt notices
+  or send duplicate worker cancel requests.
+- Verification: `npm test -- tests/main/application/agent-runtime.test.ts
+  tests/main/ipc/turns-handlers.test.ts`, `npm run typecheck`,
+  `npm run test`, `npm run build`, and `git diff --check`.
+
+### 2026-06-10 - Usage daily DST date window
+- Fixed `usage:daily` bucket generation so the date window advances by local
+  calendar days instead of fixed 24-hour millisecond offsets. This prevents
+  duplicate or skipped bucket labels across daylight-saving time transitions.
+- Verification: `npm test -- tests/main/ipc/usage-handlers.test.ts`.
+
+### 2026-06-10 - Thread delete retry handle
+- Hardened `JsonlThreadStore.deleteThread()` so recursive thread directory
+  deletion happens before removing the `threads/index.json` row. If filesystem
+  deletion fails, the thread id remains listed and cleanup can be retried instead
+  of leaving an unreachable orphan session directory.
+- Verification: `npm test -- tests/main/persistence/jsonl-thread-store.test.ts`.
+
+### 2026-06-10 - Attachment delete retry handle
+- Hardened `AttachmentStore.delete()` so blob deletion happens before removing
+  the metadata index entry. If the filesystem delete fails, the attachment id
+  remains listed and cleanup can be retried instead of leaving an unreachable
+  orphan blob.
+- Verification: `npm test -- tests/main/persistence/attachment-store.test.ts`.
+
+### 2026-06-10 - Write and composer active semantics
+- Added semantic active-state hints for Write and Composer controls: Write file rows now expose the active file with `aria-current="page"`, the Markdown editor has an explicit label, and Composer plan/goal mode rows expose pressed state.
+- Verification plan: renderer Write workspace markup tests cover the editor label; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Settings sidebar active semantics
+- Added `aria-current="page"` to the active Settings sidebar category button so the left navigation exposes the same current-page state as its visual `is-active` styling.
+- Added current-state semantics to the active Settings model profile card button so profile selection exposes the same state as the visual `is-active` styling and active badge.
+- Verification plan: renderer SettingsSidebar markup tests cover the active category current state; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Composer model picker semantics
+- Added dialog semantics to the Composer model picker popover and exposed active model profile / reasoning effort buttons through `aria-pressed`, keeping accessible state aligned with the visual `is-active` state.
+- Added stable `aria-controls` relationships for the Composer `+` menu and model picker buttons, with matching popover ids.
+- Aligned the Composer `+` menu DOM with its `aria-haspopup="menu"` trigger by adding menu/menuitem/menuitemcheckbox roles and checked state for plan/goal toggles.
+- Removed the redundant `aria-pressed` state from Plan/Goal
+  `menuitemcheckbox` rows so their active state is exposed through
+  `aria-checked` only.
+- Verification plan: renderer model picker markup tests cover the dialog label and active pressed states; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Settings model profile edit gating
+- Disabled model profile form controls while profile data is loading/saving, while create/activate/duplicate/delete operations are busy, or when the preload API is unavailable, so delayed profile responses cannot overwrite newer user edits.
+- Extended `SecretInput` with a disabled state for API key editing and visibility toggling.
+- Restricted the Settings form submit path to model configuration categories, so the profile list category cannot submit an update with unchanged form state through the outer page form.
+- Verification plan: Settings helper tests cover the model profile control disable boundary; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Deleted profile default cleanup
+- Fixed model profile deletion so `ModelConfigStore.deleteProfile()` clears Code/Write default model profile ids in `runtimePreferences` when they point at the deleted profile. This keeps the shared `userData/config` file from retaining dangling default profile references after Settings or IPC deletes a profile.
+- Extended shared config normalization so older or manually edited config files also clear stored Code/Write default profile ids that no longer match any normalized profile.
+- Hardened `RuntimePreferencesStore.update()` so new non-null Code/Write default profile ids must reference an existing model profile instead of persisting a dangling id through IPC.
+- Synced Settings deletion UI with the main-process cleanup by refreshing `runtimePreferences` after profile deletion, with a local fallback that clears defaults pointing at the deleted profile if the refresh fails.
+- Rechecked the renderer delete path and wired the refresh/fallback into the
+  actual `handleDeleteProfile()` success branch so Code/Write default selects and
+  Workbench runtime state update immediately after a profile is deleted.
+- Verification: `npm test -- tests/main/persistence/model-config-store.test.ts`, `npm test -- tests/main/persistence/runtime-preferences-store.test.ts`, `npm test -- tests/renderer/settings-view.test.ts`, `npm run typecheck`, `npm run test`, `npm run build`, and `git diff --check`.
+
+### 2026-06-10 - Write IPC commit path revalidation
+- Hardened `write.put` so Markdown writes re-run the shared workspace path policy after parent directory creation and before the final UTF-8 write. This closes the gap where a newly created parent directory could be swapped to a symlink outside the workspace between validation and commit.
+- Verification: `npm test -- tests/main/ipc/write-handlers.test.ts`, `npm run typecheck`, `npm run test`, `npm run build`, and `git diff --check`.
+
+### 2026-06-10 - Settings profile delete confirmation pruning
+- Cleared stale Settings model-profile delete-confirmation state when the backing profile disappears from the current profile list, matching the Sidebar stale confirmation cleanup.
+- Verification plan: renderer SettingsView helper tests cover keeping visible pending profile ids and clearing missing ones; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Sidebar delete confirmation state pruning
+- Cleared stale Sidebar inline delete-confirmation state when the backing thread disappears from the current list, such as after archive/delete/list refreshes.
+- Verification plan: renderer Sidebar helper tests cover keeping visible pending ids and clearing missing ones; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Renderer style token integrity
+- Replaced the remaining `shell.css` references to undefined `--ds-surface` with existing surface tokens so Write assistant and Settings tool-access rows keep stable themed backgrounds.
+- Added a renderer style-token test that checks every `var(--ds-*)` reference in `shell.css` resolves to a token defined in `tokens.css`.
+- Verification plan: `npm test -- tests/renderer/style-tokens.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Controlled details toggle boundaries
+- Hardened renderer reasoning and work-process folding so controlled `<details>` updates that only mirror live/completed defaults are not recorded as user overrides; only real open-state flips from the current controlled state persist as explicit toggles.
+- Verification plan: renderer ChatBlock and MessageTimeline helper tests cover ignored programmatic details toggles and real user toggles; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Right inspector close control text
+- Replaced the RightInspector close button's visible glyph with stable ASCII text while keeping its localized `aria-label` and `title`, matching the other close/remove controls hardened against encoding drift.
+- Verification plan: renderer RightInspector tests cover the close button visible text; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Right inspector control relationship
+- Added stable region/title ids to `RightInspector` and wired the Workbench topbar
+  Inspector mode/toggle buttons with `aria-controls`; the open/close toggle now
+  reflects panel visibility through `aria-expanded`.
+- Verification plan: renderer WorkbenchTopBar and RightInspector helper tests
+  cover the expansion helper and stable controlled-region ids; full
+  `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Approval diff preview toggle boundary
+- Preserved manual open/closed state for approval file diff previews after the user toggles them, while still applying `showDiffByDefault` until a manual override exists.
+- Verification plan: renderer ChatBlock helper tests cover default syncing and user override behavior; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Empty-session usage heatmap semantics
+- Exposed the empty-session daily usage heatmap as one labeled graphic and hid individual decorative cells from assistive tech, preserving the visible grid and tooltip behavior.
+- Verification plan: renderer InitialSessionUsageHeatmap markup tests cover the heatmap role/label and hidden cells; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Assistant code block disclosure semantics
+- Added an `aria-controls` relationship between long-code expand/collapse buttons and their rendered `<pre>` content in `AssistantMarkdown`.
+- Verification plan: renderer AssistantMarkdown markup tests cover the button/content id relationship; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Assistant code copy control polish
+- Added stable accessible labels and titles to Assistant Markdown code-block copy buttons while preserving transient copied/failed visible feedback. Copy failures now also reset back to idle after the short feedback window.
+- Cleared pending code-copy feedback timers when a new copy result arrives or the code block unmounts, preventing stale feedback resets from racing later state.
+- Verification plan: renderer AssistantMarkdown markup tests cover the copy button label/title; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Code/Write default profile send boundary
+- Fixed Workbench turn send payloads so automatically synced active composer profiles are not sent as explicit `modelProfileId`; config-backed Code/Write default model profile preferences now reach `AgentRuntime.resolveModelProfile()` unless the user explicitly chooses a profile.
+- Verification plan: renderer Workbench and WorkbenchContext tests cover the auto-vs-explicit composer profile boundary; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-09 - Command output UTF-8 truncation
+- Hardened `run_command` stdout/stderr truncation so byte-limited command output is decoded on a UTF-8 character boundary and does not introduce replacement characters into tool results.
+- Verification: `npm test -- tests/main/application/tools.test.ts`, `npm run typecheck`, `npm run test`, `npm run build`, and `git diff --check`.
+
 ### 2026-06-09 - Stable visible close controls
 - Replaced remaining renderer-visible close/remove glyphs in Write search clear and Composer attachment remove controls with stable ASCII text while keeping localized accessible labels and titles.
 - Verification plan: renderer Write workspace and Floating Composer helper tests lock the stable visible text; full `typecheck/test/build` verification is run before handoff.

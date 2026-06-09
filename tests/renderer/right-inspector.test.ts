@@ -4,6 +4,9 @@ import {
   clampRightInspectorWidth,
   deriveInspectorTodos,
   getNextRightInspectorWidth,
+  RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT,
+  RIGHT_INSPECTOR_REGION_ID,
+  RIGHT_INSPECTOR_TITLE_ID,
   summarizeInspectorChanges,
   summarizePlanProgress,
 } from "../../src/renderer/src/ui/components/inspector/RightInspector";
@@ -21,6 +24,15 @@ describe("RightInspector helpers", () => {
     expect(getNextRightInspectorWidth(360, "Home")).toBe(280);
     expect(getNextRightInspectorWidth(360, "End")).toBe(760);
     expect(getNextRightInspectorWidth(360, "Enter")).toBe(360);
+  });
+
+  it("uses stable ASCII visible text for the close button", () => {
+    expect(RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT).toBe("x");
+  });
+
+  it("uses stable ids for the controlled Inspector region and label", () => {
+    expect(RIGHT_INSPECTOR_REGION_ID).toBe("workbench-right-inspector");
+    expect(RIGHT_INSPECTOR_TITLE_ID).toBe("workbench-right-inspector-title");
   });
 
   it("summarizes tool items for the changes panel", () => {

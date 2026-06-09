@@ -200,6 +200,94 @@ describe("ModelConfigStore", () => {
     expect(raw.runtimePreferences).toEqual(runtimePreferences);
   });
 
+  it("clears runtime default profile references when a profile is deleted", async () => {
+    const profileState: ModelConfigProfilesState & { runtimePreferences: RuntimePreferences } = {
+      activeProfileId: "default",
+      profiles: [
+        {
+          id: "default",
+          name: "MiniMax",
+          config: DEFAULT_MODEL_CONFIG,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "write-profile",
+          name: "Write",
+          config: {
+            ...DEFAULT_MODEL_CONFIG,
+            model: "write-model",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "code-profile",
+          name: "Code",
+          config: {
+            ...DEFAULT_MODEL_CONFIG,
+            model: "code-model",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      runtimePreferences: {
+        ...DEFAULT_RUNTIME_PREFERENCES,
+        codeDefaultModelProfileId: "code-profile",
+        writeDefaultModelProfileId: "write-profile",
+      },
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(profileState));
+
+    await store.deleteProfile("write-profile");
+    const raw = JSON.parse(
+      await fs.readFile(path.join(userDataDir, "config"), "utf8"),
+    ) as { runtimePreferences?: RuntimePreferences };
+
+    expect(raw.runtimePreferences?.codeDefaultModelProfileId).toBe("code-profile");
+    expect(raw.runtimePreferences?.writeDefaultModelProfileId).toBeNull();
+  });
+
+  it("normalizes stale runtime default profile references from shared config", async () => {
+    const profileState: ModelConfigProfilesState & { runtimePreferences: RuntimePreferences } = {
+      activeProfileId: "default",
+      profiles: [
+        {
+          id: "default",
+          name: "MiniMax",
+          config: DEFAULT_MODEL_CONFIG,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "code-profile",
+          name: "Code",
+          config: {
+            ...DEFAULT_MODEL_CONFIG,
+            model: "code-model",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      runtimePreferences: {
+        ...DEFAULT_RUNTIME_PREFERENCES,
+        codeDefaultModelProfileId: "code-profile",
+        writeDefaultModelProfileId: "missing-profile",
+      },
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(profileState));
+
+    await store.init();
+    const raw = JSON.parse(
+      await fs.readFile(path.join(userDataDir, "config"), "utf8"),
+    ) as { runtimePreferences?: RuntimePreferences };
+
+    expect(raw.runtimePreferences?.codeDefaultModelProfileId).toBe("code-profile");
+    expect(raw.runtimePreferences?.writeDefaultModelProfileId).toBeNull();
+  });
+
   it("normalizes a legacy single-config file into profile state", async () => {
     const legacyConfig: ModelConfig = {
       ...DEFAULT_MODEL_CONFIG,

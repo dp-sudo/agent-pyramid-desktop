@@ -152,6 +152,17 @@ export class ModelConfigStore {
         ...state,
         activeProfileId: nextActive.id,
         profiles,
+        runtimePreferences: {
+          ...state.runtimePreferences,
+          codeDefaultModelProfileId:
+            state.runtimePreferences.codeDefaultModelProfileId === id
+              ? null
+              : state.runtimePreferences.codeDefaultModelProfileId,
+          writeDefaultModelProfileId:
+            state.runtimePreferences.writeDefaultModelProfileId === id
+              ? null
+              : state.runtimePreferences.writeDefaultModelProfileId,
+        },
       };
       return { state: nextState, result: toModelConfigProfilesState(nextState) };
     });

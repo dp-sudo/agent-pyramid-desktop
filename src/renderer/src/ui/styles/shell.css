@@ -1909,7 +1909,7 @@ textarea:focus-visible {
   flex: 0 0 clamp(300px, 28vw, 420px);
   flex-direction: column;
   border-left: 1px solid var(--ds-border-muted);
-  background: var(--ds-surface);
+  background: var(--ds-surface-card);
 }
 
 .ds-write-assistant-header {
@@ -2488,7 +2488,7 @@ textarea:focus-visible {
   border: 1px solid var(--ds-border-muted);
   border-radius: var(--ds-radius-sm);
   padding: 10px 12px;
-  background: var(--ds-surface);
+  background: var(--ds-surface-subtle);
 }
 
 .ds-settings-tool-row > span {

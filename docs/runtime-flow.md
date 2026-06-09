@@ -149,6 +149,12 @@ Model profile resolution order:
 4. Active profile id.
 5. First available profile.
 
+Renderer composer state tracks whether the displayed model profile came from an
+automatic active-profile sync or an explicit user picker choice. Workbench send
+paths only include `request.modelProfileId` for explicit selections, so Code and
+Write default profile preferences can take effect when the user has not chosen a
+profile for that turn.
+
 ## Background Run Loop
 
 After the user item is persisted, `AgentRuntime.runTurn()` builds the model messages and executes the LLM/tool loop.
@@ -253,6 +259,8 @@ Worker invariants:
 - A worker request cleanup only clears the cancel handle it installed; this
   protects newer same-thread requests if an old request settles late.
 - Worker replacement clears thread affinity for dead workers.
+- If the initial `postMessage(chat)` to a worker fails, the request listeners and
+  cancel handle are cleaned immediately and runtime sees `worker_crashed`.
 - Worker errors preserve protocol categories through the pool: provider HTTP
   failures become `provider_http`, provider SSE `event: error` frames become
   `provider_error`, provider/schema parse failures become `schema_invalid`,
@@ -335,7 +343,7 @@ Workspace tools require an absolute thread workspace path before resolving file 
 
 File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; it is not replayed from JSONL after restart.
 
-`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start.
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start.
 
 `diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass and receives the same runtime command defaults as `run_command`. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
 
@@ -404,6 +412,13 @@ sequenceDiagram
 
   UI->>IPC: turns.interrupt(turnId)
   IPC->>RT: interruptTurn(turnId)
+  alt turn is not in flight
+    RT-->>IPC: throw Turn ... is not in flight
+    IPC-->>UI: TURN_INTERRUPT_FAILED
+  else turn is already marked interrupted
+    RT-->>IPC: no-op success
+    IPC-->>UI: ok({ turnId })
+  else active in-flight turn
   RT->>RT: set status = interrupted
   RT->>RT: abort active tool controllers
   RT->>Store: append failed ToolItem for running tools
@@ -417,6 +432,7 @@ sequenceDiagram
   RT->>Store: append truncated partial stream output if present
   RT->>Store: appendEvent(turn_completed status=interrupted)
   RT->>Bus: turn_completed(status=interrupted)
+  end
 ```
 
 Notes:

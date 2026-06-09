@@ -147,7 +147,7 @@ export function normalizeAppConfigState(
       );
   return {
     ...modelState,
-    runtimePreferences,
+    runtimePreferences: normalizeRuntimeProfileReferences(runtimePreferences, modelState),
   };
 }
 
@@ -320,6 +320,26 @@ function createDefaultProfilesState(): ModelConfigProfilesState {
         updatedAt: now,
       },
     ],
+  };
+}
+
+function normalizeRuntimeProfileReferences(
+  runtimePreferences: RuntimePreferences,
+  modelState: ModelConfigProfilesState,
+): RuntimePreferences {
+  const profileIds = new Set(modelState.profiles.map((profile) => profile.id));
+  return {
+    ...runtimePreferences,
+    codeDefaultModelProfileId:
+      runtimePreferences.codeDefaultModelProfileId !== null &&
+      !profileIds.has(runtimePreferences.codeDefaultModelProfileId)
+        ? null
+        : runtimePreferences.codeDefaultModelProfileId,
+    writeDefaultModelProfileId:
+      runtimePreferences.writeDefaultModelProfileId !== null &&
+      !profileIds.has(runtimePreferences.writeDefaultModelProfileId)
+        ? null
+        : runtimePreferences.writeDefaultModelProfileId,
   };
 }
 

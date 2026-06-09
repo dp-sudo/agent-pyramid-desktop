@@ -163,6 +163,8 @@ Thread row attributes:
 - Pending delete confirmation: `is-confirming-delete`.
 - Main button uses `aria-current="page"` when active.
 - Delete behavior depends on `basicPreferences.confirmThreadDelete`.
+- Pending delete confirmation is pruned when the backing thread disappears from
+  the current list, such as after archive/delete/filter refreshes.
 - Footer workbench switch uses the existing `WorkbenchContext.actions.setRoute`
   path for `code` / `write`; switching to a workbench route clears an active
   thread whose persisted `mode` does not match that route. Settings remains a
@@ -197,6 +199,9 @@ Inspector controls:
 
 - Modes: `changes`, `todo`, `plan`.
 - Toggle label comes from `getInspectorToggleLabel()`.
+- Mode buttons and the open/close toggle use `aria-controls` to target the
+  shared `RightInspector` region; the open/close toggle also reflects
+  `aria-expanded`.
 
 ### Timeline
 
@@ -209,6 +214,8 @@ Purpose:
   moving post-answer items ahead of the answer.
 - Keep scroll pinned to bottom while user is near the bottom.
 - Show `InitialSessionUsageHeatmap` when no items exist.
+- Empty-session usage cells are exposed as one labeled `role="img"` heatmap;
+  individual cells stay visual/tooltip-only and are hidden from assistive tech.
 
 Key classes:
 
@@ -224,7 +231,9 @@ Scroll behavior:
 
 - Sticky threshold: `96px`.
 - Active turn work process opens by default.
-- User toggles are stored by turn id and pruned when turns disappear.
+- User toggles are stored by turn id and pruned when turns disappear. Controlled
+  `details` updates that only mirror the active-turn default are ignored, so a
+  programmatic live/completed state change does not become a user override.
 
 ### Chat Blocks
 
@@ -236,7 +245,7 @@ Item rendering:
 | --- | --- |
 | `user` | Right-side user bubble with optional attachment names. |
 | `assistant` | Markdown assistant bubble. Live output gets shiny styling. |
-| `reasoning` | Collapsible process entry with reasoning label and markdown body. |
+| `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning folds unless the user explicitly toggled it. |
 | `tool` | Collapsible process entry with status/tone summary. |
 | `approval` | Approval block with args JSON and allow/deny buttons. |
 | `user_input` | System-style user input prompt. |
@@ -266,7 +275,12 @@ Approval behavior:
 
 - Buttons only render when `item.decision === undefined` and an approve handler
   exists.
-- Pending decision disables further response until the handler returns.
+- Pending decision is shared by `approvalId` across the timeline block and the
+  composer-adjacent pending panel. Failed IPC responses release the pending
+  state; successful responses stay disabled until the resolved `ApprovalItem`
+  update reaches renderer state.
+- File diff previews follow `showDiffByDefault` until the user manually opens or
+  closes a preview; later re-renders do not overwrite that manual state.
 - Unresolved approvals for the active thread also appear in a composer-adjacent
   pending approval panel, while the timeline block remains as the durable audit
   record.
@@ -289,7 +303,12 @@ Renderer:
 - Code blocks are wrapped in `ds-code-block`.
 - Code language header is extracted from `language-*` class.
 - Long code blocks start collapsed with expand/collapse controls while short code
-  blocks remain open.
+  blocks remain open. The expand/collapse control owns the rendered `<pre>` via
+  `aria-controls`.
+- Code block copy controls keep a stable accessible label/title while the
+  visible text can briefly show copied or failed state before returning to idle.
+  Repeated copy attempts replace the previous feedback timer, and unmount clears
+  any pending reset.
 - Tables are wrapped in `ds-markdown-table-wrap`.
 - Images are wrapped in `ds-markdown-image-frame`; only `http(s)` and supported
   image `data:` URLs are rendered.
@@ -349,6 +368,13 @@ States:
 - Attachment removal is disabled while a send is pending or the active thread is
   running, so runtime attachment reads cannot race with composer cleanup.
 - `menuOpen`, `pickerOpen`: popovers close on outside pointer down or Escape.
+  The `+` and model buttons expose stable `aria-controls` targets for their
+  respective popovers.
+- The `+` popover is a `role="menu"` surface; the image action is a menu item
+  and plan/goal toggles are menuitemcheckbox rows.
+- The model picker popover is exposed as a dialog and marks active model profile
+  / reasoning effort buttons with pressed state, matching the visual `is-active`
+  state.
 - When enabled, clipboard paste filters to PNG/JPEG/WebP/GIF files, creates the
   same renderer attachment records as the picker path, generates a bounded
   thumbnail for the composer preview, and keeps normal text paste behavior when
@@ -356,6 +382,8 @@ States:
   before attachment processing and normal text paste remains untouched.
 - Backspace/Delete removes the newest attachment only when the textarea is empty
   and removal is not disabled.
+- Plan mode and goal mode menu rows expose active state with `aria-checked`,
+  matching the visual `is-active` state and on/off text.
 
 Send behavior:
 
@@ -378,6 +406,8 @@ Purpose:
 Layout:
 
 - Class: `ds-right-inspector`.
+- Region id: `workbench-right-inspector`.
+- Region label id: `workbench-right-inspector-title`.
 - Width: `state.rightSidebarWidth`.
 - Clamp: `280..760`.
 - Resizer class: `ds-right-inspector-resizer`.
@@ -406,6 +436,10 @@ Key classes:
 - `ds-inspector-plan`
 - `ds-inspector-plan-meter`
 - `ds-inspector-plan-steps`
+
+Close control:
+
+- Uses stable visible ASCII text with localized `aria-label` and `title`.
 
 ### Error Toast
 
@@ -504,6 +538,7 @@ List states from `getWriteListState()`:
 File row attributes:
 
 - Active file: `is-active`.
+- Active file button uses `aria-current="page"`.
 - Title includes path and formatted file meta.
 - Meta format: `formatWriteFileMeta()` => size + modified date.
 
@@ -531,6 +566,8 @@ Behavior constants:
 - Autosave delay: `800ms`.
 - Completion delay: `650ms`.
 - Completion requires at least `10` trailing content characters.
+- Main Markdown textarea has an `aria-label` that matches its localized editor
+  placeholder.
 - Opening another file or refreshing/switching workspace first flushes the
   current dirty file through `write.put`; if that save fails, navigation stays
   on the current file and surfaces the error.
@@ -638,6 +675,12 @@ Section tabs:
 - Buttons: `ds-settings-section-tab`.
 - Active button gets `is-active` and `aria-pressed`.
 
+Sidebar category nav:
+
+- Class: `ds-settings-nav`.
+- Buttons: `ds-settings-nav-item`.
+- Active category gets `is-active` and `aria-current="page"`.
+
 Category ownership:
 
 | Section | Categories | Persistence / consumer |
@@ -736,8 +779,20 @@ State sinks:
   `FloatingComposer`.
 - Model defaults update `runtimePreferences` through
   `window.agentApi.runtimePreferences.update()`.
+- The composer keeps `modelProfileSelection: "auto" | "explicit"` so the model
+  label can follow the active profile while turn requests omit `modelProfileId`
+  unless the user explicitly picked a profile. This preserves config-backed
+  Code/Write default model profiles.
+- After deleting a model profile, Settings refreshes `runtimePreferences` so
+  Code/Write default profile selects reflect main-process cleanup. If that
+  refresh fails, the renderer locally clears defaults pointing at the deleted
+  profile and surfaces the runtime preference error. This refresh/fallback path
+  runs after profile delete as well as active-profile changes.
 - Runtime preference controls are disabled while the runtime preference load or
   save state is `loading` / `saving`, and when the preload API is unavailable.
+- Runtime preference saves are serialized in renderer: if another runtime
+  preference change arrives while one save is in flight, Settings deep-merges it
+  into a pending update and flushes it after the active save settles.
 
 ### Model Settings
 
@@ -752,6 +807,8 @@ Profiles:
 - Add custom profile.
 - Activate, duplicate, delete profiles.
 - Two-step delete confirmation through `pendingDeleteProfileId`.
+- Pending delete confirmation is pruned when the backing profile disappears from
+  the current profile list.
 
 Connection:
 
@@ -791,7 +848,15 @@ Primary save button:
 
 - Only visible for model section.
 - Disabled when no preload API, loading, saving, idle, or saved.
-- Submit calls `modelConfig.updateProfile`.
+- Submit calls `modelConfig.updateProfile` only from model configuration
+  categories (`connection`, `context`, `reasoning`); the profile list category
+  cannot submit the outer Settings form.
+- Active model profile cards use `is-active`; the card's main button also uses
+  `aria-current="true"` while it represents the active profile.
+- Model profile input controls are disabled when the preload API is unavailable,
+  while profile data is loading/saving, and while create/activate/duplicate/delete
+  profile operations are busy. This prevents delayed profile responses from
+  replacing newer unsaved edits in the form.
 
 ### Agent Behavior
 

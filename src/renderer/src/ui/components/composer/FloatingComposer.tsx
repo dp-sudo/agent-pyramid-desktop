@@ -31,6 +31,8 @@ interface FloatingComposerProps {
 const COMPOSER_IMAGE_ACCEPT = SUPPORTED_ATTACHMENT_MIME_TYPES.join(",");
 const COMPOSER_THUMBNAIL_MAX_EDGE = 192;
 export const COMPOSER_REMOVE_ATTACHMENT_BUTTON_TEXT = "x";
+export const COMPOSER_TOOL_MENU_POPOVER_ID = "composer-tool-menu";
+export const COMPOSER_MODEL_PICKER_POPOVER_ID = "composer-model-picker";
 
 export interface ComposerImageFile {
   file: File;
@@ -355,15 +357,21 @@ export function FloatingComposer({
             aria-label={t("composer.more")}
             aria-expanded={menuOpen}
             aria-haspopup="menu"
+            aria-controls={COMPOSER_TOOL_MENU_POPOVER_ID}
           >
             +
           </button>
           {menuOpen ? (
-            <div className="ds-composer-popover is-menu">
+            <div
+              id={COMPOSER_TOOL_MENU_POPOVER_ID}
+              className="ds-composer-popover is-menu"
+              role="menu"
+            >
               {state.basicPreferences.allowComposerImageUpload ? (
                 <button
                   type="button"
                   className="ds-composer-menu-row"
+                  role="menuitem"
                   onClick={() => {
                     fileInputRef.current?.click();
                     setMenuOpen(false);
@@ -376,6 +384,8 @@ export function FloatingComposer({
               <button
                 type="button"
                 className={`ds-composer-menu-row ${state.composer.mode === "plan" ? "is-active" : ""}`}
+                role="menuitemcheckbox"
+                aria-checked={state.composer.mode === "plan"}
                 onClick={() => {
                   actions.setComposerMode(state.composer.mode === "plan" ? "agent" : "plan");
                   setMenuOpen(false);
@@ -387,6 +397,8 @@ export function FloatingComposer({
               <button
                 type="button"
                 className={`ds-composer-menu-row ${state.composer.goalMode ? "is-active" : ""}`}
+                role="menuitemcheckbox"
+                aria-checked={state.composer.goalMode}
                 onClick={() => {
                   actions.setComposerGoalMode(!state.composer.goalMode);
                   setMenuOpen(false);
@@ -403,6 +415,7 @@ export function FloatingComposer({
             aria-label={t("composer.model")}
             aria-expanded={pickerOpen}
             aria-haspopup="dialog"
+            aria-controls={COMPOSER_MODEL_PICKER_POPOVER_ID}
             onClick={() => {
               setPickerOpen((value) => !value);
               setMenuOpen(false);
@@ -413,6 +426,7 @@ export function FloatingComposer({
           </button>
           {pickerOpen ? (
             <FloatingComposerModelPicker
+              id={COMPOSER_MODEL_PICKER_POPOVER_ID}
               profiles={state.modelProfiles?.profiles ?? []}
               selectedModel={state.composer.model}
               selectedProfileId={state.composer.modelProfileId}

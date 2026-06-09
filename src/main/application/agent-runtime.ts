@@ -313,7 +313,10 @@ export class AgentRuntime {
 
   async interruptTurn(turnId: string): Promise<void> {
     const turn = this.inFlight.get(turnId);
-    if (!turn) return;
+    if (!turn) {
+      throw new Error(`Turn ${turnId} is not in flight.`);
+    }
+    if (turn.status === "interrupted") return;
     turn.status = "interrupted";
     await this.interruptActiveToolExecutionsForTurn(turn);
     await this.resolvePendingApprovalsForTurn(turnId, "deny");

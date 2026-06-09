@@ -89,6 +89,25 @@ describe("turn handlers", () => {
     expect(runtime.interruptTurn).not.toHaveBeenCalled();
   });
 
+  it("returns an error envelope when runtime rejects an interrupt request", async () => {
+    const runtime = createRuntime();
+    vi.mocked(runtime.interruptTurn).mockRejectedValue(
+      new Error("Turn turn-1 is not in flight."),
+    );
+    registerTurnHandlers(runtime, createStore());
+    const handler = electronMock.handlers.get(TURN_INTERRUPT_CHANNEL);
+    if (!handler) throw new Error("Expected turn interrupt handler.");
+
+    const result = await handler({}, "turn-1");
+
+    expect(result).toEqual({
+      ok: false,
+      code: "TURN_INTERRUPT_FAILED",
+      message: "Turn turn-1 is not in flight.",
+    });
+    expect(runtime.interruptTurn).toHaveBeenCalledWith("turn-1");
+  });
+
   it("returns timeline items for a valid get request", async () => {
     const runtime = createRuntime();
     const userItem: Item = {

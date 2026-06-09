@@ -29,6 +29,7 @@ export class RuntimePreferencesStore {
   async update(update: RuntimePreferencesUpdate): Promise<RuntimePreferences> {
     const parsed = parseRuntimePreferencesUpdate(update);
     return this.configFile.update((state) => {
+      assertDefaultProfileReferencesExist(parsed, state);
       const preferences = mergeRuntimePreferences(state.runtimePreferences, parsed);
       const nextState: AppConfigState = {
         ...state,
@@ -36,5 +37,26 @@ export class RuntimePreferencesStore {
       };
       return { state: nextState, result: preferences };
     });
+  }
+}
+
+function assertDefaultProfileReferencesExist(
+  update: RuntimePreferencesUpdate,
+  state: AppConfigState,
+): void {
+  const profileIds = new Set(state.profiles.map((profile) => profile.id));
+  if (
+    update.codeDefaultModelProfileId !== undefined &&
+    update.codeDefaultModelProfileId !== null &&
+    !profileIds.has(update.codeDefaultModelProfileId)
+  ) {
+    throw new Error("codeDefaultModelProfileId must reference an existing model profile.");
+  }
+  if (
+    update.writeDefaultModelProfileId !== undefined &&
+    update.writeDefaultModelProfileId !== null &&
+    !profileIds.has(update.writeDefaultModelProfileId)
+  ) {
+    throw new Error("writeDefaultModelProfileId must reference an existing model profile.");
   }
 }

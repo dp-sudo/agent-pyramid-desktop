@@ -30,6 +30,7 @@ type FakeWorkerListener<K extends FakeWorkerEvent> = (
 
 class FakeWorker {
   readonly posted: WorkerInbound[] = [];
+  failNextPostMessage: Error | null = null;
   private readonly messageListeners = new Set<FakeWorkerListener<"message">>();
   private readonly errorListeners = new Set<FakeWorkerListener<"error">>();
   private readonly exitListeners = new Set<FakeWorkerListener<"exit">>();
@@ -45,6 +46,11 @@ class FakeWorker {
   }
 
   postMessage(message: WorkerInbound): void {
+    if (this.failNextPostMessage) {
+      const error = this.failNextPostMessage;
+      this.failNextPostMessage = null;
+      throw error;
+    }
     this.posted.push(message);
   }
 
@@ -129,6 +135,43 @@ describe("LlmWorkerPool", () => {
 
     await expect(promise).rejects.toThrow("LLM worker exited before completing request");
     expect(worker.listenerCount("message")).toBe(0);
+  });
+
+  it("cleans request state when posting the chat message fails", async () => {
+    const worker = new FakeWorker();
+    const pool = createPoolWithWorker(worker);
+    await pool.start();
+    const baselineExitListeners = worker.listenerCount("exit");
+    worker.failNextPostMessage = new Error("worker port is closed");
+
+    const failed = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+
+    await expect(failed).rejects.toMatchObject({
+      name: "LlmWorkerError",
+      code: "worker_crashed",
+      message: "worker port is closed",
+    });
+    expect(worker.listenerCount("message")).toBe(0);
+    expect(worker.listenerCount("error")).toBe(1);
+    expect(worker.listenerCount("exit")).toBe(baselineExitListeners);
+    pool.cancel("thread-1");
+    expect(worker.posted).toEqual([]);
+
+    const recovered = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+    const chat = worker.posted[0];
+    if (chat.type !== "chat") throw new Error("Expected recovered chat message.");
+    worker.emit("message", {
+      kind: "done",
+      requestId: chat.requestId,
+      response: {
+        text: "recovered",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    } satisfies WorkerOutbound);
+
+    await expect(recovered).resolves.toMatchObject({ text: "recovered" });
   });
 
   it("replaces exited workers and clears stale thread affinity", async () => {

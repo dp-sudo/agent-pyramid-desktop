@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
   getActiveThreadInFlightTurn,
@@ -6,12 +6,14 @@ import {
   useWorkbench,
   type WorkbenchActions,
   type WorkbenchRoute,
+  type WorkbenchState,
 } from "./store/WorkbenchContext";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { WorkbenchTopBar } from "./components/topbar/WorkbenchTopBar";
 import { FloatingComposer } from "./components/composer/FloatingComposer";
 import { MessageTimeline } from "./components/chat/MessageTimeline";
 import { PendingApprovalPanel } from "./components/chat/PendingApprovalPanel";
+import type { ApprovalPendingDecision } from "./components/chat/ChatBlock";
 import { RightInspector } from "./components/inspector/RightInspector";
 import {
   WriteWorkspaceView,
@@ -23,6 +25,7 @@ import {
 } from "./preferences";
 import {
   err,
+  type Item,
   type IpcResult,
   type RuntimeEvent,
   type RuntimeErrorEvent,
@@ -41,6 +44,10 @@ export function Workbench(): ReactElement {
   const selectThreadRequestRef = useRef(0);
   const sendInProgressRef = useRef(false);
   const subscribedThreadIdsRef = useRef(new Set<string>());
+  const pendingApprovalResponsesRef = useRef<Record<string, ApprovalPendingDecision>>({});
+  const [pendingApprovalResponses, setPendingApprovalResponses] = useState<
+    Record<string, ApprovalPendingDecision>
+  >({});
   const activeThreadArchived = state.activeThread?.status === "archived";
   const activeThreadInFlightTurn = getActiveThreadInFlightTurn(state);
   const codeThreads = filterThreadsForWorkbench(state.threads, "code");
@@ -52,6 +59,16 @@ export function Workbench(): ReactElement {
   useEffect(() => {
     workspaceRootRef.current = state.workspaceRoot;
   }, [state.workspaceRoot]);
+
+  useEffect(() => {
+    const nextPending = clearResolvedApprovalResponses(
+      pendingApprovalResponsesRef.current,
+      state.items,
+    );
+    if (nextPending === pendingApprovalResponsesRef.current) return;
+    pendingApprovalResponsesRef.current = nextPending;
+    setPendingApprovalResponses(nextPending);
+  }, [state.items]);
 
   // Load thread list on mount.
   useEffect(() => {
@@ -448,7 +465,7 @@ export function Workbench(): ReactElement {
           text: sendPayload.text,
           displayText: sendPayload.displayText,
           model: state.composer.model,
-          modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
+          modelProfileId: explicitComposerModelProfileId(state.composer),
           reasoningEffort:
             state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
           attachmentIds: state.composer.attachmentIds,
@@ -472,7 +489,6 @@ export function Workbench(): ReactElement {
     state.activeThreadId,
     state.composer,
     state.modelConfig,
-    state.modelProfiles,
     state.route,
     activeThreadArchived,
     actions,
@@ -531,7 +547,7 @@ export function Workbench(): ReactElement {
             text: sendPayload.text,
             displayText: sendPayload.displayText,
             model: state.composer.model,
-            modelProfileId: state.composer.modelProfileId ?? state.modelProfiles?.activeProfileId,
+            modelProfileId: explicitComposerModelProfileId(state.composer),
             reasoningEffort:
               state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
             attachmentIds: [],
@@ -554,9 +570,9 @@ export function Workbench(): ReactElement {
       state.activeThreadId,
       state.composer.model,
       state.composer.modelProfileId,
+      state.composer.modelProfileSelection,
       state.composer.reasoningEffort,
       state.modelConfig.model_reasoning_effort,
-      state.modelProfiles,
       activeThreadArchived,
       actions,
       ensureWorkspaceRoot,
@@ -580,6 +596,14 @@ export function Workbench(): ReactElement {
 
   const onApprove = useCallback(
     async (approvalId: string, decision: "allow" | "deny") => {
+      const nextPending = beginPendingApprovalResponse(
+        pendingApprovalResponsesRef.current,
+        approvalId,
+        decision,
+      );
+      if (!nextPending) return;
+      pendingApprovalResponsesRef.current = nextPending;
+      setPendingApprovalResponses(nextPending);
       const result = await runWorkbenchIpc(() =>
         window.agentApi.approvals.respond({ approvalId, decision }),
       );
@@ -587,6 +611,10 @@ export function Workbench(): ReactElement {
         actions.setError(null);
       } else {
         actions.setError(result.message);
+        const { [approvalId]: _removed, ...rest } = pendingApprovalResponsesRef.current;
+        void _removed;
+        pendingApprovalResponsesRef.current = rest;
+        setPendingApprovalResponses(rest);
       }
     },
     [actions],
@@ -696,10 +724,16 @@ export function Workbench(): ReactElement {
             </div>
             <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
               <div className="ds-chat-column-inset" style={{ display: "flex", flex: 1, flexDirection: "column", minHeight: 0 }}>
-                <MessageTimeline onApprove={onApprove} />
+                <MessageTimeline
+                  onApprove={onApprove}
+                  pendingApprovalResponses={pendingApprovalResponses}
+                />
                 <div style={{ padding: "0 0 12px", display: "flex", justifyContent: "center" }}>
                   <div style={{ width: "min(100%, 720px)" }}>
-                    <PendingApprovalPanel onApprove={onApprove} />
+                    <PendingApprovalPanel
+                      onApprove={onApprove}
+                      pendingApprovalResponses={pendingApprovalResponses}
+                    />
                     <FloatingComposer
                       onSend={onSend}
                       onInterrupt={() => void onInterrupt()}
@@ -762,6 +796,40 @@ export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): str
     .filter((result) => !result.ok)
     .map((result) => result.message);
   return messages.length > 0 ? messages.join("\n") : null;
+}
+
+export function beginPendingApprovalResponse(
+  current: Record<string, ApprovalPendingDecision>,
+  approvalId: string,
+  decision: Exclude<ApprovalPendingDecision, null>,
+): Record<string, ApprovalPendingDecision> | null {
+  if (current[approvalId]) return null;
+  return {
+    ...current,
+    [approvalId]: decision,
+  };
+}
+
+export function clearResolvedApprovalResponses(
+  current: Record<string, ApprovalPendingDecision>,
+  items: readonly Item[],
+): Record<string, ApprovalPendingDecision> {
+  let next: Record<string, ApprovalPendingDecision> | null = null;
+  for (const item of items) {
+    if (
+      item.kind !== "approval" ||
+      item.decision === undefined ||
+      current[item.approvalId] === undefined
+    ) {
+      continue;
+    }
+    const source: Record<string, ApprovalPendingDecision> = next ?? current;
+    const { [item.approvalId]: _removed, ...rest }: Record<string, ApprovalPendingDecision> =
+      source;
+    void _removed;
+    next = rest;
+  }
+  return next ?? current;
 }
 
 export async function runWorkbenchIpc<T>(
@@ -846,6 +914,14 @@ export function applyWorkbenchRuntimeEvent(
 
 export function workbenchThreadModeForRoute(route: WorkbenchRoute): ThreadRecord["mode"] {
   return route === "write" ? "write" : "code";
+}
+
+export function explicitComposerModelProfileId(
+  composer: WorkbenchState["composer"],
+): string | undefined {
+  return composer.modelProfileSelection === "explicit"
+    ? composer.modelProfileId
+    : undefined;
 }
 
 export function findLatestThreadForWorkspace(

@@ -1,6 +1,9 @@
 import {
   Children,
   isValidElement,
+  useEffect,
+  useId,
+  useRef,
   useState,
   type ComponentPropsWithoutRef,
   type ReactElement,
@@ -103,6 +106,24 @@ function CodeBlock({
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const shouldStartCollapsed = isCodeBlockCollapsedByDefault(code);
   const [collapsed, setCollapsed] = useState(shouldStartCollapsed);
+  const [userControlledCollapsed, setUserControlledCollapsed] = useState(false);
+  const copyResetTimerRef = useRef<number | null>(null);
+  const codeContentId = useId();
+  const copyLabel = t("chat.copyCode");
+
+  useEffect(() => {
+    setCollapsed((current) =>
+      resolveNextCodeBlockCollapsedState({
+        currentCollapsed: current,
+        defaultCollapsed: shouldStartCollapsed,
+        userControlled: userControlledCollapsed,
+      }),
+    );
+  }, [shouldStartCollapsed, userControlledCollapsed]);
+
+  useEffect(() => {
+    return () => clearCopyResetTimer(copyResetTimerRef);
+  }, []);
 
   async function copyCode(): Promise<void> {
     try {
@@ -111,11 +132,20 @@ function CodeBlock({
       }
       await navigator.clipboard.writeText(code);
       setCopyState("copied");
-      window.setTimeout(() => setCopyState("idle"), 1600);
+      resetCopyStateLater();
     } catch (error) {
       console.warn("[chat] failed to copy code block:", error);
       setCopyState("failed");
+      resetCopyStateLater();
     }
+  }
+
+  function resetCopyStateLater(): void {
+    clearCopyResetTimer(copyResetTimerRef);
+    copyResetTimerRef.current = window.setTimeout(() => {
+      copyResetTimerRef.current = null;
+      setCopyState("idle");
+    }, 1600);
   }
 
   return (
@@ -126,13 +156,22 @@ function CodeBlock({
           {shouldStartCollapsed ? (
             <button
               type="button"
+              aria-controls={codeContentId}
               aria-expanded={!collapsed}
-              onClick={() => setCollapsed((current) => !current)}
+              onClick={() => {
+                setUserControlledCollapsed(true);
+                setCollapsed((current) => !current);
+              }}
             >
               {collapsed ? t("chat.expandCode") : t("chat.collapseCode")}
             </button>
           ) : null}
-          <button type="button" onClick={() => void copyCode()}>
+          <button
+            type="button"
+            aria-label={copyLabel}
+            title={copyLabel}
+            onClick={() => void copyCode()}
+          >
             {copyState === "copied"
               ? t("chat.copyCodeDone")
               : copyState === "failed"
@@ -141,13 +180,37 @@ function CodeBlock({
           </button>
         </div>
       </div>
-      <pre {...preProps}>{children}</pre>
+      <pre {...preProps} id={codeContentId}>{children}</pre>
     </div>
   );
 }
 
 export function isCodeBlockCollapsedByDefault(code: string): boolean {
   return countCodeLines(code) > COLLAPSED_CODE_BLOCK_LINE_LIMIT;
+}
+
+export function resolveNextCodeBlockCollapsedState({
+  currentCollapsed,
+  defaultCollapsed,
+  userControlled,
+}: {
+  currentCollapsed: boolean;
+  defaultCollapsed: boolean;
+  userControlled: boolean;
+}): boolean {
+  if (!defaultCollapsed) return false;
+  return userControlled ? currentCollapsed : true;
+}
+
+export function shouldReplaceCopyResetTimer(timerId: number | null): timerId is number {
+  return timerId !== null;
+}
+
+function clearCopyResetTimer(timerRef: { current: number | null }): void {
+  const timerId = timerRef.current;
+  if (!shouldReplaceCopyResetTimer(timerId)) return;
+  window.clearTimeout(timerId);
+  timerRef.current = null;
 }
 
 function countCodeLines(code: string): number {

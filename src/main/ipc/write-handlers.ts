@@ -58,10 +58,12 @@ export function registerWriteHandlers(): void {
   ipcMain.handle(WRITE_PUT_CHANNEL, async (_event, request: unknown) => {
     try {
       const parsed = parseWritePutRequest(request);
-      const fullPath = await resolveWritePathForAccess(parsed.workspace, parsed.path, "write");
-      await fs.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.writeFile(fullPath, parsed.content, "utf8");
-      return ok({ path: parsed.path, bytes: Buffer.byteLength(parsed.content, "utf8") });
+      const bytes = await writeMarkdownFileContent(
+        parsed.workspace,
+        parsed.path,
+        parsed.content,
+      );
+      return ok({ path: parsed.path, bytes });
     } catch (error) {
       return err("WRITE_PUT_FAILED", messageOf(error));
     }
@@ -165,6 +167,21 @@ export async function readMarkdownFileContent(
     relativePath,
     "write.get path",
   );
+}
+
+export async function writeMarkdownFileContent(
+  workspace: string,
+  relativePath: string,
+  content: string,
+): Promise<number> {
+  const fullPath = await resolveWritePathForAccess(workspace, relativePath, "write");
+  await fs.mkdir(path.dirname(fullPath), { recursive: true });
+  const checkedFullPath = await resolveWritePathForAccess(workspace, relativePath, "write");
+  if (path.resolve(checkedFullPath) !== path.resolve(fullPath)) {
+    throw new Error(`Path changed before write: ${relativePath}`);
+  }
+  await fs.writeFile(fullPath, content, "utf8");
+  return Buffer.byteLength(content, "utf8");
 }
 
 export function completeMarkdownInline(request: WriteCompleteRequest): WriteCompleteResponse {

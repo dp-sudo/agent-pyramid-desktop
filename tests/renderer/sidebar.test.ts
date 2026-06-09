@@ -4,6 +4,7 @@ import {
   getThreadDeleteClickMode,
   getWorkbenchSwitchOptions,
   isThreadDeletePending,
+  prunePendingThreadDeleteId,
 } from "../../src/renderer/src/ui/components/sidebar/Sidebar";
 
 describe("Sidebar", () => {
@@ -18,6 +19,17 @@ describe("Sidebar", () => {
     expect(isThreadDeletePending("thread-1", "thread-1")).toBe(true);
     expect(isThreadDeletePending("thread-1", "thread-2")).toBe(false);
     expect(isThreadDeletePending(null, "thread-1")).toBe(false);
+  });
+
+  it("clears stale delete confirmation when the thread disappears", () => {
+    expect(
+      prunePendingThreadDeleteId("thread-1", [
+        { id: "thread-1" },
+        { id: "thread-2" },
+      ]),
+    ).toBe("thread-1");
+    expect(prunePendingThreadDeleteId("thread-3", [{ id: "thread-1" }])).toBeNull();
+    expect(prunePendingThreadDeleteId(null, [{ id: "thread-1" }])).toBeNull();
   });
 
   it("maps delete clicks to confirmation or immediate delete mode", () => {

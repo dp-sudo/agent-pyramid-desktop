@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { ApprovalPreview, FileDiffLine, Item } from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
@@ -10,9 +10,18 @@ interface ChatBlockProps {
   isLive?: boolean;
   nested?: boolean;
   onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  approvalPendingDecision?: ApprovalPendingDecision;
 }
 
-export function ChatBlock({ item, isLive, nested, onApprove }: ChatBlockProps): ReactElement {
+export type ApprovalPendingDecision = "allow" | "deny" | null;
+
+export function ChatBlock({
+  item,
+  isLive,
+  nested,
+  onApprove,
+  approvalPendingDecision,
+}: ChatBlockProps): ReactElement {
   const { t } = useTranslation();
   switch (item.kind) {
     case "user":
@@ -41,7 +50,14 @@ export function ChatBlock({ item, isLive, nested, onApprove }: ChatBlockProps): 
     case "tool":
       return <ToolBlock item={item} nested={nested} />;
     case "approval":
-      return <ApprovalBlock item={item} nested={nested} onApprove={onApprove} />;
+      return (
+        <ApprovalBlock
+          item={item}
+          nested={nested}
+          onApprove={onApprove}
+          pendingDecision={approvalPendingDecision ?? null}
+        />
+      );
     case "user_input":
       return (
         <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
@@ -99,12 +115,33 @@ function ReasoningBlock({
   nested?: boolean;
 }): ReactElement {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(() => isReasoningOpenByDefault(Boolean(isLive)));
+  const defaultOpen = isReasoningOpenByDefault(Boolean(isLive));
+  const [open, setOpen] = useState(defaultOpen);
+  const [userControlledOpen, setUserControlledOpen] = useState(false);
+
+  useEffect(() => {
+    setOpen((current) =>
+      resolveNextReasoningOpenState({
+        currentOpen: current,
+        defaultOpen,
+        userControlled: userControlledOpen,
+      }),
+    );
+  }, [defaultOpen, userControlledOpen]);
+
   return (
     <details
       className={`ds-process-entry ds-process-reasoning-entry ${nested ? "is-nested" : ""}`}
       open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+        if (!shouldRecordReasoningToggle({
+          currentOpen: open,
+          nextOpen,
+        })) return;
+        setUserControlledOpen(true);
+        setOpen(nextOpen);
+      }}
     >
       <summary className="ds-process-entry-summary">
         <span className="ds-process-entry-title">{t("chat.reasoningLabel")}</span>
@@ -120,18 +157,42 @@ export function isReasoningOpenByDefault(isLive: boolean): boolean {
   return isLive;
 }
 
+export function resolveNextReasoningOpenState({
+  currentOpen,
+  defaultOpen,
+  userControlled,
+}: {
+  currentOpen: boolean;
+  defaultOpen: boolean;
+  userControlled: boolean;
+}): boolean {
+  return userControlled ? currentOpen : defaultOpen;
+}
+
+export function shouldRecordReasoningToggle({
+  currentOpen,
+  nextOpen,
+}: {
+  currentOpen: boolean;
+  nextOpen: boolean;
+}): boolean {
+  return currentOpen !== nextOpen;
+}
+
 function ApprovalBlock({
   item,
   nested,
   onApprove,
+  pendingDecision,
 }: {
   item: Extract<Item, { kind: "approval" }>;
   nested?: boolean;
   onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  pendingDecision?: ApprovalPendingDecision;
 }): ReactElement {
   return (
     <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
-      <ApprovalCard item={item} onApprove={onApprove} />
+      <ApprovalCard item={item} onApprove={onApprove} pendingDecision={pendingDecision ?? null} />
     </div>
   );
 }
@@ -139,13 +200,14 @@ function ApprovalBlock({
 export function ApprovalCard({
   item,
   onApprove,
+  pendingDecision = null,
 }: {
   item: Extract<Item, { kind: "approval" }>;
   onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  pendingDecision?: ApprovalPendingDecision;
 }): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
-  const [pendingDecision, setPendingDecision] = useState<"allow" | "deny" | null>(null);
   const canRespond = canRespondToApproval(item.decision, pendingDecision, Boolean(onApprove));
   const statusText = approvalStatusText(item.decision, pendingDecision, t);
   const showDiffByDefault =
@@ -153,12 +215,7 @@ export function ApprovalCard({
 
   async function respond(decision: "allow" | "deny"): Promise<void> {
     if (!canRespond || !onApprove) return;
-    setPendingDecision(decision);
-    try {
-      await onApprove(item.approvalId, decision);
-    } finally {
-      setPendingDecision(null);
-    }
+    await onApprove(item.approvalId, decision);
   }
 
   return (
@@ -225,8 +282,33 @@ function FileDiffPreviewBlock({
   defaultOpen: boolean;
 }): ReactElement {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(defaultOpen);
+  const [userControlledOpen, setUserControlledOpen] = useState(false);
+
+  useEffect(() => {
+    setOpen((current) =>
+      resolveNextApprovalDiffOpenState({
+        currentOpen: current,
+        defaultOpen,
+        userControlled: userControlledOpen,
+      }),
+    );
+  }, [defaultOpen, userControlledOpen]);
+
   return (
-    <details className="ds-diff-preview" open={defaultOpen}>
+    <details
+      className="ds-diff-preview"
+      open={open}
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+        if (!shouldRecordApprovalDiffToggle({
+          currentOpen: open,
+          nextOpen,
+        })) return;
+        setUserControlledOpen(true);
+        setOpen(nextOpen);
+      }}
+    >
       <summary className="ds-diff-preview-header">
         <span>{preview.path}</span>
         <span>
@@ -240,6 +322,28 @@ function FileDiffPreviewBlock({
       </div>
     </details>
   );
+}
+
+export function resolveNextApprovalDiffOpenState({
+  currentOpen,
+  defaultOpen,
+  userControlled,
+}: {
+  currentOpen: boolean;
+  defaultOpen: boolean;
+  userControlled: boolean;
+}): boolean {
+  return userControlled ? currentOpen : defaultOpen;
+}
+
+export function shouldRecordApprovalDiffToggle({
+  currentOpen,
+  nextOpen,
+}: {
+  currentOpen: boolean;
+  nextOpen: boolean;
+}): boolean {
+  return currentOpen !== nextOpen;
 }
 
 function DiffLine({ line }: { line: FileDiffLine }): ReactElement {

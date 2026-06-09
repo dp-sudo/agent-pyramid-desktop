@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { isRuntimeEvent } from "../shared/agent-contracts";
 import type {
   AttachmentCreateRequest,
   AttachmentDeleteResponse,
@@ -124,7 +125,11 @@ const turns = {
 type SseListener = (event: RuntimeEvent) => void;
 const sseListeners = new Set<SseListener>();
 
-ipcRenderer.on(SSE_PUSH_CHANNEL, (_event: IpcRendererEvent, payload: RuntimeEvent) => {
+ipcRenderer.on(SSE_PUSH_CHANNEL, (_event: IpcRendererEvent, payload: unknown) => {
+  if (!isRuntimeEvent(payload)) {
+    console.warn("[preload] dropped invalid runtime event payload.");
+    return;
+  }
   for (const listener of sseListeners) {
     listener(payload);
   }

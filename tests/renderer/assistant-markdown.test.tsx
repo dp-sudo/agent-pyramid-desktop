@@ -6,6 +6,8 @@ import {
   extractCodeText,
   isCodeBlockCollapsedByDefault,
   normalizeMarkdownHref,
+  resolveNextCodeBlockCollapsedState,
+  shouldReplaceCopyResetTimer,
 } from "../../src/renderer/src/ui/components/chat/AssistantMarkdown";
 
 describe("AssistantMarkdown", () => {
@@ -32,7 +34,9 @@ describe("AssistantMarkdown", () => {
     expect(html).toContain("rel=\"noreferrer\"");
     expect(html).toContain("class=\"ds-code-block\"");
     expect(html).toContain("class=\"ds-code-block-header\"><span>ts</span>");
-    expect(html).toContain("<button type=\"button\">chat.copyCode</button>");
+    expect(html).toContain(
+      "<button type=\"button\" aria-label=\"chat.copyCode\" title=\"chat.copyCode\">chat.copyCode</button>",
+    );
     expect(html).toContain("class=\"ds-markdown-table-wrap\"");
     expect(html).toContain("class=\"ds-markdown-task-checkbox");
   });
@@ -47,8 +51,43 @@ describe("AssistantMarkdown", () => {
     expect(isCodeBlockCollapsedByDefault("short\ncode")).toBe(false);
     expect(html).toContain("class=\"ds-code-block is-collapsed\"");
     expect(html).toContain("aria-expanded=\"false\"");
+    const controlsMatch = /aria-controls="([^"]+)"/.exec(html);
+    const preIdMatch = /<pre[^>]* id="([^"]+)"/.exec(html);
+    if (!controlsMatch || !preIdMatch) {
+      throw new Error(`Expected collapsed code block control and pre id in: ${html}`);
+    }
+    expect(controlsMatch[1]).toBe(preIdMatch[1]);
     expect(html).toContain("chat.expandCode");
     expect(html).toContain("chat.copyCode");
+  });
+
+  it("updates code block collapse state only while the user has not overridden it", () => {
+    expect(
+      resolveNextCodeBlockCollapsedState({
+        currentCollapsed: false,
+        defaultCollapsed: true,
+        userControlled: false,
+      }),
+    ).toBe(true);
+    expect(
+      resolveNextCodeBlockCollapsedState({
+        currentCollapsed: false,
+        defaultCollapsed: true,
+        userControlled: true,
+      }),
+    ).toBe(false);
+    expect(
+      resolveNextCodeBlockCollapsedState({
+        currentCollapsed: true,
+        defaultCollapsed: false,
+        userControlled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("replaces only pending code-copy reset timers", () => {
+    expect(shouldReplaceCopyResetTimer(null)).toBe(false);
+    expect(shouldReplaceCopyResetTimer(1)).toBe(true);
   });
 
   it("extracts only code text from a code block node tree", () => {

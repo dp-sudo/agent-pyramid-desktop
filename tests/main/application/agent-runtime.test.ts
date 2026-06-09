@@ -3078,6 +3078,46 @@ describe("AgentRuntime", () => {
     ).toBe(false);
   });
 
+  it("rejects interrupt requests for turns that are not in flight", async () => {
+    const runtime = createRuntime();
+
+    await expect(runtime.interruptTurn("missing-turn")).rejects.toThrow(
+      "Turn missing-turn is not in flight.",
+    );
+  });
+
+  it("keeps repeated interrupts for the same in-flight turn idempotent", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.delayMs = 30;
+    fakePool.rejectCanceledThreads = true;
+    const runtime = createRuntime();
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Long run",
+    });
+
+    const firstInterrupt = runtime.interruptTurn(turn.id);
+    const secondInterrupt = runtime.interruptTurn(turn.id);
+    await Promise.all([firstInterrupt, secondInterrupt]);
+    await waitFor(() => !runtime.isThreadInFlight(thread.id) && fakePool.activeChats === 0);
+
+    expect(fakePool.canceledThreads).toEqual([thread.id]);
+    expect(events.filter((event) =>
+      event.kind === "item_appended" &&
+      event.item.kind === "system" &&
+      event.item.text === "Interrupted by user"
+    )).toHaveLength(1);
+    expect(events.filter((event) =>
+      event.kind === "turn_completed" &&
+      event.turnId === turn.id &&
+      event.status === "interrupted"
+    )).toHaveLength(1);
+  });
+
   it("persists truncated streamed output before emitting interrupted completion", async () => {
     const thread = await store.createThread({
       title: "Runtime",

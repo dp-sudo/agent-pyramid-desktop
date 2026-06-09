@@ -109,8 +109,11 @@ export class AttachmentStore {
       if (next.length === all.length) {
         throw new Error(`Attachment ${id} not found.`);
       }
-      await this.atomicWriteJson(next);
+      // Keep the index as the retry handle until the blob is gone. If the
+      // filesystem delete fails, callers can retry the same attachment id
+      // instead of leaving an unreachable orphan file.
       await fs.rm(this.attachmentPath(id), { force: true });
+      await this.atomicWriteJson(next);
     });
   }
 

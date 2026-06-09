@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { getInspectorToggleLabel } from "../../src/renderer/src/ui/components/topbar/WorkbenchTopBar";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { RIGHT_INSPECTOR_REGION_ID } from "../../src/renderer/src/ui/components/inspector/RightInspector";
+import {
+  getInspectorToggleLabel,
+  isInspectorExpanded,
+  WorkbenchTopBar,
+} from "../../src/renderer/src/ui/components/topbar/WorkbenchTopBar";
+import { WorkbenchProvider } from "../../src/renderer/src/ui/store/WorkbenchContext";
 
 describe("WorkbenchTopBar helpers", () => {
   it("shows an open label before the inspector is visible", () => {
@@ -10,6 +18,22 @@ describe("WorkbenchTopBar helpers", () => {
     expect(getInspectorToggleLabel("changes", testT)).toBe("Close");
     expect(getInspectorToggleLabel("todo", testT)).toBe("Close");
     expect(getInspectorToggleLabel("plan", testT)).toBe("Close");
+  });
+
+  it("derives the Inspector toggle expansion state from the panel mode", () => {
+    expect(isInspectorExpanded(null)).toBe(false);
+    expect(isInspectorExpanded("changes")).toBe(true);
+    expect(isInspectorExpanded("todo")).toBe(true);
+    expect(isInspectorExpanded("plan")).toBe(true);
+  });
+
+  it("wires topbar Inspector controls to the controlled panel region", () => {
+    const html = renderToStaticMarkup(
+      createElement(WorkbenchProvider, null, createElement(WorkbenchTopBar)),
+    );
+
+    expect(html).toContain(`aria-controls="${RIGHT_INSPECTOR_REGION_ID}"`);
+    expect(html).toContain("aria-expanded=\"false\"");
   });
 });
 

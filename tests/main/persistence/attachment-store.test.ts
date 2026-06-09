@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../../src/main/persistence/attachment-store";
 import { MAX_ATTACHMENT_BYTES } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
@@ -18,6 +18,7 @@ describe("AttachmentStore", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await removeTempDir(userDataDir);
   });
 
@@ -144,6 +145,34 @@ describe("AttachmentStore", () => {
 
     const entries = await fs.readdir(path.join(userDataDir, "attachments"));
     expect(entries.filter((entry) => entry.endsWith(".bin"))).toEqual([]);
+  });
+
+  it("keeps the index entry when blob deletion fails so cleanup can be retried", async () => {
+    const record = await store.create({
+      name: "avatar.png",
+      mimeType: "image/png",
+      dataBase64: ONE_PIXEL_PNG_BASE64,
+    });
+    const realRm = fs.rm.bind(fs);
+    let failNextBlobDelete = true;
+    vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
+      if (
+        failNextBlobDelete &&
+        typeof target === "string" &&
+        target.endsWith(`${record.id}.bin`)
+      ) {
+        failNextBlobDelete = false;
+        throw new Error("simulated blob delete failure");
+      }
+      return realRm(target, options);
+    });
+
+    await expect(store.delete(record.id)).rejects.toThrow("simulated blob delete failure");
+    await expect(store.list()).resolves.toEqual([record]);
+
+    await expect(store.delete(record.id)).resolves.toBeUndefined();
+    await expect(store.list()).resolves.toEqual([]);
+    await expect(store.get(record.id)).resolves.toBeNull();
   });
 
   it("rejects non-UUID attachment ids before resolving blob paths", async () => {

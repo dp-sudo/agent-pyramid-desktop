@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  canSubmitModelSettingsSection,
+  clearDeletedDefaultProfileReferences,
   filterSettingsSidebarItems,
   getDefaultCategoryForSection,
   isProfileDeletePending,
   isSettingsCategoryInSection,
+  mergeRuntimePreferencesUpdates,
   messageOfUnknownError,
+  prunePendingProfileDeleteId,
   shouldBlockSettingsNavigation,
+  shouldDisableModelProfileControls,
   shouldDisableRuntimePreferenceControls,
   toDefaultInspectorMode,
   toDefaultInspectorModeValue,
@@ -16,6 +21,7 @@ import {
 } from "../../src/renderer/src/ui/SettingsView";
 import {
   DEFAULT_MODEL_CONFIG,
+  DEFAULT_RUNTIME_PREFERENCES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
 } from "../../src/shared/agent-contracts";
@@ -25,6 +31,17 @@ describe("SettingsView helpers", () => {
     expect(isProfileDeletePending("profile-1", "profile-1")).toBe(true);
     expect(isProfileDeletePending("profile-1", "profile-2")).toBe(false);
     expect(isProfileDeletePending(null, "profile-1")).toBe(false);
+  });
+
+  it("clears stale profile delete confirmation when the profile disappears", () => {
+    expect(
+      prunePendingProfileDeleteId("profile-1", [
+        { id: "profile-1" },
+        { id: "profile-2" },
+      ]),
+    ).toBe("profile-1");
+    expect(prunePendingProfileDeleteId("profile-3", [{ id: "profile-1" }])).toBeNull();
+    expect(prunePendingProfileDeleteId(null, [{ id: "profile-1" }])).toBeNull();
   });
 
   it("blocks profile-changing settings actions while dirty or failed with unsaved changes", () => {
@@ -125,6 +142,15 @@ describe("SettingsView helpers", () => {
       .toMatchObject({ protocol: "anthropic-compatible" });
   });
 
+  it("submits only model configuration categories through the Settings form", () => {
+    expect(canSubmitModelSettingsSection("model", "connection")).toBe(true);
+    expect(canSubmitModelSettingsSection("model", "context")).toBe(true);
+    expect(canSubmitModelSettingsSection("model", "reasoning")).toBe(true);
+    expect(canSubmitModelSettingsSection("model", "profiles")).toBe(false);
+    expect(canSubmitModelSettingsSection("tools", "commandLimits")).toBe(false);
+    expect(canSubmitModelSettingsSection("workbench", "modelDefaults")).toBe(false);
+  });
+
   it("validates command-limit drafts before runtime preference updates", () => {
     expect(validateRuntimeCommandDraft("timeoutMs", "", testT))
       .toEqual({ ok: true, value: null });
@@ -151,11 +177,101 @@ describe("SettingsView helpers", () => {
     expect(shouldDisableRuntimePreferenceControls(true, "error")).toBe(false);
   });
 
+  it("merges queued runtime preference updates without dropping nested controls", () => {
+    const first = mergeRuntimePreferencesUpdates(null, {
+      toolAvailability: {
+        code: { run_command: false },
+      },
+      approvalExperience: { showDiffByDefault: false },
+      command: { timeoutMs: 45_000 },
+      compaction: { enabled: false },
+    });
+
+    expect(mergeRuntimePreferencesUpdates(first, {
+      defaultApprovalPolicy: "never",
+      toolAvailability: {
+        code: { apply_patch: false },
+        write: { read_file: false },
+      },
+      approvalExperience: { autoScrollOnRequest: false },
+      command: { maxOutputBytes: 65_536 },
+      compaction: { strategy: "aggressive" },
+    })).toEqual({
+      defaultApprovalPolicy: "never",
+      toolAvailability: {
+        code: { run_command: false, apply_patch: false },
+        write: { read_file: false },
+      },
+      approvalExperience: {
+        showDiffByDefault: false,
+        autoScrollOnRequest: false,
+      },
+      command: {
+        timeoutMs: 45_000,
+        maxOutputBytes: 65_536,
+      },
+      compaction: {
+        enabled: false,
+        strategy: "aggressive",
+      },
+    });
+  });
+
+  it("lets later queued runtime preference updates override the same field", () => {
+    expect(mergeRuntimePreferencesUpdates({
+      defaultSandboxMode: "read-only",
+      toolAvailability: {
+        code: { run_command: false },
+      },
+    }, {
+      defaultSandboxMode: "danger-full-access",
+      toolAvailability: {
+        code: { run_command: true },
+      },
+    })).toEqual({
+      defaultSandboxMode: "danger-full-access",
+      toolAvailability: {
+        code: { run_command: true },
+        write: {},
+      },
+    });
+  });
+
+  it("disables model profile controls while profile state can be overwritten", () => {
+    expect(shouldDisableModelProfileControls(false, "idle", "")).toBe(true);
+    expect(shouldDisableModelProfileControls(true, "loading", "")).toBe(true);
+    expect(shouldDisableModelProfileControls(true, "saving", "")).toBe(true);
+    expect(shouldDisableModelProfileControls(true, "idle", "profile-1")).toBe(true);
+    expect(shouldDisableModelProfileControls(true, "dirty", "")).toBe(false);
+    expect(shouldDisableModelProfileControls(true, "error", "")).toBe(false);
+  });
+
   it("keeps rejected runtime preference IPC errors traceable", () => {
     expect(messageOfUnknownError(new Error("IPC channel failed"))).toBe("IPC channel failed");
     expect(messageOfUnknownError("renderer bridge unavailable")).toBe(
       "renderer bridge unavailable",
     );
+  });
+
+  it("clears local default profile references after deleting a model profile", () => {
+    const preferences = {
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      codeDefaultModelProfileId: "code-profile",
+      writeDefaultModelProfileId: "write-profile",
+    };
+
+    expect(clearDeletedDefaultProfileReferences(preferences, "write-profile"))
+      .toEqual({
+        ...preferences,
+        writeDefaultModelProfileId: null,
+      });
+    expect(clearDeletedDefaultProfileReferences(preferences, "code-profile"))
+      .toEqual({
+        ...preferences,
+        codeDefaultModelProfileId: null,
+      });
+    expect(clearDeletedDefaultProfileReferences(preferences, "other-profile"))
+      .toBe(preferences);
   });
 });
 
