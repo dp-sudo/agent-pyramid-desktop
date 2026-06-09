@@ -7,7 +7,6 @@ import {
   getWriteListState,
   shouldApplyWriteOpenResult,
   shouldDisableWriteSave,
-  shouldSaveWriteFileBeforeRouteChange,
   shouldSaveWriteFileBeforeSwitch,
   shouldWarnBeforeLeavingWriteDocument,
   shouldUseSelectedWriteWorkspace,
@@ -89,21 +88,6 @@ describe("WriteWorkspaceView helpers", () => {
       workspaceRoot: "",
       content: "draft",
       savedContent: "",
-    })).toBe(false);
-  });
-
-  it("requires a save before leaving the write route with a changed open file", () => {
-    expect(shouldSaveWriteFileBeforeRouteChange({
-      activePath: "notes.md",
-      workspaceRoot: "/workspace",
-      content: "draft",
-      savedContent: "",
-    })).toBe(true);
-    expect(shouldSaveWriteFileBeforeRouteChange({
-      activePath: "notes.md",
-      workspaceRoot: "/workspace",
-      content: "draft",
-      savedContent: "draft",
     })).toBe(false);
   });
 

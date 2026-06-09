@@ -64,6 +64,7 @@ interface ActiveToolExecution {
   item: ToolItem;
   controller?: AbortController;
   finalizedByInterrupt: boolean;
+  settled?: Promise<void>;
 }
 
 type NormalizedTurnStartRequest = Omit<TurnStartRequest, "attachmentIds"> & {
@@ -132,6 +133,7 @@ const MIN_PROGRESSIVE_COMPACTION_BYTES = 128;
 const TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4;
 const MIN_TEXT_COMPACTION_BYTES = 512;
 const MAX_PROGRESSIVE_COMPACTION_PASSES = 24;
+const ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS = 3_000;
 export const CODE_ONLY_TOOL_NAMES = [
   "edit_file",
   "write_file",
@@ -884,16 +886,21 @@ export class AgentRuntime {
 
       const controller = new AbortController();
       activeExecution.controller = controller;
+      const executionPromise = this.deps.registry.execute(call, {
+        threadId: turn.threadId,
+        turnId: turn.id,
+        workspace: thread.workspace,
+        signal: controller.signal,
+        readState: this.readState,
+        fileHistory: this.fileHistory,
+      });
+      activeExecution.settled = executionPromise.then(
+        () => undefined,
+        () => undefined,
+      );
       let content: AgentToolResult;
       try {
-        content = await this.deps.registry.execute(call, {
-          threadId: turn.threadId,
-          turnId: turn.id,
-          workspace: thread.workspace,
-          signal: controller.signal,
-          readState: this.readState,
-          fileHistory: this.fileHistory,
-        });
+        content = await executionPromise;
       } finally {
         activeExecution.controller = undefined;
       }
@@ -1161,8 +1168,12 @@ export class AgentRuntime {
   private async interruptActiveToolExecutionsForTurn(turn: TurnRecord): Promise<void> {
     const executions = this.activeToolExecutions.get(turn.id);
     if (!executions) return;
-    for (const execution of executions) {
+    const settling: Promise<void>[] = [];
+    for (const execution of [...executions]) {
       execution.controller?.abort();
+      if (execution.settled) {
+        settling.push(execution.settled);
+      }
       if (execution.item.status !== "running") continue;
       execution.finalizedByInterrupt = true;
       execution.item.status = "failed";
@@ -1179,6 +1190,15 @@ export class AgentRuntime {
         });
       }
       this.emitToolItemUpdated(turn, execution.item);
+    }
+    if (!await waitForInterruptedToolExecutions(settling)) {
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "internal",
+        message: "Timed out waiting for interrupted tools to settle.",
+      });
     }
   }
 
@@ -1460,6 +1480,23 @@ function parsePlanStep(value: unknown, index: number): PlanStep {
 
 function interruptedToolMessage(toolName: string): string {
   return toolName === "run_command" ? "Command was interrupted." : "Tool was interrupted.";
+}
+
+async function waitForInterruptedToolExecutions(
+  executions: Promise<void>[],
+): Promise<boolean> {
+  if (executions.length === 0) return true;
+  let timedOut = false;
+  await Promise.race([
+    Promise.all(executions),
+    new Promise<void>((resolve) => {
+      setTimeout(() => {
+        timedOut = true;
+        resolve();
+      }, ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS);
+    }),
+  ]);
+  return !timedOut;
 }
 
 function normalizeTurnStartRequest(request: unknown): NormalizedTurnStartRequest {

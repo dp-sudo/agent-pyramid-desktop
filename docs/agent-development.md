@@ -83,7 +83,17 @@
 - 扩展 `AgentRuntime` tool access policy：默认在 `mode: "write"` 线程中隐藏并拒绝 `edit_file`、`write_file`、`apply_patch`、`rollback_file`、`run_command`、`diagnose_workspace`、`diagnose_file`，强制 tool call 会在 approval/execution 前记录 failed `ToolItem` 和 `runtime_error(code: "tool_not_found")`。
 - 新增可配置权限入口：`createToolAccessPolicy()` 支持按 `code` / `write` mode 单独 allow 或 deny tool name；同一 mode/tool 同时 allow 与 deny 会在创建 policy 时失败；该层只控制 catalog/access，现有 approval 与 sandbox 策略仍在后续执行前生效。
 - 修复 Workbench 线程边界：发送路径按当前 route 创建 `mode: "code"` 或 `mode: "write"` thread；workspace 选择会优先选中同 workspace 且 mode 匹配的 active thread，Write route 选择工作区时会选择或创建 Write thread。
+- 闭合 Workbench route 隔离：Code route 侧栏只展示 Code threads；从 Write route 回到 Code route 时会清理不匹配的 active Write thread，避免 Code composer 继续向 Write thread 发送 turn。
+- 修复旧线程数据兼容：缺失 `mode` 的旧 `ThreadRecord` / `ThreadSummary` 在 store 边界归一化为 `code`，非法 mode 值仍明确失败，避免 Write/Code tool policy 拿到 `undefined`。
 - 修复 Write 编辑器状态越界：Markdown 文档编辑和 Tab 接受本地补全只更新 Write 本地文档状态，不再把全文写入全局 `composer.text`。
+- 加固 `update_goal` 工具输入：非字符串 `summary` 现在会失败并进入可见 tool error，不再在同时存在其他字段时被静默忽略。
+- 修复 Windows 命令中断：`run_command` 中断/超时时会终止 shell 子进程树，runtime 在 interrupted 终态前对已 abort 工具做有上限的 settle 等待，避免命令子进程继续占用 workspace。
+- 修复 TypeScript workspace diagnostics 测试脚本跨平台 quoting：测试内的 `typecheck` script 改用 `node` 启动本仓库解析出的 `tsc`，避免带空格的 Node 绝对路径在 Windows npm script 下被截断。
+- 加固 Write IPC 请求边界：`write.list/get/put/complete` 现在会在进入文件系统访问前校验请求对象和字符串字段，坏 payload 通过既有 `WRITE_*_FAILED` envelope 暴露明确错误。
+- 加固 turns IPC：`turn:interrupt` 现在要求非空字符串 turnId，坏 payload 返回 `TURN_INTERRUPT_FAILED`，避免 malformed request 被 runtime no-op 包装成成功；`turn:get` 要求非空字符串 threadId，坏 payload 返回 `TURN_GET_FAILED` 且不会进入 store replay。
+- 加固 attachments IPC：`attachment:create/get/delete` 现在会在进入 `AttachmentStore` 前校验请求对象和 id/string 字段，坏 payload 通过既有 `ATTACHMENT_*_FAILED` envelope 暴露且不会触发附件持久化初始化。
+- 修复 Anthropic-compatible 无工具请求兼容性：`MiniMaxGateway` 现在只在工具列表非空时发送 `tools` 与 `tool_choice: auto`，避免 no-tool chat 请求被兼容服务误判为工具调用请求。
+- 修复 Write workspace 绑定失败空错误：选择工作区时若无法选择或创建对应 Write thread，Write 状态栏会显示本地化失败原因；回调抛出的真实错误也会直接暴露。
 - 补充回归测试覆盖 runtime 默认隔离、策略覆盖放行、Write 强制 Code-only tool call 拒绝、route-aware thread helper 和 Write 文档状态隔离。
 - 验证方式：`npm run typecheck`、目标 Vitest；完整验证命令见本次实现记录。
 

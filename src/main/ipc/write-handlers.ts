@@ -30,30 +30,36 @@ const SKIPPED_DIRECTORIES = new Set([
 ]);
 
 export function registerWriteHandlers(): void {
-  ipcMain.handle(WRITE_LIST_CHANNEL, async (_event, request: WriteListRequest) => {
+  // Write IPC is a renderer file-service boundary, not an agent tool surface.
+  // Parse unknown payloads before filesystem access so bad requests fail with
+  // traceable envelope errors while path and Markdown policy stay in main.
+  ipcMain.handle(WRITE_LIST_CHANNEL, async (_event, request: unknown) => {
     try {
-      const files = await listMarkdownFiles(request.workspace, request.search ?? "");
+      const parsed = parseWriteListRequest(request);
+      const files = await listMarkdownFiles(parsed.workspace, parsed.search ?? "");
       return ok(files);
     } catch (error) {
       return err("WRITE_LIST_FAILED", messageOf(error));
     }
   });
 
-  ipcMain.handle(WRITE_GET_CHANNEL, async (_event, request: WriteGetRequest) => {
+  ipcMain.handle(WRITE_GET_CHANNEL, async (_event, request: unknown) => {
     try {
-      const content = await readMarkdownFileContent(request.workspace, request.path);
-      return ok({ path: request.path, content });
+      const parsed = parseWriteGetRequest(request);
+      const content = await readMarkdownFileContent(parsed.workspace, parsed.path);
+      return ok({ path: parsed.path, content });
     } catch (error) {
       return err("WRITE_GET_FAILED", messageOf(error));
     }
   });
 
-  ipcMain.handle(WRITE_PUT_CHANNEL, async (_event, request: WritePutRequest) => {
+  ipcMain.handle(WRITE_PUT_CHANNEL, async (_event, request: unknown) => {
     try {
-      const fullPath = await resolveWritePathForAccess(request.workspace, request.path, "write");
+      const parsed = parseWritePutRequest(request);
+      const fullPath = await resolveWritePathForAccess(parsed.workspace, parsed.path, "write");
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.writeFile(fullPath, request.content, "utf8");
-      return ok({ path: request.path, bytes: Buffer.byteLength(request.content, "utf8") });
+      await fs.writeFile(fullPath, parsed.content, "utf8");
+      return ok({ path: parsed.path, bytes: Buffer.byteLength(parsed.content, "utf8") });
     } catch (error) {
       return err("WRITE_PUT_FAILED", messageOf(error));
     }
@@ -61,15 +67,75 @@ export function registerWriteHandlers(): void {
 
   ipcMain.handle(
     WRITE_COMPLETE_CHANNEL,
-    async (_event, request: WriteCompleteRequest): Promise<{ ok: true; value: WriteCompleteResponse } | { ok: false; code: string; message: string }> => {
+    async (_event, request: unknown): Promise<{ ok: true; value: WriteCompleteResponse } | { ok: false; code: string; message: string }> => {
       try {
-        resolveWritePath(request.workspace, request.path);
-        return ok(completeMarkdownInline(request));
+        const parsed = parseWriteCompleteRequest(request);
+        resolveWritePath(parsed.workspace, parsed.path);
+        return ok(completeMarkdownInline(parsed));
       } catch (error) {
         return err("WRITE_COMPLETE_FAILED", messageOf(error));
       }
     },
   );
+}
+
+export function parseWriteListRequest(request: unknown): WriteListRequest {
+  const value = parseWriteRequestObject(request, "Write list request");
+  const workspace = requiredString(value.workspace, "Write list workspace must be a string.");
+  const search = optionalString(value.search, "Write list search must be a string.");
+  return {
+    workspace,
+    ...(search !== undefined ? { search } : {}),
+  };
+}
+
+export function parseWriteGetRequest(request: unknown): WriteGetRequest {
+  const value = parseWriteRequestObject(request, "Write get request");
+  return {
+    workspace: requiredString(value.workspace, "Write get workspace must be a string."),
+    path: requiredString(value.path, "Write get path must be a string."),
+  };
+}
+
+export function parseWritePutRequest(request: unknown): WritePutRequest {
+  const value = parseWriteRequestObject(request, "Write put request");
+  return {
+    workspace: requiredString(value.workspace, "Write put workspace must be a string."),
+    path: requiredString(value.path, "Write put path must be a string."),
+    content: requiredString(value.content, "Write put content must be a string."),
+  };
+}
+
+export function parseWriteCompleteRequest(request: unknown): WriteCompleteRequest {
+  const value = parseWriteRequestObject(request, "Write complete request");
+  return {
+    workspace: requiredString(value.workspace, "Write complete workspace must be a string."),
+    path: requiredString(value.path, "Write complete path must be a string."),
+    prefix: requiredString(value.prefix, "Write complete prefix must be a string."),
+    suffix: requiredString(value.suffix, "Write complete suffix must be a string."),
+  };
+}
+
+function parseWriteRequestObject(
+  request: unknown,
+  name: string,
+): Record<string, unknown> {
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    throw new Error(`${name} must be an object.`);
+  }
+  return request as Record<string, unknown>;
+}
+
+function requiredString(value: unknown, message: string): string {
+  if (typeof value !== "string") {
+    throw new Error(message);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, message: string): string | undefined {
+  if (value === undefined) return undefined;
+  return requiredString(value, message);
 }
 
 export async function resolveWritePathForAccess(

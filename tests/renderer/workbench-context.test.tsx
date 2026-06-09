@@ -4,6 +4,7 @@ import {
   getThreadInFlightTurn,
   INITIAL_STATE,
   reducer,
+  shouldDeselectActiveThreadForRoute,
   type WorkbenchState,
 } from "../../src/renderer/src/ui/store/WorkbenchContext";
 import { DEFAULT_BASIC_PREFERENCES } from "../../src/renderer/src/ui/preferences";
@@ -54,6 +55,29 @@ describe("WorkbenchContext reducer", () => {
     expect(fromWrite.lastWorkbenchRoute).toBe("write");
     expect(settings.lastWorkbenchRoute).toBe("write");
     expect(backToCode.lastWorkbenchRoute).toBe("code");
+  });
+
+  it("deselects active threads that do not match the target workbench route", () => {
+    const selectedWrite = reducer(
+      { ...INITIAL_STATE, route: "write" },
+      {
+        type: "selectThread",
+        thread: thread({ id: "write-thread", mode: "write" }),
+        items: [],
+      },
+    );
+
+    expect(shouldDeselectActiveThreadForRoute("code", selectedWrite.activeThread))
+      .toBe(true);
+    expect(shouldDeselectActiveThreadForRoute("settings", selectedWrite.activeThread))
+      .toBe(false);
+
+    const switchedToCode = reducer(selectedWrite, { type: "setRoute", route: "code" });
+
+    expect(switchedToCode.activeThread).toBeNull();
+    expect(switchedToCode.activeThreadId).toBeNull();
+    expect(switchedToCode.activeTurnId).toBeNull();
+    expect(switchedToCode.items).toEqual([]);
   });
 
   it("selects and removes active threads without leaving stale state", () => {

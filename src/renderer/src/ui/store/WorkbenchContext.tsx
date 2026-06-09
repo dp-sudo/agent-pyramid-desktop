@@ -139,6 +139,13 @@ function updateThreadSummaryActivity(
   return next.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
+export function shouldDeselectActiveThreadForRoute(
+  route: WorkbenchRoute,
+  thread: ThreadRecord | null,
+): boolean {
+  return isWorkbenchRoute(route) && thread !== null && thread.mode !== route;
+}
+
 export type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
   | { type: "setModelConfig"; config: ModelConfig }
@@ -190,6 +197,15 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
         lastWorkbenchRoute: isWorkbenchRoute(action.route)
           ? action.route
           : state.lastWorkbenchRoute,
+        ...(shouldDeselectActiveThreadForRoute(action.route, state.activeThread)
+          ? {
+              activeThread: null,
+              activeThreadId: null,
+              activeTurnId: null,
+              items: [],
+              rightPanelMode: null,
+            }
+          : {}),
       };
     case "setModelConfig":
       return {

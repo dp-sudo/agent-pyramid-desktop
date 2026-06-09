@@ -103,6 +103,8 @@ Important semantics:
 - `JsonlThreadStore.createThread()` defaults `status` to `active`.
 - `ThreadRecord.workspace` must be an absolute path; create rejects relative workspace input before writing `thread.json` or `index.json`.
 - Missing `status` in old thread records is normalized to `active`.
+- Missing `mode` in old thread records or summaries is normalized to `code`;
+  invalid stored mode values still fail instead of being silently accepted.
 - Thread list filters validate `includeArchived` and `archivedOnly` as booleans
   before applying status visibility rules.
 - Same-thread writes are serialized with a per-thread mutex.
@@ -423,6 +425,7 @@ rg "FieldName|fieldName" src tests docs
 Current compatibility examples:
 
 - Thread `status` missing from old records is normalized to `active`.
+- Thread `mode` missing from old records or summaries is normalized to `code`.
 - Model single-config format is normalized to `ModelConfigProfilesState`.
 - Malformed JSONL lines are skipped with a warning.
 

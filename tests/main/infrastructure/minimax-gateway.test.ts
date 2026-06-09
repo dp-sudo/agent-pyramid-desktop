@@ -65,6 +65,48 @@ describe("MiniMaxGateway", () => {
     });
   });
 
+  it("sends a minimal Anthropic-compatible request when no tools are present", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          content: [
+            { type: "text", text: "Done" },
+            { type: "thinking", thinking: "Thought" },
+          ],
+          usage: {
+            input_tokens: 1,
+            output_tokens: 2,
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await new MiniMaxGateway().complete({
+      ...baseRequest,
+      protocol: "anthropic-compatible",
+      baseUrl: "https://provider.example.test/anthropic",
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+
+    expect(url).toBe("https://provider.example.test/anthropic/v1/messages");
+    expect(body).toMatchObject({
+      model: "custom-model",
+      max_tokens: 256,
+      temperature: 0.2,
+    });
+    expect(body).not.toHaveProperty("tools");
+    expect(body).not.toHaveProperty("tool_choice");
+    expect(body).not.toHaveProperty("stream");
+    expect(response).toMatchObject({
+      text: "Done",
+      reasoning: "Thought",
+      usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+    });
+  });
+
   it("uses DeepSeek endpoint and maps xhigh reasoning effort to max", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
@@ -395,7 +437,9 @@ describe("MiniMaxGateway", () => {
     const [, init] = fetchMock.mock.calls[0];
     const body = JSON.parse(String(init?.body)) as {
       messages: Array<{ role: string; content: unknown }>;
-    };
+    } & Record<string, unknown>;
+    expect(body).not.toHaveProperty("tools");
+    expect(body).not.toHaveProperty("tool_choice");
     expect(body.messages[1]).toEqual({
       role: "user",
       content: [

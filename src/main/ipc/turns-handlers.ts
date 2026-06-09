@@ -28,8 +28,9 @@ export function registerTurnHandlers(
 
   ipcMain.handle(
     TURN_INTERRUPT_CHANNEL,
-    async (_event, turnId: string) => {
+    async (_event, request: unknown) => {
       try {
+        const turnId = parseTurnInterruptRequest(request);
         await runtime.interruptTurn(turnId);
         return ok({ turnId });
       } catch (error) {
@@ -38,8 +39,9 @@ export function registerTurnHandlers(
     },
   );
 
-  ipcMain.handle(TURN_GET_CHANNEL, async (_event, threadId: string) => {
+  ipcMain.handle(TURN_GET_CHANNEL, async (_event, request: unknown) => {
     try {
+      const threadId = parseTurnGetRequest(request);
       const byId = new Map<string, Item>();
       for await (const item of store.replayItems(threadId)) {
         byId.set(item.id, item);
@@ -50,6 +52,22 @@ export function registerTurnHandlers(
       return err("TURN_GET_FAILED", messageOf(error));
     }
   });
+}
+
+// Interrupt is a renderer IPC boundary: malformed payloads must fail visibly
+// instead of being treated as a no-op successful interrupt.
+export function parseTurnInterruptRequest(request: unknown): string {
+  if (typeof request !== "string" || !request.trim()) {
+    throw new Error("Turn interrupt requires a turnId string.");
+  }
+  return request.trim();
+}
+
+export function parseTurnGetRequest(request: unknown): string {
+  if (typeof request !== "string" || !request.trim()) {
+    throw new Error("Turn get requires a threadId string.");
+  }
+  return request.trim();
 }
 
 function messageOf(error: unknown): string {

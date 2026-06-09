@@ -53,7 +53,14 @@ export function WriteWorkspaceView({
       return null;
     }
     if (result.value.canceled || !result.value.path) return null;
-    if (!await shouldUseSelectedWriteWorkspace(result.value.path, onWorkspaceSelected)) {
+    try {
+      if (!await shouldUseSelectedWriteWorkspace(result.value.path, onWorkspaceSelected)) {
+        setErrorMessage(t("write.workspaceSelectionFailed"));
+        setStatus("error");
+        return null;
+      }
+    } catch (error) {
+      setErrorMessage(messageOf(error));
       setStatus("error");
       return null;
     }
@@ -518,10 +525,6 @@ export function shouldDisableWriteSave(input: WriteSaveStateInput): boolean {
 
 export function shouldSaveWriteFileBeforeSwitch(input: WriteDirtyDocumentInput): boolean {
   return Boolean(input.activePath && input.workspaceRoot && input.content !== input.savedContent);
-}
-
-export function shouldSaveWriteFileBeforeRouteChange(input: WriteDirtyDocumentInput): boolean {
-  return shouldSaveWriteFileBeforeSwitch(input);
 }
 
 export function shouldWarnBeforeLeavingWriteDocument(input: WriteDirtyDocumentInput): boolean {

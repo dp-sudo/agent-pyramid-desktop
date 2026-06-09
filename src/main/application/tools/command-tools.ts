@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import * as path from "node:path";
 import ts from "typescript";
 import type { AgentTool, AgentToolContext, AgentToolResult } from "../../domain/agent/types";
@@ -357,7 +357,9 @@ async function spawnWorkspaceCommand(
      */
     const killChild = (killSignal: NodeJS.Signals): void => {
       if (child.exitCode !== null || child.signalCode !== null) return;
-      if (child.pid && process.platform !== "win32") {
+      if (process.platform === "win32") {
+        killWindowsProcessTree(child, killSignal);
+      } else if (child.pid) {
         try {
           process.kill(-child.pid, killSignal);
         } catch (error) {
@@ -421,6 +423,24 @@ async function spawnWorkspaceCommand(
         stderr: stderr.finish(),
       });
     });
+  });
+}
+
+function killWindowsProcessTree(
+  child: ChildProcess,
+  fallbackSignal: NodeJS.Signals,
+): void {
+  if (!child.pid) {
+    child.kill(fallbackSignal);
+    return;
+  }
+  const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  killer.on("error", (error) => {
+    console.warn("[command-tools] taskkill failed; falling back to child.kill:", error);
+    child.kill(fallbackSignal);
   });
 }
 

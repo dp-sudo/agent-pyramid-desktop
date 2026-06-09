@@ -134,7 +134,8 @@ Purpose:
 - Pick/change workspace.
 - Display active workspace.
 - Toggle archived thread visibility.
-- Group threads by `workspace`.
+- Group Code threads by `workspace`; Write threads are managed inside the
+  Write workspace route and are not shown in the Code sidebar.
 - Select, archive, restore, and delete threads.
 - Open Settings route.
 - Switch quickly between Code and Write workbenches.
@@ -163,7 +164,9 @@ Thread row attributes:
 - Main button uses `aria-current="page"` when active.
 - Delete behavior depends on `basicPreferences.confirmThreadDelete`.
 - Footer workbench switch uses the existing `WorkbenchContext.actions.setRoute`
-  path for `code` / `write`; Settings remains a separate button.
+  path for `code` / `write`; switching to a workbench route clears an active
+  thread whose persisted `mode` does not match that route. Settings remains a
+  separate button.
 
 ### Topbar
 
@@ -442,7 +445,8 @@ Purpose:
 - Navigate to Settings.
 - Pick/open workspace and select or create a `mode: "write"` thread for that
   workspace before file listing starts; if thread selection fails, the Write
-  file list/editor state is not applied to that workspace.
+  file list/editor state is not applied to that workspace and the Write status
+  area surfaces the failure.
 - Refresh markdown file list.
 - Show active workspace.
 - Search markdown files.

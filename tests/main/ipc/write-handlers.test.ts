@@ -4,6 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   completeMarkdownInline,
   listMarkdownFiles,
+  parseWriteCompleteRequest,
+  parseWriteGetRequest,
+  parseWriteListRequest,
+  parseWritePutRequest,
   readMarkdownFileContent,
   resolveWritePathForAccess,
   resolveWritePath,
@@ -17,6 +21,54 @@ vi.mock("electron", () => ({
 }));
 
 describe("write handlers helpers", () => {
+  it("parses write IPC requests before file service access", () => {
+    expect(parseWriteListRequest({ workspace: "/workspace", search: "guide" }))
+      .toEqual({ workspace: "/workspace", search: "guide" });
+    expect(parseWriteGetRequest({ workspace: "/workspace", path: "notes.md" }))
+      .toEqual({ workspace: "/workspace", path: "notes.md" });
+    expect(parseWritePutRequest({
+      workspace: "/workspace",
+      path: "notes.md",
+      content: "# Notes\n",
+    })).toEqual({
+      workspace: "/workspace",
+      path: "notes.md",
+      content: "# Notes\n",
+    });
+    expect(parseWriteCompleteRequest({
+      workspace: "/workspace",
+      path: "notes.md",
+      prefix: "- first task",
+      suffix: "",
+    })).toEqual({
+      workspace: "/workspace",
+      path: "notes.md",
+      prefix: "- first task",
+      suffix: "",
+    });
+  });
+
+  it("rejects malformed write IPC requests with traceable messages", () => {
+    expect(() => parseWriteListRequest(null)).toThrow(
+      "Write list request must be an object.",
+    );
+    expect(() => parseWriteListRequest({ workspace: "/workspace", search: 1 }))
+      .toThrow("Write list search must be a string.");
+    expect(() => parseWriteGetRequest({ workspace: "/workspace", path: 1 }))
+      .toThrow("Write get path must be a string.");
+    expect(() => parseWritePutRequest({
+      workspace: "/workspace",
+      path: "notes.md",
+      content: Buffer.from("draft"),
+    })).toThrow("Write put content must be a string.");
+    expect(() => parseWriteCompleteRequest({
+      workspace: "/workspace",
+      path: "notes.md",
+      prefix: "- first task",
+      suffix: false,
+    })).toThrow("Write complete suffix must be a string.");
+  });
+
   it("lists markdown files while excluding skipped project and build directories", async () => {
     const workspace = await makeTempDir("write-handlers-");
     try {

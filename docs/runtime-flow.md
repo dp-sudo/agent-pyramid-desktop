@@ -279,7 +279,7 @@ Workspace tools require an absolute thread workspace path before resolving file 
 
 File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; it is not replayed from JSONL after restart.
 
-`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions.
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start.
 
 `diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
 
@@ -332,7 +332,7 @@ the active thread's unresolved approvals in a composer-adjacent pending
 approval panel, reusing the same diff preview and allow/deny controls so users
 do not have to scroll the timeline to unblock a turn.
 
-Interrupting a turn denies pending approvals for that turn and aborts active tool controllers. Command tools receive the abort signal and terminate the child process/process group before the turn is marked interrupted.
+Interrupting a turn denies pending approvals for that turn and aborts active tool controllers. Runtime waits briefly for already-started tool execution promises to settle before emitting the interrupted terminal event; if a tool ignores abort beyond that bounded wait, runtime emits a traceable `runtime_error` and continues the interrupt. Command tools receive the abort signal and terminate the child process/process group before the turn is marked interrupted.
 
 ## Interrupt Lifecycle
 
@@ -350,6 +350,7 @@ sequenceDiagram
   RT->>RT: set status = interrupted
   RT->>RT: abort active tool controllers
   RT->>Store: append failed ToolItem for running tools
+  RT->>RT: bounded wait for active tools to settle
   RT->>RT: deny pending approvals
   RT->>Pool: cancel(threadId)
   RT->>Store: append warning SystemItem

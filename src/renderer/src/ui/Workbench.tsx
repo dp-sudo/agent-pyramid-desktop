@@ -36,6 +36,7 @@ export function Workbench(): ReactElement {
   const subscribedThreadIdsRef = useRef(new Set<string>());
   const activeThreadArchived = state.activeThread?.status === "archived";
   const activeThreadInFlightTurn = getActiveThreadInFlightTurn(state);
+  const codeThreads = filterThreadsForWorkbench(state.threads, "code");
 
   useEffect(() => {
     activeThreadIdRef.current = state.activeThreadId;
@@ -512,7 +513,7 @@ export function Workbench(): ReactElement {
           style={{ width: state.leftSidebarWidth, flex: `0 0 ${state.leftSidebarWidth}px` }}
         >
           <Sidebar
-            threads={state.threads}
+            threads={codeThreads}
             activeView="code"
             onSelectThread={(id) => void onSelectThread(id)}
             onNewChat={() => void onNewChat()}
@@ -650,6 +651,13 @@ export function findLatestThreadForWorkspace(
       thread.workspace === workspace &&
       thread.status !== "archived",
   ) ?? null;
+}
+
+export function filterThreadsForWorkbench(
+  threads: readonly ThreadSummary[],
+  mode: ThreadRecord["mode"],
+): ThreadSummary[] {
+  return threads.filter((thread) => thread.mode === mode);
 }
 
 export function clampSidebarWidth(width: number): number {

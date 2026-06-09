@@ -48,7 +48,7 @@ function nodeCommand(script: string): string {
 }
 
 function tscCommand(project = "tsconfig.json"): string {
-  return `${JSON.stringify(process.execPath)} ${JSON.stringify(requireFromTest.resolve("typescript/bin/tsc"))} --noEmit -p ${project}`;
+  return `node ${JSON.stringify(requireFromTest.resolve("typescript/bin/tsc"))} --noEmit -p ${JSON.stringify(project)}`;
 }
 
 describe("application tools", () => {
@@ -182,6 +182,13 @@ describe("application tools", () => {
     await expect(
       goalTool.execute({ status: "done" }, { threadId: "thread-1", turnId: "turn-1" }),
     ).rejects.toThrow("goal status must be active, complete, or blocked.");
+
+    await expect(
+      goalTool.execute(
+        { status: "complete", summary: 123 },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).rejects.toThrow("summary must be a string.");
   });
 
   it("reads, lists, and searches workspace files without escaping the workspace", async () => {

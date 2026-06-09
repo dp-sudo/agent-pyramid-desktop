@@ -3,6 +3,7 @@ import { err, ok } from "../../src/shared/agent-contracts";
 import {
   buildComposerSendPayload,
   clampSidebarWidth,
+  filterThreadsForWorkbench,
   findLatestThreadForWorkspace,
   formatInitialLoadErrors,
   getNextSidebarWidth,
@@ -102,6 +103,18 @@ describe("Workbench", () => {
     expect(findLatestThreadForWorkspace(threads, "/workspace", "write")?.id).toBe("write-1");
     expect(findLatestThreadForWorkspace(threads, "/workspace", "code")?.id).toBe("code-1");
     expect(findLatestThreadForWorkspace(threads, "/missing", "write")).toBeNull();
+  });
+
+  it("keeps Code sidebar thread lists limited to Code threads", () => {
+    const threads = [
+      makeThreadSummary("code-1", "/workspace", "code", "2026-06-08T08:00:00.000Z"),
+      makeThreadSummary("write-1", "/workspace", "write", "2026-06-08T09:00:00.000Z"),
+    ];
+
+    expect(filterThreadsForWorkbench(threads, "code").map((thread) => thread.id))
+      .toEqual(["code-1"]);
+    expect(filterThreadsForWorkbench(threads, "write").map((thread) => thread.id))
+      .toEqual(["write-1"]);
   });
 });
 

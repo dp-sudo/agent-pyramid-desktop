@@ -272,6 +272,7 @@ export class JsonlThreadStore {
   private normalizeThreadRecord(record: ThreadRecord): ThreadRecord {
     return {
       ...record,
+      mode: normalizeStoredThreadMode(record.mode),
       status: record.status ?? "active",
     };
   }
@@ -279,6 +280,7 @@ export class JsonlThreadStore {
   private normalizeThreadSummary(summary: ThreadSummary): ThreadSummary {
     return {
       ...summary,
+      mode: normalizeStoredThreadMode(summary.mode),
       status: summary.status ?? "active",
     };
   }
@@ -463,6 +465,13 @@ function normalizeRelationFilter(value: unknown): ThreadRelation[] {
     throw new Error("include must be an array.");
   }
   return value.map((relation) => assertEnum(relation, THREAD_RELATIONS, "include"));
+}
+
+// Code/Write mode was added after early thread records existed; missing mode
+// replays as Code so legacy sessions keep the stricter Code tool boundary.
+function normalizeStoredThreadMode(value: unknown): ThreadRecord["mode"] {
+  if (value === undefined) return "code";
+  return assertEnum(value, THREAD_MODES, "mode");
 }
 
 function normalizeThreadPatch(patch: ThreadUpdatePatch): ThreadUpdatePatch {

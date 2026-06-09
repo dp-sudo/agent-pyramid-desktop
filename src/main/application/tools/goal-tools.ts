@@ -81,6 +81,9 @@ function parseGoalUpdate(input: Record<string, unknown>): {
   if ("status" in input) {
     update.status = parseGoalStatus(input.status);
   }
+  if ("summary" in input && typeof input.summary !== "string") {
+    throw new Error("summary must be a string.");
+  }
   if (typeof input.summary === "string" && input.summary.trim()) {
     update.summary = input.summary.trim();
   }

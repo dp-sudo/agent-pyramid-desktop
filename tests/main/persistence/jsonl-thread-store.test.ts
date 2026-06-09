@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JsonlThreadStore } from "../../../src/main/persistence/index";
-import type { Item, RuntimeEvent } from "../../../src/shared/agent-contracts";
+import type { Item, RuntimeEvent, ThreadRecord, ThreadSummary } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
 describe("JsonlThreadStore", () => {
@@ -137,6 +137,34 @@ describe("JsonlThreadStore", () => {
       updatedAt: item.createdAt,
     });
     expect(listed.map((thread) => thread.id)).toEqual([older.id, newer.id]);
+  });
+
+  it("normalizes legacy thread records and summaries without mode to code", async () => {
+    const thread = await store.createThread({
+      title: "Legacy",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const threadPath = path.join(userDataDir, "threads", thread.id, "thread.json");
+    const indexPath = path.join(userDataDir, "threads", "index.json");
+    const legacyRecord = JSON.parse(
+      await fs.readFile(threadPath, "utf8"),
+    ) as Partial<ThreadRecord>;
+    const legacyIndex = JSON.parse(
+      await fs.readFile(indexPath, "utf8"),
+    ) as Array<Partial<ThreadSummary>>;
+    delete legacyRecord.mode;
+    delete legacyIndex[0].mode;
+    await fs.writeFile(threadPath, JSON.stringify(legacyRecord, null, 2), "utf8");
+    await fs.writeFile(indexPath, JSON.stringify(legacyIndex, null, 2), "utf8");
+
+    await expect(store.getThread(thread.id)).resolves.toMatchObject({
+      id: thread.id,
+      mode: "code",
+    });
+    await expect(store.listThreads()).resolves.toEqual([
+      expect.objectContaining({ id: thread.id, mode: "code" }),
+    ]);
   });
 
   it("serializes concurrent appends for the same thread", async () => {

@@ -109,6 +109,11 @@ Notes:
   `text` must be string, `mode` must be `agent | plan`, `reasoningEffort` must
   be supported, `attachmentIds` must be `string[]`, and `goalMode` must be
   boolean.
+- `turn:interrupt` validates that the renderer payload is a non-empty string
+  before calling runtime; malformed payloads return `TURN_INTERRUPT_FAILED`.
+- `turn:get` validates that the renderer payload is a non-empty string
+  `threadId` before replaying store items; malformed payloads return
+  `TURN_GET_FAILED`.
 
 ### SSE Runtime Events
 
@@ -162,6 +167,9 @@ Notes:
 
 Notes:
 
+- Attachment IPC handlers validate request objects and id/string fields before
+  store access so malformed create/get/delete payloads return the existing
+  `ATTACHMENT_*_FAILED` envelope without touching persistence.
 - Store accepts only image mime types: PNG, JPEG, WebP, GIF.
 - Attachment data is stored as binary files, not in `UserItem.attachments`.
 
@@ -203,6 +211,9 @@ Notes:
 
 Notes:
 
+- Write IPC handlers validate request objects and string field types before
+  entering filesystem access, then return the existing `WRITE_*_FAILED`
+  envelope for malformed payloads.
 - `write.get` reads Markdown as strict UTF-8 and fails instead of returning replacement characters for invalid bytes.
 - `write.put` performs a plain UTF-8 file write after workspace path validation.
 

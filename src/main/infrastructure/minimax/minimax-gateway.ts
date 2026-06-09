@@ -85,20 +85,7 @@ export class MiniMaxGateway implements LlmGateway {
 
   private async completeAnthropicCompatible(request: LlmRequest): Promise<LlmResponse> {
     const anthropicRequest = toAnthropicRequestParts(request);
-    const body = {
-      model: request.model,
-      system: anthropicRequest.system,
-      messages: anthropicRequest.messages,
-      tools: normalizeToolDefinitions(request.tools).map(toAnthropicTool),
-      tool_choice: {
-        type: "auto"
-      },
-      temperature: request.temperature,
-      max_tokens: request.maxTokens,
-      thinking: {
-        type: request.thinking ? "adaptive" : "disabled"
-      }
-    };
+    const body = buildAnthropicCompatibleBody(request, anthropicRequest, false);
 
     const response = await postJson<AnthropicMessageResponse>(
       resolveEndpoint(request.baseUrl, ANTHROPIC_MESSAGES_PATH),
@@ -182,21 +169,7 @@ export class MiniMaxGateway implements LlmGateway {
     options: LlmStreamOptions
   ): AsyncIterable<LlmStreamChunk> {
     const anthropicRequest = toAnthropicRequestParts(request);
-    const body = {
-      model: request.model,
-      system: anthropicRequest.system,
-      messages: anthropicRequest.messages,
-      tools: normalizeToolDefinitions(request.tools).map(toAnthropicTool),
-      tool_choice: {
-        type: "auto"
-      },
-      temperature: request.temperature,
-      max_tokens: request.maxTokens,
-      stream: true,
-      thinking: {
-        type: request.thinking ? "adaptive" : "disabled"
-      }
-    };
+    const body = buildAnthropicCompatibleBody(request, anthropicRequest, true);
 
     const response = await postStream(
       resolveEndpoint(request.baseUrl, ANTHROPIC_MESSAGES_PATH),
@@ -599,6 +572,36 @@ function buildOpenAiCompatibleBody(
           stream: true
         }
       : {})
+  };
+}
+
+function buildAnthropicCompatibleBody(
+  request: LlmRequest,
+  anthropicRequest: {
+    system?: string;
+    messages: AnthropicMessage[];
+  },
+  stream: boolean
+): Record<string, unknown> {
+  const tools = normalizeToolDefinitions(request.tools).map(toAnthropicTool);
+  return {
+    model: request.model,
+    system: anthropicRequest.system,
+    messages: anthropicRequest.messages,
+    ...(tools.length > 0
+      ? {
+          tools,
+          tool_choice: {
+            type: "auto"
+          }
+        }
+      : {}),
+    temperature: request.temperature,
+    max_tokens: request.maxTokens,
+    ...(stream ? { stream: true } : {}),
+    thinking: {
+      type: request.thinking ? "adaptive" : "disabled"
+    }
   };
 }
 

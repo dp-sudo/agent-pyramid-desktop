@@ -72,6 +72,7 @@
     "clearSearch": "Clear search",
     "loadingFiles": "Loading Markdown files…",
     "noWorkspace": "Open a workspace first.",
+    "workspaceSelectionFailed": "Could not bind this workspace to a Write thread.",
     "emptyFiles": "No Markdown files in this workspace.",
     "emptySearch": "No Markdown files match \"{{search}}\".",
     "noActiveFile": "No file open"
