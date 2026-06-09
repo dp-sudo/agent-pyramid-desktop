@@ -14,6 +14,7 @@ export type SettingsCategory =
   | "toolAccess"
   | "commandLimits"
   | "modelDefaults"
+  | "attachments"
   | "approvalPresentation";
 
 export interface SettingsSidebarItem {

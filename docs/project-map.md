@@ -127,7 +127,7 @@ flowchart LR
 ```mermaid
 flowchart TD
   AppReady["app.whenReady()"]
-  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore\nRuntimePreferencesStore"]
+  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore\nRuntimePreferencesStore\n(shared userData/config)"]
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool"]
   Registry["InMemoryToolRegistry"]
@@ -196,8 +196,9 @@ flowchart TD
 - `update_goal` is only available in goal mode or when a thread has an active goal.
 - Model configuration profiles are persisted by `ModelConfigStore`; runtime
   receives only the selected `ModelConfig`.
-- Runtime preferences are persisted by `RuntimePreferencesStore`; runtime uses
-  them for thread-mode default profile selection and known-tool availability.
+- Runtime preferences are persisted by `RuntimePreferencesStore` in the same
+  `userData/config` file; runtime uses them for thread-mode default profile
+  selection and known-tool availability.
 
 ## Data Ownership
 
@@ -208,8 +209,8 @@ flowchart TD
 | Runtime events | `src/shared/agent-contracts.ts` | `JsonlThreadStore.events.jsonl` |
 | Attachment metadata | `src/shared/agent-contracts.ts` | `AttachmentStore.index.json` |
 | Attachment bytes | `AttachmentStore` | `attachments/<id>.bin` |
-| Model config profiles | `src/shared/agent-contracts.ts` | `ModelConfigStore` |
-| Runtime preferences | `src/shared/agent-contracts.ts` | `RuntimePreferencesStore` |
+| Model config profiles | `src/shared/agent-contracts.ts` | `ModelConfigStore` via `userData/config` |
+| Runtime preferences | `src/shared/agent-contracts.ts` | `RuntimePreferencesStore` via `userData/config` |
 | IPC channel names | `src/shared/ipc.ts` | Not persisted |
 | Renderer basic preferences | `src/renderer/src/ui/preferences.ts` | `localStorage` |
 | Supported locales | `src/shared/locale.ts` | Not persisted |
@@ -227,7 +228,7 @@ flowchart TD
 | Thread persistence | `tests/main/persistence/jsonl-thread-store.test.ts` |
 | Attachments | `tests/main/persistence/attachment-store.test.ts` |
 | Model config | `tests/main/persistence/model-config-store.test.ts` |
-| Runtime preferences | `tests/main/persistence/runtime-preferences-store.test.ts` |
+| Runtime preferences / shared config migration | `tests/main/persistence/runtime-preferences-store.test.ts` |
 | IPC handlers | `tests/main/ipc/*-handlers.test.ts` |
 | Renderer state/components | `tests/renderer/*.test.ts`、`tests/renderer/*.test.tsx` |
 

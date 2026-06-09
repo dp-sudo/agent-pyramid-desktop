@@ -47,6 +47,7 @@ flowchart LR
     Attachments["AttachmentStore"]
     Config["ModelConfigStore"]
     RuntimePrefs["RuntimePreferencesStore"]
+    AppConfig["AppConfigFile\nuserData/config"]
     WorkerPool["LlmWorkerPool"]
     WriteSvc["write-handlers"]
   end
@@ -73,19 +74,23 @@ flowchart LR
   IpcHandlers --> Threads
   IpcHandlers --> Attachments
   IpcHandlers --> Config
+  IpcHandlers --> RuntimePrefs
   IpcHandlers --> WriteSvc
   Runtime --> Registry
   Runtime --> Bus
   Runtime --> Threads
   Runtime --> Attachments
   Runtime --> Config
+  Runtime --> RuntimePrefs
   Runtime --> WorkerPool
+  Config --> AppConfig
+  RuntimePrefs --> AppConfig
   WorkerPool --> WorkerEntry
   WorkerEntry --> Gateway
   Gateway --> Providers
   Threads --> Filesystem
   Attachments --> Filesystem
-  Config --> Filesystem
+  AppConfig --> Filesystem
   WriteSvc --> Filesystem
   Bus --> IpcHandlers
   IpcHandlers -. "sse:push RuntimeEvent" .-> AgentApi
@@ -129,7 +134,7 @@ Security invariants:
 ```mermaid
 flowchart TD
   AppReady["app.whenReady()"]
-  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore\nRuntimePreferencesStore"]
+  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore\nRuntimePreferencesStore\n(shared AppConfigFile for config)"]
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool(1)"]
   Registry["InMemoryToolRegistry"]
@@ -298,7 +303,8 @@ Worker rules:
 - Worker exit clears stale thread affinity and creates a replacement worker.
 - Worker stream chunks become `LlmStreamChunk` events for runtime consumption.
 - Worker protocol errors keep their category through the pool and are mapped to
-  runtime errors such as `provider_http`, `schema_invalid`, and `worker_crashed`.
+  runtime errors such as `provider_http`, `provider_error`, `schema_invalid`,
+  and `worker_crashed`.
 - Worker raw diagnostics are bounded stream summaries, not full retained chunk
   transcripts.
 
@@ -316,6 +322,8 @@ Gateway rules:
 - OpenAI-compatible and Anthropic-compatible SSE keep reading after terminal
   finish/stop signals until `[DONE]` or stream close so provider usage-only
   tail frames are preserved.
+- Provider SSE `event: error` frames throw immediately instead of being treated
+  as normal payload frames.
 - SSE parsing flushes pending tool calls on terminal finish, `[DONE]`, or stream
   close.
 
@@ -342,6 +350,7 @@ flowchart TB
   AttachDir --> Blob["<attachmentId>.bin"]
 
   ConfigFile --> Profiles["ModelConfigProfilesState"]
+  ConfigFile --> RuntimePrefs["runtimePreferences\nAgent controls"]
 ```
 
 Persistence invariants:
@@ -354,6 +363,12 @@ Persistence invariants:
 - Attachment names are reduced with `path.basename()`.
 - Model config keeps at least one profile and normalizes legacy single-config
   files into profile state.
+- `userData/config` is the shared authority for model profiles and runtime
+  preferences. `ModelConfigStore` and `RuntimePreferencesStore` use the shared
+  config-file writer so one section update does not overwrite the other.
+- Legacy `runtime-preferences.json` is read only to populate a missing
+  `runtimePreferences` section; if the section already exists, it is
+  authoritative.
 
 ## Renderer State Architecture
 

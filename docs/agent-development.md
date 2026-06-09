@@ -70,6 +70,11 @@
 
 ## 变更记录
 
+### 2026-06-09 - Settings runtime controls polish
+- 优化工具与权限里的命令限制控件：`command.timeoutMs` / `command.maxOutputBytes` 改为本地草稿输入，失焦或 Enter 时才按 shared runtime preference 边界校验并保存，Escape 回退当前持久化值，避免用户编辑中间态把空值、`0` 或越界值提交到主进程。
+- 修复设置页新增 runtime 控件的 zh-CN 文案占位损坏，补齐协议、Code/Write 默认模型、审批/沙盒、工具、命令、压缩和审批展示相关中文标签，并新增 i18n 测试防止问号占位回归。
+- 验证方式：`npm test -- tests/renderer/settings-view.test.ts tests/renderer/settings-i18n.test.ts`、`npm run typecheck`；完整验证见本轮维护结果。
+
 ### 2026-06-09 - Write IPC 路径策略硬编码收敛
 
 - 收敛 Write IPC 文件服务的 workspace 路径策略：`write-handlers.ts` 不再复制 skipped directory、path escape、realpath 与 symlink 防护逻辑，改为复用 `workspace-policy.ts` 的共享策略；Write 层只保留 Markdown 扩展名限制和自己的 `WRITE_*_FAILED` envelope。
@@ -535,10 +540,18 @@
 - 落地 runtime preferences 主进程链路：新增 shared `RuntimePreferences` 契约、`RuntimePreferencesStore`、`runtime-preferences:get/update` IPC 与 preload API；`AgentRuntime` 现在使用 thread-mode 默认 profile，并把 `toolAvailability` 接入工具 definitions 过滤和 forced tool call 拦截；新建 thread 会读取默认 approval/sandbox，命令工具读取 timeout/output limit，上下文准备读取 compaction enablement/strategy，renderer 读取 approval presentation 偏好，避免设置保存后无运行时或 UI 效果。
 - 验证方式：`npm run typecheck`、`npm run test`、`npm run build`。
 
+### 2026-06-09 - Shared config-backed Agent controls
+
+- Moved Agent runtime preferences into the shared Electron `userData/config` file as `runtimePreferences`, alongside `activeProfileId` and `profiles[]`.
+- Added a shared config-file persistence boundary so `ModelConfigStore` and `RuntimePreferencesStore` serialize writes through the same queue; profile updates preserve Agent controls, and runtime preference updates preserve model profiles.
+- Kept the existing `runtime-preferences:get/update` IPC and preload API as the typed access surface for Agent controls. Legacy `userData/runtime-preferences.json` is read only when the shared config lacks a `runtimePreferences` section; `config.runtimePreferences` wins if both exist.
+- Verification coverage: model config and runtime preferences persistence tests cover default initialization, legacy preference migration, config-vs-legacy priority, and concurrent shared-config writes.
+
 ### 2026-06-09 - LLM streaming usage and interrupt lifecycle hardening
 - Hardened Anthropic-compatible usage mapping: `cache_read_input_tokens` and `cache_creation_input_tokens` now populate `TokenUsage.cacheHitTokens`, `cacheMissTokens`, and `cacheHitRate`; streaming usage from `message_start` and `message_delta` frames is merged before it reaches the runtime, so partial provider usage frames do not overwrite previously observed fields.
 - Hardened streaming turn cleanup: interrupted turns remain in `AgentRuntime` in-flight state until the background run loop persists truncated partial output/tool cleanup and emits `turn_completed(status: "interrupted")`; non-interrupt worker failures after text/reasoning deltas now persist the truncated assistant/reasoning output before `turn_failed`.
 - Hardened worker cancellation: `LlmWorkerPool` request cleanup only clears the cancel handle installed by that request, preventing late old-request cleanup from deleting a newer same-thread cancel mapping.
-- Hardened worker diagnostics: worker protocol errors now preserve `http` / `schema` / `internal` through `LlmWorkerPool`, `AgentRuntime` maps them to `provider_http` / `schema_invalid` / `internal`, worker exit/error maps to `worker_crashed`, and worker `LlmResponse.raw` is now a bounded stream summary instead of an unbounded full chunk transcript.
+- Hardened worker diagnostics: worker protocol errors now preserve `http` / `provider` / `schema` / `internal` through `LlmWorkerPool`, `AgentRuntime` maps them to `provider_http` / `provider_error` / `schema_invalid` / `internal`, worker exit/error maps to `worker_crashed`, and worker `LlmResponse.raw` is now a bounded stream summary instead of an unbounded full chunk transcript.
+- Hardened provider SSE error handling: OpenAI-compatible and Anthropic-compatible `event: error` frames now throw a traceable provider stream error instead of being consumed as empty normal payloads.
 - Current model profile protocol behavior: `AgentRuntime` forwards the selected profile `protocol` into `LlmRequest`; OpenAI-compatible and Anthropic-compatible profiles share the same runtime path while `MiniMaxGateway` owns provider-specific body and SSE mapping.
 - Verification: `npm test -- tests/main/infrastructure/minimax-types.test.ts tests/main/infrastructure/minimax-gateway.test.ts`, `npm test -- tests/main/application/agent-runtime.test.ts tests/main/infrastructure/worker-pool.test.ts`, `npm test -- tests/main/infrastructure/worker-diagnostics.test.ts tests/main/infrastructure/worker-pool.test.ts tests/main/application/agent-runtime.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.

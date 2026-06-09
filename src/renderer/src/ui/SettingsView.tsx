@@ -4,6 +4,7 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
+  type KeyboardEvent,
   type ReactElement,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -20,6 +21,10 @@ import {
   DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
   LLM_PROTOCOLS,
+  MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+  MAX_RUNTIME_COMMAND_TIMEOUT_MS,
+  MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+  MIN_RUNTIME_COMMAND_TIMEOUT_MS,
   MODEL_REASONING_EFFORTS,
   RUNTIME_COMPACTION_STRATEGIES,
   RUNTIME_TOOL_NAMES,
@@ -75,6 +80,11 @@ export interface SettingsFormState {
 
 type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
 type RuntimeSaveState = Exclude<SaveState, "dirty">;
+type RuntimeCommandDraftField = "timeoutMs" | "maxOutputBytes";
+interface RuntimeCommandDraft {
+  timeoutMs: string;
+  maxOutputBytes: string;
+}
 type SettingsSection =
   | "basic"
   | "model"
@@ -108,6 +118,7 @@ const WORKBENCH_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "layout",
   "session",
   "modelDefaults",
+  "attachments",
 ];
 const VISIBILITY_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "approvalPresentation",
@@ -140,6 +151,9 @@ export function SettingsView(): ReactElement {
   );
   const [runtimePreferences, setRuntimePreferences] = useState<RuntimePreferences>(
     state.runtimePreferences,
+  );
+  const [commandDraft, setCommandDraft] = useState<RuntimeCommandDraft>(() =>
+    toRuntimeCommandDraft(state.runtimePreferences.command),
   );
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const [runtimeSaveState, setRuntimeSaveState] = useState<RuntimeSaveState>("loading");
@@ -264,6 +278,7 @@ export function SettingsView(): ReactElement {
 
   function applyRuntimePreferences(preferences: RuntimePreferences): void {
     setRuntimePreferences(preferences);
+    setCommandDraft(toRuntimeCommandDraft(preferences.command));
     actions.setRuntimePreferences(preferences);
   }
 
@@ -396,6 +411,60 @@ export function SettingsView(): ReactElement {
     void updateRuntimePreferences({
       writeDefaultModelProfileId: emptyStringToNullableProfileId(event.target.value),
     });
+  }
+
+  function updateCommandDraft(field: RuntimeCommandDraftField, value: string): void {
+    setCommandDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function resetCommandDraftField(field: RuntimeCommandDraftField): void {
+    setCommandDraft((current) => ({
+      ...current,
+      [field]: String(runtimePreferences.command[field]),
+    }));
+  }
+
+  async function commitCommandDraft(
+    field: RuntimeCommandDraftField,
+    raw = commandDraft[field],
+  ): Promise<void> {
+    const validation = validateRuntimeCommandDraft(field, raw, t);
+    if (!validation.ok) {
+      setRuntimeSaveState("error");
+      setRuntimeError(validation.message);
+      return;
+    }
+    if (validation.value === null) {
+      resetCommandDraftField(field);
+      setRuntimeError("");
+      return;
+    }
+    if (validation.value === runtimePreferences.command[field]) {
+      resetCommandDraftField(field);
+      setRuntimeError("");
+      return;
+    }
+    const update: RuntimePreferencesUpdate =
+      field === "timeoutMs"
+        ? { command: { timeoutMs: validation.value } }
+        : { command: { maxOutputBytes: validation.value } };
+    await updateRuntimePreferences(update);
+  }
+
+  function handleCommandDraftKeyDown(
+    field: RuntimeCommandDraftField,
+    event: KeyboardEvent<HTMLInputElement>,
+  ): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void commitCommandDraft(field, event.currentTarget.value);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      resetCommandDraftField(field);
+      setRuntimeError("");
+    }
   }
 
   function markDirty(): void {
@@ -569,11 +638,11 @@ export function SettingsView(): ReactElement {
           : runtimeSaveState === "error"
             ? t("settings.status.error")
             : t("settings.status.idle");
-  const isRuntimeSettingsSection =
+  const isRuntimeBackedSettingsCategory =
     section === "agent" ||
     section === "tools" ||
-    section === "workbench" ||
-    section === "visibility";
+    section === "visibility" ||
+    (section === "workbench" && category === "modelDefaults");
 
   return (
     <main className="ds-settings-root">
@@ -626,7 +695,7 @@ export function SettingsView(): ReactElement {
                       : t("settings.save")}
                 </button>
               </>
-            ) : isRuntimeSettingsSection ? (
+            ) : isRuntimeBackedSettingsCategory ? (
               <StatusBadge tone={runtimeSaveState} title={runtimeError || undefined}>
                 {runtimeStatusLabel}
               </StatusBadge>
@@ -656,10 +725,10 @@ export function SettingsView(): ReactElement {
           {section === "model" && error ? (
             <div className="ds-settings-notice is-error">{error}</div>
           ) : null}
-          {isRuntimeSettingsSection && !hasAgentApi ? (
+          {isRuntimeBackedSettingsCategory && !hasAgentApi ? (
             <div className="ds-settings-notice is-error">{t("settings.preloadMissing")}</div>
           ) : null}
-          {isRuntimeSettingsSection && runtimeError ? (
+          {isRuntimeBackedSettingsCategory && runtimeError ? (
             <div className="ds-settings-notice is-error">{runtimeError}</div>
           ) : null}
 
@@ -896,6 +965,40 @@ export function SettingsView(): ReactElement {
                       </option>
                     ))}
                   </select>
+                }
+              />
+            </SettingsCard>
+          ) : null}
+
+          {section === "workbench" && category === "attachments" ? (
+            <SettingsCard
+              title={t("settings.sections.attachments")}
+              description={t("settings.sections.attachmentsDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.allowComposerImageUpload")}
+                description={t("settings.descriptions.allowComposerImageUpload")}
+                control={
+                  <Toggle
+                    checked={preferences.allowComposerImageUpload}
+                    label={t("settings.fields.allowComposerImageUpload")}
+                    onChange={(checked) =>
+                      actions.updateBasicPreference("allowComposerImageUpload", checked)
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.allowComposerImagePaste")}
+                description={t("settings.descriptions.allowComposerImagePaste")}
+                control={
+                  <Toggle
+                    checked={preferences.allowComposerImagePaste}
+                    label={t("settings.fields.allowComposerImagePaste")}
+                    onChange={(checked) =>
+                      actions.updateBasicPreference("allowComposerImagePaste", checked)
+                    }
+                  />
                 }
               />
             </SettingsCard>
@@ -1373,15 +1476,18 @@ export function SettingsView(): ReactElement {
                   <input
                     id="command_timeout_ms"
                     type="number"
-                    min="100"
-                    max="120000"
-                    value={runtimePreferences.command.timeoutMs}
+                    min={MIN_RUNTIME_COMMAND_TIMEOUT_MS}
+                    max={MAX_RUNTIME_COMMAND_TIMEOUT_MS}
+                    value={commandDraft.timeoutMs}
                     placeholder={String(DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS)}
+                    disabled={!hasAgentApi}
                     onChange={(event) =>
-                      void updateRuntimePreferences({
-                        command: { timeoutMs: Number(event.target.value) },
-                      })
+                      updateCommandDraft("timeoutMs", event.target.value)
                     }
+                    onBlur={(event) =>
+                      void commitCommandDraft("timeoutMs", event.currentTarget.value)
+                    }
+                    onKeyDown={(event) => handleCommandDraftKeyDown("timeoutMs", event)}
                   />
                 }
               />
@@ -1393,14 +1499,22 @@ export function SettingsView(): ReactElement {
                   <input
                     id="command_max_output_bytes"
                     type="number"
-                    min="1024"
-                    max="1048576"
-                    value={runtimePreferences.command.maxOutputBytes}
+                    min={MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES}
+                    max={MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES}
+                    value={commandDraft.maxOutputBytes}
                     placeholder={String(DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES)}
+                    disabled={!hasAgentApi}
                     onChange={(event) =>
-                      void updateRuntimePreferences({
-                        command: { maxOutputBytes: Number(event.target.value) },
-                      })
+                      updateCommandDraft("maxOutputBytes", event.target.value)
+                    }
+                    onBlur={(event) =>
+                      void commitCommandDraft(
+                        "maxOutputBytes",
+                        event.currentTarget.value,
+                      )
+                    }
+                    onKeyDown={(event) =>
+                      handleCommandDraftKeyDown("maxOutputBytes", event)
                     }
                   />
                 }
@@ -1497,6 +1611,15 @@ function toFormState(config: ModelConfig): SettingsFormState {
   };
 }
 
+function toRuntimeCommandDraft(
+  command: RuntimePreferences["command"],
+): RuntimeCommandDraft {
+  return {
+    timeoutMs: String(command.timeoutMs),
+    maxOutputBytes: String(command.maxOutputBytes),
+  };
+}
+
 export function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
   const contextWindow = parseOptionalInteger(
     form.model_context_window,
@@ -1578,6 +1701,42 @@ function parseOptionalInteger(raw: string, field: string): number | undefined {
 type IntegerValidationResult =
   | { ok: true; value: number | undefined }
   | { ok: false; message: string };
+
+type RuntimeCommandDraftValidationResult =
+  | { ok: true; value: number | null }
+  | { ok: false; message: string };
+
+export function validateRuntimeCommandDraft(
+  field: RuntimeCommandDraftField,
+  raw: string,
+  t: SettingsTranslator,
+): RuntimeCommandDraftValidationResult {
+  const label = field === "timeoutMs"
+    ? t("settings.fields.commandTimeout")
+    : t("settings.fields.commandMaxOutput");
+  const min = field === "timeoutMs"
+    ? MIN_RUNTIME_COMMAND_TIMEOUT_MS
+    : MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
+  const max = field === "timeoutMs"
+    ? MAX_RUNTIME_COMMAND_TIMEOUT_MS
+    : MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: null };
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return {
+      ok: false,
+      message: t("settings.errors.positiveInteger", { field: label }),
+    };
+  }
+  if (parsed < min || parsed > max) {
+    return {
+      ok: false,
+      message: t("settings.errors.integerRange", { field: label, min, max }),
+    };
+  }
+  return { ok: true, value: parsed };
+}
 
 function parseOptionalPositiveIntegerForValidation(
   raw: string,

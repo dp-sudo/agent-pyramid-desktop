@@ -10,8 +10,9 @@
 | IPC channel names | `src/shared/ipc.ts` |
 | Thread persistence | `src/main/persistence/index.ts` |
 | Attachment persistence | `src/main/persistence/attachment-store.ts` |
-| Model config persistence | `src/main/persistence/model-config-store.ts` |
-| Runtime preferences persistence | `src/main/persistence/runtime-preferences-store.ts` |
+| Application config persistence | `src/main/persistence/config-file.ts` |
+| Model config access | `src/main/persistence/model-config-store.ts` |
+| Runtime preferences access | `src/main/persistence/runtime-preferences-store.ts` |
 | Runtime event emission | `src/main/application/agent-runtime.ts` and `src/main/event-bus.ts` |
 | Renderer state shape | `src/renderer/src/ui/store/WorkbenchContext.tsx` |
 | Renderer local preferences | `src/renderer/src/ui/preferences.ts` |
@@ -36,7 +37,6 @@ userData/
     index.json
     <attachmentId>.bin
   config
-  runtime-preferences.json
 ```
 
 ```mermaid
@@ -49,13 +49,16 @@ flowchart TB
   Threads["userData/threads"]
   Attachments["userData/attachments"]
   Config["userData/config"]
-  RuntimePreferences["userData/runtime-preferences.json"]
+  Profiles["ModelConfigProfilesState"]
+  RuntimePreferences["RuntimePreferences"]
   Renderer["WorkbenchContext"]
 
   Contracts --> ThreadStore --> Threads
   Contracts --> AttachmentStore --> Attachments
   Contracts --> ConfigStore --> Config
-  Contracts --> RuntimePreferencesStore --> RuntimePreferences
+  Contracts --> RuntimePreferencesStore --> Config
+  Config --> Profiles
+  Config --> RuntimePreferences
   Contracts --> Renderer
 ```
 
@@ -363,8 +366,8 @@ Current event kinds:
 - `runtime_error`
 
 `runtime_error.code` is one of `worker_crashed`, `worker_timeout`,
-`provider_http`, `schema_invalid`, `tool_not_found`, `tool_failed`,
-`approval_timeout`, `persistence_error`, or `internal`.
+`provider_http`, `provider_error`, `schema_invalid`, `tool_not_found`,
+`tool_failed`, `approval_timeout`, `persistence_error`, or `internal`.
 
 `turn_started` carries the complete runtime-created `TurnRecord` as `turn`.
 Usage data lives on `turn_completed.usage` and is aggregated by `usage:daily`.
@@ -402,9 +405,15 @@ userData/config
 
 Key semantics:
 
-- Store persists profile state, not just a single `ModelConfig`.
+- `userData/config` is the shared application config file. It persists
+  `activeProfileId`, `profiles[]`, and the Agent control section
+  `runtimePreferences`.
+- `ModelConfigStore` persists profile state through the shared config file, not
+  just a single `ModelConfig`.
 - `ModelConfigStore.get()` returns the active profile's `ModelConfig`.
 - `ModelConfigStore.listProfiles()` returns all profiles.
+- Model profile writes preserve `runtimePreferences`; runtime preference writes
+  preserve model profiles. Both stores use a shared config-file write queue.
 - Store normalizes older single-config files into profile state.
 - Store normalizes missing profile `protocol` to `openai-compatible`.
 - Stored profile `createdAt` / `updatedAt` values use the shared
@@ -443,11 +452,18 @@ Contracts:
 Storage file:
 
 ```text
-userData/runtime-preferences.json
+userData/config
+  runtimePreferences
 ```
 
 Key semantics:
 
+- `RuntimePreferencesStore` reads and writes the `runtimePreferences` section
+  inside the shared `userData/config` file.
+- A legacy `userData/runtime-preferences.json` file is read only when
+  `userData/config` has no `runtimePreferences` section. If both exist, the
+  config section wins so stale legacy data cannot overwrite newer Agent
+  controls.
 - Missing or malformed stored preference groups normalize to
   `DEFAULT_RUNTIME_PREFERENCES`.
 - Updates must include at least one recognized field; unknown-only or malformed
@@ -514,7 +530,7 @@ Examples:
 - delete confirmation behavior
 - restore last workspace
 
-If a preference must influence Agent runtime behavior, do not hide it in renderer localStorage. Promote it into `RuntimePreferences`, main-process persistence and a typed IPC API.
+If a preference must influence Agent runtime behavior, do not hide it in renderer localStorage. Promote it into `RuntimePreferences`, the `userData/config` runtime preferences section and a typed IPC API.
 
 ## Field Change Checklist
 
@@ -541,7 +557,13 @@ Current compatibility examples:
 
 - Thread `status` missing from old records is normalized to `active`.
 - Thread `mode` missing from old records or summaries is normalized to `code`.
-- Model single-config format is normalized to `ModelConfigProfilesState`.
+- Model single-config format is normalized to the shared config shape
+  (`ModelConfigProfilesState` plus `runtimePreferences`).
+- Missing `runtimePreferences` in `userData/config` is filled from legacy
+  `userData/runtime-preferences.json` when present, otherwise from
+  `DEFAULT_RUNTIME_PREFERENCES`.
+- If both `userData/config.runtimePreferences` and legacy
+  `runtime-preferences.json` exist, the config section is authoritative.
 - Malformed JSONL lines are skipped with a warning.
 
 Preferred migration style:
@@ -559,6 +581,8 @@ Preferred migration style:
 - Returning raw attachment bytes inside timeline items.
 - Allowing path escape in workspace or write-mode APIs.
 - Changing model config constraints without updating settings UI and tests.
+- Writing model profiles and runtime preferences through independent
+  read-modify-write paths instead of the shared config-file queue.
 - Adding event kinds without updating `RuntimeEventBus.onThread()`.
 
 ## Verification
@@ -577,6 +601,7 @@ Targeted tests:
 - `tests/main/persistence/jsonl-thread-store.test.ts`
 - `tests/main/persistence/attachment-store.test.ts`
 - `tests/main/persistence/model-config-store.test.ts`
+- `tests/main/persistence/runtime-preferences-store.test.ts`
 - `tests/main/application/agent-runtime.test.ts`
 - affected renderer tests
 

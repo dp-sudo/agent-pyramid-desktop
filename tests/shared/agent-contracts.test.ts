@@ -534,6 +534,15 @@ describe("shared agent contracts", () => {
     ).toBe(true);
     expect(
       isRuntimeEvent({
+        kind: "runtime_error",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        code: "provider_error",
+        message: "LLM stream error event: rate limited",
+      }),
+    ).toBe(true);
+    expect(
+      isRuntimeEvent({
         kind: "turn_completed",
         threadId: "thread-1",
         turnId: "turn-1",

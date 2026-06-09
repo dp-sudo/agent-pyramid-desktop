@@ -532,6 +532,33 @@ describe("AgentRuntime", () => {
         }),
       ]),
     );
+
+    const providerEventThread = await store.createThread({
+      title: "Provider Event Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.error = new LlmWorkerError(
+      "LLM stream error event: rate_limit_error: rate limited",
+      "provider",
+    );
+
+    await runtime.startTurn({
+      threadId: providerEventThread.id,
+      text: "Run provider event",
+    });
+    await waitFor(() => !runtime.isThreadInFlight(providerEventThread.id));
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          threadId: providerEventThread.id,
+          code: "provider_error",
+          message: "LLM stream error event: rate_limit_error: rate limited",
+        }),
+      ]),
+    );
   });
 
   it("persists truncated streamed output when the worker fails after deltas", async () => {

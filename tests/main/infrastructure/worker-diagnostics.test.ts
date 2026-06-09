@@ -18,7 +18,13 @@ describe("worker diagnostics", () => {
         new Error("LLM stream frame was not valid JSON: Unexpected token"),
       ),
     ).toBe("schema");
+    expect(
+      classifyWorkerErrorCode(
+        new Error("LLM stream error event: rate_limit_error: rate limited"),
+      ),
+    ).toBe("provider");
     expect(classifyWorkerErrorCode(new Error("worker connection lost"))).toBe("internal");
+    expect(normalizeWorkerErrorCode("provider")).toBe("provider");
     expect(normalizeWorkerErrorCode("schema")).toBe("schema");
     expect(normalizeWorkerErrorCode("bad-code")).toBe("internal");
   });

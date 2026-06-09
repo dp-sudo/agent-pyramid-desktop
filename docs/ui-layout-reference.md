@@ -625,10 +625,10 @@ Category ownership:
 | --- | --- | --- |
 | `basic` | `appearance` | Renderer `basicPreferences` localStorage, i18n and theme helpers. |
 | `model` | `profiles`, `connection`, `context`, `reasoning` | Main `ModelConfigStore` through `modelConfig.*` IPC. |
-| `agent` | `compaction` | Main `RuntimePreferencesStore`; consumed by `AgentRuntime.prepareMessagesForRequest()`. |
-| `tools` | `permissions`, `toolAccess`, `commandLimits` | Main `RuntimePreferencesStore`; consumed by thread creation, tool catalog filtering and command-backed tools. |
-| `workbench` | `startup`, `layout`, `session`, `modelDefaults` | Renderer `basicPreferences` for UI-only fields; `RuntimePreferencesStore` for Code/Write default model profile ids. |
-| `visibility` | `approvalPresentation` | Main `RuntimePreferencesStore`; consumed by approval/timeline/toast presentation in renderer. |
+| `agent` | `compaction` | Config-backed `RuntimePreferencesStore`; consumed by `AgentRuntime.prepareMessagesForRequest()`. |
+| `tools` | `permissions`, `toolAccess`, `commandLimits` | Config-backed `RuntimePreferencesStore`; consumed by thread creation, tool catalog filtering and command-backed tools. |
+| `workbench` | `startup`, `layout`, `session`, `modelDefaults` | Renderer `basicPreferences` for UI-only fields; config-backed `RuntimePreferencesStore` for Code/Write default model profile ids. |
+| `visibility` | `approvalPresentation` | Config-backed `RuntimePreferencesStore`; consumed by approval/timeline/toast presentation in renderer. |
 
 Model categories:
 
@@ -789,6 +789,8 @@ Command limits:
 - Command timeout in milliseconds.
 - Command output byte limit.
 - Values are validated by shared runtime preference bounds before persistence.
+- Number fields keep local draft text while the user edits. Blur or Enter
+  validates and saves; Escape restores the current persisted value.
 
 ### Notifications And Visibility
 

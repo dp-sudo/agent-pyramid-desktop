@@ -34,7 +34,7 @@ flowchart LR
   Store["JsonlThreadStore"]
   Attachments["AttachmentStore"]
   Config["ModelConfigStore"]
-  Preferences["RuntimePreferencesStore"]
+  Preferences["RuntimePreferencesStore\nconfig-backed"]
   Registry["ToolRegistry"]
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool"]
@@ -107,7 +107,8 @@ Important behavior:
 - Same thread does not already have an in-flight turn.
 - Requested `modelProfileId`, when present, exists.
 - Runtime preferences are readable; if no store is configured, runtime falls
-  back to `DEFAULT_RUNTIME_PREFERENCES`.
+  back to `DEFAULT_RUNTIME_PREFERENCES`. The configured store reads the
+  `runtimePreferences` section from `userData/config`.
 - Attachment ids, when present, resolve through `AttachmentStore.get()`.
 
 Failure mapping:
@@ -142,7 +143,8 @@ Model profile resolution order:
 1. Explicit `request.modelProfileId`.
 2. Thread-mode default profile from `RuntimePreferences`
    (`codeDefaultModelProfileId` / `writeDefaultModelProfileId`) when it matches
-   an existing profile.
+   an existing profile. These defaults are stored in `userData/config` beside
+   the model profiles they reference.
 3. `request.model` matching a profile config model.
 4. Active profile id.
 5. First available profile.
@@ -197,7 +199,7 @@ LLM request construction:
 - Context budget inputs still come from the selected model profile
   (`model_context_window`, `model_auto_compact_token_limit`, `max_tokens`),
   while automatic compaction enablement and strategy come from
-  `RuntimePreferences.compaction`.
+  config-backed `RuntimePreferences.compaction`.
 - When automatic compaction is disabled, runtime skips summary compaction but
   still applies the hard context safety limit before calling the worker.
 
@@ -252,8 +254,9 @@ Worker invariants:
   protects newer same-thread requests if an old request settles late.
 - Worker replacement clears thread affinity for dead workers.
 - Worker errors preserve protocol categories through the pool: provider HTTP
-  failures become `provider_http`, provider/schema parse failures become
-  `schema_invalid`, and worker process failures become `worker_crashed`.
+  failures become `provider_http`, provider SSE `event: error` frames become
+  `provider_error`, provider/schema parse failures become `schema_invalid`,
+  and worker process failures become `worker_crashed`.
 - Worker `LlmResponse.raw` is a bounded stream summary rather than a full chunk
   transcript, so long text/reasoning/tool streams do not duplicate unbounded
   content in memory.
@@ -303,7 +306,7 @@ Tool availability:
   mode to allow or deny individual tool names without changing persisted thread
   data. Approval and sandbox checks still run afterward.
 - `RuntimePreferences.toolAvailability` is the main-process persisted catalog
-  switch for known runtime tools. Disabled tools are omitted from
+  switch for known runtime tools, stored in `userData/config`. Disabled tools are omitted from
   `LlmRequest.tools`; if the model still returns a disabled tool call, runtime
   appends a failed `ToolItem` and emits `runtime_error(code: "tool_not_found")`.
 - Constructor-injected `toolAccessPolicy` remains the highest-priority override
@@ -325,7 +328,7 @@ Workspace tools require an absolute thread workspace path before resolving file 
 
 File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; it is not replayed from JSONL after restart.
 
-`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Runtime injects `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start.
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start.
 
 `diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass and receives the same runtime command defaults as `run_command`. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
 
@@ -439,8 +442,8 @@ Completion persistence:
 
 Failure behavior:
 
-- Runtime emits `runtime_error` for provider HTTP, schema, worker, internal,
-  tool, and persistence categories where available.
+- Runtime emits `runtime_error` for provider HTTP, provider stream error,
+  schema, worker, internal, tool, and persistence categories where available.
 - Runtime appends and emits `turn_failed` for top-level run loop failures.
 - Runtime marks turn failed through `markTurnStatus("failed")`.
 

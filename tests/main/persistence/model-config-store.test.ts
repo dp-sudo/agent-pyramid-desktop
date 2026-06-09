@@ -4,9 +4,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
 import {
   DEFAULT_MODEL_CONFIG,
+  DEFAULT_RUNTIME_PREFERENCES,
   isIsoTimestampString,
   type ModelConfig,
   type ModelConfigProfilesState,
+  type RuntimePreferences,
 } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
@@ -48,6 +50,16 @@ describe("ModelConfigStore", () => {
       thinking: false,
       model_reasoning_effort: "high",
     });
+  });
+
+  it("initializes agent runtime preferences inside the shared config file", async () => {
+    await store.init();
+
+    const raw = JSON.parse(
+      await fs.readFile(path.join(userDataDir, "config"), "utf8"),
+    ) as { runtimePreferences?: RuntimePreferences };
+
+    expect(raw.runtimePreferences).toEqual(DEFAULT_RUNTIME_PREFERENCES);
   });
 
   it("creates, activates, updates, and deletes profiles", async () => {
@@ -148,6 +160,44 @@ describe("ModelConfigStore", () => {
     ).rejects.toThrow("Model config update must include at least one field.");
 
     await expect(store.listProfiles()).resolves.toEqual(before);
+  });
+
+  it("preserves agent runtime preferences when model profiles are updated", async () => {
+    const runtimePreferences: RuntimePreferences = {
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      command: {
+        ...DEFAULT_RUNTIME_PREFERENCES.command,
+        timeoutMs: 45_000,
+      },
+      toolAvailability: {
+        ...DEFAULT_RUNTIME_PREFERENCES.toolAvailability,
+        code: {
+          ...DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code,
+          run_command: false,
+        },
+      },
+    };
+    const profileState = {
+      activeProfileId: "default",
+      profiles: [
+        {
+          id: "default",
+          name: "MiniMax",
+          config: DEFAULT_MODEL_CONFIG,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      runtimePreferences,
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(profileState));
+
+    await store.update({ model: "MiniMax-M3-latest" });
+    const raw = JSON.parse(
+      await fs.readFile(path.join(userDataDir, "config"), "utf8"),
+    ) as { runtimePreferences?: RuntimePreferences };
+
+    expect(raw.runtimePreferences).toEqual(runtimePreferences);
   });
 
   it("normalizes a legacy single-config file into profile state", async () => {

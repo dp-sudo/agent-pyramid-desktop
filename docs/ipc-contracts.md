@@ -264,6 +264,9 @@ Notes:
 
 - Store always keeps at least one profile.
 - `ModelConfigStore.get()` returns only the active profile config.
+- Model config profiles and runtime preferences are stored in the same
+  `userData/config` file; the IPC namespaces stay split so callers only touch
+  the section they need.
 - Runtime resolves a turn profile by explicit id, Code/Write default profile id
   from `RuntimePreferences`, model match, active profile, then first profile.
 - Profile creation validates `activate` as a strict boolean; non-boolean truthy
@@ -291,8 +294,11 @@ Notes:
 
 Notes:
 
-- Preferences are persisted by `RuntimePreferencesStore` in
-  `userData/runtime-preferences.json`.
+- Preferences are persisted by `RuntimePreferencesStore` in the
+  `runtimePreferences` section of `userData/config`.
+- Legacy `userData/runtime-preferences.json` is a migration input only when
+  `userData/config` has no runtime preferences section; config data wins if
+  both are present.
 - Update payloads must be objects and include at least one recognized field.
 - `defaultApprovalPolicy` / `defaultSandboxMode` reuse shared thread enum
   guards; model profile ids are non-empty strings or `null`.

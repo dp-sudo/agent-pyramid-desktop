@@ -14,6 +14,8 @@ export interface WorkbenchBasicPreferences {
   showArchivedThreadsByDefault: boolean;
   restoreLastWorkspaceOnStartup: boolean;
   confirmThreadDelete: boolean;
+  allowComposerImageUpload: boolean;
+  allowComposerImagePaste: boolean;
 }
 
 const BASIC_PREFERENCES_STORAGE_KEY = "agent-pyramid.basicPreferences";
@@ -38,6 +40,8 @@ export const DEFAULT_BASIC_PREFERENCES: WorkbenchBasicPreferences = {
   showArchivedThreadsByDefault: false,
   restoreLastWorkspaceOnStartup: false,
   confirmThreadDelete: true,
+  allowComposerImageUpload: true,
+  allowComposerImagePaste: true,
 };
 
 export function loadBasicPreferences(): WorkbenchBasicPreferences {
@@ -122,6 +126,14 @@ export function normalizeBasicPreferences(
       typeof value.confirmThreadDelete === "boolean"
         ? value.confirmThreadDelete
         : DEFAULT_BASIC_PREFERENCES.confirmThreadDelete,
+    allowComposerImageUpload:
+      typeof value.allowComposerImageUpload === "boolean"
+        ? value.allowComposerImageUpload
+        : DEFAULT_BASIC_PREFERENCES.allowComposerImageUpload,
+    allowComposerImagePaste:
+      typeof value.allowComposerImagePaste === "boolean"
+        ? value.allowComposerImagePaste
+        : DEFAULT_BASIC_PREFERENCES.allowComposerImagePaste,
   };
 }
 

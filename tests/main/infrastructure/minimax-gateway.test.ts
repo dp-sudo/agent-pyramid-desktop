@@ -653,6 +653,68 @@ describe("MiniMaxGateway", () => {
     ]);
   });
 
+  it("rejects OpenAI-compatible stream error SSE events", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              "event: error",
+              'data: {"type":"error","error":{"type":"rate_limit_error","message":"rate limited"}}',
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    await expect(async () => {
+      for await (const _chunk of new MiniMaxGateway().stream(baseRequest)) {
+        void _chunk;
+      }
+    }).rejects.toThrow("LLM stream error event: rate_limit_error: rate limited");
+  });
+
+  it("rejects Anthropic-compatible stream error SSE events", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              "event: error",
+              'data: {"type":"error","error":{"type":"invalid_request_error","code":"bad_payload","message":"bad request"}}',
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    await expect(async () => {
+      for await (const _chunk of new MiniMaxGateway().stream({
+        ...baseRequest,
+        protocol: "anthropic-compatible",
+        baseUrl: "https://provider.example.test/anthropic",
+      })) {
+        void _chunk;
+      }
+    }).rejects.toThrow(
+      "LLM stream error event: invalid_request_error: bad_payload: bad request",
+    );
+  });
+
   it("reports invalid JSON provider responses and HTTP failures", async () => {
     vi.stubGlobal(
       "fetch",

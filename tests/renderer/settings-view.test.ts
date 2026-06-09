@@ -9,9 +9,14 @@ import {
   toDefaultInspectorModeValue,
   toUpdatePayload,
   validateModelSettingsForm,
+  validateRuntimeCommandDraft,
   type SettingsFormState,
 } from "../../src/renderer/src/ui/SettingsView";
-import { DEFAULT_MODEL_CONFIG } from "../../src/shared/agent-contracts";
+import {
+  DEFAULT_MODEL_CONFIG,
+  MAX_RUNTIME_COMMAND_TIMEOUT_MS,
+  MIN_RUNTIME_COMMAND_TIMEOUT_MS,
+} from "../../src/shared/agent-contracts";
 
 describe("SettingsView helpers", () => {
   it("tracks inline delete confirmation for a single profile", () => {
@@ -115,6 +120,23 @@ describe("SettingsView helpers", () => {
     expect(toUpdatePayload(modelForm({ protocol: "anthropic-compatible" })))
       .toMatchObject({ protocol: "anthropic-compatible" });
   });
+
+  it("validates command-limit drafts before runtime preference updates", () => {
+    expect(validateRuntimeCommandDraft("timeoutMs", "", testT))
+      .toEqual({ ok: true, value: null });
+    expect(validateRuntimeCommandDraft("timeoutMs", "45000", testT))
+      .toEqual({ ok: true, value: 45000 });
+    expect(validateRuntimeCommandDraft("timeoutMs", "1.5", testT))
+      .toEqual({
+        ok: false,
+        message: "Command timeout must be a positive whole number.",
+      });
+    expect(validateRuntimeCommandDraft("timeoutMs", "10", testT))
+      .toEqual({
+        ok: false,
+        message: `Command timeout must be between ${MIN_RUNTIME_COMMAND_TIMEOUT_MS} and ${MAX_RUNTIME_COMMAND_TIMEOUT_MS}.`,
+      });
+  });
 });
 
 function modelForm(overrides: Partial<SettingsFormState> = {}): SettingsFormState {
@@ -138,8 +160,13 @@ function testT(key: string, options?: Record<string, unknown>): string {
   if (key === "settings.fields.contextWindow") return "Context window";
   if (key === "settings.fields.compactLimit") return "Auto compact limit";
   if (key === "settings.fields.maxTokens") return "Max output tokens";
+  if (key === "settings.fields.commandTimeout") return "Command timeout";
+  if (key === "settings.fields.commandMaxOutput") return "Command output limit";
   if (key === "settings.errors.positiveInteger") {
     return `${String(options?.field)} must be a positive whole number.`;
+  }
+  if (key === "settings.errors.integerRange") {
+    return `${String(options?.field)} must be between ${String(options?.min)} and ${String(options?.max)}.`;
   }
   if (key === "settings.errors.compactLimitTooLarge") {
     return "Auto compact limit must fit in context.";

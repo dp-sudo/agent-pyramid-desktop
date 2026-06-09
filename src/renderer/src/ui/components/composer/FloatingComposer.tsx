@@ -12,6 +12,7 @@ import {
   useWorkbench,
   type ComposerAttachment,
 } from "../../store/WorkbenchContext";
+import type { WorkbenchBasicPreferences } from "../../preferences";
 import { Pill } from "../primitives/Pill";
 import { FloatingComposerModelPicker } from "./FloatingComposerModelPicker";
 import {
@@ -40,6 +41,8 @@ interface ClipboardImageItemLike {
   type: string;
   getAsFile(): File | null;
 }
+
+type ComposerImageSource = "picker" | "paste";
 
 export function FloatingComposer({
   onSend,
@@ -156,6 +159,7 @@ export function FloatingComposer({
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>): void {
     const files = getClipboardImageFiles(event.clipboardData.items);
     if (files.length === 0) return;
+    if (!canAddComposerImageFromSource(state.basicPreferences, "paste")) return;
     void addImageFiles(files, "paste");
   }
 
@@ -186,6 +190,7 @@ export function FloatingComposer({
   async function handleImageSelected(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
+    if (!canAddComposerImageFromSource(state.basicPreferences, "picker")) return;
     const imageFiles = files.map(toComposerImageFile).filter(isComposerImageFile);
     if (imageFiles.length !== files.length) {
       actions.setError(t("composer.unsupportedImage"));
@@ -196,9 +201,10 @@ export function FloatingComposer({
 
   async function addImageFiles(
     files: ComposerImageFile[],
-    source: "picker" | "paste",
+    source: ComposerImageSource,
   ): Promise<void> {
     if (files.length === 0) return;
+    if (!canAddComposerImageFromSource(state.basicPreferences, source)) return;
     if (disabled || runtimeBusy || sendPending || attachmentPending) {
       actions.setError(t("composer.attachmentAddBlocked"));
       return;
@@ -277,6 +283,7 @@ export function FloatingComposer({
         accept={COMPOSER_IMAGE_ACCEPT}
         multiple
         hidden
+        disabled={!state.basicPreferences.allowComposerImageUpload}
         onChange={(event) => void handleImageSelected(event)}
       />
       {state.composer.attachments.length > 0 ? (
@@ -348,17 +355,19 @@ export function FloatingComposer({
           </button>
           {menuOpen ? (
             <div className="ds-composer-popover is-menu">
-              <button
-                type="button"
-                className="ds-composer-menu-row"
-                onClick={() => {
-                  fileInputRef.current?.click();
-                  setMenuOpen(false);
-                }}
-              >
-                <span>{t("composer.addImage")}</span>
-                <span>PNG/JPEG/WebP/GIF</span>
-              </button>
+              {state.basicPreferences.allowComposerImageUpload ? (
+                <button
+                  type="button"
+                  className="ds-composer-menu-row"
+                  onClick={() => {
+                    fileInputRef.current?.click();
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span>{t("composer.addImage")}</span>
+                  <span>PNG/JPEG/WebP/GIF</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={`ds-composer-menu-row ${state.composer.mode === "plan" ? "is-active" : ""}`}
@@ -577,7 +586,7 @@ export function partitionComposerImageFilesBySize(
 export function getComposerImageAttachmentName(
   file: Pick<File, "name" | "type">,
   index: number,
-  source: "picker" | "paste",
+  source: ComposerImageSource,
 ): string {
   const safeName = file.name.trim().split(/[/\\]/).pop()?.trim();
   if (safeName) return safeName.slice(0, 180);
@@ -591,6 +600,18 @@ function getImageExtension(mimeType: string): string {
   if (mimeType === "image/webp") return "webp";
   if (mimeType === "image/gif") return "gif";
   return "png";
+}
+
+export function canAddComposerImageFromSource(
+  preferences: Pick<
+    WorkbenchBasicPreferences,
+    "allowComposerImageUpload" | "allowComposerImagePaste"
+  >,
+  source: ComposerImageSource,
+): boolean {
+  return source === "picker"
+    ? preferences.allowComposerImageUpload
+    : preferences.allowComposerImagePaste;
 }
 
 export function canSubmitComposerDraft({

@@ -1,14 +1,18 @@
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_MODEL_CONFIG,
   DEFAULT_RUNTIME_PREFERENCES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
+  type ModelConfigProfilesState,
+  type RuntimePreferences,
 } from "../../../src/shared/agent-contracts";
 import {
   RuntimePreferencesStore,
   parseRuntimePreferencesUpdate,
 } from "../../../src/main/persistence/runtime-preferences-store";
+import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
 describe("RuntimePreferencesStore", () => {
@@ -26,10 +30,15 @@ describe("RuntimePreferencesStore", () => {
 
   it("initializes default runtime preferences", async () => {
     const preferences = await store.get();
+    const raw = JSON.parse(
+      await fs.readFile(path.join(userDataDir, "config"), "utf8"),
+    ) as { runtimePreferences?: RuntimePreferences };
 
     expect(preferences).toEqual(DEFAULT_RUNTIME_PREFERENCES);
+    expect(raw.runtimePreferences).toEqual(DEFAULT_RUNTIME_PREFERENCES);
     expect(preferences.toolAvailability.write.apply_patch).toBe(false);
     expect(preferences.toolAvailability.code.apply_patch).toBe(true);
+    expect(existsSync(path.join(userDataDir, "runtime-preferences.json"))).toBe(false);
   });
 
   it("updates runtime preferences with nested values", async () => {
@@ -68,6 +77,95 @@ describe("RuntimePreferencesStore", () => {
     );
     expect(updated.compaction.enabled).toBe(false);
     expect(updated.compaction.strategy).toBe("recent-only");
+  });
+
+  it("preserves model profiles when runtime preferences are updated", async () => {
+    const profileState: ModelConfigProfilesState & { runtimePreferences: RuntimePreferences } = {
+      activeProfileId: "legacy-profile",
+      profiles: [
+        {
+          id: "legacy-profile",
+          name: "Legacy",
+          config: {
+            ...DEFAULT_MODEL_CONFIG,
+            model_provide: "Legacy",
+            model: "legacy-model",
+            base_url: "https://legacy.example.test/v1",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      runtimePreferences: DEFAULT_RUNTIME_PREFERENCES,
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(profileState));
+
+    await store.update({ command: { timeoutMs: 45_000 } });
+    const raw = JSON.parse(
+      await fs.readFile(path.join(userDataDir, "config"), "utf8"),
+    ) as ModelConfigProfilesState & { runtimePreferences?: RuntimePreferences };
+
+    expect(raw.activeProfileId).toBe(profileState.activeProfileId);
+    expect(raw.profiles).toEqual(profileState.profiles);
+    expect(raw.runtimePreferences?.command.timeoutMs).toBe(45_000);
+  });
+
+  it("uses config runtime preferences instead of stale legacy preferences", async () => {
+    const configPreferences: RuntimePreferences = {
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      defaultApprovalPolicy: "never",
+      command: {
+        ...DEFAULT_RUNTIME_PREFERENCES.command,
+        timeoutMs: 45_000,
+      },
+    };
+    const legacyPreferences: RuntimePreferences = {
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      defaultApprovalPolicy: "auto",
+      command: {
+        ...DEFAULT_RUNTIME_PREFERENCES.command,
+        timeoutMs: 60_000,
+      },
+    };
+    const profileState: ModelConfigProfilesState & { runtimePreferences: RuntimePreferences } = {
+      activeProfileId: "default",
+      profiles: [
+        {
+          id: "default",
+          name: "MiniMax",
+          config: DEFAULT_MODEL_CONFIG,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      runtimePreferences: configPreferences,
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(profileState));
+    await fs.writeFile(
+      path.join(userDataDir, "runtime-preferences.json"),
+      JSON.stringify(legacyPreferences),
+    );
+
+    const preferences = await store.get();
+
+    expect(preferences).toEqual(configPreferences);
+  });
+
+  it("serializes shared config writes from model config and runtime preference stores", async () => {
+    const modelConfigStore = new ModelConfigStore(userDataDir);
+
+    const [modelConfig, preferences] = await Promise.all([
+      modelConfigStore.update({ model: "MiniMax-M3-latest" }),
+      store.update({ command: { timeoutMs: 45_000 } }),
+    ]);
+    const raw = JSON.parse(
+      await fs.readFile(path.join(userDataDir, "config"), "utf8"),
+    ) as ModelConfigProfilesState & { runtimePreferences?: RuntimePreferences };
+
+    expect(modelConfig.model).toBe("MiniMax-M3-latest");
+    expect(preferences.command.timeoutMs).toBe(45_000);
+    expect(raw.profiles[0]?.config.model).toBe("MiniMax-M3-latest");
+    expect(raw.runtimePreferences?.command.timeoutMs).toBe(45_000);
   });
 
   it("rejects malformed runtime preference updates", async () => {
@@ -119,6 +217,9 @@ describe("RuntimePreferencesStore", () => {
     }));
 
     const preferences = await store.get();
+    const raw = JSON.parse(
+      await fs.readFile(path.join(userDataDir, "config"), "utf8"),
+    ) as { runtimePreferences?: RuntimePreferences };
 
     expect(preferences.defaultApprovalPolicy).toBe(
       DEFAULT_RUNTIME_PREFERENCES.defaultApprovalPolicy,
@@ -139,6 +240,7 @@ describe("RuntimePreferencesStore", () => {
     expect(preferences.command.maxOutputBytes).toBe(65_536);
     expect(preferences.compaction.enabled).toBe(false);
     expect(preferences.compaction.strategy).toBe(DEFAULT_RUNTIME_PREFERENCES.compaction.strategy);
+    expect(raw.runtimePreferences).toEqual(preferences);
   });
 
   it("parses runtime preferences updates independently for IPC reuse", () => {
