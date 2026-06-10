@@ -7,6 +7,7 @@ import ts from "typescript";
 import type { AgentTool, AgentToolContext, AgentToolResult } from "../../domain/agent/types";
 import {
   requireWorkspace,
+  resolveWorkspacePathLexically,
   resolveWorkspacePathForAccess,
   shouldSkipEntry,
   toWorkspaceRelative,
@@ -408,7 +409,7 @@ const gitStatusTool: AgentTool = {
         pathspecs: {
           type: "array",
           items: { type: "string" },
-          description: "Optional workspace-relative pathspecs to limit status.",
+          description: "Optional plain workspace-relative paths to limit status.",
         },
       },
     },
@@ -446,7 +447,7 @@ const gitDiffTool: AgentTool = {
         pathspecs: {
           type: "array",
           items: { type: "string" },
-          description: "Optional workspace-relative pathspecs.",
+          description: "Optional plain workspace-relative paths.",
         },
       },
     },
@@ -479,12 +480,12 @@ const gitLogTool: AgentTool = {
         },
         ref: {
           type: "string",
-          description: "Optional branch, tag, or revision range.",
+          description: "Optional branch, tag, commit, or revision range. Git options and pathspec magic are rejected.",
         },
         pathspecs: {
           type: "array",
           items: { type: "string" },
-          description: "Optional workspace-relative pathspecs.",
+          description: "Optional plain workspace-relative paths.",
         },
       },
     },
@@ -547,7 +548,7 @@ const gitCommitTool: AgentTool = {
         pathspecs: {
           type: "array",
           items: { type: "string" },
-          description: "Workspace-relative paths to stage before commit.",
+          description: "Plain workspace-relative paths to stage before commit.",
         },
       },
       required: ["message"],
@@ -730,8 +731,8 @@ const readCommandSessionTool: AgentTool = {
       required: ["session_id"],
     },
   },
-  async execute(input) {
-    const result = commandSessionManager.read(input);
+  async execute(input, context) {
+    const result = commandSessionManager.read(input, context);
     return JSON.stringify(result);
   },
 };
@@ -763,8 +764,8 @@ const writeCommandSessionTool: AgentTool = {
       required: ["session_id", "input"],
     },
   },
-  async execute(input) {
-    const result = commandSessionManager.write(input);
+  async execute(input, context) {
+    const result = await commandSessionManager.write(input, context);
     return JSON.stringify(result);
   },
 };
@@ -788,8 +789,8 @@ const stopCommandSessionTool: AgentTool = {
       required: ["session_id"],
     },
   },
-  async execute(input) {
-    const result = commandSessionManager.stop(input);
+  async execute(input, context) {
+    const result = await commandSessionManager.stop(input, context);
     return JSON.stringify(result);
   },
 };
@@ -1221,7 +1222,7 @@ async function executeGitLog(
     DEFAULT_GIT_LOG_COUNT,
     "max_count",
   );
-  const ref = optionalString(input.ref);
+  const ref = optionalGitLogRef(input.ref);
   const pathspecs = await resolvePathspecs(input.pathspecs, workspace, "git_log");
   const format = "%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s";
   const args = [
@@ -1394,7 +1395,7 @@ function createPackageScriptCommandTool(
           },
           script: {
             type: "string",
-            description: `Script name to run. Defaults to ${defaultScript}.`,
+            description: `Script name to run. Defaults to ${defaultScript}. Must be a package script identifier, not a package-manager option.`,
           },
           timeout_ms: {
             type: "number",
@@ -1594,6 +1595,9 @@ async function resolveDiagnosticCommand(cwdPath: string): Promise<string> {
       return "npm run typecheck";
     }
   } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`diagnose_workspace package.json is invalid in ${cwdPath}: ${error.message}`);
+    }
     if (!hasNodeErrorCode(error, "ENOENT")) {
       throw error;
     }
@@ -1749,17 +1753,36 @@ function killWindowsProcessTree(
   fallbackSignal: NodeJS.Signals,
 ): void {
   if (!child.pid) {
-    child.kill(fallbackSignal);
+    killDirectChild(child, fallbackSignal);
     return;
   }
+  const fallbackToDirectKill = (reason: string): void => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    console.warn(`[command-tools] taskkill ${reason}; falling back to child.kill.`);
+    killDirectChild(child, fallbackSignal);
+  };
   const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
     stdio: "ignore",
     windowsHide: true,
   });
   killer.on("error", (error) => {
-    console.warn("[command-tools] taskkill failed; falling back to child.kill:", error);
-    child.kill(fallbackSignal);
+    fallbackToDirectKill(`failed: ${error.message}`);
   });
+  killer.on("close", (exitCode) => {
+    if (exitCode !== 0) {
+      fallbackToDirectKill(`exited with code ${exitCode ?? "unknown"}`);
+    }
+  });
+}
+
+function killDirectChild(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    child.kill(signal);
+  } catch (error) {
+    if (!isProcessAlreadyExited(error)) {
+      console.warn("[command-tools] child.kill failed while stopping command:", error);
+    }
+  }
 }
 
 export function createShellInvocation(command: string): ShellInvocation {
@@ -2035,7 +2058,8 @@ async function resolvePathspecs(
 ): Promise<string[]> {
   const pathspecs = optionalStringArray(value, "pathspecs") ?? [];
   for (const pathspec of pathspecs) {
-    await resolveWorkspacePathForAccess(workspace, pathspec, "read");
+    assertPlainGitPathspec(pathspec, toolName);
+    resolveWorkspacePathLexically(workspace, pathspec);
     if (pathspec.includes("\0")) {
       throw new Error(`${toolName} pathspec cannot contain NUL bytes.`);
     }
@@ -2043,8 +2067,38 @@ async function resolvePathspecs(
   return pathspecs;
 }
 
+function assertPlainGitPathspec(pathspec: string, toolName: string): void {
+  if (pathspec.startsWith(":")) {
+    throw new Error(`${toolName} pathspec must be a plain workspace-relative path, not Git pathspec magic: ${pathspec}`);
+  }
+  if (/[*?\[]/.test(pathspec)) {
+    throw new Error(`${toolName} pathspec must be a plain workspace-relative path, not a glob: ${pathspec}`);
+  }
+}
+
 function gitPathspecArgs(pathspecs: string[]): string[] {
   return pathspecs.length > 0 ? ["--", ...pathspecs] : [];
+}
+
+function optionalGitLogRef(value: unknown): string | undefined {
+  const ref = optionalString(value);
+  if (!ref) return undefined;
+  if (Buffer.byteLength(ref, "utf8") > 256) {
+    throw new Error("git_log ref must be 256 bytes or less.");
+  }
+  if (ref.includes("\0")) {
+    throw new Error("git_log ref cannot contain NUL bytes.");
+  }
+  if (/[\x01-\x1f\x7f\s]/.test(ref)) {
+    throw new Error("git_log ref cannot contain whitespace or control characters.");
+  }
+  if (ref.startsWith("-")) {
+    throw new Error(`git_log ref must be a revision, not a Git option: ${ref}`);
+  }
+  if (ref.startsWith(":")) {
+    throw new Error(`git_log ref must be a revision, not Git pathspec magic: ${ref}`);
+  }
+  return ref;
 }
 
 async function readPackageJson(cwdPath: string): Promise<PackageJsonShape> {
@@ -2116,9 +2170,14 @@ function packageInstallArgs(
 ): string[] {
   switch (manager) {
     case "npm":
-      return frozenLockfile && pathExistsSync(path.join(cwdPath, "package-lock.json"))
-        ? ["ci"]
-        : ["install"];
+      if (!frozenLockfile) return ["install"];
+      if (
+        pathExistsSync(path.join(cwdPath, "package-lock.json")) ||
+        pathExistsSync(path.join(cwdPath, "npm-shrinkwrap.json"))
+      ) {
+        return ["ci"];
+      }
+      throw new Error("package_install frozen_lockfile requires package-lock.json or npm-shrinkwrap.json for npm.");
     case "pnpm":
       return ["install", ...(frozenLockfile ? ["--frozen-lockfile"] : [])];
     case "yarn":
@@ -2159,11 +2218,21 @@ function isPackageManagerName(value: unknown): value is PackageManagerName {
 
 function optionalPackageScriptName(value: unknown): string | undefined {
   if (value === undefined) return undefined;
-  return requiredLimitedString(
+  const script = requiredLimitedString(
     value,
     "script must be a non-empty string.",
     MAX_PACKAGE_SCRIPT_NAME_BYTES,
   );
+  if (/[\x01-\x1f\x7f\s]/.test(script)) {
+    throw new Error("script cannot contain whitespace or control characters.");
+  }
+  if (script.startsWith("-")) {
+    throw new Error(`script must be a package script name, not a package-manager option: ${script}`);
+  }
+  if (!/^[A-Za-z0-9_./:=@+-]+$/.test(script)) {
+    throw new Error(`script contains unsupported characters: ${script}`);
+  }
+  return script;
 }
 
 async function detectShellEnvironment(
@@ -2300,6 +2369,8 @@ class CommandSessionManager {
     const now = new Date().toISOString();
     const session: CommandSession = {
       id: randomUUID(),
+      threadId: context.threadId,
+      workspace,
       command,
       cwd: toWorkspaceRelative(workspace, cwdPath) || ".",
       cwdPath,
@@ -2326,6 +2397,12 @@ class CommandSessionManager {
       session.updatedAt = new Date().toISOString();
     });
     child.on("close", (exitCode, signal) => {
+      if (session.status === "failed") {
+        session.exitCode = exitCode;
+        session.signal = signal;
+        session.updatedAt = new Date().toISOString();
+        return;
+      }
       session.status = "exited";
       session.exitCode = exitCode;
       session.signal = signal;
@@ -2335,8 +2412,8 @@ class CommandSessionManager {
     return this.snapshot(session, DEFAULT_SESSION_TAIL_BYTES);
   }
 
-  read(input: Record<string, unknown>): CommandSessionSnapshot {
-    const session = this.requireSession(input.session_id);
+  read(input: Record<string, unknown>, context: AgentToolContext): CommandSessionSnapshot {
+    const session = this.requireSession(input.session_id, context, "read_command_session");
     const tailBytes = numberInRange(
       input.tail_bytes,
       1,
@@ -2347,42 +2424,62 @@ class CommandSessionManager {
     return this.snapshot(session, tailBytes);
   }
 
-  write(input: Record<string, unknown>): { sessionId: string; bytesWritten: number } {
-    const session = this.requireSession(input.session_id);
+  async write(
+    input: Record<string, unknown>,
+    context: AgentToolContext,
+  ): Promise<{ sessionId: string; bytesWritten: number }> {
+    const session = this.requireSession(input.session_id, context, "write_command_session");
     if (session.status !== "running") {
       throw new Error(`write_command_session session is not running: ${session.id}`);
     }
-    const text = requiredLimitedString(
+    const text = requiredSessionInput(
       input.input,
       "write_command_session requires a string input.",
       MAX_COMMAND_BYTES,
     );
     const newline = input.newline === undefined ? true : requiredBoolean(input.newline, "newline");
     const payload = newline ? `${text}\n` : text;
-    session.child.stdin?.write(payload);
+    const bytesWritten = await this.writeSessionInput(session, payload);
     session.updatedAt = new Date().toISOString();
     return {
       sessionId: session.id,
-      bytesWritten: Buffer.byteLength(payload, "utf8"),
+      bytesWritten,
     };
   }
 
-  stop(input: Record<string, unknown>): CommandSessionSnapshot {
-    const session = this.requireSession(input.session_id);
+  async stop(input: Record<string, unknown>, context: AgentToolContext): Promise<CommandSessionSnapshot> {
+    const session = this.requireSession(input.session_id, context, "stop_command_session");
     if (session.status === "running") {
       session.status = "stopping";
       killProcessTree(session.child, "SIGTERM");
-      setTimeout(() => killProcessTree(session.child, "SIGKILL"), KILL_GRACE_MS);
+      if (session.stopForceKillTimer) {
+        clearTimeout(session.stopForceKillTimer);
+      }
+      session.stopForceKillTimer = setTimeout(() => {
+        session.stopForceKillTimer = undefined;
+        killProcessTree(session.child, "SIGKILL");
+      }, KILL_GRACE_MS);
       session.updatedAt = new Date().toISOString();
+    }
+    if (session.status === "stopping") {
+      await this.waitForTerminalSession(session, KILL_GRACE_MS + 4_000);
     }
     return this.snapshot(session, DEFAULT_SESSION_TAIL_BYTES);
   }
 
-  private requireSession(value: unknown): CommandSession {
+  private requireSession(
+    value: unknown,
+    context: AgentToolContext,
+    toolName: string,
+  ): CommandSession {
     const id = requiredLimitedString(value, "session_id must be a non-empty string.", 128);
     const session = this.sessions.get(id);
     if (!session) {
       throw new Error(`Command session not found: ${id}`);
+    }
+    const workspace = requireWorkspace(context);
+    if (session.threadId !== context.threadId || !isSamePath(session.workspace, workspace)) {
+      throw new Error(`${toolName} session does not belong to this thread workspace: ${id}`);
     }
     return session;
   }
@@ -2393,6 +2490,93 @@ class CommandSessionManager {
         this.sessions.delete(id);
       }
     }
+  }
+
+  private async waitForTerminalSession(
+    session: CommandSession,
+    timeoutMs: number,
+  ): Promise<void> {
+    if (session.status !== "running" && session.status !== "stopping") return;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = (): void => {
+        clearTimeout(timeout);
+        if (session.stopForceKillTimer) {
+          clearTimeout(session.stopForceKillTimer);
+          session.stopForceKillTimer = undefined;
+        }
+        session.child.off("close", onSettled);
+        session.child.off("error", onSettled);
+      };
+      const onSettled = (): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error(`stop_command_session timed out waiting for session to stop: ${session.id}`));
+      }, timeoutMs);
+      session.child.once("close", onSettled);
+      session.child.once("error", onSettled);
+      if (session.status !== "running" && session.status !== "stopping") {
+        onSettled();
+      }
+    });
+  }
+
+  private async writeSessionInput(
+    session: CommandSession,
+    payload: string,
+  ): Promise<number> {
+    const stdin = session.child.stdin;
+    if (!stdin || !stdin.writable || stdin.destroyed || stdin.writableEnded) {
+      throw new Error(`write_command_session stdin is not writable: ${session.id}`);
+    }
+    const bytesWritten = Buffer.byteLength(payload, "utf8");
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = (): void => {
+        stdin.off("error", onError);
+        stdin.off("close", onClose);
+        session.child.off("close", onChildClose);
+      };
+      const settleResolve = (): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+      const settleReject = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const onError = (error: Error): void => {
+        settleReject(new Error(`write_command_session stdin write failed: ${error.message}`));
+      };
+      const onClose = (): void => {
+        settleReject(new Error(`write_command_session stdin closed before input was written: ${session.id}`));
+      };
+      const onChildClose = (): void => {
+        settleReject(new Error(`write_command_session session closed before input was written: ${session.id}`));
+      };
+      stdin.once("error", onError);
+      stdin.once("close", onClose);
+      session.child.once("close", onChildClose);
+      stdin.write(payload, (error?: Error | null) => {
+        if (error) {
+          settleReject(new Error(`write_command_session stdin write failed: ${error.message}`));
+          return;
+        }
+        settleResolve();
+      });
+    });
+    return bytesWritten;
   }
 
   private snapshot(session: CommandSession, tailBytes: number): CommandSessionSnapshot {
@@ -2417,6 +2601,8 @@ class CommandSessionManager {
 
 interface CommandSession {
   id: string;
+  threadId: string;
+  workspace: string;
   command: string;
   cwd: string;
   cwdPath: string;
@@ -2429,6 +2615,7 @@ interface CommandSession {
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
   error?: string;
+  stopForceKillTimer?: NodeJS.Timeout;
   stdout: SessionCapture;
   stderr: SessionCapture;
 }
@@ -2505,8 +2692,10 @@ function parseTypeScriptDiagnostics(
     const match = pattern.exec(line.trim());
     if (!match) continue;
     const fullPath = path.resolve(diagnosticBasePath, match[1]);
+    const relativePath = workspaceRelativeDiagnosticPath(workspace, fullPath);
+    if (!relativePath) continue;
     diagnostics.push({
-      path: toWorkspaceRelative(workspace, fullPath),
+      path: relativePath,
       line: Number(match[2]),
       column: Number(match[3]),
       code: match[4],
@@ -2569,7 +2758,10 @@ async function collectLanguageServiceDiagnostics(
     ...service.getSuggestionDiagnostics(filePath),
   ];
   service.dispose();
-  return diagnostics.map((diagnostic) => toWorkspaceDiagnostic(diagnostic, workspace, filePath));
+  return diagnostics.flatMap((diagnostic) => {
+    const workspaceDiagnostic = toWorkspaceDiagnostic(diagnostic, workspace, filePath);
+    return workspaceDiagnostic ? [workspaceDiagnostic] : [];
+  });
 }
 
 function findTsConfig(workspace: string, filePath: string): string | undefined {
@@ -2611,15 +2803,17 @@ function toWorkspaceDiagnostic(
   diagnostic: ts.Diagnostic,
   workspace: string,
   fallbackFilePath: string,
-): WorkspaceDiagnostic {
+): WorkspaceDiagnostic | undefined {
   const file = diagnostic.file;
   const sourceFilePath = file?.fileName ?? fallbackFilePath;
+  const relativePath = workspaceRelativeDiagnosticPath(workspace, sourceFilePath);
+  if (!relativePath) return undefined;
   const start = diagnostic.start ?? 0;
   const position = file
     ? file.getLineAndCharacterOfPosition(start)
     : { line: 0, character: 0 };
   return {
-    path: toWorkspaceRelative(workspace, sourceFilePath),
+    path: relativePath,
     line: position.line + 1,
     column: position.character + 1,
     code: `TS${diagnostic.code}`,
@@ -2627,6 +2821,13 @@ function toWorkspaceDiagnostic(
     message: formatTsDiagnosticMessage(diagnostic),
     source: "language_service",
   };
+}
+
+function workspaceRelativeDiagnosticPath(workspace: string, fullPath: string): string | undefined {
+  const root = path.resolve(workspace);
+  const resolved = path.resolve(fullPath);
+  if (!isPathInsideOrEqual(root, resolved)) return undefined;
+  return toWorkspaceRelative(root, resolved);
 }
 
 function diagnosticCategoryToSeverity(category: ts.DiagnosticCategory): WorkspaceDiagnostic["severity"] {
@@ -2688,6 +2889,19 @@ function requiredLimitedString(value: unknown, message: string, maxBytes: number
     throw new Error(`string value exceeds ${maxBytes} bytes.`);
   }
   return value.trim();
+}
+
+function requiredSessionInput(value: unknown, message: string, maxBytes: number): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(message);
+  }
+  if (value.includes("\0")) {
+    throw new Error("string value cannot contain NUL bytes.");
+  }
+  if (Buffer.byteLength(value, "utf8") > maxBytes) {
+    throw new Error(`string value exceeds ${maxBytes} bytes.`);
+  }
+  return value;
 }
 
 function requiredRegexPattern(value: unknown): string {

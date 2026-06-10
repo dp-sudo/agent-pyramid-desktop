@@ -76,7 +76,7 @@ export interface AgentToolContext {
       workspace: string;
       filePath: string;
       relativePath: string;
-      operation: "create" | "update" | "rollback";
+      operation: "create" | "update" | "delete" | "rollback";
       beforeContent: string | null;
       afterContent: string | null;
       beforeSha256: string | null;
@@ -89,7 +89,7 @@ export interface AgentToolContext {
       workspace: string;
       filePath: string;
       relativePath: string;
-      operation: "create" | "update" | "rollback";
+      operation: "create" | "update" | "delete" | "rollback";
       beforeContent: string | null;
       afterContent: string | null;
       beforeSha256: string | null;
@@ -104,7 +104,7 @@ export interface AgentToolContext {
       workspace: string;
       filePath: string;
       relativePath: string;
-      operation: "create" | "update" | "rollback";
+      operation: "create" | "update" | "delete" | "rollback";
       beforeContent: string | null;
       afterContent: string | null;
       beforeSha256: string | null;

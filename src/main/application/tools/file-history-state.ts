@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 
-type FileHistoryOperation = "create" | "update" | "rollback";
+type FileHistoryOperation = "create" | "update" | "delete" | "rollback";
 
 export interface FileHistoryEntry {
   id: string;

@@ -51,7 +51,7 @@ interface PatchApplyResult {
 }
 
 export function createCodingTools(): AgentTool[] {
-  return [editFileTool, writeFileTool, applyPatchTool, rollbackFileTool];
+  return [editFileTool, writeFileTool, deleteFileTool, applyPatchTool, rollbackFileTool];
 }
 
 const editFileTool: AgentTool = {
@@ -137,6 +137,37 @@ const writeFileTool: AgentTool = {
     const change = await prepareWrite(input, context);
     const committed = await writePreparedChange(change, context, "write_file");
     return toToolResult("write_file", committed);
+  },
+};
+
+const deleteFileTool: AgentTool = {
+  metadata: {
+    category: "workspace",
+    isDestructive: true,
+  },
+  definition: {
+    name: "delete_file",
+    description:
+      "Delete a UTF-8 workspace text file after it has been read. Use when a file should be removed and rollback_file may need to restore it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Workspace-relative file path to delete.",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  async preview(input, context) {
+    const change = await prepareDelete(input, context);
+    return change.diff;
+  },
+  async execute(input, context) {
+    const change = await prepareDelete(input, context);
+    const committed = await writePreparedChange(change, context, "delete_file");
+    return toToolResult("delete_file", committed);
   },
 };
 
@@ -231,6 +262,7 @@ async function prepareEdit(
   }
 
   const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
+  await assertNoSymlinkPath(workspace, relativePath, "read");
   const { content } = await readEditableTextFile(filePath, relativePath);
   assertFreshRead(context, filePath, content);
   const matches = countOccurrences(content, oldString);
@@ -259,6 +291,7 @@ async function prepareWrite(
   const createOnly = optionalBoolean(input.create_only, false, "create_only must be a boolean.");
   const overwrite = optionalBoolean(input.overwrite, false, "overwrite must be a boolean.");
   const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "write");
+  await assertNoSymlinkPath(workspace, relativePath, "write");
   let original = "";
   let operation: FileChangeResult["operation"] = "create";
 
@@ -282,6 +315,19 @@ async function prepareWrite(
   return buildPreparedChange(workspace, filePath, original, content, operation);
 }
 
+async function prepareDelete(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<PreparedFileChange> {
+  const workspace = requireWorkspace(context);
+  const relativePath = requiredString(input.path, "delete_file requires a string path.");
+  const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
+  await assertNoSymlinkPath(workspace, relativePath, "read");
+  const { content } = await readEditableTextFile(filePath, relativePath);
+  assertFreshRead(context, filePath, content);
+  return buildPreparedChange(workspace, filePath, content, "", "delete");
+}
+
 async function prepareRollback(
   input: Record<string, unknown>,
   context: AgentToolContext,
@@ -289,12 +335,16 @@ async function prepareRollback(
   const workspace = requireWorkspace(context);
   const relativePath = requiredString(input.path, "rollback_file requires a string path.");
   const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "write");
+  await assertNoSymlinkPath(workspace, relativePath, "write");
   const entry = context.fileHistory?.latest(filePath);
   if (!entry) {
     throw new Error(`rollback_file has no history for ${relativePath}.`);
   }
   if (!isSamePath(path.resolve(entry.workspace), path.resolve(workspace))) {
     throw new Error(`rollback_file history does not belong to this workspace: ${relativePath}`);
+  }
+  if (entry.threadId !== context.threadId) {
+    throw new Error(`rollback_file history does not belong to this thread: ${relativePath}`);
   }
 
   const current = await readCurrentTextOrMissing(filePath, relativePath);
@@ -397,8 +447,38 @@ async function assertPreparedChangePathStillAllowed(
   access: "read" | "write",
 ): Promise<void> {
   const resolved = await resolveWorkspacePathForAccess(change.workspace, change.path, access);
+  await assertNoSymlinkPath(change.workspace, change.path, access);
   if (!isSamePath(path.resolve(resolved), path.resolve(change.filePath))) {
     throw new Error(`Path changed before write: ${change.path}. Read it again before writing.`);
+  }
+}
+
+async function assertNoSymlinkPath(
+  workspace: string,
+  relativePath: string,
+  access: "read" | "write",
+): Promise<void> {
+  // Destructive coding tools record and roll back lexical workspace paths.
+  // Reject symlink components so the recorded path and modified inode cannot diverge.
+  const root = path.resolve(workspace);
+  const target = path.resolve(root, relativePath);
+  const relative = path.relative(root, target);
+  if (!relative) return;
+  const segments = relative.split(path.sep).filter(Boolean);
+  let current = root;
+  for (const [index, segment] of segments.entries()) {
+    current = path.join(current, segment);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Coding tools do not modify files through symbolic links: ${relativePath}`);
+      }
+    } catch (error) {
+      if (getErrorCode(error) === "ENOENT" && access === "write") {
+        return;
+      }
+      throw error;
+    }
   }
 }
 
@@ -482,6 +562,7 @@ async function preparePatch(
     }
     const operation: FileChangeResult["operation"] = file.oldPath === undefined ? "create" : "update";
     const filePath = await resolveWorkspacePathForAccess(workspace, targetPath, operation === "create" ? "write" : "read");
+    await assertNoSymlinkPath(workspace, targetPath, operation === "create" ? "write" : "read");
     if (seenTargets.has(filePath)) {
       throw new Error(`apply_patch contains duplicate file sections for ${targetPath}.`);
     }
@@ -880,7 +961,7 @@ function recordFileHistory(
     workspace,
     filePath: change.filePath,
     relativePath: change.path,
-    operation: toolName === "rollback_file" ? "rollback" : change.operation === "create" ? "create" : "update",
+    operation: toolName === "rollback_file" ? "rollback" : change.operation,
     beforeContent: change.operation === "create" ? null : change.originalContent,
     afterContent: change.operation === "delete" ? null : change.nextContent,
     beforeSha256: change.operation === "create" ? null : sha256(change.originalContent),

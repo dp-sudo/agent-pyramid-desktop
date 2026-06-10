@@ -87,6 +87,22 @@ function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
   }
 }
 
+async function withPlatformAsync<T>(platform: NodeJS.Platform, fn: () => Promise<T>): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    enumerable: true,
+    value: platform,
+  });
+  try {
+    return await fn();
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  }
+}
+
 async function waitUntil(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs = 1000,
@@ -226,6 +242,18 @@ describe("application tools", () => {
     ]));
   });
 
+  it("registers dedicated coding tools", () => {
+    const names = createCodingTools().map((tool) => tool.definition.name);
+
+    expect(names).toEqual([
+      "edit_file",
+      "write_file",
+      "delete_file",
+      "apply_patch",
+      "rollback_file",
+    ]);
+  });
+
   it("keeps workspace tool limit schema aligned with runtime bounds", () => {
     const tools = createWorkspaceTools();
     const listFiles = tools.find((tool) => tool.definition.name === "list_files");
@@ -264,6 +292,31 @@ describe("application tools", () => {
     expect(toolSchemaProperties(diagnoseWorkspace).timeout_ms).toMatchObject({
       type: "number",
       description: timeoutDescription,
+    });
+  });
+
+  it("keeps Git pathspec schema aligned with plain path validation", () => {
+    const tools = createCommandTools();
+    const gitStatus = tools.find((tool) => tool.definition.name === "git_status");
+    const gitDiff = tools.find((tool) => tool.definition.name === "git_diff");
+    const gitLog = tools.find((tool) => tool.definition.name === "git_log");
+    const gitCommit = tools.find((tool) => tool.definition.name === "git_commit");
+
+    expect(toolSchemaProperties(gitStatus).pathspecs).toMatchObject({
+      type: "array",
+      description: "Optional plain workspace-relative paths to limit status.",
+    });
+    expect(toolSchemaProperties(gitDiff).pathspecs).toMatchObject({
+      type: "array",
+      description: "Optional plain workspace-relative paths.",
+    });
+    expect(toolSchemaProperties(gitLog).pathspecs).toMatchObject({
+      type: "array",
+      description: "Optional plain workspace-relative paths.",
+    });
+    expect(toolSchemaProperties(gitCommit).pathspecs).toMatchObject({
+      type: "array",
+      description: "Plain workspace-relative paths to stage before commit.",
     });
   });
 
@@ -663,6 +716,83 @@ describe("application tools", () => {
           removed: 0,
         },
       });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("deletes files only after a fresh read and allows rollback restore", async () => {
+    const workspace = await makeTempDir("coding-tools-delete-");
+    try {
+      await fs.writeFile(path.join(workspace, "remove.ts"), "export const remove = true;\n", "utf8");
+      const readState = new FileReadStateStore();
+      const fileHistory = new FileHistoryStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState, fileHistory };
+
+      await registry.execute(
+        { id: "call-read-delete", name: "read_file", arguments: { path: "remove.ts" } },
+        context,
+      );
+      const deleted = await registry.execute(
+        {
+          id: "call-delete",
+          name: "delete_file",
+          arguments: { path: "remove.ts" },
+        },
+        context,
+      );
+
+      await expect(fs.readFile(path.join(workspace, "remove.ts"), "utf8"))
+        .rejects.toMatchObject({ code: "ENOENT" });
+      expect(deleted.displayResult).toMatchObject({
+        path: "remove.ts",
+        operation: "delete",
+        diff: {
+          kind: "file_diff",
+          added: 0,
+          removed: 1,
+        },
+      });
+      expect(fileHistory.latest(path.join(workspace, "remove.ts"))).toMatchObject({
+        operation: "delete",
+        beforeContent: "export const remove = true;\n",
+        afterContent: null,
+      });
+
+      const rollback = await registry.execute(
+        {
+          id: "call-rollback-delete",
+          name: "rollback_file",
+          arguments: { path: "remove.ts" },
+        },
+        context,
+      );
+      expect(await fs.readFile(path.join(workspace, "remove.ts"), "utf8"))
+        .toBe("export const remove = true;\n");
+      expect(rollback.displayResult).toMatchObject({
+        path: "remove.ts",
+        operation: "create",
+      });
+
+      await registry.execute(
+        { id: "call-read-stale-delete", name: "read_file", arguments: { path: "remove.ts" } },
+        context,
+      );
+      await fs.writeFile(path.join(workspace, "remove.ts"), "external\n", "utf8");
+      await expect(
+        registry.execute(
+          {
+            id: "call-delete-stale",
+            name: "delete_file",
+            arguments: { path: "remove.ts" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("File has been modified since it was read.");
     } finally {
       await removeTempDir(workspace);
     }
@@ -1245,6 +1375,91 @@ describe("application tools", () => {
     }
   });
 
+  it("rejects destructive coding tool paths that include symbolic links", async () => {
+    const workspace = await makeTempDir("coding-tools-symlink-path-");
+    try {
+      await fs.mkdir(path.join(workspace, "real"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "real", "file.ts"), "one\n", "utf8");
+      try {
+        await fs.symlink(path.join(workspace, "real"), path.join(workspace, "link"), "dir");
+      } catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error
+          ? String((error as { code?: unknown }).code)
+          : undefined;
+        if (code === "EPERM" || code === "EACCES") {
+          return;
+        }
+        throw error;
+      }
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read-symlink", name: "read_file", arguments: { path: "link/file.ts" } },
+        context,
+      );
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-edit-symlink",
+            name: "edit_file",
+            arguments: { path: "link/file.ts", old_string: "one", new_string: "two" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Coding tools do not modify files through symbolic links: link/file.ts");
+      await expect(
+        registry.execute(
+          {
+            id: "call-delete-symlink",
+            name: "delete_file",
+            arguments: { path: "link/file.ts" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Coding tools do not modify files through symbolic links: link/file.ts");
+      await expect(
+        registry.execute(
+          {
+            id: "call-patch-symlink",
+            name: "apply_patch",
+            arguments: {
+              patch: [
+                "--- a/link/file.ts",
+                "+++ b/link/file.ts",
+                "@@ -1 +1 @@",
+                "-one",
+                "+two",
+              ].join("\n"),
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Coding tools do not modify files through symbolic links: link/file.ts");
+      await expect(
+        registry.execute(
+          {
+            id: "call-write-symlink-create",
+            name: "write_file",
+            arguments: { path: "link/new.ts", content: "created\n" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Coding tools do not modify files through symbolic links: link/new.ts");
+
+      expect(await fs.readFile(path.join(workspace, "real", "file.ts"), "utf8"))
+        .toBe("one\n");
+      await expect(fs.access(path.join(workspace, "real", "new.ts")))
+        .rejects.toThrow();
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("rejects invalid apply_patch input without partial writes", async () => {
     const workspace = await makeTempDir("apply-patch-tools-guard-");
     try {
@@ -1550,6 +1765,48 @@ describe("application tools", () => {
           context,
         ),
       ).rejects.toThrow("rollback_file current content no longer matches the latest history entry: file.ts");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("refuses rollback of file history written by another thread", async () => {
+    const workspace = await makeTempDir("rollback-tools-thread-guard-");
+    try {
+      await fs.writeFile(path.join(workspace, "file.ts"), "one\n", "utf8");
+      const readState = new FileReadStateStore();
+      const fileHistory = new FileHistoryStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const threadOne = { threadId: "thread-1", turnId: "turn-1", workspace, readState, fileHistory };
+      const threadTwo = { threadId: "thread-2", turnId: "turn-2", workspace, readState, fileHistory };
+
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "file.ts" } },
+        threadOne,
+      );
+      await registry.execute(
+        {
+          id: "call-edit",
+          name: "edit_file",
+          arguments: { path: "file.ts", old_string: "one", new_string: "two" },
+        },
+        threadOne,
+      );
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-cross-thread-rollback",
+            name: "rollback_file",
+            arguments: { path: "file.ts" },
+          },
+          threadTwo,
+        ),
+      ).rejects.toThrow("rollback_file history does not belong to this thread: file.ts");
+      expect(await fs.readFile(path.join(workspace, "file.ts"), "utf8")).toBe("two\n");
     } finally {
       await removeTempDir(workspace);
     }
@@ -1889,6 +2146,71 @@ describe("application tools", () => {
     }
   });
 
+  it("falls back to direct child kill when Windows taskkill exits nonzero", async () => {
+    const workspace = await makeTempDir("command-tools-taskkill-fallback-");
+    const fakeBin = await makeTempDir("command-tools-fake-taskkill-");
+    const originalPath = process.env.PATH;
+    const originalPathCapitalized = process.env.Path;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      if (process.platform === "win32") {
+        await fs.copyFile(process.execPath, path.join(fakeBin, "taskkill.exe"));
+      } else {
+        const fakeTaskkill = path.join(fakeBin, "taskkill");
+        await fs.writeFile(fakeTaskkill, "#!/bin/sh\nexit 1\n", "utf8");
+        await fs.chmod(fakeTaskkill, 0o755);
+      }
+      process.env.PATH = `${fakeBin}${path.delimiter}${originalPath ?? ""}`;
+      process.env.Path = `${fakeBin}${path.delimiter}${originalPathCapitalized ?? originalPath ?? ""}`;
+
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const result = await withPlatformAsync("win32", () =>
+        registry.execute(
+          {
+            id: "call-taskkill-fallback",
+            name: "shell_command",
+            arguments: {
+              command: "setTimeout(() => process.exit(23), 800);",
+              shell_path: process.execPath,
+              shell_args: ["-e", "{command}"],
+              timeout_ms: 100,
+            },
+          },
+          {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            workspace,
+            commandDefaults: {
+              timeoutMs: 100,
+              maxOutputBytes: 2048,
+            },
+          },
+        ),
+      );
+      const parsed = JSON.parse(result.content) as { timedOut: boolean; exitCode: number | null };
+
+      expect(parsed.timedOut).toBe(true);
+      expect(parsed.exitCode).not.toBe(23);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("taskkill exited with code"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      if (originalPathCapitalized === undefined) {
+        delete process.env.Path;
+      } else {
+        process.env.Path = originalPathCapitalized;
+      }
+      await removeTempDir(workspace);
+      await removeTempDir(fakeBin);
+    }
+  });
+
   it("uses runtime command defaults for timeout and output truncation", async () => {
     const workspace = await makeTempDir("command-tools-runtime-defaults-");
     try {
@@ -2140,6 +2462,17 @@ describe("application tools", () => {
       ) as { commits: Array<{ subject: string }> };
       expect(log.commits).toEqual([expect.objectContaining({ subject: "initial commit" })]);
 
+      const headLog = JSON.parse(
+        (
+          await registry.execute(
+            { id: "git-log-head", name: "git_log", arguments: { ref: "HEAD", max_count: 1 } },
+            context,
+          )
+        ).content,
+      ) as { command: string[]; commits: Array<{ subject: string }> };
+      expect(headLog.command).toContain("HEAD");
+      expect(headLog.commits).toEqual([expect.objectContaining({ subject: "initial commit" })]);
+
       const branch = JSON.parse(
         (
           await registry.execute(
@@ -2292,6 +2625,114 @@ describe("application tools", () => {
     }
   });
 
+  it("supports deleted file pathspecs for git_diff and git_commit", async () => {
+    const workspace = await makeTempDir("git-deleted-pathspec-tools-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      await registry.execute(
+        { id: "git-init", name: "run_command", arguments: { command: "git init" } },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-email",
+          name: "run_command",
+          arguments: { command: "git config user.email test@example.test" },
+        },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-name",
+          name: "run_command",
+          arguments: { command: "git config user.name Tester" },
+        },
+        context,
+      );
+      await fs.writeFile(path.join(workspace, "delete-me.txt"), "remove me\n", "utf8");
+      await registry.execute(
+        { id: "git-add-base", name: "run_command", arguments: { command: "git add delete-me.txt" } },
+        context,
+      );
+      await registry.execute(
+        { id: "git-commit-base", name: "run_command", arguments: { command: "git commit -m initial" } },
+        context,
+      );
+      await fs.unlink(path.join(workspace, "delete-me.txt"));
+
+      const diff = JSON.parse(
+        (
+          await registry.execute(
+            { id: "git-diff-delete", name: "git_diff", arguments: { pathspecs: ["delete-me.txt"] } },
+            context,
+          )
+        ).content,
+      ) as { stdout: string };
+      expect(diff.stdout).toContain("-remove me");
+
+      const commit = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "git-commit-delete",
+              name: "git_commit",
+              arguments: { message: "delete tracked file", pathspecs: ["delete-me.txt"] },
+            },
+            context,
+          )
+        ).content,
+      ) as { commit: { exitCode: number | null } };
+      expect(commit.commit.exitCode).toBe(0);
+
+      await expect(
+        registry.execute(
+          {
+            id: "git-hidden-pathspec",
+            name: "git_diff",
+            arguments: { pathspecs: [".env"] },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Path is skipped by workspace tool policy: .env");
+      await expect(
+        registry.execute(
+          {
+            id: "git-magic-pathspec",
+            name: "git_diff",
+            arguments: { pathspecs: [":(glob).env"] },
+          },
+          context,
+        ),
+      ).rejects.toThrow("git_diff pathspec must be a plain workspace-relative path");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects git_log refs that are options or pathspec magic", async () => {
+    const workspace = await makeTempDir("git-log-ref-tools-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      for (const ref of ["--all", "-n1", ":(glob)*", "HEAD name"]) {
+        await expect(
+          registry.execute(
+            {
+              id: `git-log-ref-${ref}`,
+              name: "git_log",
+              arguments: { ref },
+            },
+            context,
+          ),
+        ).rejects.toThrow("git_log ref");
+      }
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("detects package scripts and runs package/build/lint/test wrappers", async () => {
     const workspace = await makeTempDir("package-tools-");
     try {
@@ -2300,6 +2741,7 @@ describe("application tools", () => {
         JSON.stringify({
           scripts: {
             build: "node -e \"process.stdout.write('built')\"",
+            "format:write": "node -e \"process.stdout.write('formatted')\"",
             lint: "node -e \"process.stdout.write('linted')\"",
             test: "node -e \"process.stdout.write('tested')\"",
           },
@@ -2318,7 +2760,7 @@ describe("application tools", () => {
         ).content,
       ) as { manager: string; scripts: Record<string, string> };
       expect(scripts.manager).toBe("npm");
-      expect(Object.keys(scripts.scripts).sort()).toEqual(["build", "lint", "test"]);
+      expect(Object.keys(scripts.scripts).sort()).toEqual(["build", "format:write", "lint", "test"]);
 
       const build = JSON.parse(
         (
@@ -2352,8 +2794,117 @@ describe("application tools", () => {
       ) as { script: string; stdout: string };
       expect(tests).toMatchObject({ script: "test" });
       expect(tests.stdout).toContain("tested");
+
+      const formatted = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "package-test-format-write",
+              name: "package_test",
+              arguments: { script: "format:write" },
+            },
+            context,
+          )
+        ).content,
+      ) as { script: string; stdout: string };
+      expect(formatted).toMatchObject({ script: "format:write" });
+      expect(formatted.stdout).toContain("formatted");
+
+      for (const script of ["--help", "-w", "test -- --watch", "test\nnext", "bad<script>"]) {
+        await expect(
+          registry.execute(
+            {
+              id: `package-test-script-${Buffer.from(script).toString("hex")}`,
+              name: "package_test",
+              arguments: { script },
+            },
+            context,
+          ),
+        ).rejects.toThrow("script");
+      }
     } finally {
       await removeTempDir(workspace);
+    }
+  });
+
+  it("uses npm ci only when frozen package_install has an npm lockfile", async () => {
+    const workspace = await makeTempDir("package-install-frozen-tools-");
+    const fakeBin = await makeTempDir("package-install-fake-bin-");
+    const originalPath = process.env.PATH;
+    const originalPathCapitalized = process.env.Path;
+    try {
+      await fs.writeFile(path.join(workspace, "package.json"), "{}", "utf8");
+      const fakeNpm = process.platform === "win32"
+        ? path.join(fakeBin, "npm.cmd")
+        : path.join(fakeBin, "npm");
+      const fakeNpmBody = process.platform === "win32"
+        ? "@echo off\r\nnode -e \"process.stdout.write(process.argv.slice(1).join(' '))\" %*\r\n"
+        : "#!/bin/sh\nnode -e \"process.stdout.write(process.argv.slice(1).join(' '))\" \"$@\"\n";
+      await fs.writeFile(fakeNpm, fakeNpmBody, "utf8");
+      if (process.platform !== "win32") {
+        await fs.chmod(fakeNpm, 0o755);
+      }
+      process.env.PATH = `${fakeBin}${path.delimiter}${originalPath ?? ""}`;
+      process.env.Path = `${fakeBin}${path.delimiter}${originalPathCapitalized ?? originalPath ?? ""}`;
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      await expect(
+        registry.execute(
+          {
+            id: "package-install-frozen-missing-lock",
+            name: "package_install",
+            arguments: { manager: "npm", frozen_lockfile: true },
+          },
+          context,
+        ),
+      ).rejects.toThrow("package_install frozen_lockfile requires package-lock.json or npm-shrinkwrap.json for npm.");
+
+      await fs.writeFile(path.join(workspace, "package-lock.json"), "{}", "utf8");
+      const packageLockInstall = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "package-install-frozen-package-lock",
+              name: "package_install",
+              arguments: { manager: "npm", frozen_lockfile: true },
+            },
+            context,
+          )
+        ).content,
+      ) as { commandArgs: string[]; stdout: string };
+      expect(packageLockInstall.commandArgs).toEqual(["npm", "ci"]);
+      expect(packageLockInstall.stdout.trim()).toBe("ci");
+
+      await fs.unlink(path.join(workspace, "package-lock.json"));
+      await fs.writeFile(path.join(workspace, "npm-shrinkwrap.json"), "{}", "utf8");
+      const shrinkwrapInstall = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "package-install-frozen-shrinkwrap",
+              name: "package_install",
+              arguments: { manager: "npm", frozen_lockfile: true },
+            },
+            context,
+          )
+        ).content,
+      ) as { commandArgs: string[]; stdout: string };
+      expect(shrinkwrapInstall.commandArgs).toEqual(["npm", "ci"]);
+      expect(shrinkwrapInstall.stdout.trim()).toBe("ci");
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      if (originalPathCapitalized === undefined) {
+        delete process.env.Path;
+      } else {
+        process.env.Path = originalPathCapitalized;
+      }
+      await removeTempDir(workspace);
+      await removeTempDir(fakeBin);
     }
   });
 
@@ -2382,14 +2933,33 @@ describe("application tools", () => {
       sessionId = start.sessionId;
       expect(start.status).toBe("running");
 
-      await registry.execute(
-        {
-          id: "session-write",
-          name: "write_command_session",
-          arguments: { session_id: sessionId, input: "ping" },
-        },
-        context,
-      );
+      await expect(
+        registry.execute(
+          {
+            id: "session-cross-thread-read",
+            name: "read_command_session",
+            arguments: { session_id: sessionId },
+          },
+          { threadId: "thread-2", turnId: "turn-2", workspace },
+        ),
+      ).rejects.toThrow("read_command_session session does not belong to this thread workspace");
+
+      const write = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-write",
+              name: "write_command_session",
+              arguments: { session_id: sessionId, input: " ping " },
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionId: string; bytesWritten: number };
+      expect(write).toEqual({
+        sessionId,
+        bytesWritten: Buffer.byteLength(" ping \n", "utf8"),
+      });
 
       await waitUntil(async () => {
         const read = JSON.parse(
@@ -2404,7 +2974,7 @@ describe("application tools", () => {
             )
           ).content,
         ) as { stdout: { text: string } };
-        return read.stdout.text.includes("ready") && read.stdout.text.includes("echo:ping");
+        return read.stdout.text.includes("ready") && read.stdout.text.includes("echo: ping ");
       });
 
       const stopped = JSON.parse(
@@ -2419,7 +2989,17 @@ describe("application tools", () => {
           )
         ).content,
       ) as { status: string };
-      expect(["running", "stopping", "exited"]).toContain(stopped.status);
+      expect(["exited", "failed"]).toContain(stopped.status);
+      await expect(
+        registry.execute(
+          {
+            id: "session-write-stopped",
+            name: "write_command_session",
+            arguments: { session_id: sessionId, input: "late" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("write_command_session session is not running");
     } finally {
       if (sessionId) {
         const registry = new InMemoryToolRegistry(createCommandTools());
@@ -2434,6 +3014,67 @@ describe("application tools", () => {
           if (error instanceof Error && error.message.includes("Command session not found")) return;
           throw error;
         });
+      }
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("preserves failed command session status after spawn errors", async () => {
+    const workspace = await makeTempDir("command-session-spawn-failure-");
+    const envKey = process.platform === "win32" ? "ComSpec" : "SHELL";
+    const originalShell = process.env[envKey];
+    try {
+      process.env[envKey] = path.join(workspace, "missing-shell");
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const start = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-start-missing-shell",
+              name: "start_command_session",
+              arguments: { command: "echo unreachable" },
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionId: string };
+
+      await waitUntil(async () => {
+        const read = JSON.parse(
+          (
+            await registry.execute(
+              {
+                id: "session-read-missing-shell",
+                name: "read_command_session",
+                arguments: { session_id: start.sessionId },
+              },
+              context,
+            )
+          ).content,
+        ) as { status: string };
+        return read.status === "failed";
+      });
+
+      const failed = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-read-failed-shell",
+              name: "read_command_session",
+              arguments: { session_id: start.sessionId },
+            },
+            context,
+          )
+        ).content,
+      ) as { status: string; error?: string };
+      expect(failed.status).toBe("failed");
+      expect(failed.error).toBeTruthy();
+    } finally {
+      if (originalShell === undefined) {
+        delete process.env[envKey];
+      } else {
+        process.env[envKey] = originalShell;
       }
       await removeTempDir(workspace);
     }
@@ -2542,6 +3183,27 @@ describe("application tools", () => {
     }
   });
 
+  it("reports invalid package.json while resolving workspace diagnostics", async () => {
+    const workspace = await makeTempDir("diagnose-tools-invalid-package-");
+    try {
+      await fs.writeFile(path.join(workspace, "package.json"), "{ invalid", "utf8");
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-diagnose-invalid-package",
+            name: "diagnose_workspace",
+            arguments: {},
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ),
+      ).rejects.toThrow("diagnose_workspace package.json is invalid");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("resolves diagnose_workspace diagnostics relative to the command cwd", async () => {
     const workspace = await makeTempDir("diagnose-tools-cwd-");
     try {
@@ -2593,6 +3255,59 @@ describe("application tools", () => {
       });
     } finally {
       await removeTempDir(workspace);
+    }
+  });
+
+  it("filters diagnose_workspace diagnostics outside the workspace", async () => {
+    const workspace = await makeTempDir("diagnose-tools-outside-output-");
+    const outside = await makeTempDir("diagnose-tools-outside-source-");
+    try {
+      const outsideFile = path.join(outside, "external.ts");
+      await fs.writeFile(outsideFile, "const value: string = 1;\n", "utf8");
+      await fs.writeFile(
+        path.join(workspace, "emit-diagnostics.js"),
+        [
+          `console.log(${JSON.stringify(`${outsideFile}(1,7): error TS2322: outside`)});`,
+          "console.log('src/index.ts(1,7): error TS2322: inside');",
+          "process.exit(1);",
+        ].join("\n"),
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(workspace, "package.json"),
+        JSON.stringify({
+          scripts: {
+            typecheck: "node emit-diagnostics.js",
+          },
+        }),
+        "utf8",
+      );
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value: string = 1;\n", "utf8");
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-diagnose-outside-output",
+          name: "diagnose_workspace",
+          arguments: {},
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        diagnostics: Array<{ path: string; message: string }>;
+      };
+
+      expect(parsed.diagnostics).toEqual([
+        expect.objectContaining({
+          path: "src/index.ts",
+          message: "inside",
+        }),
+      ]);
+      expect(parsed.diagnostics.some((diagnostic) => diagnostic.path.includes(".."))).toBe(false);
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
     }
   });
 
@@ -2648,6 +3363,59 @@ describe("application tools", () => {
       ]);
     } finally {
       await removeTempDir(workspace);
+    }
+  });
+
+  it("keeps diagnose_file diagnostic paths inside the workspace", async () => {
+    const workspace = await makeTempDir("diagnose-file-tools-outside-");
+    const outside = await makeTempDir("diagnose-file-tools-outside-source-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(
+        path.join(workspace, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            noEmit: true,
+            allowJs: true,
+            checkJs: true,
+            moduleResolution: "node",
+          },
+          include: ["src/**/*.ts"],
+        }),
+        "utf8",
+      );
+      const outsideFile = path.join(outside, "external.js");
+      await fs.writeFile(outsideFile, "/** @type {string} */\nexports.value = 1;\n", "utf8");
+      await fs.writeFile(
+        path.join(workspace, "src", "index.ts"),
+        `import { value } from ${JSON.stringify(outsideFile.replaceAll("\\", "/"))};\nconst local: string = 1;\nconsole.log(value);\n`,
+        "utf8",
+      );
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-diagnose-file-outside",
+          name: "diagnose_file",
+          arguments: { path: "src/index.ts" },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        diagnostics: Array<{ path: string; code: string }>;
+      };
+
+      expect(parsed.diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          path: "src/index.ts",
+          code: "TS2322",
+        }),
+      ]));
+      expect(parsed.diagnostics.some((diagnostic) => diagnostic.path.includes(".."))).toBe(false);
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
     }
   });
 

@@ -148,6 +148,7 @@ const ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS = 3_000;
 export const CODE_ONLY_TOOL_NAMES = [
   "edit_file",
   "write_file",
+  "delete_file",
   "apply_patch",
   "rollback_file",
   "run_command",
@@ -974,6 +975,14 @@ export class AgentRuntime {
       if (policyDecision === "ask") {
         const approval = await this.requestApproval(turn, call, thread);
         if (approval === "deny") {
+          if (activeExecution.finalizedByInterrupt) {
+            this.unregisterActiveToolExecution(turn.id, activeExecution);
+            return {
+              toolCallId: call.id,
+              name: call.name,
+              content: JSON.stringify(toolItem.result ?? { message: interruptedToolMessage(call.name) }),
+            };
+          }
           toolItem.status = "failed";
           toolItem.result = { denied: true };
           await this.deps.store.appendItem(turn.threadId, toolItem);

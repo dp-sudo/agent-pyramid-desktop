@@ -70,6 +70,23 @@
 
 ## 变更记录
 
+### 2026-06-11 - Command tool hardening follow-up
+- Hardened `rollback_file` so in-memory file history can only be rolled back by the same thread that created the latest history entry, preventing same-workspace cross-thread rollback of another session's write.
+- Preserved interrupted `ToolItem` results when a pending approval is auto-denied during turn interruption, so replay keeps the interrupt reason instead of rewriting it as a normal denial.
+- Hardened command sessions so `read_command_session`, `write_command_session`, and `stop_command_session` only operate from the same thread and workspace that created the session.
+- Made `write_command_session` preserve input exactly, wait for stdin to accept it, and return the actual UTF-8 byte count, with closed stdin and async write failures surfaced as tool errors instead of best-effort success.
+- Made `stop_command_session` wait for the process to reach a terminal state before returning, preventing stopped sessions from leaving the workspace directory busy during cleanup or follow-up tool calls.
+- Preserved `failed` command session status after spawn/runtime errors so a later child `close` event cannot rewrite the session as a normal exit and hide the captured error.
+- Hardened Windows foreground command cancellation so timeout/interrupt falls back to direct child termination when `taskkill /T /F` starts but exits unsuccessfully.
+- Changed Git pathspec validation from realpath read checks to the shared workspace lexical policy, allowing deleted tracked files to be diffed or staged while still rejecting hidden, path-escaping, magic, and glob pathspecs.
+- Tightened `git_log.ref` so the structured read-only log tool accepts revision/range values but rejects Git options, pathspec magic, whitespace/control characters, and NUL bytes before invoking Git.
+- Tightened model-provided package script overrides so package/task wrappers accept script identifiers such as `format:write` but reject package-manager options, whitespace/control characters, NUL bytes, and unsupported shell metacharacters before spawning npm/pnpm/yarn/bun.
+- Tightened npm `package_install` frozen lockfile mode so it uses `npm ci` only with `package-lock.json` or `npm-shrinkwrap.json`, and fails instead of silently falling back to `npm install` when no npm lockfile exists.
+- Rejected symbolic-link components in destructive coding tool targets so `edit_file`, `write_file`, `delete_file`, `apply_patch`, and `rollback_file` cannot record one lexical path while modifying or deleting a different linked file object.
+- Wrapped malformed `package.json` failures in `diagnose_workspace` with a tool-specific invalid-manifest error so diagnostics setup failures remain traceable to the workspace package being inspected.
+- Filtered TypeScript diagnostic paths so `diagnose_workspace` and `diagnose_file` only return diagnostics whose source path remains inside the active workspace.
+- Verification plan: command tool tests cover cross-thread session denial, session spawn failure state, Windows `taskkill` fallback, deleted-file Git pathspecs, hidden and magic pathspec rejection, git log ref validation, package script-name validation, npm frozen-lockfile install behavior, symlink-path coding tool rejection, invalid diagnostic package manifests, workspace-bound diagnostic paths, plus the existing command/coding tool safety regressions; full `typecheck/test/build` verification is run before handoff.
+
 ### 2026-06-10 - Code workbench long timeline performance
 - Optimized Code `MessageTimeline` for long histories by windowing at the raw
   `Item[]` boundary before turn grouping. The initial render keeps the latest

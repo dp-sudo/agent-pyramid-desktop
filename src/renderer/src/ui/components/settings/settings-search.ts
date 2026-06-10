@@ -128,6 +128,7 @@ const SETTINGS_CATEGORY_SEARCH_KEY_PATHS: Record<SettingsCategory, readonly stri
     "settings.toolNames.rg_search",
     "settings.toolNames.edit_file",
     "settings.toolNames.write_file",
+    "settings.toolNames.delete_file",
     "settings.toolNames.apply_patch",
     "settings.toolNames.rollback_file",
     "settings.toolNames.run_command",

@@ -441,6 +441,7 @@
       "rg_search": "Regex search",
       "edit_file": "Edit file",
       "write_file": "Write file",
+      "delete_file": "Delete file",
       "apply_patch": "Apply patch",
       "rollback_file": "Rollback file",
       "run_command": "Run command",

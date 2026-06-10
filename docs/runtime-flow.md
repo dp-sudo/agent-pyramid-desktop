@@ -340,34 +340,55 @@ Approval policy currently implemented in runtime:
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
 - All remaining non-read-only tools require approval.
 
-Workspace tools require an absolute thread workspace path before resolving file paths. `read_file`, `search_files`, `rg_search`, `edit_file`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the file no longer matches the latest agent-written content. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
+Workspace tools require an absolute thread workspace path before resolving file paths. `read_file`, `search_files`, `rg_search`, `edit_file`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the history entry belongs to another thread or the file no longer matches the latest agent-written content. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
 
 `apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written. A patch may include multiple hunks for one file under a single file header, but duplicate file sections for the same resolved target are rejected so successful writes and failure rollback both have one authoritative pre-write snapshot per file. The parser treats `\ No newline at end of file` as part of the neighboring hunk line, so patches cannot silently add or remove the final newline. Existing lines keep their original LF or CRLF endings; added lines use the local file ending around the insertion point, falling back to LF for new files.
 
-File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; it is not replayed from JSONL after restart.
+File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; rollback is limited to the thread that produced the latest file history entry, and history is not replayed from JSONL after restart.
 
-`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. `shell_command`, `git_bash_command`, `powershell_command`, and `wsl_command` use the same foreground execution boundary while selecting an explicit shell. `shell_command` can use a custom `shell_path` and `shell_args`; `wsl_command` converts Windows drive paths to `/mnt/<drive>/...` before entering the WSL shell. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start.
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. `shell_command`, `git_bash_command`, `powershell_command`, and `wsl_command` use the same foreground execution boundary while selecting an explicit shell. `shell_command` can use a custom `shell_path` and `shell_args`; `wsl_command` converts Windows drive paths to `/mnt/<drive>/...` before entering the WSL shell. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start or exits unsuccessfully.
 
 Structured developer command tools are registered independently from
 `run_command`. `rg_search` performs ripgrep-style regular expression search
 over UTF-8 workspace text files without depending on a host `rg` binary.
 `git_status`, `git_diff`, `git_log`, and `git_branch` are read-only Git
-wrappers; `git_commit` can stage all or selected workspace paths and commit
-after approval. `package_scripts` detects package scripts and the
+wrappers; `git_diff` disables external diff and textconv execution before
+using the read-only approval bypass. `git_commit` can stage all or selected
+workspace paths and commit after approval. Git pathspecs use the workspace
+lexical policy and must be plain workspace-relative paths, so deleted tracked
+files can be diffed or staged while hidden, escaping, magic, and glob pathspecs
+remain rejected. `git_log.ref` is separately limited to revision/range syntax:
+Git options, pathspec magic, whitespace/control characters, and NUL bytes are
+rejected before invoking Git. `package_scripts` detects package scripts and the
 `npm`/`pnpm`/`yarn`/`bun` manager; `package_install`, `package_test`,
 `package_build`, `run_lint`, `run_format`, `run_tests`, and `run_build` run
 package-manager commands through the same timeout/output limits and approval
-boundary as foreground commands. `detect_shell_environment` reports PATH-based
-shell availability, Git Bash candidates, PowerShell/pwsh, WSL, and workspace
-path conversion facts.
+boundary as foreground commands. Model-provided package script overrides are
+validated as script identifiers rather than package-manager options: option-like
+names, whitespace/control characters, NUL bytes, and unsupported shell
+metacharacters are rejected before spawning npm/pnpm/yarn/bun. When
+`package_install` is called with `frozen_lockfile: true`, npm uses `npm ci` only
+if `package-lock.json` or `npm-shrinkwrap.json` exists; otherwise it fails
+instead of silently falling back to lockfile-mutating `npm install`.
+`detect_shell_environment` reports PATH-based shell availability, Git Bash
+candidates, PowerShell/pwsh, WSL, and workspace path conversion facts.
 
 Long-running command sessions are held in main-process memory by
 `start_command_session`, `read_command_session`, `write_command_session`, and
 `stop_command_session`. Starting a session returns a session id immediately
-while stdout/stderr are retained in bounded per-stream buffers. Session state is
-not persisted across app restarts; callers must stop sessions explicitly.
+while stdout/stderr are retained in bounded per-stream buffers. Read, write and
+stop calls must come from the same thread and workspace that created the
+session. `write_command_session` writes the provided input string to stdin
+without trimming, waits for stdin to accept it, and surfaces a write/closed-stdin
+error instead of reporting a best-effort success.
+`stop_command_session` waits for the child process to reach a terminal state
+before returning, so callers can safely clean up or reuse the workspace after a
+stop result. Spawn/runtime errors keep the session in `failed` state with the
+captured error message even if the child later emits a close event. Session
+state is not persisted across app restarts; callers must stop sessions
+explicitly.
 
-`diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass and receives the same runtime command defaults as `run_command`. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
+`diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass and receives the same runtime command defaults as `run_command`. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths; diagnostics that resolve outside the active workspace are omitted instead of being surfaced as `../...` paths. A malformed package manifest is reported as a `diagnose_workspace package.json is invalid` tool error instead of a raw JSON parser failure. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. Language-service diagnostics are also limited to files inside the active workspace. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
 
 Write-mode Markdown file operations remain renderer-invoked IPC services under
 `window.agentApi.write.*`. They are not exposed to the model as coding tools;
@@ -419,7 +440,7 @@ the active thread's unresolved approvals in a composer-adjacent pending
 approval panel, reusing the same diff preview and allow/deny controls so users
 do not have to scroll the timeline to unblock a turn.
 
-Interrupting a turn denies pending approvals for that turn and aborts active tool controllers. Runtime waits briefly for already-started tool execution promises to settle before emitting the interrupted terminal event; if a tool ignores abort beyond that bounded wait, runtime emits a traceable `runtime_error` and continues the interrupt. Command tools receive the abort signal and terminate the child process/process group before the turn is marked interrupted.
+Interrupting a turn denies pending approvals for that turn and aborts active tool controllers. Tool items that were already finalized as interrupted keep that interrupted result when the pending approval resolves to deny, so replay does not rewrite an interrupt as an ordinary user denial. Runtime waits briefly for already-started tool execution promises to settle before emitting the interrupted terminal event; if a tool ignores abort beyond that bounded wait, runtime emits a traceable `runtime_error` and continues the interrupt. Command tools receive the abort signal and terminate the child process/process group before the turn is marked interrupted.
 
 ## Interrupt Lifecycle
 

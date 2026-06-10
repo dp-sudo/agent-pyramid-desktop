@@ -3040,6 +3040,20 @@ describe("AgentRuntime", () => {
       kind: "item_updated",
       item: expect.objectContaining({ kind: "approval", decision: "deny" }),
     });
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(finalItems(replayed)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "tool",
+          name: "shell_command",
+          status: "failed",
+          result: { message: "Tool was interrupted." },
+        }),
+      ]),
+    );
     expect(await fs.readdir(userDataDir)).toEqual(
       expect.arrayContaining(["threads", "config"]),
     );
