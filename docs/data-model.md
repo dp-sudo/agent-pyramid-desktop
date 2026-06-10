@@ -437,6 +437,10 @@ Key semantics:
 - `ModelConfigStore.listProfiles()` returns all profiles.
 - Model profile writes preserve `runtimePreferences`; runtime preference writes
   preserve model profiles. Both stores use a shared config-file write queue.
+- Non-empty `OPENAI_API_KEY` values stay plain text only in the in-memory
+  `ModelConfig` contract. The `userData/config` representation is encrypted via
+  the main-process secret codec, and legacy plain-text config files are migrated
+  on the next normalized write.
 - Deleting a model profile clears Code/Write default profile ids in
   `runtimePreferences` when they point at the deleted profile, avoiding
   persisted dangling profile references.
@@ -456,7 +460,8 @@ Key semantics:
   `updatedAt`.
 - `model_auto_compact_token_limit <= model_context_window`.
 - `max_tokens < model_context_window`.
-- `OPENAI_API_KEY` is a generic field name; provider fallback may use environment variables in the gateway/runtime path.
+- `OPENAI_API_KEY` is a generic field name; provider fallback may use
+  environment variables in the gateway/runtime path.
 
 Default configs are defined in `src/shared/agent-contracts.ts`:
 
@@ -559,8 +564,9 @@ Examples:
 - sidebar width persistence
 - default inspector mode
 - archived thread visibility
-- delete confirmation behavior
 - restore last workspace
+- code block fold threshold
+- completed reasoning default-open behavior
 - composer image upload and paste entry points
 
 If a preference must influence Agent runtime behavior, do not hide it in renderer localStorage. Promote it into `RuntimePreferences`, the `userData/config` runtime preferences section and a typed IPC API.

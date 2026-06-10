@@ -11,9 +11,10 @@ export interface WorkbenchBasicPreferences {
   rememberRightSidebarWidth: boolean;
   rightSidebarWidth: number;
   defaultInspectorMode: DefaultInspectorMode;
+  codeBlockCollapseLineThreshold: number;
+  openReasoningByDefault: boolean;
   showArchivedThreadsByDefault: boolean;
   restoreLastWorkspaceOnStartup: boolean;
-  confirmThreadDelete: boolean;
   allowComposerImageUpload: boolean;
   allowComposerImagePaste: boolean;
 }
@@ -27,6 +28,9 @@ export const LEFT_SIDEBAR_DEFAULT_WIDTH = 268;
 export const RIGHT_INSPECTOR_MIN_WIDTH = 280;
 export const RIGHT_INSPECTOR_MAX_WIDTH = 760;
 export const RIGHT_INSPECTOR_DEFAULT_WIDTH = 360;
+export const CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN = 1;
+export const CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX = 200;
+export const CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT = 18;
 
 export const DEFAULT_BASIC_PREFERENCES: WorkbenchBasicPreferences = {
   theme: "light",
@@ -37,9 +41,10 @@ export const DEFAULT_BASIC_PREFERENCES: WorkbenchBasicPreferences = {
   rememberRightSidebarWidth: false,
   rightSidebarWidth: RIGHT_INSPECTOR_DEFAULT_WIDTH,
   defaultInspectorMode: null,
+  codeBlockCollapseLineThreshold: CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
+  openReasoningByDefault: false,
   showArchivedThreadsByDefault: false,
   restoreLastWorkspaceOnStartup: false,
-  confirmThreadDelete: true,
   allowComposerImageUpload: true,
   allowComposerImagePaste: true,
 };
@@ -114,6 +119,16 @@ export function normalizeBasicPreferences(
     defaultInspectorMode: isDefaultInspectorMode(value.defaultInspectorMode)
       ? value.defaultInspectorMode
       : DEFAULT_BASIC_PREFERENCES.defaultInspectorMode,
+    codeBlockCollapseLineThreshold: clampInteger(
+      value.codeBlockCollapseLineThreshold,
+      CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN,
+      CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX,
+      DEFAULT_BASIC_PREFERENCES.codeBlockCollapseLineThreshold,
+    ),
+    openReasoningByDefault:
+      typeof value.openReasoningByDefault === "boolean"
+        ? value.openReasoningByDefault
+        : DEFAULT_BASIC_PREFERENCES.openReasoningByDefault,
     showArchivedThreadsByDefault:
       typeof value.showArchivedThreadsByDefault === "boolean"
         ? value.showArchivedThreadsByDefault
@@ -122,10 +137,6 @@ export function normalizeBasicPreferences(
       typeof value.restoreLastWorkspaceOnStartup === "boolean"
         ? value.restoreLastWorkspaceOnStartup
         : DEFAULT_BASIC_PREFERENCES.restoreLastWorkspaceOnStartup,
-    confirmThreadDelete:
-      typeof value.confirmThreadDelete === "boolean"
-        ? value.confirmThreadDelete
-        : DEFAULT_BASIC_PREFERENCES.confirmThreadDelete,
     allowComposerImageUpload:
       typeof value.allowComposerImageUpload === "boolean"
         ? value.allowComposerImageUpload
@@ -158,6 +169,17 @@ function clampNumber(
   fallback: number,
 ): number {
   return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, value))
+    : fallback;
+}
+
+function clampInteger(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  return typeof value === "number" && Number.isInteger(value)
     ? Math.min(max, Math.max(min, value))
     : fallback;
 }

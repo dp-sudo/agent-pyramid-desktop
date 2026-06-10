@@ -10,6 +10,7 @@ import {
 } from "../../shared/agent-contracts.js";
 import {
   AppConfigFile,
+  type AppConfigFileOptions,
   assertModelConfigUpdateHasFields,
   assertNonEmptyString,
   assertProfileUpdateHasFields,
@@ -23,8 +24,8 @@ import {
 export class ModelConfigStore {
   private readonly configFile: AppConfigFile;
 
-  constructor(userDataDir: string) {
-    this.configFile = new AppConfigFile(userDataDir);
+  constructor(userDataDir: string, options: AppConfigFileOptions = {}) {
+    this.configFile = new AppConfigFile(userDataDir, options);
   }
 
   async init(): Promise<void> {

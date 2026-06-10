@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   canSubmitModelSettingsSection,
   clearDeletedDefaultProfileReferences,
-  filterSettingsSidebarItems,
   getDefaultCategoryForSection,
   isProfileDeletePending,
   isSettingsCategoryInSection,
@@ -15,10 +14,12 @@ import {
   toDefaultInspectorMode,
   toDefaultInspectorModeValue,
   toUpdatePayload,
+  validateCodeBlockCollapseLineThreshold,
   validateModelSettingsForm,
   validateRuntimeCommandDraft,
   type SettingsFormState,
 } from "../../src/renderer/src/ui/SettingsView";
+import { filterSettingsSidebarItems } from "../../src/renderer/src/ui/components/settings/settings-search";
 import {
   DEFAULT_MODEL_CONFIG,
   DEFAULT_RUNTIME_PREFERENCES,
@@ -94,18 +95,22 @@ describe("SettingsView helpers", () => {
         label: "Appearance",
         description: "Language and theme",
         marker: "01",
+        searchKeywords: ["Interface language", "Follow system theme"],
       },
       {
         id: "context" as const,
         label: "Context",
         description: "Token windows",
         marker: "02",
+        searchKeywords: ["Maximum context tokens", "Auto compact limit"],
       },
     ];
 
     expect(filterSettingsSidebarItems(items, "theme").map((item) => item.id))
       .toEqual(["appearance"]);
     expect(filterSettingsSidebarItems(items, "context").map((item) => item.id))
+      .toEqual(["context"]);
+    expect(filterSettingsSidebarItems(items, "compact").map((item) => item.id))
       .toEqual(["context"]);
     expect(filterSettingsSidebarItems(items, "missing")).toEqual([]);
     expect(filterSettingsSidebarItems(items, " ")).toEqual(items);
@@ -165,6 +170,21 @@ describe("SettingsView helpers", () => {
       .toEqual({
         ok: false,
         message: `Command timeout must be between ${MIN_RUNTIME_COMMAND_TIMEOUT_MS} and ${MAX_RUNTIME_COMMAND_TIMEOUT_MS}.`,
+      });
+  });
+
+  it("validates code block fold threshold drafts before saving local preferences", () => {
+    expect(validateCodeBlockCollapseLineThreshold("24", testT))
+      .toEqual({ ok: true, value: 24 });
+    expect(validateCodeBlockCollapseLineThreshold("", testT))
+      .toEqual({
+        ok: false,
+        message: "Code block fold line count must be a positive whole number.",
+      });
+    expect(validateCodeBlockCollapseLineThreshold("201", testT))
+      .toEqual({
+        ok: false,
+        message: "Code block fold line count must be between 1 and 200.",
       });
   });
 
@@ -298,6 +318,9 @@ function testT(key: string, options?: Record<string, unknown>): string {
   if (key === "settings.fields.maxTokens") return "Max output tokens";
   if (key === "settings.fields.commandTimeout") return "Command timeout";
   if (key === "settings.fields.commandMaxOutput") return "Command output limit";
+  if (key === "settings.fields.codeBlockCollapseLineThreshold") {
+    return "Code block fold line count";
+  }
   if (key === "settings.errors.positiveInteger") {
     return `${String(options?.field)} must be a positive whole number.`;
   }

@@ -278,6 +278,9 @@ Notes:
 - Model config profiles and runtime preferences are stored in the same
   `userData/config` file; the IPC namespaces stay split so callers only touch
   the section they need.
+- Non-empty `OPENAI_API_KEY` values are encrypted by the main-process config
+  persistence boundary before they are written to `userData/config`; IPC and
+  renderer code still receive the existing plain `ModelConfig` shape.
 - Runtime resolves a turn profile by explicit id, Code/Write default profile id
   from `RuntimePreferences`, model match, active profile, then first profile.
 - Deleting a profile also clears Code/Write default profile ids in

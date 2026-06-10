@@ -36,7 +36,8 @@ Global root:
 - Route source: `WorkbenchContext.state.route`.
 - Routes: `code`, `write`, `settings`.
 - Lazy loaded route components: `Workbench`, `SettingsView`.
-- Empty loading fallback: full-size surface with `var(--ds-bg-main)`.
+- Empty loading fallback: `ds-route-fallback`, a full-size surface using
+  `var(--ds-bg-main)`.
 
 Global visual system:
 
@@ -65,7 +66,7 @@ Important UI state:
 | `composer` | Draft text, model, reasoning effort, mode, goal mode, attachments. |
 | `errorMessage` | Visible workbench error toast. |
 | `leftSidebarWidth`, `rightSidebarWidth` | Resizable panel dimensions. |
-| `basicPreferences` | Theme/startup/session/sidebar/inspector defaults. |
+| `basicPreferences` | Theme/startup/session/sidebar/inspector and message display defaults. |
 
 Dimension constants from `preferences.ts`:
 
@@ -113,12 +114,22 @@ Top-level regions:
   - Class: `ds-workbench-divider`.
   - Role: `separator`.
   - Keyboard: arrows adjust by `SIDEBAR_KEYBOARD_STEP = 16`.
+  - Double click resets width to `LEFT_SIDEBAR_DEFAULT_WIDTH`.
 - Main stage:
   - Class: `ds-stage-surface`.
   - Code route child: `ds-chat-stage`.
+- Topbar frame:
+  - Class: `ds-chat-topbar-frame`.
+  - Padding: `--ds-space-3`.
+- Stage body:
+  - Class: `ds-chat-stage-body`.
+  - Owns the horizontal chat column + optional inspector row.
 - Chat column:
-  - Class: `ds-chat-column-inset`.
-  - Composer max width: `min(100%, 720px)`.
+  - Classes: `ds-chat-column ds-chat-column-inset`.
+- Composer dock:
+  - Classes: `ds-chat-composer-dock` and `ds-chat-composer-frame`.
+  - Composer frame max width shares `min(100%, --ds-chat-content-max-width)`
+    with the timeline content column so model output and input stay aligned.
 - Right inspector:
   - Class: `ds-right-inspector`.
   - Width: `state.rightSidebarWidth`.
@@ -162,7 +173,7 @@ Thread row attributes:
 - Archived row: `is-archived`.
 - Pending delete confirmation: `is-confirming-delete`.
 - Main button uses `aria-current="page"` when active.
-- Delete behavior depends on `basicPreferences.confirmThreadDelete`.
+- Delete always uses inline confirmation before calling the thread delete API.
 - Pending delete confirmation is pruned when the backing thread disappears from
   the current list, such as after archive/delete/filter refreshes.
 - Footer workbench switch uses the existing `WorkbenchContext.actions.setRoute`
@@ -221,6 +232,7 @@ Key classes:
 
 - `ds-message-timeline`
 - `ds-message-timeline-content`
+- `ds-message-jump-bottom`
 - `ds-message-turn`
 - `ds-work-process`
 - `ds-work-process-summary`
@@ -229,7 +241,12 @@ Key classes:
 
 Scroll behavior:
 
+- Timeline content max width uses `min(100%, --ds-chat-content-max-width)`,
+  the same outer width as the Code composer frame.
 - Sticky threshold: `96px`.
+- When the user scrolls away from latest output, `MessageTimeline` shows a
+  localized `ds-message-jump-bottom` button. Activating it restores the scroll
+  position to the latest item and re-enables bottom stickiness.
 - Active turn work process opens by default.
 - User toggles are stored by turn id and pruned when turns disappear. Controlled
   `details` updates that only mirror the active-turn default are ignored, so a
@@ -245,8 +262,8 @@ Item rendering:
 | --- | --- |
 | `user` | Right-side user bubble with optional attachment names. |
 | `assistant` | Markdown assistant bubble. Live output gets shiny styling. |
-| `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning folds unless the user explicitly toggled it. |
-| `tool` | Collapsible process entry with status/tone summary. |
+| `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning follows `basicPreferences.openReasoningByDefault` until the user explicitly toggles it. |
+| `tool` | Collapsible process entry with status/tone summary. Long details render as a bounded preview with an explicit full-detail toggle. |
 | `approval` | Approval block with args JSON and allow/deny buttons. |
 | `user_input` | System-style user input prompt. |
 | `plan` | Plan block with ordered steps and per-step status class. |
@@ -265,6 +282,9 @@ Key classes:
 - `ds-process-entry-title`
 - `ds-process-entry-status`
 - `ds-process-entry-detail`
+- `ds-process-entry-detail-frame`
+- `ds-process-entry-detail-note`
+- `ds-process-entry-detail-actions`
 - `ds-process-tool`
 - `ds-approval-block`
 - `ds-approval-actions`
@@ -303,15 +323,17 @@ Renderer:
 - Code blocks are wrapped in `ds-code-block`.
 - Code language header is extracted from `language-*` class.
 - Long code blocks start collapsed with expand/collapse controls while short code
-  blocks remain open. The expand/collapse control owns the rendered `<pre>` via
-  `aria-controls`.
+  blocks remain open. The line threshold comes from
+  `basicPreferences.codeBlockCollapseLineThreshold`, and the expand/collapse
+  control owns the rendered `<pre>` via `aria-controls`.
 - Code block copy controls keep a stable accessible label/title while the
   visible text can briefly show copied or failed state before returning to idle.
   Repeated copy attempts replace the previous feedback timer, and unmount clears
   any pending reset.
 - Tables are wrapped in `ds-markdown-table-wrap`.
 - Images are wrapped in `ds-markdown-image-frame`; only `http(s)` and supported
-  image `data:` URLs are rendered.
+  image `data:` URLs are rendered, and rendered images use lazy loading plus
+  async decoding.
 - Task-list checkboxes use `ds-markdown-task-checkbox` and are disabled.
 
 Key classes:
@@ -346,6 +368,8 @@ Purpose:
 Key classes:
 
 - `ds-composer-shell`
+- `ds-composer-toolbar`
+- `ds-composer-toolbar-actions`
 - `ds-composer-attachments`
 - `ds-composer-attachment`
 - `ds-composer-attachment-remove`
@@ -388,6 +412,11 @@ States:
 Send behavior:
 
 - Enter sends, Shift+Enter inserts newline.
+- Enter is ignored while IME composition is active, including the legacy
+  `keyCode: 229` composition signal, so confirming Chinese/Japanese/Korean
+  candidates cannot submit the draft accidentally.
+- The textarea resets to `auto` height and then syncs to its `scrollHeight`
+  after draft changes; CSS min/max height keeps the control bounded.
 - Empty text is blocked unless attachments are present through the composer
   payload builder.
 - New thread is created automatically when no active thread exists.
@@ -416,6 +445,7 @@ Layout:
   - ArrowRight shrinks.
   - Home jumps to min.
   - End jumps to max.
+- Double click resets width to `RIGHT_INSPECTOR_DEFAULT_WIDTH`.
 
 Panels:
 
@@ -455,12 +485,16 @@ Source:
 - `state.errorMessage`.
 - Workbench preload IPC `IpcResult.err` values and rejected invoke promises are
   normalized into this state before display.
+- The copy button writes the full current error message to the clipboard and
+  shows transient copied / failed feedback without replacing the toast message.
 - The dismiss button uses stable visible text plus localized `aria-label` and
   `title`; it must not depend on glyphs that can degrade under encoding issues.
 
 Behavior:
 
 - Uses `role="status"`.
+- Copy failures stay visible through the button feedback state and are logged by
+  the renderer handler.
 - Dismiss button clears `actions.setError(null)`.
 - Runtime and IPC failures should be routed here when visible to the user.
 
@@ -517,8 +551,9 @@ Purpose:
 Key classes:
 
 - `ds-write-route-actions`
+- `ds-write-sidebar-actions`
 - `ds-pill`
-- `ds-sidebar-workspace`
+- `ds-sidebar-workspace ds-write-workspace-label`
 - `ds-write-search`
 - `ds-write-search-clear`
 - `ds-sidebar-list`
@@ -560,6 +595,7 @@ Key classes:
 - `ds-write-editor-frame`
 - `ds-write-ghost`
 - `ds-write-status`
+- `ds-write-save-button`
 
 Behavior constants:
 
@@ -568,6 +604,9 @@ Behavior constants:
 - Completion requires at least `10` trailing content characters.
 - Main Markdown textarea has an `aria-label` that matches its localized editor
   placeholder.
+- Sidebar width/flex-basis remains a dynamic inline style sourced from
+  `state.leftSidebarWidth`; static sidebar colors, borders, action spacing and
+  status layout live in `shell.css`.
 - Opening another file or refreshing/switching workspace first flushes the
   current dirty file through `write.put`; if that save fails, navigation stays
   on the current file and surfaces the error.
@@ -681,6 +720,14 @@ Sidebar category nav:
 - Buttons: `ds-settings-nav-item`.
 - Active category gets `is-active` and `aria-current="page"`.
 
+Search:
+
+- The sidebar search is scoped to the active top-level section.
+- Results remain category-level so the two-level Settings structure stays
+  stable.
+- Matching includes category label/description/id plus the labels,
+  descriptions, and main option text for settings owned by that category.
+
 Category ownership:
 
 | Section | Categories | Persistence / consumer |
@@ -740,21 +787,28 @@ State sink:
 - Persisted with `saveBasicPreferences()`.
 - Locale and theme go through `i18n`, `persistLocale()`, `setTheme()`, and
   `setFollowSystemTheme()`.
+- When follow-system theme is enabled, the renderer listens to
+  `prefers-color-scheme` changes and keeps `<html data-theme>` in sync until a
+  manual light/dark selection disables follow mode.
 
 ### Workbench Settings
 
 Startup:
 
 - Default startup view: `code | write`.
+
+Layout:
+
 - Remember left sidebar width.
 - Remember right sidebar width.
 - Default inspector mode: none, changes, todo, plan.
+- Code block fold line count.
+- Open completed reasoning by default.
 
 Session:
 
 - Show archived threads by default.
 - Restore last workspace on startup.
-- Confirm thread delete.
 
 Model defaults:
 
@@ -775,6 +829,10 @@ State sinks:
 
 - Startup, layout and session settings update renderer `basicPreferences` and
   localStorage.
+- The code block fold line count is consumed by `ChatBlock` / `AssistantMarkdown`
+  when rendering assistant and reasoning Markdown.
+- The completed reasoning default-open preference is consumed by `ChatBlock`;
+  live reasoning still opens while streaming.
 - Attachment settings update renderer `basicPreferences` and are consumed by
   `FloatingComposer`.
 - Model defaults update `runtimePreferences` through
@@ -982,7 +1040,7 @@ Cross-route coupling:
 - Settings model profile changes update `modelConfig`, `modelProfiles`, and
   composer model selection.
 - Basic settings can change startup route, inspector default, sidebar width
-  persistence, archived-thread visibility, and delete confirmation behavior.
+  persistence, archived-thread visibility, and message display defaults.
 - Runtime preference settings can change Code/Write default model profiles,
   approval/sandbox defaults for newly created threads, tool catalog visibility,
   command defaults, compaction strategy and approval presentation behavior.

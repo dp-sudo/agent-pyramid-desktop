@@ -6,6 +6,7 @@ import {
   extractCodeText,
   isCodeBlockCollapsedByDefault,
   normalizeMarkdownHref,
+  normalizeMarkdownImageSrc,
   resolveNextCodeBlockCollapsedState,
   shouldReplaceCopyResetTimer,
 } from "../../src/renderer/src/ui/components/chat/AssistantMarkdown";
@@ -59,6 +60,28 @@ describe("AssistantMarkdown", () => {
     expect(controlsMatch[1]).toBe(preIdMatch[1]);
     expect(html).toContain("chat.expandCode");
     expect(html).toContain("chat.copyCode");
+  });
+
+  it("uses the configured code block collapse threshold", () => {
+    const code = Array.from({ length: 4 }, (_, index) => `line ${index + 1}`).join("\n");
+    const collapsedHtml = renderToStaticMarkup(
+      <AssistantMarkdown
+        text={["```txt", code, "```"].join("\n")}
+        codeBlockCollapseLineThreshold={3}
+      />,
+    );
+    const openHtml = renderToStaticMarkup(
+      <AssistantMarkdown
+        text={["```txt", code, "```"].join("\n")}
+        codeBlockCollapseLineThreshold={4}
+      />,
+    );
+
+    expect(isCodeBlockCollapsedByDefault(code, 3)).toBe(true);
+    expect(isCodeBlockCollapsedByDefault(code, 4)).toBe(false);
+    expect(collapsedHtml).toContain("class=\"ds-code-block is-collapsed\"");
+    expect(openHtml).toContain("class=\"ds-code-block\"");
+    expect(openHtml).not.toContain("is-collapsed");
   });
 
   it("updates code block collapse state only while the user has not overridden it", () => {
@@ -124,5 +147,32 @@ describe("AssistantMarkdown", () => {
     expect(html).not.toContain("javascript:alert");
     expect(html).toContain("bad and");
     expect(html).toContain("href=\"https://example.com/\"");
+  });
+
+  it("renders only safe markdown images with lazy async loading", () => {
+    expect(normalizeMarkdownImageSrc(" https://example.com/image.png ")).toBe(
+      "https://example.com/image.png",
+    );
+    expect(normalizeMarkdownImageSrc("data:image/png;base64,AAAA")).toBe(
+      "data:image/png;base64,AAAA",
+    );
+    expect(normalizeMarkdownImageSrc("data:text/html;base64,AAAA")).toBeNull();
+    expect(normalizeMarkdownImageSrc("javascript:alert(1)")).toBeNull();
+    expect(normalizeMarkdownImageSrc("file:///tmp/image.png")).toBeNull();
+
+    const html = renderToStaticMarkup(
+      <AssistantMarkdown
+        text={[
+          "![safe](https://example.com/image.png)",
+          "![unsafe](javascript:alert(1))",
+        ].join("\n")}
+      />,
+    );
+
+    expect(html).toContain("class=\"ds-markdown-image-frame\"");
+    expect(html).toContain("loading=\"lazy\"");
+    expect(html).toContain("decoding=\"async\"");
+    expect(html).toContain("src=\"https://example.com/image.png\"");
+    expect(html).not.toContain("javascript:alert");
   });
 });

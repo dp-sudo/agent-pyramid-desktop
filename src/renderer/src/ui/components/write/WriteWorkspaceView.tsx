@@ -414,11 +414,6 @@ export function WriteWorkspaceView({
         className="ds-write-sidebar"
         style={{
           width: state.leftSidebarWidth,
-          background: "var(--ds-bg-sidebar)",
-          borderRight: "1px solid var(--ds-border-muted)",
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
           flex: `0 0 ${state.leftSidebarWidth}px`,
         }}
       >
@@ -438,7 +433,7 @@ export function WriteWorkspaceView({
             {t("common.settings")}
           </button>
         </div>
-        <div style={{ padding: 12, display: "flex", gap: 6 }}>
+        <div className="ds-write-sidebar-actions">
           <button
             type="button"
             className="ds-pill"
@@ -458,8 +453,7 @@ export function WriteWorkspaceView({
         </div>
         {state.workspaceRoot ? (
           <div
-            className="ds-sidebar-workspace"
-            style={{ margin: "0 12px 8px" }}
+            className="ds-sidebar-workspace ds-write-workspace-label"
             title={state.workspaceRoot}
           >
             {state.workspaceRoot}
@@ -547,8 +541,7 @@ export function WriteWorkspaceView({
             {status === "idle" && !activePath ? t("write.noActiveFile") : null}
             <button
               type="button"
-              className="ds-pill is-accent"
-              style={{ float: "right" }}
+              className="ds-pill is-accent ds-write-save-button"
               onClick={() => void save()}
               disabled={saveDisabled}
             >

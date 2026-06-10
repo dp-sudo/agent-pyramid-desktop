@@ -368,6 +368,9 @@ Persistence invariants:
 - `userData/config` is the shared authority for model profiles and runtime
   preferences. `ModelConfigStore` and `RuntimePreferencesStore` use the shared
   config-file writer so one section update does not overwrite the other.
+- The shared config writer encrypts non-empty model `OPENAI_API_KEY` values on
+  disk through the main-process secret codec. Store callers, IPC, renderer state
+  and runtime requests still use the plain `ModelConfig` contract in memory.
 - Legacy `runtime-preferences.json` is read only to populate a missing
   `runtimePreferences` section; if the section already exists, it is
   authoritative.
@@ -408,8 +411,8 @@ Important state slices:
   attachment ids.
 - `rightPanelMode`: `changes | todo | plan | null`.
 - `basicPreferences`: theme, startup, sidebar widths, inspector default,
-  archive visibility, last workspace, delete confirmation, composer image
-  upload and paste entry points.
+  archive visibility, last workspace, code/reasoning display defaults, composer
+  image upload and paste entry points.
 
 ## IPC Contract Map
 

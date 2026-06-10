@@ -10,6 +10,10 @@ import en from "./locales/en/translation.json";
 import zhCN from "./locales/zh-CN/translation.json";
 
 const LANGUAGE_STORAGE_KEY = "agent-pyramid.locale";
+const SYSTEM_THEME_QUERY = "(prefers-color-scheme: dark)";
+
+let systemThemeMediaQuery: MediaQueryList | null = null;
+let systemThemeListener: ((event: MediaQueryListEvent) => void) | null = null;
 
 function getInitialLocale(): LocaleCode {
   if (typeof window === "undefined") return DEFAULT_LOCALE;
@@ -25,7 +29,8 @@ export function persistLocale(locale: LocaleCode): void {
 export function initTheme(): void {
   if (typeof document === "undefined") return;
   const preferences = loadBasicPreferences();
-  document.documentElement.dataset.theme = resolveThemePreference(preferences);
+  applyThemePreference(preferences);
+  configureSystemThemeListener(preferences.followSystemTheme);
   const platform = detectPlatform();
   if (platform) {
     document.documentElement.dataset.platform = platform;
@@ -38,7 +43,8 @@ export function setTheme(theme: ThemePreference): void {
     theme,
     followSystemTheme: false,
   });
-  document.documentElement.dataset.theme = resolveThemePreference(nextPreferences);
+  applyThemePreference(nextPreferences);
+  configureSystemThemeListener(false);
 }
 
 export function setFollowSystemTheme(enabled: boolean): void {
@@ -46,7 +52,8 @@ export function setFollowSystemTheme(enabled: boolean): void {
     ...loadBasicPreferences(),
     followSystemTheme: enabled,
   });
-  document.documentElement.dataset.theme = resolveThemePreference(nextPreferences);
+  applyThemePreference(nextPreferences);
+  configureSystemThemeListener(enabled);
 }
 
 export function resolveThemePreference(preferences = loadBasicPreferences()): ThemePreference {
@@ -55,10 +62,75 @@ export function resolveThemePreference(preferences = loadBasicPreferences()): Th
 }
 
 function getSystemThemePreference(): ThemePreference {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+  const mediaQuery = getSystemThemeMediaQuery();
+  if (!mediaQuery) {
     return "light";
   }
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return mediaQuery.matches ? "dark" : "light";
+}
+
+function applyThemePreference(preferences = loadBasicPreferences()): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.theme = resolveThemePreference(preferences);
+}
+
+function configureSystemThemeListener(enabled: boolean): void {
+  const mediaQuery = getSystemThemeMediaQuery();
+  removeSystemThemeListener();
+  if (!enabled || !mediaQuery) return;
+
+  const listener = (): void => {
+    const preferences = loadBasicPreferences();
+    if (!preferences.followSystemTheme) {
+      removeSystemThemeListener();
+      applyThemePreference(preferences);
+      return;
+    }
+    applyThemePreference(preferences);
+  };
+  systemThemeMediaQuery = mediaQuery;
+  systemThemeListener = listener;
+  addMediaQueryListener(mediaQuery, listener);
+}
+
+function removeSystemThemeListener(): void {
+  if (!systemThemeMediaQuery || !systemThemeListener) {
+    systemThemeMediaQuery = null;
+    systemThemeListener = null;
+    return;
+  }
+  removeMediaQueryListener(systemThemeMediaQuery, systemThemeListener);
+  systemThemeMediaQuery = null;
+  systemThemeListener = null;
+}
+
+function getSystemThemeMediaQuery(): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return null;
+  }
+  return window.matchMedia(SYSTEM_THEME_QUERY);
+}
+
+function addMediaQueryListener(
+  mediaQuery: MediaQueryList,
+  listener: (event: MediaQueryListEvent) => void,
+): void {
+  if (typeof mediaQuery.addEventListener === "function") {
+    mediaQuery.addEventListener("change", listener);
+    return;
+  }
+  mediaQuery.addListener(listener);
+}
+
+function removeMediaQueryListener(
+  mediaQuery: MediaQueryList,
+  listener: (event: MediaQueryListEvent) => void,
+): void {
+  if (typeof mediaQuery.removeEventListener === "function") {
+    mediaQuery.removeEventListener("change", listener);
+    return;
+  }
+  mediaQuery.removeListener(listener);
 }
 
 function detectPlatform(): "darwin" | "win32" | "linux" | undefined {

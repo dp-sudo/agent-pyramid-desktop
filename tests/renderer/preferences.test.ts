@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
+  CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX,
+  CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN,
   DEFAULT_BASIC_PREFERENCES,
   LEFT_SIDEBAR_MAX_WIDTH,
   RIGHT_INSPECTOR_MIN_WIDTH,
@@ -25,9 +28,10 @@ describe("workbench basic preferences", () => {
         rememberRightSidebarWidth: true,
         rightSidebarWidth: -1,
         defaultInspectorMode: "file",
+        codeBlockCollapseLineThreshold: 2.5,
+        openReasoningByDefault: "yes",
         showArchivedThreadsByDefault: true,
         restoreLastWorkspaceOnStartup: true,
-        confirmThreadDelete: false,
         allowComposerImageUpload: false,
         allowComposerImagePaste: false,
       }),
@@ -37,12 +41,37 @@ describe("workbench basic preferences", () => {
       leftSidebarWidth: LEFT_SIDEBAR_MAX_WIDTH,
       rememberRightSidebarWidth: true,
       rightSidebarWidth: RIGHT_INSPECTOR_MIN_WIDTH,
+      codeBlockCollapseLineThreshold: CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
+      openReasoningByDefault: DEFAULT_BASIC_PREFERENCES.openReasoningByDefault,
       showArchivedThreadsByDefault: true,
       restoreLastWorkspaceOnStartup: true,
-      confirmThreadDelete: false,
       allowComposerImageUpload: false,
       allowComposerImagePaste: false,
     });
+  });
+
+  it("clamps persisted code block fold thresholds to the supported range", () => {
+    expect(normalizeBasicPreferences({
+      codeBlockCollapseLineThreshold: CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN - 1,
+    }).codeBlockCollapseLineThreshold).toBe(CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN);
+
+    expect(normalizeBasicPreferences({
+      codeBlockCollapseLineThreshold: CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX + 1,
+    }).codeBlockCollapseLineThreshold).toBe(CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX);
+
+    expect(normalizeBasicPreferences({
+      codeBlockCollapseLineThreshold: 42,
+    }).codeBlockCollapseLineThreshold).toBe(42);
+  });
+
+  it("preserves the completed reasoning default-open preference when valid", () => {
+    expect(normalizeBasicPreferences({
+      openReasoningByDefault: true,
+    }).openReasoningByDefault).toBe(true);
+
+    expect(normalizeBasicPreferences({
+      openReasoningByDefault: false,
+    }).openReasoningByDefault).toBe(false);
   });
 
   it("normalizes remembered workspace roots at the localStorage boundary", () => {

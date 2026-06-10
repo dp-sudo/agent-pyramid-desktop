@@ -1,6 +1,7 @@
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ENCRYPTED_SECRET_PREFIX } from "../../../src/main/persistence/config-file";
 import {
   DEFAULT_MODEL_CONFIG,
   DEFAULT_RUNTIME_PREFERENCES,
@@ -13,15 +14,18 @@ import {
   parseRuntimePreferencesUpdate,
 } from "../../../src/main/persistence/runtime-preferences-store";
 import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
+import type { SecretStringCodec } from "../../../src/main/persistence/secret-codec";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
 describe("RuntimePreferencesStore", () => {
   let userDataDir: string;
   let store: RuntimePreferencesStore;
+  let secretCodec: SecretStringCodec;
 
   beforeEach(async () => {
     userDataDir = await makeTempDir("agent-runtime-preferences-");
-    store = new RuntimePreferencesStore(userDataDir);
+    secretCodec = createTestSecretCodec();
+    store = new RuntimePreferencesStore(userDataDir, { secretCodec });
   });
 
   afterEach(async () => {
@@ -147,6 +151,21 @@ describe("RuntimePreferencesStore", () => {
     expect(raw.runtimePreferences?.command.timeoutMs).toBe(45_000);
   });
 
+  it("preserves encrypted model API keys when runtime preferences rewrite config", async () => {
+    const modelConfigStore = new ModelConfigStore(userDataDir, { secretCodec });
+    await modelConfigStore.update({ OPENAI_API_KEY: "test-runtime-shared-key" });
+
+    await store.update({ command: { timeoutMs: 45_000 } });
+    const raw = await fs.readFile(path.join(userDataDir, "config"), "utf8");
+    const parsed = JSON.parse(raw) as ModelConfigProfilesState & {
+      runtimePreferences?: RuntimePreferences;
+    };
+
+    expect(raw).not.toContain("test-runtime-shared-key");
+    expect(parsed.profiles[0]?.config.OPENAI_API_KEY).toContain(ENCRYPTED_SECRET_PREFIX);
+    expect(parsed.runtimePreferences?.command.timeoutMs).toBe(45_000);
+  });
+
   it("uses config runtime preferences instead of stale legacy preferences", async () => {
     const configPreferences: RuntimePreferences = {
       ...DEFAULT_RUNTIME_PREFERENCES,
@@ -189,7 +208,7 @@ describe("RuntimePreferencesStore", () => {
   });
 
   it("serializes shared config writes from model config and runtime preference stores", async () => {
-    const modelConfigStore = new ModelConfigStore(userDataDir);
+    const modelConfigStore = new ModelConfigStore(userDataDir, { secretCodec });
 
     const [modelConfig, preferences] = await Promise.all([
       modelConfigStore.update({ model: "MiniMax-M3-latest" }),
@@ -300,4 +319,15 @@ function malformedRuntimePreferencesUpdate(
   value: unknown,
 ): Parameters<RuntimePreferencesStore["update"]>[0] {
   return value as Parameters<RuntimePreferencesStore["update"]>[0];
+}
+
+function createTestSecretCodec(): SecretStringCodec {
+  return {
+    encrypt: encodeTestSecret,
+    decrypt: (value) => Buffer.from(value, "base64").toString("utf8"),
+  };
+}
+
+function encodeTestSecret(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64");
 }

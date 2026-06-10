@@ -1,7 +1,9 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ENCRYPTED_SECRET_PREFIX } from "../../../src/main/persistence/config-file";
 import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
+import type { SecretStringCodec } from "../../../src/main/persistence/secret-codec";
 import {
   DEFAULT_MODEL_CONFIG,
   DEFAULT_RUNTIME_PREFERENCES,
@@ -15,10 +17,12 @@ import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 describe("ModelConfigStore", () => {
   let userDataDir: string;
   let store: ModelConfigStore;
+  let secretCodec: SecretStringCodec;
 
   beforeEach(async () => {
     userDataDir = await makeTempDir("agent-model-config-");
-    store = new ModelConfigStore(userDataDir);
+    secretCodec = createTestSecretCodec();
+    store = new ModelConfigStore(userDataDir, { secretCodec });
   });
 
   afterEach(async () => {
@@ -335,6 +339,44 @@ describe("ModelConfigStore", () => {
     expect(profiles.profiles[0]?.config.protocol).toBe("openai-compatible");
   });
 
+  it("migrates legacy plain-text API keys into encrypted config storage", async () => {
+    const legacySecret = "test-model-api-key";
+    const legacyConfig: ModelConfig = {
+      ...DEFAULT_MODEL_CONFIG,
+      model_provide: "Legacy",
+      model: "legacy-model",
+      base_url: "https://legacy.example.test/v1",
+      OPENAI_API_KEY: legacySecret,
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(legacyConfig));
+
+    const profiles = await store.listProfiles();
+    const raw = await fs.readFile(path.join(userDataDir, "config"), "utf8");
+    const persisted = JSON.parse(raw) as ModelConfigProfilesState;
+
+    expect(profiles.profiles[0]?.config.OPENAI_API_KEY).toBe(legacySecret);
+    expect(raw).not.toContain(legacySecret);
+    expect(persisted.profiles[0]?.config.OPENAI_API_KEY)
+      .toBe(`${ENCRYPTED_SECRET_PREFIX}${encodeTestSecret(legacySecret)}`);
+  });
+
+  it("keeps API keys encrypted on profile updates while returning decrypted config", async () => {
+    const updated = await store.update({ OPENAI_API_KEY: "test-updated-api-key" });
+    const raw = await fs.readFile(path.join(userDataDir, "config"), "utf8");
+
+    expect(updated.OPENAI_API_KEY).toBe("test-updated-api-key");
+    expect(raw).not.toContain("test-updated-api-key");
+    expect(raw).toContain(ENCRYPTED_SECRET_PREFIX);
+  });
+
+  it("fails traceably instead of writing a non-empty API key without encryption", async () => {
+    const unencryptedStore = new ModelConfigStore(userDataDir);
+
+    await expect(
+      unencryptedStore.update({ OPENAI_API_KEY: "test-unencrypted-api-key" }),
+    ).rejects.toThrow("Secret encryption codec is not configured.");
+  });
+
   it("rejects invalid protocol updates at the store boundary", async () => {
     await expect(
       store.update({
@@ -491,3 +533,14 @@ describe("ModelConfigStore", () => {
     );
   });
 });
+
+function createTestSecretCodec(): SecretStringCodec {
+  return {
+    encrypt: encodeTestSecret,
+    decrypt: (value) => Buffer.from(value, "base64").toString("utf8"),
+  };
+}
+
+function encodeTestSecret(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64");
+}

@@ -14,6 +14,8 @@ import {
   nextAttachmentPendingCount,
   normalizeSupportedComposerImageMimeType,
   partitionComposerImageFilesBySize,
+  shouldSubmitComposerKeyboardEvent,
+  syncComposerTextareaHeight,
 } from "../../src/renderer/src/ui/components/composer/FloatingComposer";
 import { DEFAULT_BASIC_PREFERENCES } from "../../src/renderer/src/ui/preferences";
 import type { ComposerAttachment } from "../../src/renderer/src/ui/store/WorkbenchContext";
@@ -72,6 +74,67 @@ describe("FloatingComposer", () => {
         attachmentPending: true,
       }),
     ).toBe(false);
+  });
+
+  it("submits only plain Enter keyboard events", () => {
+    expect(
+      shouldSubmitComposerKeyboardEvent({
+        key: "Enter",
+        shiftKey: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldSubmitComposerKeyboardEvent({
+        key: "Enter",
+        shiftKey: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSubmitComposerKeyboardEvent({
+        key: "a",
+        shiftKey: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not submit Enter while an IME composition is active", () => {
+    expect(
+      shouldSubmitComposerKeyboardEvent({
+        key: "Enter",
+        shiftKey: false,
+        isComposing: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSubmitComposerKeyboardEvent({
+        key: "Enter",
+        shiftKey: false,
+        keyCode: 229,
+      }),
+    ).toBe(false);
+  });
+
+  it("resets then syncs textarea height to its scroll height", () => {
+    const writes: string[] = [];
+    let currentHeight = "56px";
+    const textarea = {
+      scrollHeight: 132,
+      style: {
+        get height(): string {
+          return currentHeight;
+        },
+        set height(value: string) {
+          writes.push(value);
+          currentHeight = value;
+        },
+      },
+    };
+
+    syncComposerTextareaHeight(textarea);
+    syncComposerTextareaHeight(null);
+
+    expect(writes).toEqual(["auto", "132px"]);
+    expect(currentHeight).toBe("132px");
   });
 
   it("blocks attachment removal while a send or active turn can still need the blob", () => {

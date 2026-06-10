@@ -57,11 +57,18 @@ import {
   type SettingsCategory,
   type SettingsSidebarItem,
 } from "./components/settings/SettingsSidebar";
+import {
+  filterSettingsSidebarItems,
+  getSettingsCategorySearchKeywords,
+} from "./components/settings/settings-search";
 import { i18n, persistLocale, setFollowSystemTheme, setTheme } from "../i18n";
-import type {
-  DefaultInspectorMode,
-  DefaultStartupView,
-  ThemePreference,
+import {
+  CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
+  CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX,
+  CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN,
+  type DefaultInspectorMode,
+  type DefaultStartupView,
+  type ThemePreference,
 } from "./preferences";
 
 export interface SettingsFormState {
@@ -163,6 +170,10 @@ export function SettingsView(): ReactElement {
   const [pendingDeleteProfileId, setPendingDeleteProfileId] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [settingsSearch, setSettingsSearch] = useState("");
+  const [basicPreferenceError, setBasicPreferenceError] = useState("");
+  const [codeBlockThresholdDraft, setCodeBlockThresholdDraft] = useState(() =>
+    String(state.basicPreferences.codeBlockCollapseLineThreshold),
+  );
   const runtimeSaveInProgressRef = useRef(false);
   const pendingRuntimePreferencesUpdateRef = useRef<RuntimePreferencesUpdate | null>(null);
 
@@ -296,6 +307,10 @@ export function SettingsView(): ReactElement {
     );
   }, [profilesState?.profiles]);
 
+  useEffect(() => {
+    setCodeBlockThresholdDraft(String(preferences.codeBlockCollapseLineThreshold));
+  }, [preferences.codeBlockCollapseLineThreshold]);
+
   function applyProfilesState(state: ModelConfigProfilesState): void {
     const active = findActiveProfile(state);
     setProfilesState(state);
@@ -387,6 +402,36 @@ export function SettingsView(): ReactElement {
   function updateDefaultInspectorMode(event: ChangeEvent<HTMLSelectElement>): void {
     const value = toDefaultInspectorMode(event.target.value);
     actions.updateBasicPreference("defaultInspectorMode", value);
+  }
+
+  function commitCodeBlockThresholdDraft(raw = codeBlockThresholdDraft): void {
+    const validation = validateCodeBlockCollapseLineThreshold(raw, t);
+    if (!validation.ok) {
+      setBasicPreferenceError(validation.message);
+      return;
+    }
+    setBasicPreferenceError("");
+    setCodeBlockThresholdDraft(String(validation.value));
+    if (validation.value !== preferences.codeBlockCollapseLineThreshold) {
+      actions.updateBasicPreference("codeBlockCollapseLineThreshold", validation.value);
+    }
+  }
+
+  function resetCodeBlockThresholdDraft(): void {
+    setCodeBlockThresholdDraft(String(preferences.codeBlockCollapseLineThreshold));
+    setBasicPreferenceError("");
+  }
+
+  function handleCodeBlockThresholdKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitCodeBlockThresholdDraft(event.currentTarget.value);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      resetCodeBlockThresholdDraft();
+    }
   }
 
   async function updateRuntimePreferences(update: RuntimePreferencesUpdate): Promise<void> {
@@ -806,6 +851,9 @@ export function SettingsView(): ReactElement {
           {isRuntimeBackedSettingsCategory && runtimeError ? (
             <div className="ds-settings-notice is-error">{runtimeError}</div>
           ) : null}
+          {section === "workbench" && category === "layout" && basicPreferenceError ? (
+            <div className="ds-settings-notice is-error">{basicPreferenceError}</div>
+          ) : null}
 
           {section === "basic" && category === "appearance" ? (
             <SettingsCard
@@ -941,6 +989,44 @@ export function SettingsView(): ReactElement {
                   </select>
                 }
               />
+              <SettingRow
+                title={t("settings.fields.codeBlockCollapseLineThreshold")}
+                description={t("settings.descriptions.codeBlockCollapseLineThreshold")}
+                controlId="code_block_collapse_line_threshold"
+                control={
+                  <input
+                    id="code_block_collapse_line_threshold"
+                    type="number"
+                    min={CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN}
+                    max={CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX}
+                    value={codeBlockThresholdDraft}
+                    placeholder={String(CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT)}
+                    aria-invalid={basicPreferenceError ? true : undefined}
+                    onChange={(event) =>
+                      setCodeBlockThresholdDraft(event.target.value)
+                    }
+                    onBlur={(event) =>
+                      commitCodeBlockThresholdDraft(event.currentTarget.value)
+                    }
+                    onKeyDown={(event) =>
+                      handleCodeBlockThresholdKeyDown(event)
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.openReasoningByDefault")}
+                description={t("settings.descriptions.openReasoningByDefault")}
+                control={
+                  <Toggle
+                    checked={preferences.openReasoningByDefault}
+                    label={t("settings.fields.openReasoningByDefault")}
+                    onChange={(checked) =>
+                      actions.updateBasicPreference("openReasoningByDefault", checked)
+                    }
+                  />
+                }
+              />
             </SettingsCard>
           ) : null}
 
@@ -977,19 +1063,6 @@ export function SettingsView(): ReactElement {
                         "restoreLastWorkspaceOnStartup",
                         checked,
                       )
-                    }
-                  />
-                }
-              />
-              <SettingRow
-                title={t("settings.fields.confirmThreadDelete")}
-                description={t("settings.descriptions.confirmThreadDelete")}
-                control={
-                  <Toggle
-                    checked={preferences.confirmThreadDelete}
-                    label={t("settings.fields.confirmThreadDelete")}
-                    onChange={(checked) =>
-                      actions.updateBasicPreference("confirmThreadDelete", checked)
                     }
                   />
                 }
@@ -1803,6 +1876,10 @@ type RuntimeCommandDraftValidationResult =
   | { ok: true; value: number | null }
   | { ok: false; message: string };
 
+type BasicPreferenceDraftValidationResult =
+  | { ok: true; value: number }
+  | { ok: false; message: string };
+
 export function validateRuntimeCommandDraft(
   field: RuntimeCommandDraftField,
   raw: string,
@@ -1830,6 +1907,35 @@ export function validateRuntimeCommandDraft(
     return {
       ok: false,
       message: t("settings.errors.integerRange", { field: label, min, max }),
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+export function validateCodeBlockCollapseLineThreshold(
+  raw: string,
+  t: SettingsTranslator,
+): BasicPreferenceDraftValidationResult {
+  const label = t("settings.fields.codeBlockCollapseLineThreshold");
+  const trimmed = raw.trim();
+  const parsed = Number(trimmed);
+  if (!trimmed || !Number.isInteger(parsed) || parsed < 1) {
+    return {
+      ok: false,
+      message: t("settings.errors.positiveInteger", { field: label }),
+    };
+  }
+  if (
+    parsed < CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN ||
+    parsed > CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX
+  ) {
+    return {
+      ok: false,
+      message: t("settings.errors.integerRange", {
+        field: label,
+        min: CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN,
+        max: CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX,
+      }),
     };
   }
   return { ok: true, value: parsed };
@@ -2102,17 +2208,6 @@ function getSettingsNavItems(
     label: t(`settings.nav.${category}`),
     description: t(`settings.nav.${category}Desc`),
     marker: String(index + 1).padStart(2, "0"),
+    searchKeywords: getSettingsCategorySearchKeywords(category, t),
   }));
-}
-
-export function filterSettingsSidebarItems(
-  items: readonly SettingsSidebarItem[],
-  query: string,
-): SettingsSidebarItem[] {
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  if (!normalizedQuery) return [...items];
-  return items.filter((item) =>
-    [item.label, item.description, item.id]
-      .some((value) => value.toLocaleLowerCase().includes(normalizedQuery)),
-  );
 }

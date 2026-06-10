@@ -76,6 +76,13 @@ textarea:focus-visible {
   box-shadow: var(--ds-shadow-shell);
 }
 
+.ds-route-fallback {
+  height: 100%;
+  width: 100%;
+  background: var(--ds-bg-main);
+  opacity: 0.6;
+}
+
 .ds-stage-surface {
   position: relative;
   display: flex;
@@ -454,6 +461,38 @@ textarea:focus-visible {
   flex: 1 1 0;
 }
 
+.ds-chat-topbar-frame {
+  flex: 0 0 auto;
+  padding: var(--ds-space-3);
+}
+
+.ds-chat-stage-body {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.ds-chat-column {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+}
+
+.ds-chat-composer-dock {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  padding: 0 0 var(--ds-space-3);
+}
+
+.ds-chat-composer-frame {
+  width: min(100%, var(--ds-chat-content-max-width));
+  min-width: 0;
+}
+
 .ds-error-toast {
   display: flex;
   align-items: flex-start;
@@ -467,14 +506,22 @@ textarea:focus-visible {
   padding: 6px 8px 6px 10px;
 }
 
-.ds-error-toast span {
+.ds-error-toast-message {
+  flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
+.ds-error-toast-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
 .ds-error-toast button {
   display: inline-flex;
-  width: 20px;
+  min-width: 20px;
   height: 20px;
   flex: 0 0 auto;
   align-items: center;
@@ -487,6 +534,17 @@ textarea:focus-visible {
   font-size: var(--ds-size-title);
   line-height: 1;
   padding: 0;
+}
+
+.ds-error-toast .ds-error-toast-copy-button {
+  width: auto;
+  font-size: var(--ds-size-caption);
+  padding: 0 6px;
+}
+
+.ds-error-toast .ds-error-toast-dismiss-button {
+  width: 20px;
+  font-size: var(--ds-size-title);
 }
 
 .ds-error-toast button:hover,
@@ -507,6 +565,7 @@ textarea:focus-visible {
 /* ---------- Composer ---------- */
 .ds-composer-shell {
   position: relative;
+  width: 100%;
   overflow: visible;
   background: var(--ds-surface-elevated);
   border: 1px solid var(--ds-border-strong);
@@ -524,6 +583,21 @@ textarea:focus-visible {
   outline: none;
   min-height: 56px;
   max-height: 240px;
+}
+
+.ds-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  border-top: 1px solid var(--ds-border-muted);
+  padding: 6px 10px 10px;
+}
+
+.ds-composer-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  margin-left: auto;
 }
 
 .ds-composer-tool-button,
@@ -570,7 +644,7 @@ textarea:focus-visible {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 
 .ds-composer-popover {
@@ -820,9 +894,37 @@ textarea:focus-visible {
   padding-block: 18px 150px;
 }
 
+.ds-message-jump-bottom {
+  position: sticky;
+  z-index: 5;
+  bottom: 18px;
+  display: block;
+  width: max-content;
+  max-width: min(240px, calc(100% - 32px));
+  margin: 18px auto 0;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-surface-card);
+  box-shadow: var(--ds-shadow-card-strong);
+  color: var(--ds-text);
+  cursor: pointer;
+  font-size: var(--ds-size-caption);
+  font-weight: 650;
+  padding: 8px 12px;
+}
+
+.ds-message-jump-bottom:hover {
+  border-color: var(--ds-accent);
+  color: var(--ds-accent);
+}
+
+.ds-message-jump-bottom:focus-visible {
+  box-shadow: var(--ds-shadow-card-strong), var(--ds-focus-ring);
+}
+
 .ds-message-timeline-content {
   display: flex;
-  width: min(100%, 920px);
+  width: min(100%, var(--ds-chat-content-max-width));
   min-width: 0;
   flex-direction: column;
   gap: 22px;
@@ -1210,6 +1312,44 @@ textarea:focus-visible {
   font-size: var(--ds-size-caption);
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.ds-process-entry-detail-frame {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ds-process-entry-detail.is-truncated {
+  max-height: 14rem;
+  overflow: hidden;
+}
+
+.ds-process-entry-detail-note {
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-process-entry-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ds-process-entry-detail-actions button {
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-surface-card);
+  color: var(--ds-text-muted);
+  cursor: pointer;
+  font-size: var(--ds-size-caption);
+  padding: 3px 9px;
+}
+
+.ds-process-entry-detail-actions button:hover,
+.ds-process-entry-detail-actions button:focus-visible {
+  border-color: var(--ds-border-strong);
+  color: var(--ds-text);
 }
 
 .ds-process-reasoning {
@@ -1739,8 +1879,13 @@ textarea:focus-visible {
 }
 
 .ds-write-sidebar {
+  display: flex;
+  min-height: 0;
   min-width: 180px;
   max-width: 420px;
+  flex-direction: column;
+  border-right: 1px solid var(--ds-border-muted);
+  background: var(--ds-bg-sidebar);
 }
 
 .ds-write-route-actions {
@@ -1753,6 +1898,16 @@ textarea:focus-visible {
 .ds-write-route-actions .ds-pill {
   flex: 1 1 0;
   justify-content: center;
+}
+
+.ds-write-sidebar-actions {
+  display: flex;
+  gap: 6px;
+  padding: var(--ds-space-3);
+}
+
+.ds-write-workspace-label {
+  margin: 0 var(--ds-space-3) var(--ds-space-2);
 }
 
 .ds-write-search {
@@ -1895,10 +2050,18 @@ textarea:focus-visible {
 }
 
 .ds-write-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
   padding: 8px 16px;
   font-size: var(--ds-size-caption);
   color: var(--ds-text-faint);
   border-top: 1px solid var(--ds-border-muted);
+}
+
+.ds-write-save-button {
+  flex: 0 0 auto;
 }
 
 .ds-write-assistant {

@@ -205,6 +205,12 @@ type BasicPreferenceAction = {
 export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
   switch (action.type) {
     case "setRoute":
+      /*
+       * Code and Write threads share renderer state but must not share the
+       * active timeline. Switching between workbench modes clears only the
+       * in-memory selection when the selected thread belongs to the other
+       * mode; persisted thread data remains owned by the main-process store.
+       */
       return {
         ...state,
         route: action.route,

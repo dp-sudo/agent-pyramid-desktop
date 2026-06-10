@@ -20,6 +20,7 @@ import {
   type WriteAssistantPromptPayload,
 } from "./components/write/WriteWorkspaceView";
 import {
+  LEFT_SIDEBAR_DEFAULT_WIDTH,
   LEFT_SIDEBAR_MAX_WIDTH,
   LEFT_SIDEBAR_MIN_WIDTH,
 } from "./preferences";
@@ -35,6 +36,14 @@ import {
 
 const SIDEBAR_KEYBOARD_STEP = 16;
 export const WORKBENCH_DISMISS_BUTTON_TEXT = "x";
+const WORKBENCH_ERROR_COPY_RESET_MS = 1600;
+
+type WorkbenchErrorCopyState = "idle" | "copied" | "failed";
+type WorkbenchErrorCopyFailureReason = "empty" | "unavailable" | "failed";
+
+export type WorkbenchErrorCopyResult =
+  | { ok: true }
+  | { ok: false; reason: WorkbenchErrorCopyFailureReason; error?: unknown };
 
 export function Workbench(): ReactElement {
   const { t } = useTranslation();
@@ -654,7 +663,6 @@ export function Workbench(): ReactElement {
             onSwitchWorkbench={onSwitchWorkbench}
             workspaceRoot={state.workspaceRoot}
             showArchivedThreads={state.showArchivedThreads}
-            confirmThreadDelete={state.basicPreferences.confirmThreadDelete}
             onToggleArchivedThreads={() =>
               actions.setShowArchivedThreads(!state.showArchivedThreads)
             }
@@ -666,6 +674,7 @@ export function Workbench(): ReactElement {
           className="ds-workbench-divider"
           role="separator"
           aria-orientation="vertical"
+          aria-label={t("common.resizeLeftSidebar")}
           aria-valuemin={LEFT_SIDEBAR_MIN_WIDTH}
           aria-valuemax={LEFT_SIDEBAR_MAX_WIDTH}
           aria-valuenow={state.leftSidebarWidth}
@@ -697,6 +706,9 @@ export function Workbench(): ReactElement {
             target.addEventListener("pointermove", onMove);
             target.addEventListener("pointerup", onUp);
           }}
+          onDoubleClick={() => {
+            actions.setLeftSidebarWidth(getResetSidebarWidth());
+          }}
         />
       ) : null}
       <main className="ds-stage-surface">
@@ -719,17 +731,17 @@ export function Workbench(): ReactElement {
           </>
         ) : (
           <section className="ds-chat-stage">
-            <div style={{ padding: 12 }}>
+            <div className="ds-chat-topbar-frame">
               <WorkbenchTopBar />
             </div>
-            <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-              <div className="ds-chat-column-inset" style={{ display: "flex", flex: 1, flexDirection: "column", minHeight: 0 }}>
+            <div className="ds-chat-stage-body">
+              <div className="ds-chat-column ds-chat-column-inset">
                 <MessageTimeline
                   onApprove={onApprove}
                   pendingApprovalResponses={pendingApprovalResponses}
                 />
-                <div style={{ padding: "0 0 12px", display: "flex", justifyContent: "center" }}>
-                  <div style={{ width: "min(100%, 720px)" }}>
+                <div className="ds-chat-composer-dock">
+                  <div className="ds-chat-composer-frame">
                     <PendingApprovalPanel
                       onApprove={onApprove}
                       pendingApprovalResponses={pendingApprovalResponses}
@@ -768,18 +780,63 @@ function WorkbenchErrorToast({
   floating?: boolean;
 }): ReactElement | null {
   const { t } = useTranslation();
+  const [copyState, setCopyState] = useState<WorkbenchErrorCopyState>("idle");
+  const copyResetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setCopyState("idle");
+    return () => clearWorkbenchErrorCopyResetTimer(copyResetTimerRef);
+  }, [message]);
+
   if (!shouldShowWorkbenchErrorToast(message, enabled)) return null;
+
+  async function copyErrorMessage(): Promise<void> {
+    const result = await copyWorkbenchErrorMessage(message);
+    if (!result.ok) {
+      console.warn(
+        "[workbench] failed to copy error toast text:",
+        result.error ?? result.reason,
+      );
+      setCopyState("failed");
+      resetCopyStateLater(copyResetTimerRef, setCopyState);
+      return;
+    }
+
+    setCopyState("copied");
+    resetCopyStateLater(copyResetTimerRef, setCopyState);
+  }
+
+  const copyLabel = t("common.copyError");
+  const copyText =
+    copyState === "copied"
+      ? t("common.copied")
+      : copyState === "failed"
+        ? t("common.copyFailed")
+        : t("common.copy");
+
   return (
     <div className={`ds-error-toast ${floating ? "is-floating" : ""}`} role="status">
-      <span>{message}</span>
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label={t("common.dismiss")}
-        title={t("common.dismiss")}
-      >
-        {WORKBENCH_DISMISS_BUTTON_TEXT}
-      </button>
+      <span className="ds-error-toast-message">{message}</span>
+      <div className="ds-error-toast-actions">
+        <button
+          type="button"
+          className="ds-error-toast-copy-button"
+          onClick={() => void copyErrorMessage()}
+          aria-label={copyLabel}
+          title={copyLabel}
+        >
+          {copyText}
+        </button>
+        <button
+          type="button"
+          className="ds-error-toast-dismiss-button"
+          onClick={onDismiss}
+          aria-label={t("common.dismiss")}
+          title={t("common.dismiss")}
+        >
+          {WORKBENCH_DISMISS_BUTTON_TEXT}
+        </button>
+      </div>
     </div>
   );
 }
@@ -789,6 +846,44 @@ export function shouldShowWorkbenchErrorToast(
   enabled = true,
 ): boolean {
   return enabled && Boolean(message);
+}
+
+// Clipboard access stays in the renderer boundary; callers get a structured
+// failure reason so the toast can expose copy errors instead of hiding them.
+export async function copyWorkbenchErrorMessage(
+  message: string | null,
+  writeText?: (text: string) => Promise<void>,
+): Promise<WorkbenchErrorCopyResult> {
+  if (message === null || message.length === 0) return { ok: false, reason: "empty" };
+
+  const clipboardWriteText =
+    writeText ?? globalThis.navigator?.clipboard?.writeText?.bind(globalThis.navigator.clipboard);
+  if (!clipboardWriteText) return { ok: false, reason: "unavailable" };
+
+  try {
+    await clipboardWriteText(message);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: "failed", error };
+  }
+}
+
+function resetCopyStateLater(
+  timerRef: { current: number | null },
+  setCopyState: (state: WorkbenchErrorCopyState) => void,
+): void {
+  clearWorkbenchErrorCopyResetTimer(timerRef);
+  timerRef.current = window.setTimeout(() => {
+    timerRef.current = null;
+    setCopyState("idle");
+  }, WORKBENCH_ERROR_COPY_RESET_MS);
+}
+
+function clearWorkbenchErrorCopyResetTimer(timerRef: { current: number | null }): void {
+  const timerId = timerRef.current;
+  if (timerId === null) return;
+  window.clearTimeout(timerId);
+  timerRef.current = null;
 }
 
 export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): string | null {
@@ -966,6 +1061,10 @@ export function getNextSidebarWidth(
   if (key === "Home") return LEFT_SIDEBAR_MIN_WIDTH;
   if (key === "End") return LEFT_SIDEBAR_MAX_WIDTH;
   return currentWidth;
+}
+
+export function getResetSidebarWidth(): number {
+  return LEFT_SIDEBAR_DEFAULT_WIDTH;
 }
 
 export function buildComposerSendPayload(

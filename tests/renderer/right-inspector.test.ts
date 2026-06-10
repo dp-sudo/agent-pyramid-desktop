@@ -4,6 +4,7 @@ import {
   clampRightInspectorWidth,
   deriveInspectorTodos,
   getNextRightInspectorWidth,
+  getResetRightInspectorWidth,
   RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT,
   RIGHT_INSPECTOR_REGION_ID,
   RIGHT_INSPECTOR_TITLE_ID,
@@ -24,6 +25,10 @@ describe("RightInspector helpers", () => {
     expect(getNextRightInspectorWidth(360, "Home")).toBe(280);
     expect(getNextRightInspectorWidth(360, "End")).toBe(760);
     expect(getNextRightInspectorWidth(360, "Enter")).toBe(360);
+  });
+
+  it("resets the right-side resizer to the default width on double click", () => {
+    expect(getResetRightInspectorWidth()).toBe(360);
   });
 
   it("uses stable ASCII visible text for the close button", () => {

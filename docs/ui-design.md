@@ -114,6 +114,8 @@ spacing:
     right_inspector_default_px: 360
     right_inspector_min_px: 280
     right_inspector_max_px: 760
+    chat_frame_padding_px: 12
+    chat_content_max_width_px: 920
 
 # ---------- 4. Border radius ----------
 radius:
@@ -190,7 +192,7 @@ grammar:
     - "Right Inspector (right, drag-resizable, default 360px, optional)"
   routes: [code, write, settings]
   state_store: React useReducer (no external dependency)
-  local_preferences: "src/renderer/src/ui/preferences.ts stores basic settings for language/theme handoff, startup view, resizable widths, Inspector defaults, archived threads, workspace restore, and delete confirmation."
+  local_preferences: "src/renderer/src/ui/preferences.ts stores basic settings for language/theme handoff, startup view, resizable widths, Inspector defaults, archived threads, workspace restore, code/reasoning display defaults, and composer attachment entry points. Follow-system theme is applied through a prefers-color-scheme listener while enabled."
 
 # ---------- 10. i18n ----------
 i18n:
@@ -233,7 +235,7 @@ Two workbenches plus settings:
 - **Workbench switch** —— the Code sidebar footer exposes a compact Code/Write
   switch that calls the existing `setRoute("code" | "write")` path; Settings
   remains a separate footer action.
-- **Composer attachments** —— Code composer supports text+image and image-only turns; image-only sends use a visible localized prompt as the timeline text and thread title, while empty drafts without attachments remain disabled. Image attachments can be selected or pasted from the clipboard when the corresponding Workbench Settings controls allow those entry points, generate bounded thumbnail previews inside the composer, and expose an overlaid remove control for quick deletion.
+- **Composer input and attachments** —— Code composer textarea grows with content up to its bounded max height. It supports text+image and image-only turns; image-only sends use a visible localized prompt as the timeline text and thread title, while empty drafts without attachments remain disabled. Image attachments can be selected or pasted from the clipboard when the corresponding Workbench Settings controls allow those entry points, generate bounded thumbnail previews inside the composer, and expose an overlaid remove control for quick deletion.
 
 ## 2. Layout grammar
 
@@ -250,6 +252,7 @@ Two workbenches plus settings:
 
 Right Inspector content is derived from the current timeline items: Changes lists tool activity with status and details, Todo surfaces pending approvals, failed tools, runtime errors, and unfinished latest-plan steps, and Plan shows latest-plan progress plus per-step status.
 Topbar exposes the Right Inspector modes as a segmented control for Changes / Todo / Plan, with a separate Open / Close action; active mode buttons must set `aria-pressed` and keep the workspace path truncated inside the available title row.
+Workbench runtime failure toasts must keep the full error text visible, provide copy-to-clipboard with explicit copied/failed feedback, and retain a separate dismiss control with localized `aria-label` and `title`.
 
 ## 3. Token usage
 
@@ -272,12 +275,12 @@ Topbar exposes the Right Inspector modes as a segmented control for Changes / To
 ## 6. Message timeline
 
 - Assistant 最终回答按 Markdown 文档渲染，不再放进高对比卡片；段落、列表、链接、任务列表、图片、分隔线、表格和代码块必须使用 `ds-markdown` 规则，并保持在中心内容列内可换行或横向滚动。
-- 代码块使用 `ds-code-block` 包裹，语言标签或默认代码标签显示在顶部栏，并提供复制按钮与失败反馈；长代码块默认折叠为受限高度并提供展开/折叠控制，短代码块保持展开；宽表格使用 `ds-markdown-table-wrap` 包裹，避免模型输出撑破中心列。
-- 流式 Markdown 必须能容忍模型尚未输出完整代码围栏；未闭合的三反引号代码块在渲染层临时闭合，避免 live 输出退化成普通段落。Markdown 链接和图片地址必须先经过渲染端白名单规范化；不安全协议不得生成可点击链接或可加载图片。
+- 代码块使用 `ds-code-block` 包裹，语言标签或默认代码标签显示在顶部栏，并提供复制按钮与失败反馈；超过 Workbench 设置中代码块折叠行数的代码块默认折叠为受限高度并提供展开/折叠控制，短代码块保持展开；宽表格使用 `ds-markdown-table-wrap` 包裹，避免模型输出撑破中心列。
+- 流式 Markdown 必须能容忍模型尚未输出完整代码围栏；未闭合的三反引号代码块在渲染层临时闭合，避免 live 输出退化成普通段落。Markdown 链接和图片地址必须先经过渲染端白名单规范化；不安全协议不得生成可点击链接或可加载图片。安全 Markdown 图片必须使用 lazy loading 和 async decoding，避免图片输出阻塞时间线渲染。
 - 每个 turn 内先显示用户输入，再显示可折叠 `ds-work-process`。推理、工具调用、过程性 assistant 文本放入该区域，当前运行中的 turn 默认展开；用户手动展开或折叠后，流式更新不得重置该选择。
-- 最终 assistant 回答之后到达的 follow-up 项必须保留在回答之后，不能被重新归入回答前的 work process；推理内容本身使用独立可折叠 process entry。
+- 最终 assistant 回答之后到达的 follow-up 项必须保留在回答之后，不能被重新归入回答前的 work process；推理内容本身使用独立可折叠 process entry。实时推理保持展开，已完成推理是否默认展开由 Workbench Layout 设置控制。
 - 时间线在用户接近底部时自动跟随流式输出；用户上滑阅读旧内容时不得抢滚动，只有回到底部后恢复自动跟随。
-- 工具过程使用 `ds-process-entry`：summary 显示本地化工具动作和状态，detail 展示参数与结果；失败状态使用 danger token，成功状态使用 success token。
+- 工具过程使用 `ds-process-entry`：summary 显示本地化工具动作和状态，detail 展示参数与结果；失败状态使用 danger token，成功状态使用 success token。长工具详情默认显示有界预览，并提供展开完整详情 / 收起为预览的显式控制。
 - 计划项、系统提示和用户输入请求仍使用原有独立块，不混入 assistant 最终回答。
 - Approval 块使用 `ds-approval-*` 样式；allow/deny 点击后必须进入提交中状态并禁用双按钮，参数 JSON 限高滚动，避免长参数撑开时间线。当前会话未决审批还必须在 composer 上方显示 `ds-pending-approval-*` 浮层，复用同一 diff preview 和审批按钮。
 
@@ -286,6 +289,7 @@ Topbar exposes the Right Inspector modes as a segmented control for Changes / To
 - 线程行的主选择区域必须是可聚焦 button；归档、恢复、删除等操作放在独立 action 区，避免嵌套交互导致误触。
 - 删除会话使用行内确认态，不使用系统 `confirm` 弹窗；确认态必须提供明确的确认和取消操作，并使用 danger token。
 - 可拖拽分栏 separator 必须可聚焦，并支持 Arrow/Home/End 键盘调宽；焦点态使用 accent token。
+- 可拖拽分栏 separator 必须提供可访问名称；双击分隔条必须恢复到对应默认宽度。
 - 右侧分析面板的左边缘 resizer 遵守 `right_inspector_min_px` / `right_inspector_max_px`，鼠标向左增宽、向右减宽；键盘 ArrowLeft 增宽，ArrowRight 减宽。
 
 ## 8. Write workspace
@@ -297,6 +301,7 @@ Topbar exposes the Right Inspector modes as a segmented control for Changes / To
 ## 9. Settings
 
 - 设置页使用两级结构：顶部 `ds-settings-section-tabs` 只切换设置大类，左侧 `SettingsSidebar` 只显示当前大类下的小类，中间受约束内容列展示当前“大类 + 小类”的详细配置。
+- Settings 搜索框限定在当前大类内，结果仍以小类导航呈现；匹配源必须包含小类名称/描述/id，以及该小类下具体设置项的标题、描述和主要选项文案。
 - 当前“基础设置”大类包含外观与语言、启动与布局、会话与工作区三组小类；这些本地偏好选择后立即生效并保存到渲染端 localStorage，不使用模型配置保存按钮。
 - 当前“大模型设置”大类包含模型档案、连接信息、上下文和推理行为四个小类；新增其它大类时必须在入口层分流，不把不同大类的配置项混入同一组小类。
 - 所有写入 `runtimePreferences` 的设置控件在运行时偏好加载或保存中必须禁用，并阻止重复提交，避免旧保存响应覆盖较新的用户选择。

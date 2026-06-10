@@ -59,8 +59,9 @@ describe("WorkbenchContext reducer", () => {
   });
 
   it("deselects active threads that do not match the target workbench route", () => {
+    const writeRoute = reducer(INITIAL_STATE, { type: "setRoute", route: "write" });
     const selectedWrite = reducer(
-      { ...INITIAL_STATE, route: "write" },
+      writeRoute,
       {
         type: "selectThread",
         thread: thread({ id: "write-thread", mode: "write" }),
@@ -79,6 +80,33 @@ describe("WorkbenchContext reducer", () => {
     expect(switchedToCode.activeThreadId).toBeNull();
     expect(switchedToCode.activeTurnId).toBeNull();
     expect(switchedToCode.items).toEqual([]);
+  });
+
+  it("keeps active thread selection while entering settings", () => {
+    const item: UserItem = {
+      kind: "user",
+      id: "item-1",
+      threadId: "write-thread",
+      turnId: "turn-1",
+      text: "draft context",
+      createdAt: "2026-06-07T00:00:00.000Z",
+    };
+    const writeRoute = reducer(INITIAL_STATE, { type: "setRoute", route: "write" });
+    const selectedWrite = reducer(
+      writeRoute,
+      {
+        type: "selectThread",
+        thread: thread({ id: "write-thread", mode: "write" }),
+        items: [item],
+      },
+    );
+
+    const settings = reducer(selectedWrite, { type: "setRoute", route: "settings" });
+
+    expect(settings.activeThread?.id).toBe("write-thread");
+    expect(settings.activeThreadId).toBe("write-thread");
+    expect(settings.items).toEqual([item]);
+    expect(settings.lastWorkbenchRoute).toBe("write");
   });
 
   it("selects and removes active threads without leaving stale state", () => {
@@ -491,7 +519,12 @@ describe("WorkbenchContext reducer", () => {
         value: true,
       },
     );
-    const resetWidth = reducer(withRememberedWidth, {
+    const withReasoningOpen = reducer(withRememberedWidth, {
+      type: "updateBasicPreference",
+      key: "openReasoningByDefault",
+      value: true,
+    });
+    const resetWidth = reducer(withReasoningOpen, {
       type: "updateBasicPreference",
       key: "rememberLeftSidebarWidth",
       value: false,
@@ -500,6 +533,7 @@ describe("WorkbenchContext reducer", () => {
     expect(withArchived.showArchivedThreads).toBe(true);
     expect(withPanel.rightPanelMode).toBe("todo");
     expect(withRememberedWidth.basicPreferences.leftSidebarWidth).toBe(320);
+    expect(withReasoningOpen.basicPreferences.openReasoningByDefault).toBe(true);
     expect(resetWidth.leftSidebarWidth).toBe(DEFAULT_BASIC_PREFERENCES.leftSidebarWidth);
   });
 });

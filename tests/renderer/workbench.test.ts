@@ -6,11 +6,13 @@ import {
   buildComposerSendPayload,
   clampSidebarWidth,
   clearResolvedApprovalResponses,
+  copyWorkbenchErrorMessage,
   explicitComposerModelProfileId,
   filterThreadsForWorkbench,
   findLatestThreadForWorkspace,
   formatInitialLoadErrors,
   getNextSidebarWidth,
+  getResetSidebarWidth,
   isGlobalRuntimeErrorEvent,
   messageOfWorkbenchError,
   normalizeWriteAssistantSendPayload,
@@ -101,6 +103,10 @@ describe("Workbench", () => {
     expect(getNextSidebarWidth(260, "Enter")).toBe(260);
   });
 
+  it("resets the sidebar separator to the default width on double click", () => {
+    expect(getResetSidebarWidth()).toBe(268);
+  });
+
   it("builds no send payload for an empty composer with no attachments", () => {
     expect(buildComposerSendPayload("   ", 0, testT)).toBeNull();
   });
@@ -142,6 +148,39 @@ describe("Workbench", () => {
     expect(shouldShowWorkbenchErrorToast("Runtime failed")).toBe(true);
     expect(shouldShowWorkbenchErrorToast("Runtime failed", false)).toBe(false);
     expect(WORKBENCH_DISMISS_BUTTON_TEXT).toBe("x");
+  });
+
+  it("copies Workbench error toast text through the clipboard boundary", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+
+    await expect(copyWorkbenchErrorMessage("Runtime failed", writeText)).resolves.toEqual({
+      ok: true,
+    });
+    expect(writeText).toHaveBeenCalledWith("Runtime failed");
+  });
+
+  it("reports Workbench error toast copy failures without throwing", async () => {
+    await expect(copyWorkbenchErrorMessage("", vi.fn())).resolves.toEqual({
+      ok: false,
+      reason: "empty",
+    });
+
+    await expect(copyWorkbenchErrorMessage("Runtime failed", undefined)).resolves.toEqual({
+      ok: false,
+      reason: "unavailable",
+    });
+
+    const error = new Error("clipboard denied");
+    await expect(
+      copyWorkbenchErrorMessage(
+        "Runtime failed",
+        vi.fn<(text: string) => Promise<void>>().mockRejectedValue(error),
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      reason: "failed",
+      error,
+    });
   });
 
   it("cleans up only threads with retained SSE subscriptions", () => {

@@ -70,6 +70,158 @@
 
 ## 变更记录
 
+### 2026-06-10 - Chat timeline and composer width alignment
+- Added `--ds-chat-content-max-width` as the shared Code chat content column
+  width. The timeline content and composer frame now both use that token, while
+  `--ds-chat-composer-max-width` remains as an alias for existing references.
+- Updated the UI design and layout reference docs to make timeline/composer
+  horizontal alignment a documented layout invariant.
+- Verification: pending.
+
+### 2026-06-10 - AppShell route fallback style cleanup
+- Moved the lazy route fallback surface styling out of `AppShell.tsx` inline
+  styles and into the `ds-route-fallback` class in `shell.css`, keeping the same
+  full-size `var(--ds-bg-main)` surface and opacity.
+- Verification: `npm run typecheck`, `npm run test`, `npm run build`.
+
+### 2026-06-10 - Workbench chat layout class cleanup
+- Moved static Code chat stage layout values out of `Workbench.tsx` inline
+  styles and into `shell.css` classes for the topbar frame, stage body, chat
+  column, composer dock, and composer width frame. Dynamic sidebar width remains
+  inline because it is user-controlled state.
+- Added `--ds-space-3` and `--ds-chat-composer-max-width` tokens so the 12px
+  frame spacing and 720px composer width have a single local source.
+- Verification: `npm test -- tests/renderer/workbench.test.ts`, plus full
+  `typecheck`, `test`, and `build`.
+
+### 2026-06-10 - Tool detail preview control
+- Added a renderer-only preview boundary for long tool args/results in chat
+  process entries. Tool records still use the persisted `ToolItem` data, but
+  long detail text now renders as a bounded preview with an explicit show-full /
+  show-preview button.
+- Kept tool duration out of the UI because the current shared `ToolItem`
+  contract has `createdAt` but no completion timestamp.
+- Verification: `npm test -- tests/renderer/chat-block.test.ts`, plus full
+  `typecheck`, `test`, and `build`.
+
+### 2026-06-10 - Composer textarea autosize and toolbar classes
+- Added `syncComposerTextareaHeight()` so the Code composer textarea resets to
+  `auto` and then follows its `scrollHeight` after draft changes, while the CSS
+  min/max height continues to bound the control.
+- Moved remaining static FloatingComposer shell/toolbar/action inline layout
+  styles into `shell.css` classes. Dynamic composer state remains in React.
+- Verification: `npm test -- tests/renderer/floating-composer.test.ts`, plus
+  full `typecheck`, `test`, and `build`.
+
+### 2026-06-10 - Markdown image lazy loading guard
+- Exported and covered `normalizeMarkdownImageSrc()` so Markdown image rendering
+  has the same explicit safety-test boundary as links: `http(s)` and supported
+  image data URLs render, unsafe/local protocols do not.
+- Safe Markdown images now include both `loading="lazy"` and `decoding="async"`
+  to avoid blocking the message timeline on large model-rendered images.
+- Verification: `npm test -- tests/renderer/assistant-markdown.test.tsx`, plus
+  full `typecheck`, `test`, and `build`.
+
+### 2026-06-10 - Write workspace layout class cleanup
+- Moved remaining static Write workspace sidebar/action/status inline layout
+  styles into `shell.css` classes. The only retained inline Write sidebar style
+  is the dynamic width/flex-basis derived from `state.leftSidebarWidth`.
+- Verification: `npm test -- tests/renderer/write-workspace-view.test.ts`, plus
+  full `typecheck`, `test`, and `build`.
+
+### 2026-06-10 - Settings search field-keyword matching
+- Expanded Settings sidebar search from category label/description/id matching
+  to category-owned setting labels, descriptions and primary option text.
+  Search stays scoped to the active top-level Settings section and still returns
+  category-level navigation results.
+- Added focused helper coverage so concrete setting terms such as compact
+  limits can route users to the owning category instead of producing an empty
+  search result.
+- Verification: `npm test -- tests/renderer/settings-view.test.ts`, plus full
+  `typecheck`, `test`, and `build`.
+
+### 2026-06-10 - Completed reasoning default-open preference
+- Added `openReasoningByDefault` to renderer basic preferences with `false` as
+  the compatibility default, preserving completed/replayed reasoning as folded
+  for existing localStorage payloads.
+- Workbench Settings now exposes the toggle in Layout settings. Live reasoning
+  still opens while streaming; completed reasoning follows the persisted
+  preference until the user manually toggles the details entry.
+- Verification: `npm test -- tests/renderer/chat-block.test.ts
+  tests/renderer/preferences.test.ts tests/renderer/settings-i18n.test.ts
+  tests/renderer/workbench-context.test.tsx`, plus full `typecheck`, `test`,
+  and `build`.
+
+### 2026-06-10 - Code block fold threshold preference
+- Added `codeBlockCollapseLineThreshold` to renderer basic preferences with a
+  normalized `1..200` range and the existing 18-line behavior as the default.
+- Workbench Settings now exposes the threshold in Layout settings with draft
+  validation on blur/Enter and Escape reset; invalid drafts show a local
+  Settings error instead of silently changing rendering behavior.
+- `ChatBlock` passes the persisted threshold into `AssistantMarkdown`, so
+  assistant and reasoning Markdown code blocks use the user-configured fold
+  threshold.
+- Verification: `npm test -- tests/renderer/assistant-markdown.test.tsx
+  tests/renderer/preferences.test.ts tests/renderer/settings-view.test.ts
+  tests/renderer/settings-i18n.test.ts tests/renderer/chat-block.test.ts
+  tests/renderer/workbench-context.test.tsx`, `npm run typecheck`,
+  `npm run test`, and `npm run build`.
+
+### 2026-06-10 - Thread delete confirmation hardening
+- Removed the Settings toggle and renderer preference branch that allowed thread
+  deletion to bypass inline confirmation. Sidebar delete now always enters the
+  existing two-step confirmation state before calling the delete API.
+- Dropped the unused `confirmThreadDelete` basic preference field from renderer
+  preference normalization and removed the stale i18n/settings documentation for
+  that no-longer-effective control.
+- Verification: `npm test -- tests/renderer/sidebar.test.ts
+  tests/renderer/preferences.test.ts tests/renderer/settings-view.test.ts
+  tests/renderer/workbench-context.test.tsx`, `npm run typecheck`,
+  `npm run test`, and `npm run build`.
+
+### 2026-06-10 - Message timeline jump-to-bottom
+- Added a localized timeline jump-to-bottom affordance that appears only after
+  the user scrolls away from latest output. Activating it restores the latest
+  position and re-enables sticky bottom following for new stream updates.
+- The button reuses existing design tokens for border, surface, focus and
+  shadow styling, avoiding a new one-off visual token.
+- Verification: `npm test -- tests/renderer/message-timeline.test.ts`,
+  `npm run typecheck`, `npm run test`, `npm run build`, and
+  `git diff --check`.
+
+### 2026-06-10 - Composer IME Enter guard
+- Fixed Composer keyboard submit handling so plain Enter still sends and
+  Shift+Enter still inserts a newline, but Enter is ignored while IME composition
+  is active.
+- The guard also treats legacy `keyCode: 229` as a composition signal, avoiding
+  accidental sends when confirming Chinese/Japanese/Korean input candidates.
+- Verification plan: renderer Floating Composer helper tests cover plain Enter,
+  Shift+Enter, active composition and `keyCode: 229`; full
+  `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Follow-system theme listener
+- Fixed the renderer theme helper so enabling follow-system theme registers a
+  `prefers-color-scheme` listener and updates `<html data-theme>` when the OS
+  light/dark preference changes.
+- Manual light/dark theme selection now removes the system listener by disabling
+  follow mode, so stale OS changes cannot override the explicit user choice.
+- Verification: `npm test -- tests/renderer/theme.test.ts` and
+  `npm run typecheck`.
+
+### 2026-06-10 - Model API key encrypted persistence
+- Added a main-process secret codec boundary for `userData/config` so non-empty
+  model `OPENAI_API_KEY` values are encrypted on disk while the existing
+  in-memory `ModelConfig`, IPC and renderer contracts remain unchanged.
+- Legacy plain-text model API keys are decrypted as plain input and migrated to
+  the encrypted `encrypted:v1:` disk representation on the next normalized
+  config write.
+- Shared config writes from both `ModelConfigStore` and `RuntimePreferencesStore`
+  use the same injected codec, so runtime preference saves preserve encrypted
+  model profile secrets instead of rewriting them as plain text.
+- Verification: `npm test -- tests/main/persistence/model-config-store.test.ts`,
+  `npm test -- tests/main/persistence/runtime-preferences-store.test.ts`, and
+  `npm run typecheck`.
+
 ### 2026-06-10 - Shared approval pending response state
 - Lifted renderer approval response pending state to `Workbench` so the durable
   timeline approval block and composer-adjacent pending approval panel share the
@@ -208,6 +360,11 @@
 - Verification plan: renderer WorkbenchTopBar and RightInspector helper tests
   cover the expansion helper and stable controlled-region ids; full
   `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Workbench error toast copy action
+- Added a copy-to-clipboard action to Workbench runtime failure toasts so users can report the full error text without selecting wrapped toast content manually.
+- Copy unavailable or rejected states now show transient failed feedback and log the renderer-side failure reason while leaving the dismiss action unchanged.
+- Verification plan: renderer Workbench helper tests cover copy success, empty input, unavailable clipboard, and rejected clipboard writes; full `typecheck/test/build` verification is run before handoff.
 
 ### 2026-06-10 - Approval diff preview toggle boundary
 - Preserved manual open/closed state for approval file diff previews after the user toggles them, while still applying `showDiffByDefault` until a manual override exists.
@@ -608,9 +765,9 @@
 ## 2026-06-08 - 基础设置完整化
 
 - 新增 `src/renderer/src/ui/preferences.ts` 作为渲染端基础偏好的唯一权威来源，集中维护 localStorage key、默认值、类型守卫和宽度范围。
-- 设置页“基础设置”扩展为“外观与语言 / 启动与布局 / 会话与工作区”三组：支持界面语言、界面主题、跟随系统主题、默认启动视图、记住左右面板宽度、默认 Inspector 面板、默认显示归档会话、启动时恢复上次工作区和删除会话二次确认。
+- 设置页“基础设置”扩展为“外观与语言 / 启动与布局 / 会话与工作区”三组：支持界面语言、界面主题、跟随系统主题、默认启动视图、记住左右面板宽度、默认 Inspector 面板、默认显示归档会话和启动时恢复上次工作区。
 - `WorkbenchContext` 从基础偏好派生初始 route、workspaceRoot、归档显示、Inspector 面板和左右宽度；设置页修改偏好后会即时同步到工作台状态。
-- 侧栏删除会话根据 `confirmThreadDelete` 决定是否显示 inline 二次确认；写作工作台补充返回编码工作台和进入设置页的导航，避免默认启动写作视图后缺少返回路径。
+- 侧栏删除会话始终显示 inline 二次确认；写作工作台补充返回编码工作台和进入设置页的导航，避免默认启动写作视图后缺少返回路径。
 - 验证方式：`npm run typecheck`；`npm run test`；`npm run build`。
 
 ## 2026-06-07 - 线程删除 UI
@@ -686,8 +843,8 @@
 - 优化工作过程展开状态：`MessageTimeline` 仍默认展开当前运行 turn 的 work process，但会按 turnId 保留用户手动展开/折叠选择，避免流式更新时重置阅读状态。
 - 优化线程侧栏交互：删除会话从系统 `window.confirm` 改为行内确认态，线程主区域改为真实 button，归档/恢复/删除操作独立成 action 区，减少误触并提升键盘焦点可见性。
 - 优化 Write 工作台交互：文件列表增加加载、未打开工作区、无 Markdown 文件和搜索无结果状态；文件行改为真实 button 并显示大小/日期元信息；搜索框支持一键清空；保存按钮在无文件、无变更或忙碌状态下禁用并显示已保存状态。
-- 优化工作台基础可控性：左侧分栏 separator 支持键盘焦点、Arrow/Home/End 调宽并复用鼠标拖拽宽度边界；聊天错误提示改为可关闭 toast，不再只能等待下一次状态覆盖。
-- 优化 RightInspector 交互：右侧分析面板增加左边缘 resizer，支持鼠标拖拽与 Arrow/Home/End 键盘调宽，宽度范围遵循 `docs/ui-design.md` 的 280 到 760；检查器空状态和变更列表样式从内联样式收敛到 `shell.css`。
+- 优化工作台基础可控性：左侧分栏 separator 支持键盘焦点、可访问名称、Arrow/Home/End 调宽、双击恢复默认宽度，并复用鼠标拖拽宽度边界；聊天错误提示改为可关闭 toast，不再只能等待下一次状态覆盖。
+- 优化 RightInspector 交互：右侧分析面板增加左边缘 resizer，支持可访问名称、鼠标拖拽、双击恢复默认宽度与 Arrow/Home/End 键盘调宽，宽度范围遵循 `docs/ui-design.md` 的 280 到 760；检查器空状态和变更列表样式从内联样式收敛到 `shell.css`。
 - 优化 RightInspector 分析内容：Changes 面板复用工具摘要展示工具标题、状态和参数/结果详情；Todo 面板从待审批、失败工具、运行错误与最新计划未完成步骤派生可操作事项；Plan 面板显示最新计划进度与步骤状态。
 - 优化 approval 交互：审批按钮点击后进入本地提交中状态并禁用 allow/deny，避免 IPC 返回或事件更新前重复提交；approval 参数 JSON 使用固定样式与滚动区域展示。
 - 优化 Settings 模型档案交互：删除 profile 改为卡片内行内确认态，提供确认/取消和删除中反馈，避免单击误删模型配置。

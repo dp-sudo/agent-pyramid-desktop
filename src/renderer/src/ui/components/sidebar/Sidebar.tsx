@@ -16,7 +16,6 @@ interface SidebarProps {
   onSwitchWorkbench: (route: Extract<WorkbenchRoute, "code" | "write">) => void;
   workspaceRoot: string;
   showArchivedThreads: boolean;
-  confirmThreadDelete: boolean;
   onToggleArchivedThreads: () => void;
 }
 
@@ -33,7 +32,6 @@ export function Sidebar({
   onSwitchWorkbench,
   workspaceRoot,
   showArchivedThreads,
-  confirmThreadDelete,
   onToggleArchivedThreads,
 }: SidebarProps): ReactElement {
   const { t } = useTranslation();
@@ -160,14 +158,7 @@ export function Sidebar({
                         className="ds-sidebar-delete-button"
                         title={t("threads.delete")}
                         aria-label={t("threads.delete")}
-                        onClick={() => {
-                          if (getThreadDeleteClickMode(confirmThreadDelete) === "confirm") {
-                            setPendingDeleteThreadId(thread.id);
-                            return;
-                          }
-                          setPendingDeleteThreadId(null);
-                          onDeleteThread(thread.id);
-                        }}
+                        onClick={() => setPendingDeleteThreadId(thread.id)}
                       >
                         {t("threads.deleteShort")}
                       </button>
@@ -251,12 +242,6 @@ export function prunePendingThreadDeleteId(
   return threads.some((thread) => thread.id === pendingDeleteThreadId)
     ? pendingDeleteThreadId
     : null;
-}
-
-export function getThreadDeleteClickMode(
-  confirmThreadDelete: boolean,
-): "confirm" | "delete" {
-  return confirmThreadDelete ? "confirm" : "delete";
 }
 
 export function getWorkbenchSwitchOptions(

@@ -56,6 +56,7 @@ export function FloatingComposer({
   const { state, actions } = useWorkbench();
   const runtimeBusy = getActiveThreadInFlightTurn(state) !== null;
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const trackedPreviewUrlsRef = useRef(new Set<string>());
   const [draftText, setDraftText] = useState(state.composer.text);
@@ -81,6 +82,10 @@ export function FloatingComposer({
   useEffect(() => {
     setDraftText(state.composer.text);
   }, [state.composer.text]);
+
+  useEffect(() => {
+    syncComposerTextareaHeight(textareaRef.current);
+  }, [draftText]);
 
   useEffect(() => {
     const currentPreviewUrls = new Set(
@@ -151,7 +156,12 @@ export function FloatingComposer({
       return;
     }
 
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (shouldSubmitComposerKeyboardEvent({
+      key: event.key,
+      shiftKey: event.shiftKey,
+      isComposing: event.nativeEvent.isComposing,
+      keyCode: event.nativeEvent.keyCode,
+    })) {
       event.preventDefault();
       if (!runtimeBusy && !sendDisabled) {
         void sendDraft();
@@ -283,7 +293,7 @@ export function FloatingComposer({
   }
 
   return (
-    <div ref={shellRef} className="ds-composer-shell" style={{ width: "100%" }}>
+    <div ref={shellRef} className="ds-composer-shell">
       <input
         ref={fileInputRef}
         type="file"
@@ -323,11 +333,13 @@ export function FloatingComposer({
         </div>
       ) : null}
       <textarea
+        ref={textareaRef}
         value={draftText}
         onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
           const nextText = event.target.value;
           setDraftText(nextText);
           actions.setComposerText(nextText);
+          syncComposerTextareaHeight(event.currentTarget);
         }}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
@@ -335,15 +347,7 @@ export function FloatingComposer({
         aria-label={t("composer.placeholder")}
         disabled={disabled}
       />
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "6px 10px 10px",
-          borderTop: "1px solid var(--ds-border-muted)",
-        }}
-      >
+      <div className="ds-composer-toolbar">
         <div className="ds-composer-toolbar-left">
           <button
             type="button"
@@ -438,7 +442,7 @@ export function FloatingComposer({
             />
           ) : null}
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+        <div className="ds-composer-toolbar-actions">
           {attachmentPending ? (
             <span className="ds-composer-status" role="status" aria-live="polite">
               {t("composer.attachmentsProcessing", { count: attachmentPendingCount })}
@@ -652,6 +656,28 @@ export function canSubmitComposerDraft({
     !attachmentPending &&
     (text.trim().length > 0 || attachmentCount > 0)
   );
+}
+
+export function syncComposerTextareaHeight(
+  textarea: { style: { height: string }; scrollHeight: number } | null,
+): void {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+export function shouldSubmitComposerKeyboardEvent({
+  key,
+  shiftKey,
+  isComposing = false,
+  keyCode,
+}: {
+  key: string;
+  shiftKey: boolean;
+  isComposing?: boolean;
+  keyCode?: number;
+}): boolean {
+  return key === "Enter" && !shiftKey && !isComposing && keyCode !== 229;
 }
 
 export function nextAttachmentPendingCount(

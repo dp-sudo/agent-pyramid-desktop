@@ -3,9 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
   ChatBlock,
+  TOOL_DETAIL_PREVIEW_MAX_CHARS,
   approvalStatusText,
   canRespondToApproval,
   isReasoningOpenByDefault,
+  isLongToolDetail,
+  resolveToolDetailDisplay,
   resolveNextApprovalDiffOpenState,
   resolveNextReasoningOpenState,
   shouldRecordApprovalDiffToggle,
@@ -15,6 +18,58 @@ import { WorkbenchProvider } from "../../src/renderer/src/ui/store/WorkbenchCont
 import type { Item } from "../../src/shared/agent-contracts";
 
 describe("ChatBlock approval helpers", () => {
+  it("previews long tool details without changing the full detail source", () => {
+    const detail = `${"line\n".repeat(90)}tail`;
+
+    expect(isLongToolDetail(detail, 10000, 80)).toBe(true);
+    expect(resolveToolDetailDisplay("short", false, 100, 80)).toEqual({
+      text: "short",
+      truncated: false,
+      hiddenCharCount: 0,
+    });
+    expect(resolveToolDetailDisplay("abcdef", false, 4, 80)).toEqual({
+      text: "abcd",
+      truncated: true,
+      hiddenCharCount: 2,
+    });
+    expect(resolveToolDetailDisplay("abcdef", true, 4, 80)).toEqual({
+      text: "abcdef",
+      truncated: false,
+      hiddenCharCount: 0,
+    });
+  });
+
+  it("renders long tool details as a preview with an expand control", () => {
+    const toolItem: Extract<Item, { kind: "tool" }> = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "read_file",
+      args: {},
+      result: {
+        content: `${"A".repeat(TOOL_DETAIL_PREVIEW_MAX_CHARS + 20)}TAIL`,
+      },
+      status: "completed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, { item: toolItem }),
+      ),
+    );
+
+    expect(html).toContain("ds-process-entry-detail is-truncated");
+    expect(html).toContain("chat.toolDetailTruncated");
+    expect(html).toContain("chat.expandToolDetail");
+    expect(html).toContain("aria-expanded=\"false\"");
+    expect(html).not.toContain("TAIL");
+  });
+
   it("allows approval response only before a decision and without a pending submission", () => {
     expect(canRespondToApproval(undefined, null, true)).toBe(true);
     expect(canRespondToApproval("allow", null, true)).toBe(false);
@@ -70,11 +125,17 @@ describe("ChatBlock approval helpers", () => {
     };
 
     const html = renderToStaticMarkup(
-      createElement(ChatBlock, { item: reasoningItem, isLive: true, nested: true }),
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, { item: reasoningItem, isLive: true, nested: true }),
+      ),
     );
 
     expect(isReasoningOpenByDefault(true)).toBe(true);
     expect(isReasoningOpenByDefault(false)).toBe(false);
+    expect(isReasoningOpenByDefault(false, true)).toBe(true);
+    expect(isReasoningOpenByDefault(true, false)).toBe(true);
     expect(html).toContain("<details");
     expect(html).toContain("ds-process-reasoning-entry");
     expect(html).toContain("is-nested");

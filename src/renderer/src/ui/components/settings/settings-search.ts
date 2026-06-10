@@ -1,0 +1,179 @@
+import type { SettingsCategory, SettingsSidebarItem } from "./SettingsSidebar";
+
+type SettingsTranslator = (key: string) => string;
+
+const SETTINGS_CATEGORY_SEARCH_KEY_PATHS: Record<SettingsCategory, readonly string[]> = {
+  appearance: [
+    "settings.fields.locale",
+    "settings.descriptions.locale",
+    "settings.fields.theme",
+    "settings.descriptions.theme",
+    "settings.fields.followSystemTheme",
+    "settings.descriptions.followSystemTheme",
+    "settings.themes.light",
+    "settings.themes.dark",
+  ],
+  startup: [
+    "settings.fields.defaultStartupView",
+    "settings.descriptions.defaultStartupView",
+    "settings.startupViews.code",
+    "settings.startupViews.write",
+  ],
+  layout: [
+    "settings.fields.rememberLeftSidebarWidth",
+    "settings.descriptions.rememberLeftSidebarWidth",
+    "settings.fields.rememberRightSidebarWidth",
+    "settings.descriptions.rememberRightSidebarWidth",
+    "settings.fields.defaultInspectorMode",
+    "settings.descriptions.defaultInspectorMode",
+    "settings.fields.codeBlockCollapseLineThreshold",
+    "settings.descriptions.codeBlockCollapseLineThreshold",
+    "settings.fields.openReasoningByDefault",
+    "settings.descriptions.openReasoningByDefault",
+    "settings.inspectorDefaults.closed",
+    "settings.inspectorDefaults.changes",
+    "settings.inspectorDefaults.todo",
+    "settings.inspectorDefaults.plan",
+  ],
+  session: [
+    "settings.fields.showArchivedThreadsByDefault",
+    "settings.descriptions.showArchivedThreadsByDefault",
+    "settings.fields.restoreLastWorkspaceOnStartup",
+    "settings.descriptions.restoreLastWorkspaceOnStartup",
+  ],
+  profiles: [
+    "settings.profiles.title",
+    "settings.profiles.subtitle",
+    "settings.profiles.addMiniMax",
+    "settings.profiles.addDeepSeek",
+    "settings.profiles.addCustom",
+    "settings.profiles.duplicate",
+    "settings.profiles.delete",
+  ],
+  connection: [
+    "settings.fields.profileName",
+    "settings.descriptions.profileName",
+    "settings.fields.modelProvide",
+    "settings.descriptions.modelProvide",
+    "settings.fields.model",
+    "settings.descriptions.model",
+    "settings.fields.protocol",
+    "settings.descriptions.protocol",
+    "settings.fields.baseUrl",
+    "settings.descriptions.baseUrl",
+    "settings.fields.apiKey",
+    "settings.descriptions.apiKey",
+    "settings.protocols.openai-compatible",
+    "settings.protocols.anthropic-compatible",
+  ],
+  context: [
+    "settings.fields.contextWindow",
+    "settings.descriptions.contextWindow",
+    "settings.fields.compactLimit",
+    "settings.descriptions.compactLimit",
+    "settings.fields.maxTokens",
+    "settings.descriptions.maxTokens",
+  ],
+  reasoning: [
+    "settings.fields.thinking",
+    "settings.descriptions.thinking",
+    "settings.fields.reasoningEffort",
+    "settings.descriptions.reasoningEffort",
+    "settings.fields.agentAutonomy",
+    "settings.descriptions.agentAutonomy",
+    "settings.efforts.low",
+    "settings.efforts.medium",
+    "settings.efforts.high",
+    "settings.efforts.xhigh",
+    "settings.autonomy.conservative",
+    "settings.autonomy.balanced",
+    "settings.autonomy.deep",
+  ],
+  compaction: [
+    "settings.fields.compactionEnabled",
+    "settings.descriptions.compactionEnabled",
+    "settings.fields.compactionStrategy",
+    "settings.descriptions.compactionStrategy",
+    "settings.compactionStrategies.balanced",
+    "settings.compactionStrategies.recent-only",
+    "settings.compactionStrategies.preserve-tools",
+    "settings.compactionStrategies.aggressive",
+  ],
+  permissions: [
+    "settings.fields.defaultApprovalPolicy",
+    "settings.descriptions.defaultApprovalPolicy",
+    "settings.fields.defaultSandboxMode",
+    "settings.descriptions.defaultSandboxMode",
+    "settings.approvalPolicies.auto",
+    "settings.approvalPolicies.on-request",
+    "settings.approvalPolicies.untrusted",
+    "settings.approvalPolicies.never",
+    "settings.sandboxModes.read-only",
+    "settings.sandboxModes.workspace-write",
+    "settings.sandboxModes.danger-full-access",
+  ],
+  toolAccess: [
+    "settings.fields.codeToolAccess",
+    "settings.fields.writeToolAccess",
+    "settings.toolNames.list_files",
+    "settings.toolNames.read_file",
+    "settings.toolNames.search_files",
+    "settings.toolNames.edit_file",
+    "settings.toolNames.write_file",
+    "settings.toolNames.apply_patch",
+    "settings.toolNames.rollback_file",
+    "settings.toolNames.run_command",
+    "settings.toolNames.diagnose_workspace",
+    "settings.toolNames.diagnose_file",
+    "settings.toolNames.create_plan",
+    "settings.toolNames.update_goal",
+  ],
+  commandLimits: [
+    "settings.fields.commandTimeout",
+    "settings.descriptions.commandTimeout",
+    "settings.fields.commandMaxOutput",
+    "settings.descriptions.commandMaxOutput",
+  ],
+  modelDefaults: [
+    "settings.fields.codeDefaultModelProfile",
+    "settings.descriptions.codeDefaultModelProfile",
+    "settings.fields.writeDefaultModelProfile",
+    "settings.descriptions.writeDefaultModelProfile",
+    "settings.profileDefaults.activeProfile",
+  ],
+  attachments: [
+    "settings.fields.allowComposerImageUpload",
+    "settings.descriptions.allowComposerImageUpload",
+    "settings.fields.allowComposerImagePaste",
+    "settings.descriptions.allowComposerImagePaste",
+  ],
+  approvalPresentation: [
+    "settings.fields.showDiffByDefault",
+    "settings.descriptions.showDiffByDefault",
+    "settings.fields.autoScrollOnRequest",
+    "settings.descriptions.autoScrollOnRequest",
+    "settings.fields.showReadOnlyToolRecords",
+    "settings.descriptions.showReadOnlyToolRecords",
+    "settings.fields.showFailureToasts",
+    "settings.descriptions.showFailureToasts",
+  ],
+};
+
+export function getSettingsCategorySearchKeywords(
+  category: SettingsCategory,
+  t: SettingsTranslator,
+): string[] {
+  return SETTINGS_CATEGORY_SEARCH_KEY_PATHS[category].map((key) => t(key));
+}
+
+export function filterSettingsSidebarItems(
+  items: readonly SettingsSidebarItem[],
+  query: string,
+): SettingsSidebarItem[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return [...items];
+  return items.filter((item) =>
+    [item.label, item.description, item.id, ...(item.searchKeywords ?? [])]
+      .some((value) => value.toLocaleLowerCase().includes(normalizedQuery)),
+  );
+}

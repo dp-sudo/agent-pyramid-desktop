@@ -3,6 +3,7 @@ import {
   isValidElement,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
@@ -13,79 +14,104 @@ import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT } from "../../preferences";
 
 interface AssistantMarkdownProps {
   text: string;
   streaming?: boolean;
+  codeBlockCollapseLineThreshold?: number;
 }
 
-const COLLAPSED_CODE_BLOCK_LINE_LIMIT = 18;
-
-export function AssistantMarkdown({ text, streaming }: AssistantMarkdownProps): ReactElement {
+export function AssistantMarkdown({
+  text,
+  streaming,
+  codeBlockCollapseLineThreshold = CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
+}: AssistantMarkdownProps): ReactElement {
   const renderText = streaming ? closeDanglingCodeFence(text) : text;
+  const components = useMemo(
+    () => createMarkdownComponents(codeBlockCollapseLineThreshold),
+    [codeBlockCollapseLineThreshold],
+  );
   return (
     <div className={`ds-markdown ${streaming ? "ds-shiny-markdown" : ""}`}>
-      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
+      <ReactMarkdown components={components} remarkPlugins={[remarkGfm]}>
         {renderText}
       </ReactMarkdown>
     </div>
   );
 }
 
-const markdownComponents: Components = {
-  a({ node: _node, href, children, ...props }) {
-    const safeHref = normalizeMarkdownHref(href);
-    if (!safeHref) return <>{children}</>;
-    const external = isExternalHref(safeHref);
-    return (
-      <a
-        {...props}
-        href={safeHref}
-        rel={external ? "noreferrer" : undefined}
-        target={external ? "_blank" : undefined}
-      >
-        {children}
-      </a>
-    );
-  },
-  code({ node: _node, className, children, ...props }) {
-    return (
-      <code {...props} className={className}>
-        {children}
-      </code>
-    );
-  },
-  hr({ node: _node, ...props }) {
-    return <hr {...props} className="ds-markdown-divider" />;
-  },
-  img({ node: _node, alt, src, ...props }) {
-    const safeSrc = normalizeMarkdownImageSrc(src);
-    if (!safeSrc) return null;
-    return (
-      <span className="ds-markdown-image-frame">
-        <img {...props} alt={alt ?? ""} loading="lazy" src={safeSrc} />
-      </span>
-    );
-  },
-  input({ node: _node, className, type, ...props }) {
-    const classes =
-      type === "checkbox"
-        ? ["ds-markdown-task-checkbox", className].filter(Boolean).join(" ")
-        : className;
-    return <input {...props} className={classes} disabled={type === "checkbox"} type={type} />;
-  },
-  pre({ node: _node, children, ...props }) {
-    const language = extractCodeLanguage(children);
-    return <CodeBlock language={language} code={extractCodeText(children)} preProps={props}>{children}</CodeBlock>;
-  },
-  table({ node: _node, children, ...props }) {
-    return (
-      <div className="ds-markdown-table-wrap">
-        <table {...props}>{children}</table>
-      </div>
-    );
-  },
-};
+function createMarkdownComponents(codeBlockCollapseLineThreshold: number): Components {
+  return {
+    a({ node: _node, href, children, ...props }) {
+      const safeHref = normalizeMarkdownHref(href);
+      if (!safeHref) return <>{children}</>;
+      const external = isExternalHref(safeHref);
+      return (
+        <a
+          {...props}
+          href={safeHref}
+          rel={external ? "noreferrer" : undefined}
+          target={external ? "_blank" : undefined}
+        >
+          {children}
+        </a>
+      );
+    },
+    code({ node: _node, className, children, ...props }) {
+      return (
+        <code {...props} className={className}>
+          {children}
+        </code>
+      );
+    },
+    hr({ node: _node, ...props }) {
+      return <hr {...props} className="ds-markdown-divider" />;
+    },
+    img({ node: _node, alt, src, ...props }) {
+      const safeSrc = normalizeMarkdownImageSrc(src);
+      if (!safeSrc) return null;
+      return (
+        <span className="ds-markdown-image-frame">
+          <img
+            {...props}
+            alt={alt ?? ""}
+            decoding="async"
+            loading="lazy"
+            src={safeSrc}
+          />
+        </span>
+      );
+    },
+    input({ node: _node, className, type, ...props }) {
+      const classes =
+        type === "checkbox"
+          ? ["ds-markdown-task-checkbox", className].filter(Boolean).join(" ")
+          : className;
+      return <input {...props} className={classes} disabled={type === "checkbox"} type={type} />;
+    },
+    pre({ node: _node, children, ...props }) {
+      const language = extractCodeLanguage(children);
+      return (
+        <CodeBlock
+          language={language}
+          code={extractCodeText(children)}
+          preProps={props}
+          collapseLineThreshold={codeBlockCollapseLineThreshold}
+        >
+          {children}
+        </CodeBlock>
+      );
+    },
+    table({ node: _node, children, ...props }) {
+      return (
+        <div className="ds-markdown-table-wrap">
+          <table {...props}>{children}</table>
+        </div>
+      );
+    },
+  };
+}
 
 type CodeElementProps = ComponentPropsWithoutRef<"code"> & {
   className?: string;
@@ -94,17 +120,22 @@ type CodeElementProps = ComponentPropsWithoutRef<"code"> & {
 function CodeBlock({
   children,
   code,
+  collapseLineThreshold,
   language,
   preProps,
 }: {
   children: ReactNode;
   code: string;
+  collapseLineThreshold: number;
   language: string | null;
   preProps: ComponentPropsWithoutRef<"pre">;
 }): ReactElement {
   const { t } = useTranslation();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  const shouldStartCollapsed = isCodeBlockCollapsedByDefault(code);
+  const shouldStartCollapsed = isCodeBlockCollapsedByDefault(
+    code,
+    collapseLineThreshold,
+  );
   const [collapsed, setCollapsed] = useState(shouldStartCollapsed);
   const [userControlledCollapsed, setUserControlledCollapsed] = useState(false);
   const copyResetTimerRef = useRef<number | null>(null);
@@ -185,8 +216,11 @@ function CodeBlock({
   );
 }
 
-export function isCodeBlockCollapsedByDefault(code: string): boolean {
-  return countCodeLines(code) > COLLAPSED_CODE_BLOCK_LINE_LIMIT;
+export function isCodeBlockCollapsedByDefault(
+  code: string,
+  lineThreshold = CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
+): boolean {
+  return countCodeLines(code) > lineThreshold;
 }
 
 export function resolveNextCodeBlockCollapsedState({
@@ -257,7 +291,7 @@ export function normalizeMarkdownHref(href: string | undefined): string | null {
   }
 }
 
-function normalizeMarkdownImageSrc(src: string | undefined): string | null {
+export function normalizeMarkdownImageSrc(src: string | undefined): string | null {
   if (!src) return null;
   const trimmed = src.trim();
   if (!trimmed) return null;

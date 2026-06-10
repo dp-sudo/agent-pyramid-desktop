@@ -22,6 +22,7 @@ export interface SettingsSidebarItem {
   label: string;
   description: string;
   marker: string;
+  searchKeywords?: readonly string[];
 }
 
 interface SettingsSidebarProps {

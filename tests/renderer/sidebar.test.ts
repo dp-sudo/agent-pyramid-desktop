@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   formatThreadTime,
-  getThreadDeleteClickMode,
   getWorkbenchSwitchOptions,
   isThreadDeletePending,
   prunePendingThreadDeleteId,
@@ -30,11 +29,6 @@ describe("Sidebar", () => {
     ).toBe("thread-1");
     expect(prunePendingThreadDeleteId("thread-3", [{ id: "thread-1" }])).toBeNull();
     expect(prunePendingThreadDeleteId(null, [{ id: "thread-1" }])).toBeNull();
-  });
-
-  it("maps delete clicks to confirmation or immediate delete mode", () => {
-    expect(getThreadDeleteClickMode(true)).toBe("confirm");
-    expect(getThreadDeleteClickMode(false)).toBe("delete");
   });
 
   it("builds code/write workbench switch options with the active route marked", () => {

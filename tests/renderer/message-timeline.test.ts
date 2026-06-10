@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   getApprovalPendingDecision,
+  getTimelineBottomScrollTop,
   isTimelineProcessOpen,
   shouldShowTimelineProcessItem,
+  shouldShowTimelineJumpToBottom,
   shouldStickToTimelineBottom,
   shouldRecordTimelineProcessToggle,
 } from "../../src/renderer/src/ui/components/chat/MessageTimeline";
@@ -29,6 +31,16 @@ describe("MessageTimeline helpers", () => {
         threshold: 96,
       }),
     ).toBe(false);
+  });
+
+  it("shows the jump-to-bottom affordance only after the user leaves latest output", () => {
+    expect(shouldShowTimelineJumpToBottom(true)).toBe(false);
+    expect(shouldShowTimelineJumpToBottom(false)).toBe(true);
+  });
+
+  it("uses the full scroll height as the jump-to-bottom target", () => {
+    expect(getTimelineBottomScrollTop(1200)).toBe(1200);
+    expect(getTimelineBottomScrollTop(-1)).toBe(0);
   });
 
   it("opens the active turn process by default", () => {

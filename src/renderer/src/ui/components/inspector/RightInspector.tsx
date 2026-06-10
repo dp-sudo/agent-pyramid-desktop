@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../store/WorkbenchContext";
 import {
+  RIGHT_INSPECTOR_DEFAULT_WIDTH,
   RIGHT_INSPECTOR_MAX_WIDTH,
   RIGHT_INSPECTOR_MIN_WIDTH,
 } from "../../preferences";
@@ -34,6 +35,7 @@ export function RightInspector(): ReactElement | null {
         className="ds-right-inspector-resizer"
         role="separator"
         aria-orientation="vertical"
+        aria-label={t("common.resizeRightInspector")}
         aria-valuemin={RIGHT_INSPECTOR_MIN_WIDTH}
         aria-valuemax={RIGHT_INSPECTOR_MAX_WIDTH}
         aria-valuenow={state.rightSidebarWidth}
@@ -59,6 +61,9 @@ export function RightInspector(): ReactElement | null {
           };
           target.addEventListener("pointermove", onMove);
           target.addEventListener("pointerup", onUp);
+        }}
+        onDoubleClick={() => {
+          actions.setRightSidebarWidth(getResetRightInspectorWidth());
         }}
       />
       <div className="ds-right-inspector-header">
@@ -178,6 +183,10 @@ export function getNextRightInspectorWidth(
   if (key === "Home") return RIGHT_INSPECTOR_MIN_WIDTH;
   if (key === "End") return RIGHT_INSPECTOR_MAX_WIDTH;
   return currentWidth;
+}
+
+export function getResetRightInspectorWidth(): number {
+  return RIGHT_INSPECTOR_DEFAULT_WIDTH;
 }
 
 export interface InspectorChangeSummary {

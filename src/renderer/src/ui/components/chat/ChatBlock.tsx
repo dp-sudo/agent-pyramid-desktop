@@ -1,9 +1,12 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useId, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { ApprovalPreview, FileDiffLine, Item } from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { summarizeToolItem } from "./timeline-model";
 import { useWorkbench } from "../../store/WorkbenchContext";
+
+export const TOOL_DETAIL_PREVIEW_MAX_CHARS = 4000;
+export const TOOL_DETAIL_PREVIEW_MAX_LINES = 80;
 
 interface ChatBlockProps {
   item: Item;
@@ -41,12 +44,21 @@ export function ChatBlock({
       return (
         <div className="ds-message-block assistant">
           <div className={`ds-assistant-bubble ${isLive ? "ds-shiny-text" : ""}`}>
-            <AssistantMarkdown text={item.text || (isLive ? "..." : "")} streaming={isLive} />
+            <AssistantMarkdownWithPreferences
+              text={item.text || (isLive ? "..." : "")}
+              streaming={isLive}
+            />
           </div>
         </div>
       );
     case "reasoning":
-      return <ReasoningBlock item={item} isLive={isLive} nested={nested} />;
+      return (
+        <ReasoningBlock
+          item={item}
+          isLive={isLive}
+          nested={nested}
+        />
+      );
     case "tool":
       return <ToolBlock item={item} nested={nested} />;
     case "approval":
@@ -115,7 +127,11 @@ function ReasoningBlock({
   nested?: boolean;
 }): ReactElement {
   const { t } = useTranslation();
-  const defaultOpen = isReasoningOpenByDefault(Boolean(isLive));
+  const { state } = useWorkbench();
+  const defaultOpen = isReasoningOpenByDefault(
+    Boolean(isLive),
+    state.basicPreferences.openReasoningByDefault,
+  );
   const [open, setOpen] = useState(defaultOpen);
   const [userControlledOpen, setUserControlledOpen] = useState(false);
 
@@ -147,14 +163,39 @@ function ReasoningBlock({
         <span className="ds-process-entry-title">{t("chat.reasoningLabel")}</span>
       </summary>
       <div className="ds-process-entry-detail ds-process-reasoning">
-        <AssistantMarkdown text={item.text} streaming={isLive} />
+        <AssistantMarkdownWithPreferences
+          text={item.text}
+          streaming={isLive}
+        />
       </div>
     </details>
   );
 }
 
-export function isReasoningOpenByDefault(isLive: boolean): boolean {
-  return isLive;
+function AssistantMarkdownWithPreferences({
+  text,
+  streaming,
+}: {
+  text: string;
+  streaming?: boolean;
+}): ReactElement {
+  const { state } = useWorkbench();
+  return (
+    <AssistantMarkdown
+      text={text}
+      streaming={streaming}
+      codeBlockCollapseLineThreshold={
+        state.basicPreferences.codeBlockCollapseLineThreshold
+      }
+    />
+  );
+}
+
+export function isReasoningOpenByDefault(
+  isLive: boolean,
+  openCompletedByDefault = false,
+): boolean {
+  return isLive || openCompletedByDefault;
 }
 
 export function resolveNextReasoningOpenState({
@@ -382,6 +423,10 @@ function ToolBlock({
 }): ReactElement {
   const { t } = useTranslation();
   const display = summarizeToolItem(item, t);
+  const detailId = useId();
+  const [showFullDetail, setShowFullDetail] = useState(false);
+  const hasLongDetail = isLongToolDetail(display.detail);
+  const detailDisplay = resolveToolDetailDisplay(display.detail, showFullDetail);
   return (
     <details className={`ds-process-entry ds-process-tool is-${display.tone} ${nested ? "is-nested" : ""}`}>
       <summary className="ds-process-entry-summary">
@@ -389,8 +434,84 @@ function ToolBlock({
         <span className="ds-process-entry-status">{display.statusText}</span>
       </summary>
       {display.detail ? (
-        <pre className="ds-process-entry-detail">{display.detail}</pre>
+        <div className="ds-process-entry-detail-frame">
+          <pre
+            id={detailId}
+            className={`ds-process-entry-detail ${detailDisplay.truncated ? "is-truncated" : ""}`}
+          >
+            {detailDisplay.text}
+          </pre>
+          {detailDisplay.truncated ? (
+            <small className="ds-process-entry-detail-note">
+              {t("chat.toolDetailTruncated", {
+                count: detailDisplay.hiddenCharCount,
+              })}
+            </small>
+          ) : null}
+          {hasLongDetail ? (
+            <div className="ds-process-entry-detail-actions">
+              <button
+                type="button"
+                aria-controls={detailId}
+                aria-expanded={showFullDetail}
+                onClick={() => setShowFullDetail((current) => !current)}
+              >
+                {showFullDetail
+                  ? t("chat.collapseToolDetail")
+                  : t("chat.expandToolDetail")}
+              </button>
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </details>
   );
+}
+
+export interface ToolDetailDisplay {
+  text: string;
+  truncated: boolean;
+  hiddenCharCount: number;
+}
+
+export function isLongToolDetail(
+  detail: string,
+  maxChars = TOOL_DETAIL_PREVIEW_MAX_CHARS,
+  maxLines = TOOL_DETAIL_PREVIEW_MAX_LINES,
+): boolean {
+  return resolveToolDetailDisplay(detail, false, maxChars, maxLines).truncated;
+}
+
+export function resolveToolDetailDisplay(
+  detail: string,
+  expanded: boolean,
+  maxChars = TOOL_DETAIL_PREVIEW_MAX_CHARS,
+  maxLines = TOOL_DETAIL_PREVIEW_MAX_LINES,
+): ToolDetailDisplay {
+  if (expanded) {
+    return {
+      text: detail,
+      truncated: false,
+      hiddenCharCount: 0,
+    };
+  }
+
+  const charLimit = normalizeToolDetailLimit(maxChars, TOOL_DETAIL_PREVIEW_MAX_CHARS);
+  const lineLimit = normalizeToolDetailLimit(maxLines, TOOL_DETAIL_PREVIEW_MAX_LINES);
+  const charLimited = detail.length > charLimit ? detail.slice(0, charLimit) : detail;
+  const lines = charLimited.split("\n");
+  const lineLimited = lines.length > lineLimit
+    ? lines.slice(0, lineLimit).join("\n")
+    : charLimited;
+  const text = lineLimited.trimEnd();
+  const truncated = text.length < detail.length;
+  return {
+    text,
+    truncated,
+    hiddenCharCount: truncated ? detail.length - text.length : 0,
+  };
+}
+
+function normalizeToolDetailLimit(value: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
 }

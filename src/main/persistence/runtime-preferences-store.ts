@@ -2,7 +2,11 @@ import type {
   RuntimePreferences,
   RuntimePreferencesUpdate,
 } from "../../shared/agent-contracts.js";
-import { AppConfigFile, type AppConfigState } from "./config-file.js";
+import {
+  AppConfigFile,
+  type AppConfigFileOptions,
+  type AppConfigState,
+} from "./config-file.js";
 import {
   mergeRuntimePreferences,
   parseRuntimePreferencesUpdate,
@@ -13,8 +17,8 @@ export { parseRuntimePreferencesUpdate } from "./runtime-preferences-schema.js";
 export class RuntimePreferencesStore {
   private readonly configFile: AppConfigFile;
 
-  constructor(userDataDir: string) {
-    this.configFile = new AppConfigFile(userDataDir);
+  constructor(userDataDir: string, options: AppConfigFileOptions = {}) {
+    this.configFile = new AppConfigFile(userDataDir, options);
   }
 
   async init(): Promise<void> {

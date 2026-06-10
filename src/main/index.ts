@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, session, shell } from "electron";
+import { app, BrowserWindow, safeStorage, session, shell } from "electron";
 import { JsonlThreadStore } from "./persistence/index.js";
 import { AttachmentStore } from "./persistence/attachment-store.js";
 import { ModelConfigStore } from "./persistence/model-config-store.js";
 import { RuntimePreferencesStore } from "./persistence/runtime-preferences-store.js";
+import { SafeStorageSecretCodec } from "./persistence/secret-codec.js";
 import { RuntimeEventBus } from "./event-bus.js";
 import { LlmWorkerPool } from "./infrastructure/llm-worker/worker-pool.js";
 import { AgentRuntime } from "./application/agent-runtime.js";
@@ -32,10 +33,11 @@ import { isSamePath } from "./application/path-utils.js";
 // ---------------------------------------------------------------------------
 
 const userDataDir = app.getPath("userData");
+const secretCodec = new SafeStorageSecretCodec(safeStorage);
 const store = new JsonlThreadStore(userDataDir);
 const attachmentStore = new AttachmentStore(userDataDir);
-const modelConfigStore = new ModelConfigStore(userDataDir);
-const runtimePreferencesStore = new RuntimePreferencesStore(userDataDir);
+const modelConfigStore = new ModelConfigStore(userDataDir, { secretCodec });
+const runtimePreferencesStore = new RuntimePreferencesStore(userDataDir, { secretCodec });
 const bus = new RuntimeEventBus();
 bus.setMaxListeners(50);
 const pool = new LlmWorkerPool(1);

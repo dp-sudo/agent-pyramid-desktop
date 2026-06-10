@@ -30,6 +30,17 @@ describe("WriteWorkspaceView helpers", () => {
     expect(html).toContain("placeholder=\"write.editorPlaceholder\"");
   });
 
+  it("keeps Write layout styling in CSS classes except dynamic sidebar width", () => {
+    const html = renderToStaticMarkup(
+      createElement(WorkbenchProvider, null, createElement(WriteWorkspaceView)),
+    );
+
+    expect(html).toContain("class=\"ds-write-sidebar-actions\"");
+    expect(html).toContain("class=\"ds-pill is-accent ds-write-save-button\"");
+    expect(html).not.toContain("float:right");
+    expect(html).not.toContain("background:var(--ds-bg-sidebar)");
+  });
+
   it("disables save when there is no file, no workspace, a busy state, or no changes", () => {
     expect(
       shouldDisableWriteSave({

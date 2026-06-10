@@ -17,14 +17,23 @@ import {
   cloneRuntimePreferences,
   normalizeRuntimePreferences,
 } from "./runtime-preferences-schema.js";
+import {
+  MissingSecretCodec,
+  type SecretStringCodec,
+} from "./secret-codec.js";
 
 const CONFIG_FILENAME = "config";
 const LEGACY_RUNTIME_PREFERENCES_FILENAME = "runtime-preferences.json";
 const TMP_SUFFIX = ".tmp";
 const configQueues = new Map<string, Promise<unknown>>();
+export const ENCRYPTED_SECRET_PREFIX = "encrypted:v1:";
 
 export interface AppConfigState extends ModelConfigProfilesState {
   runtimePreferences: RuntimePreferences;
+}
+
+export interface AppConfigFileOptions {
+  secretCodec?: SecretStringCodec;
 }
 
 type AppConfigMutation<T> = {
@@ -49,15 +58,20 @@ const MODEL_CONFIG_UPDATE_FIELDS: readonly (keyof ModelConfigUpdate)[] = [
 export class AppConfigFile {
   private readonly configPath: string;
   private readonly legacyRuntimePreferencesPath: string;
+  private readonly secretCodec: SecretStringCodec;
   private initialized = false;
   private initPromise: Promise<void> | null = null;
 
-  constructor(private readonly userDataDir: string) {
+  constructor(
+    private readonly userDataDir: string,
+    options: AppConfigFileOptions = {},
+  ) {
     this.configPath = path.join(userDataDir, CONFIG_FILENAME);
     this.legacyRuntimePreferencesPath = path.join(
       userDataDir,
       LEGACY_RUNTIME_PREFERENCES_FILENAME,
     );
+    this.secretCodec = options.secretCodec ?? new MissingSecretCodec();
   }
 
   async init(): Promise<void> {
@@ -98,7 +112,10 @@ export class AppConfigFile {
 
   private async readStateFromDisk(): Promise<AppConfigState> {
     const parsed = existsSync(this.configPath)
-      ? JSON.parse(await fs.readFile(this.configPath, "utf8")) as unknown
+      ? deserializeAppConfigSecrets(
+          JSON.parse(await fs.readFile(this.configPath, "utf8")) as unknown,
+          this.secretCodec,
+        )
       : undefined;
     const runtimePreferences = hasRuntimePreferencesSection(parsed)
       ? undefined
@@ -116,10 +133,15 @@ export class AppConfigFile {
   }
 
   private async atomicWriteJson(value: AppConfigState): Promise<void> {
+    const serialized = JSON.stringify(
+      serializeAppConfigSecrets(value, this.secretCodec),
+      null,
+      2,
+    );
     const tmp = this.configPath + TMP_SUFFIX;
     const handle = await fs.open(tmp, "w");
     try {
-      await handle.writeFile(JSON.stringify(value, null, 2), "utf8");
+      await handle.writeFile(serialized, "utf8");
       await handle.sync();
     } finally {
       await handle.close();
@@ -133,6 +155,84 @@ export class AppConfigFile {
     configQueues.set(this.configPath, next.catch(() => undefined));
     return next;
   }
+}
+
+function deserializeAppConfigSecrets(
+  value: unknown,
+  secretCodec: SecretStringCodec,
+): unknown {
+  if (!isRecord(value)) return value;
+  if (Array.isArray(value.profiles)) {
+    return {
+      ...value,
+      profiles: value.profiles.map((profile) =>
+        deserializeStoredProfileSecrets(profile, secretCodec)
+      ),
+    };
+  }
+  return deserializeStoredConfigSecrets(value, secretCodec);
+}
+
+function deserializeStoredProfileSecrets(
+  value: unknown,
+  secretCodec: SecretStringCodec,
+): unknown {
+  if (!isRecord(value)) return value;
+  return {
+    ...value,
+    config: deserializeStoredConfigSecrets(value.config, secretCodec),
+  };
+}
+
+function deserializeStoredConfigSecrets(
+  value: unknown,
+  secretCodec: SecretStringCodec,
+): unknown {
+  if (!isRecord(value)) return value;
+  const apiKey = value.OPENAI_API_KEY;
+  if (typeof apiKey !== "string") return value;
+  return {
+    ...value,
+    OPENAI_API_KEY: deserializeSecretString(apiKey, secretCodec),
+  };
+}
+
+function deserializeSecretString(
+  value: string,
+  secretCodec: SecretStringCodec,
+): string {
+  if (!value.startsWith(ENCRYPTED_SECRET_PREFIX)) {
+    return value;
+  }
+  return secretCodec.decrypt(value.slice(ENCRYPTED_SECRET_PREFIX.length));
+}
+
+function serializeAppConfigSecrets(
+  value: AppConfigState,
+  secretCodec: SecretStringCodec,
+): AppConfigState {
+  return {
+    ...value,
+    profiles: value.profiles.map((profile) => ({
+      ...profile,
+      config: serializeModelConfigSecrets(profile.config, secretCodec),
+    })),
+  };
+}
+
+function serializeModelConfigSecrets(
+  value: ModelConfig,
+  secretCodec: SecretStringCodec,
+): ModelConfig {
+  return {
+    ...value,
+    // The renderer/runtime contract stays plain-text in memory. Only the
+    // Electron userData/config representation is sealed, and legacy plain-text
+    // values are migrated the next time the normalized config is written.
+    OPENAI_API_KEY: value.OPENAI_API_KEY
+      ? ENCRYPTED_SECRET_PREFIX + secretCodec.encrypt(value.OPENAI_API_KEY)
+      : "",
+  };
 }
 
 export function normalizeAppConfigState(

@@ -25,6 +25,7 @@ export function MessageTimeline({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
   const [processOpenByTurnId, setProcessOpenByTurnId] = useState<Record<string, boolean>>({});
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const turns = useMemo(() => groupTimelineTurns(state.items), [state.items]);
   const activeInFlightTurn = getActiveThreadInFlightTurn(state);
   const showReadOnlyToolRecords =
@@ -44,17 +45,28 @@ export function MessageTimeline({
     const element = scrollRef.current;
     if (!element || !stickToBottomRef.current) return;
     element.scrollTop = element.scrollHeight;
+    setShowJumpToBottom(false);
   }, [state.items, activeInFlightTurn?.id]);
 
   function handleScroll(): void {
     const element = scrollRef.current;
     if (!element) return;
-    stickToBottomRef.current = shouldStickToTimelineBottom({
+    const shouldStick = shouldStickToTimelineBottom({
       scrollTop: element.scrollTop,
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
       threshold: TIMELINE_BOTTOM_STICKY_THRESHOLD_PX,
     });
+    stickToBottomRef.current = shouldStick;
+    setShowJumpToBottom(shouldShowTimelineJumpToBottom(shouldStick));
+  }
+
+  function jumpToBottom(): void {
+    const element = scrollRef.current;
+    if (!element) return;
+    element.scrollTop = getTimelineBottomScrollTop(element.scrollHeight);
+    stickToBottomRef.current = true;
+    setShowJumpToBottom(false);
   }
 
   if (state.items.length === 0) {
@@ -173,6 +185,16 @@ export function MessageTimeline({
           );
         })}
       </div>
+      {showJumpToBottom ? (
+        <button
+          type="button"
+          className="ds-message-jump-bottom"
+          onClick={jumpToBottom}
+          aria-label={t("chat.jumpToLatest")}
+        >
+          {t("chat.jumpToLatest")}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -215,6 +237,14 @@ export function shouldStickToTimelineBottom({
   threshold?: number;
 }): boolean {
   return scrollHeight - scrollTop - clientHeight <= threshold;
+}
+
+export function shouldShowTimelineJumpToBottom(shouldStickToBottom: boolean): boolean {
+  return !shouldStickToBottom;
+}
+
+export function getTimelineBottomScrollTop(scrollHeight: number): number {
+  return Math.max(0, scrollHeight);
 }
 
 export function isTimelineProcessOpen({

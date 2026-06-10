@@ -94,6 +94,13 @@
   --ds-window-controls-safe-block: 0px;
   --ds-window-controls-safe-inset: 0px;
   --ds-ui-scale: 1;
+
+  /* Layout sizing */
+  --ds-space-2: 8px;
+  --ds-space-3: 12px;
+  /* Code chat timeline and composer share this content column width. */
+  --ds-chat-content-max-width: 920px;
+  --ds-chat-composer-max-width: var(--ds-chat-content-max-width);
 }
 
 :root[data-theme="dark"] {

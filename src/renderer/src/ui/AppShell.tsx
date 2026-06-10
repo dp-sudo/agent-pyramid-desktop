@@ -10,16 +10,7 @@ const SettingsView = lazy(() =>
 );
 
 function RouteFallback(): ReactElement {
-  return (
-    <div
-      style={{
-        height: "100%",
-        width: "100%",
-        background: "var(--ds-bg-main)",
-        opacity: 0.6,
-      }}
-    />
-  );
+  return <div className="ds-route-fallback" />;
 }
 
 export function AppShell(): ReactElement {
