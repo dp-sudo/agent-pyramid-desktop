@@ -1,20 +1,19 @@
-import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
 import {
   buildWriteAssistantPrompt,
-  canSubmitWriteAssistantPrompt,
   formatWriteFileMeta,
   getWriteAssistantVisibleItems,
   getWriteCompletionAcceptState,
   getWriteDocumentEditState,
-  getWriteWorkspaceSwitchState,
   getWriteListState,
+  getWriteWorkspaceSwitchState,
   shouldApplyWriteOpenResult,
   shouldDisableWriteSave,
   shouldSaveWriteFileBeforeSwitch,
-  shouldWarnBeforeLeavingWriteDocument,
   shouldUseSelectedWriteWorkspace,
+  shouldWarnBeforeLeavingWriteDocument,
   WRITE_SEARCH_CLEAR_BUTTON_TEXT,
   WriteWorkspaceView,
 } from "../../src/renderer/src/ui/components/write/WriteWorkspaceView";
@@ -30,13 +29,19 @@ describe("WriteWorkspaceView helpers", () => {
     expect(html).toContain("placeholder=\"write.editorPlaceholder\"");
   });
 
-  it("keeps Write layout styling in CSS classes except dynamic sidebar width", () => {
+  it("uses the shared write composer instead of the old assistant form", () => {
     const html = renderToStaticMarkup(
       createElement(WorkbenchProvider, null, createElement(WriteWorkspaceView)),
     );
 
     expect(html).toContain("class=\"ds-write-sidebar-actions\"");
     expect(html).toContain("class=\"ds-pill is-accent ds-write-save-button\"");
+    expect(html).toContain("class=\"ds-write-assistant-composer\"");
+    expect(html).toContain("class=\"ds-composer-shell is-write\"");
+    expect(html).toContain("placeholder=\"composer.writePlaceholder\"");
+    expect(html).not.toContain("ds-write-assistant-form");
+    expect(html).not.toContain("ds-composer-tool-button");
+    expect(html).not.toContain("ds-composer-model-button");
     expect(html).not.toContain("float:right");
     expect(html).not.toContain("background:var(--ds-bg-sidebar)");
   });
@@ -258,7 +263,7 @@ describe("WriteWorkspaceView helpers", () => {
 
   it("builds explicit assistant prompts without mirroring the full document", () => {
     const payload = buildWriteAssistantPrompt({
-      prompt: "  帮我润色这一段  ",
+      prompt: "  refine this intro  ",
       activePath: "drafts/intro.md",
       content: "full private draft body",
       savedContent: "older draft body",
@@ -267,7 +272,7 @@ describe("WriteWorkspaceView helpers", () => {
     expect(payload).toEqual({
       text: [
         "Write workbench request:",
-        "帮我润色这一段",
+        "refine this intro",
         "",
         "Context:",
         "- Current Markdown file: drafts/intro.md",
@@ -275,8 +280,11 @@ describe("WriteWorkspaceView helpers", () => {
         "",
         "Respond with writing guidance or draft text. Do not claim that you changed files directly.",
       ].join("\n"),
-      displayText: "帮我润色这一段",
-      threadTitle: "帮我润色这一段",
+      displayText: "refine this intro",
+      threadTitle: "refine this intro",
+      attachmentIds: [],
+      mode: "agent",
+      goalMode: false,
     });
     expect(payload?.text).not.toContain("full private draft body");
     expect(buildWriteAssistantPrompt({
@@ -285,29 +293,6 @@ describe("WriteWorkspaceView helpers", () => {
       content: "",
       savedContent: "",
     })).toBeNull();
-  });
-
-  it("allows assistant submit only for explicit prompts in an open workspace", () => {
-    expect(canSubmitWriteAssistantPrompt({
-      prompt: "润色标题",
-      workspaceRoot: "/workspace",
-      sending: false,
-    })).toBe(true);
-    expect(canSubmitWriteAssistantPrompt({
-      prompt: "",
-      workspaceRoot: "/workspace",
-      sending: false,
-    })).toBe(false);
-    expect(canSubmitWriteAssistantPrompt({
-      prompt: "润色标题",
-      workspaceRoot: "",
-      sending: false,
-    })).toBe(false);
-    expect(canSubmitWriteAssistantPrompt({
-      prompt: "润色标题",
-      workspaceRoot: "/workspace",
-      sending: true,
-    })).toBe(false);
   });
 
   it("keeps the write assistant panel focused on conversational items", () => {

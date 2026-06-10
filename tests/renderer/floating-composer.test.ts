@@ -1,10 +1,10 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
   canAddComposerImageFromSource,
   canSubmitComposerDraft,
-  COMPOSER_MODEL_PICKER_POPOVER_ID,
-  COMPOSER_REMOVE_ATTACHMENT_BUTTON_TEXT,
-  COMPOSER_TOOL_MENU_POPOVER_ID,
+  FloatingComposer,
   getAttachmentThumbnailSrc,
   getClipboardImageFiles,
   getComposerImageAttachmentName,
@@ -16,14 +16,48 @@ import {
   partitionComposerImageFilesBySize,
   shouldSubmitComposerKeyboardEvent,
   syncComposerTextareaHeight,
-} from "../../src/renderer/src/ui/components/composer/FloatingComposer";
+} from "../../src/renderer/src/ui/components/composer";
 import { DEFAULT_BASIC_PREFERENCES } from "../../src/renderer/src/ui/preferences";
+import { WorkbenchProvider } from "../../src/renderer/src/ui/store/WorkbenchContext";
 import type { ComposerAttachment } from "../../src/renderer/src/ui/store/WorkbenchContext";
 
 describe("FloatingComposer", () => {
-  it("uses stable popover ids for composer menu controls", () => {
-    expect(COMPOSER_TOOL_MENU_POPOVER_ID).toBe("composer-tool-menu");
-    expect(COMPOSER_MODEL_PICKER_POPOVER_ID).toBe("composer-model-picker");
+  it("does not emit closed popover aria-controls targets", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(FloatingComposer, {
+          onRequestSend: async () => true,
+          onInterrupt: () => undefined,
+        }),
+      ),
+    );
+
+    expect(html).toContain("class=\"ds-composer-shell is-code\"");
+    expect(html).not.toContain("aria-controls=\"composer-tool-menu\"");
+    expect(html).not.toContain("aria-controls=\"composer-model-picker\"");
+  });
+
+  it("renders the write variant without code-only controls", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(FloatingComposer, {
+          variant: "write",
+          placeholder: "composer.writePlaceholder",
+          onRequestSend: async () => true,
+          onInterrupt: () => undefined,
+        }),
+      ),
+    );
+
+    expect(html).toContain("class=\"ds-composer-shell is-write\"");
+    expect(html).toContain("placeholder=\"composer.writePlaceholder\"");
+    expect(html).not.toContain("ds-composer-tool-button");
+    expect(html).not.toContain("ds-composer-model-button");
+    expect(html).not.toContain("ds-composer-attachments");
   });
 
   it("allows attachment-only drafts to be submitted", () => {
@@ -109,9 +143,9 @@ describe("FloatingComposer", () => {
       shouldSubmitComposerKeyboardEvent({
         key: "Enter",
         shiftKey: false,
-        keyCode: 229,
+        isComposing: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("resets then syncs textarea height to its scroll height", () => {
@@ -138,7 +172,6 @@ describe("FloatingComposer", () => {
   });
 
   it("blocks attachment removal while a send or active turn can still need the blob", () => {
-    expect(COMPOSER_REMOVE_ATTACHMENT_BUTTON_TEXT).toBe("x");
     expect(
       isAttachmentRemovalDisabled({
         disabled: false,

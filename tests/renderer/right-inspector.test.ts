@@ -5,6 +5,7 @@ import {
   deriveInspectorTodos,
   getNextRightInspectorWidth,
   getResetRightInspectorWidth,
+  getRightInspectorResizerClassName,
   RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT,
   RIGHT_INSPECTOR_REGION_ID,
   RIGHT_INSPECTOR_TITLE_ID,
@@ -29,6 +30,13 @@ describe("RightInspector helpers", () => {
 
   it("resets the right-side resizer to the default width on double click", () => {
     expect(getResetRightInspectorWidth()).toBe(360);
+  });
+
+  it("marks the right-side resizer while pointer resizing is active", () => {
+    expect(getRightInspectorResizerClassName(false)).toBe("ds-right-inspector-resizer");
+    expect(getRightInspectorResizerClassName(true)).toBe(
+      "ds-right-inspector-resizer is-dragging",
+    );
   });
 
   it("uses stable ASCII visible text for the close button", () => {

@@ -140,6 +140,7 @@ function CodeBlock({
   const [userControlledCollapsed, setUserControlledCollapsed] = useState(false);
   const copyResetTimerRef = useRef<number | null>(null);
   const codeContentId = useId();
+  const codeLineCount = countCodeLines(code);
   const copyLabel = t("chat.copyCode");
 
   useEffect(() => {
@@ -211,6 +212,11 @@ function CodeBlock({
           </button>
         </div>
       </div>
+      {collapsed ? (
+        <div className="ds-code-block-collapse-note">
+          {t("chat.collapsedCodePreview", { count: codeLineCount })}
+        </div>
+      ) : null}
       <pre {...preProps} id={codeContentId}>{children}</pre>
     </div>
   );
@@ -247,7 +253,7 @@ function clearCopyResetTimer(timerRef: { current: number | null }): void {
   timerRef.current = null;
 }
 
-function countCodeLines(code: string): number {
+export function countCodeLines(code: string): number {
   if (!code) return 0;
   const normalized = code.endsWith("\n") ? code.slice(0, -1) : code;
   return normalized.split("\n").length;

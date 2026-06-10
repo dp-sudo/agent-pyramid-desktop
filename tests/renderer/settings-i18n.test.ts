@@ -13,9 +13,13 @@ describe("settings i18n resources", () => {
       "settings.nav.attachments",
       "settings.nav.attachmentsDesc",
       "settings.nav.commandLimits",
+      "settings.nav.sessionDesc",
+      "settings.showAdvanced",
+      "settings.showAdvancedDesc",
       "settings.sections.attachments",
       "settings.sections.attachmentsDesc",
       "settings.sections.commandLimits",
+      "settings.sections.sessionDesc",
       "settings.descriptions.allowComposerImageUpload",
       "settings.descriptions.allowComposerImagePaste",
       "settings.descriptions.protocol",
@@ -56,6 +60,9 @@ describe("settings i18n resources", () => {
       "settings.compactionStrategies.preserve-tools",
       "settings.toolNames.run_command",
       "settings.errors.integerRange",
+      "composer.placeholder",
+      "composer.writePlaceholder",
+      "chat.collapsedCodePreview",
     ];
 
     for (const locale of [en, zhCN]) {
@@ -65,6 +72,13 @@ describe("settings i18n resources", () => {
         expect(value, path).not.toMatch(/\?{2,}/);
       }
     }
+  });
+
+  it("does not present thread delete confirmation as a configurable setting", () => {
+    expect(en.settings.nav.sessionDesc).not.toMatch(/delete/i);
+    expect(en.settings.sections.sessionDesc).not.toMatch(/delete confirmation/i);
+    expect(zhCN.settings.nav.sessionDesc).not.toContain("删除");
+    expect(zhCN.settings.sections.sessionDesc).not.toContain("删除确认");
   });
 });
 

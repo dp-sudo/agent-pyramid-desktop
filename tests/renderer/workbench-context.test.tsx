@@ -109,6 +109,23 @@ describe("WorkbenchContext reducer", () => {
     expect(settings.lastWorkbenchRoute).toBe("write");
   });
 
+  it("deselects active threads without leaving a stale inspector panel", () => {
+    const selected = reducer(INITIAL_STATE, {
+      type: "selectThread",
+      thread: thread(),
+      items: [],
+    });
+    const withInspector = reducer(selected, { type: "openRightPanel", mode: "todo" });
+
+    const deselected = reducer(withInspector, { type: "deselectThread" });
+
+    expect(deselected.activeThread).toBeNull();
+    expect(deselected.activeThreadId).toBeNull();
+    expect(deselected.activeTurnId).toBeNull();
+    expect(deselected.items).toEqual([]);
+    expect(deselected.rightPanelMode).toBeNull();
+  });
+
   it("selects and removes active threads without leaving stale state", () => {
     const selected = reducer(INITIAL_STATE, {
       type: "selectThread",

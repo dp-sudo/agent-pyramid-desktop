@@ -2,6 +2,10 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } fr
 import { useTranslation } from "react-i18next";
 import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
 import { ChatBlock } from "../chat/ChatBlock";
+import {
+  FloatingComposer,
+  type FloatingComposerRequestPayload,
+} from "../composer";
 import type { Item, WriteFileEntry } from "../../../../../shared/agent-contracts";
 
 const AUTOSAVE_DELAY_MS = 800;
@@ -11,7 +15,7 @@ const COMPLETION_MIN_TRAILING_CHARS = 10;
 export const WRITE_SEARCH_CLEAR_BUTTON_TEXT = "x";
 type WriteStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
-export interface WriteAssistantPromptPayload {
+export interface WriteAssistantPromptPayload extends FloatingComposerRequestPayload {
   text: string;
   displayText: string;
   threadTitle: string;
@@ -38,8 +42,6 @@ export function WriteWorkspaceView({
   const [savedContent, setSavedContent] = useState("");
   const [search, setSearch] = useState("");
   const [completion, setCompletion] = useState("");
-  const [assistantDraft, setAssistantDraft] = useState("");
-  const [assistantSending, setAssistantSending] = useState(false);
   const [status, setStatus] = useState<WriteStatus>("idle");
   const [listLoading, setListLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -63,15 +65,6 @@ export function WriteWorkspaceView({
   }, [activePath, content, savedContent, state.workspaceRoot]);
 
   const assistantItems = getWriteAssistantVisibleItems(state.items);
-  const assistantSubmitDisabled = (
-    !onSendAssistantPrompt ||
-    !canSubmitWriteAssistantPrompt({
-      prompt: assistantDraft,
-      workspaceRoot: state.workspaceRoot,
-      sending: assistantSending || assistantBusy,
-    })
-  );
-
   useEffect(() => {
     const element = assistantMessagesRef.current;
     if (!element) return;
@@ -372,25 +365,25 @@ export function WriteWorkspaceView({
     }
   }
 
-  async function sendAssistantPrompt(): Promise<void> {
-    if (!onSendAssistantPrompt || assistantSending || assistantBusy) return;
+  async function handleWriteComposerRequest(
+    composerPayload: FloatingComposerRequestPayload,
+  ): Promise<boolean> {
+    if (!onSendAssistantPrompt || assistantBusy) return false;
+    if (!state.workspaceRoot.trim()) return false;
     const payload = buildWriteAssistantPrompt({
-      prompt: assistantDraft,
+      prompt: composerPayload.text,
       activePath,
       content,
       savedContent,
     });
-    if (!payload) return;
+    if (!payload) return false;
 
-    setAssistantSending(true);
     try {
-      const sent = await onSendAssistantPrompt(payload);
-      if (sent) setAssistantDraft("");
+      return await onSendAssistantPrompt(payload);
     } catch (error) {
       setErrorMessage(messageOf(error));
       setStatus("error");
-    } finally {
-      setAssistantSending(false);
+      return false;
     }
   }
 
@@ -574,38 +567,15 @@ export function WriteWorkspaceView({
               <div className="ds-write-assistant-empty">{t("write.assistantEmpty")}</div>
             )}
           </div>
-          <form
-            className="ds-write-assistant-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void sendAssistantPrompt();
-            }}
-          >
-            <textarea
-              value={assistantDraft}
-              onChange={(event) => setAssistantDraft(event.target.value)}
-              placeholder={t("write.assistantPlaceholder")}
-              aria-label={t("write.assistantPlaceholder")}
+          <div className="ds-write-assistant-composer">
+            <FloatingComposer
+              variant="write"
+              placeholder={t("composer.writePlaceholder")}
+              disabled={!state.workspaceRoot || !onSendAssistantPrompt}
+              onRequestSend={handleWriteComposerRequest}
+              onInterrupt={onInterruptAssistant ?? (() => undefined)}
             />
-            <div className="ds-write-assistant-actions">
-              {assistantBusy && onInterruptAssistant ? (
-                <button
-                  type="button"
-                  className="ds-pill"
-                  onClick={onInterruptAssistant}
-                >
-                  {t("composer.interrupt")}
-                </button>
-              ) : null}
-              <button
-                type="submit"
-                className="ds-pill is-accent"
-                disabled={assistantSubmitDisabled}
-              >
-                {assistantSending ? t("write.assistantSending") : t("write.assistantSend")}
-              </button>
-            </div>
-          </form>
+          </div>
         </aside>
       </div>
     </div>
@@ -755,15 +725,10 @@ export function buildWriteAssistantPrompt(
     ].join("\n"),
     displayText: prompt,
     threadTitle: prompt,
+    attachmentIds: [],
+    mode: "agent",
+    goalMode: false,
   };
-}
-
-export function canSubmitWriteAssistantPrompt(input: {
-  prompt: string;
-  workspaceRoot: string;
-  sending: boolean;
-}): boolean {
-  return Boolean(input.prompt.trim() && input.workspaceRoot.trim() && !input.sending);
 }
 
 export function getWriteAssistantVisibleItems(

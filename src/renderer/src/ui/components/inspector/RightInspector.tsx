@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../store/WorkbenchContext";
 import {
@@ -22,6 +22,7 @@ export const RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT = "x";
 export function RightInspector(): ReactElement | null {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
+  const [resizerDragging, setResizerDragging] = useState(false);
   if (!state.rightPanelMode) return null;
 
   return (
@@ -32,7 +33,7 @@ export function RightInspector(): ReactElement | null {
       aria-labelledby={RIGHT_INSPECTOR_TITLE_ID}
     >
       <div
-        className="ds-right-inspector-resizer"
+        className={getRightInspectorResizerClassName(resizerDragging)}
         role="separator"
         aria-orientation="vertical"
         aria-label={t("common.resizeRightInspector")}
@@ -50,17 +51,21 @@ export function RightInspector(): ReactElement | null {
           const startX = event.clientX;
           const startWidth = state.rightSidebarWidth;
           const target = event.currentTarget;
+          setResizerDragging(true);
           target.setPointerCapture(event.pointerId);
           const onMove = (ev: PointerEvent): void => {
             const dx = startX - ev.clientX;
             actions.setRightSidebarWidth(clampRightInspectorWidth(startWidth + dx));
           };
-          const onUp = (): void => {
+          const clearDragListeners = (): void => {
+            setResizerDragging(false);
             target.removeEventListener("pointermove", onMove);
-            target.removeEventListener("pointerup", onUp);
+            target.removeEventListener("pointerup", clearDragListeners);
+            target.removeEventListener("pointercancel", clearDragListeners);
           };
           target.addEventListener("pointermove", onMove);
-          target.addEventListener("pointerup", onUp);
+          target.addEventListener("pointerup", clearDragListeners);
+          target.addEventListener("pointercancel", clearDragListeners);
         }}
         onDoubleClick={() => {
           actions.setRightSidebarWidth(getResetRightInspectorWidth());
@@ -187,6 +192,12 @@ export function getNextRightInspectorWidth(
 
 export function getResetRightInspectorWidth(): number {
   return RIGHT_INSPECTOR_DEFAULT_WIDTH;
+}
+
+export function getRightInspectorResizerClassName(isDragging: boolean): string {
+  return isDragging
+    ? "ds-right-inspector-resizer is-dragging"
+    : "ds-right-inspector-resizer";
 }
 
 export interface InspectorChangeSummary {

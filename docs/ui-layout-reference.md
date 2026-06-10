@@ -62,7 +62,7 @@ Important UI state:
 | `activeThread`, `activeThreadId` | Selected code thread. |
 | `items` | Timeline items for selected thread. |
 | `inFlightTurnsByThreadId` | Tracks running turns per thread, enabling background sessions without blocking the active composer. |
-| `rightPanelMode` | Inspector panel mode or closed state. |
+| `rightPanelMode` | Inspector panel mode or closed state; cleared when the active timeline is deselected. |
 | `composer` | Draft text, model, reasoning effort, mode, goal mode, attachments. |
 | `errorMessage` | Visible workbench error toast. |
 | `leftSidebarWidth`, `rightSidebarWidth` | Resizable panel dimensions. |
@@ -180,6 +180,9 @@ Thread row attributes:
   path for `code` / `write`; switching to a workbench route clears an active
   thread whose persisted `mode` does not match that route. Settings remains a
   separate button.
+- The Code sidebar divider uses `ds-workbench-divider`; pointer resizing adds
+  `is-dragging` so the handle stays highlighted while the pointer is down, not
+  only during hover/focus.
 
 ### Topbar
 
@@ -326,6 +329,8 @@ Renderer:
   blocks remain open. The line threshold comes from
   `basicPreferences.codeBlockCollapseLineThreshold`, and the expand/collapse
   control owns the rendered `<pre>` via `aria-controls`.
+- Collapsed long code blocks show a preview note with the total line count so the
+  bounded code area is not mistaken for the full block.
 - Code block copy controls keep a stable accessible label/title while the
   visible text can briefly show copied or failed state before returning to idle.
   Repeated copy attempts replace the previous feedback timer, and unmount clears
@@ -354,9 +359,10 @@ Component: `FloatingComposer`.
 
 Purpose:
 
-- Edit and send prompt text.
+- Edit and send prompt text for Code and Write variants.
 - Interrupt in-flight turn.
-- Add image attachments when Workbench Settings allows picker uploads.
+- In the Code variant, add image attachments when Workbench Settings allows
+  picker uploads.
 - Paste image attachments directly from the clipboard when Workbench Settings
   allows clipboard image paste.
 - Preview image attachments as thumbnails with an overlaid remove button.
@@ -370,6 +376,8 @@ Key classes:
 - `ds-composer-shell`
 - `ds-composer-toolbar`
 - `ds-composer-toolbar-actions`
+- `ds-composer-shell.is-code`
+- `ds-composer-shell.is-write`
 - `ds-composer-attachments`
 - `ds-composer-attachment`
 - `ds-composer-attachment-remove`
@@ -392,8 +400,8 @@ States:
 - Attachment removal is disabled while a send is pending or the active thread is
   running, so runtime attachment reads cannot race with composer cleanup.
 - `menuOpen`, `pickerOpen`: popovers close on outside pointer down or Escape.
-  The `+` and model buttons expose stable `aria-controls` targets for their
-  respective popovers.
+  The `+` and model buttons expose `aria-controls` only while their respective
+  popovers are mounted.
 - The `+` popover is a `role="menu"` surface; the image action is a menu item
   and plan/goal toggles are menuitemcheckbox rows.
 - The model picker popover is exposed as a dialog and marks active model profile
@@ -408,13 +416,15 @@ States:
   and removal is not disabled.
 - Plan mode and goal mode menu rows expose active state with `aria-checked`,
   matching the visual `is-active` state and on/off text.
+- The Write variant hides attachment tray, image picker, `+` menu, plan/goal
+  toggles and model picker. Its payload always uses `attachmentIds: []`,
+  `mode: "agent"` and `goalMode: false`.
 
 Send behavior:
 
 - Enter sends, Shift+Enter inserts newline.
-- Enter is ignored while IME composition is active, including the legacy
-  `keyCode: 229` composition signal, so confirming Chinese/Japanese/Korean
-  candidates cannot submit the draft accidentally.
+- Enter is ignored while IME composition is active, so confirming
+  Chinese/Japanese/Korean candidates cannot submit the draft accidentally.
 - The textarea resets to `auto` height and then syncs to its `scrollHeight`
   after draft changes; CSS min/max height keeps the control bounded.
 - Empty text is blocked unless attachments are present through the composer
@@ -446,6 +456,8 @@ Layout:
   - Home jumps to min.
   - End jumps to max.
 - Double click resets width to `RIGHT_INSPECTOR_DEFAULT_WIDTH`.
+- Pointer resizing adds `is-dragging` to the resizer so the active drag line
+  remains visible until pointer up/cancel.
 
 Panels:
 
@@ -632,13 +644,14 @@ Key classes:
 - `ds-write-assistant-header`
 - `ds-write-assistant-messages`
 - `ds-write-assistant-empty`
-- `ds-write-assistant-form`
-- `ds-write-assistant-actions`
+- `ds-write-assistant-composer`
+- `ds-composer-shell.is-write`
 
 Behavior:
 
-- Submit is enabled only when there is an open workspace, non-empty assistant
-  input, and no Write assistant send is already in progress.
+- Submit is handled by `FloatingComposer variant="write"` and is enabled only
+  when there is an open workspace, non-empty assistant input, and no active
+  Write assistant turn.
 - `Workbench` sends Write assistant turns with `attachmentIds: []`,
   `mode: "agent"`, and `goalMode: false`; it does not clear or read the global
   composer draft as the prompt source.
@@ -719,6 +732,9 @@ Sidebar category nav:
 - Class: `ds-settings-nav`.
 - Buttons: `ds-settings-nav-item`.
 - Active category gets `is-active` and `aria-current="page"`.
+- The sidebar includes a `show advanced settings` switch. When it is off, core
+  categories stay visible and advanced runtime/model/tool tuning categories are
+  filtered out before text search is applied.
 
 Search:
 
@@ -772,6 +788,8 @@ Navigation guard:
 
 - `ensureNoUnsavedProfileChanges()` blocks section/profile navigation while
   model profile state is dirty.
+- Sidebar category navigation uses the same guard, so switching among model
+  subcategories cannot discard unsaved profile edits.
 
 ### Basic Settings
 
@@ -809,6 +827,8 @@ Session:
 
 - Show archived threads by default.
 - Restore last workspace on startup.
+- Thread deletion confirmation is not configurable here; the Sidebar always
+  uses inline confirmation before calling the delete API.
 
 Model defaults:
 
@@ -844,8 +864,11 @@ State sinks:
 - After deleting a model profile, Settings refreshes `runtimePreferences` so
   Code/Write default profile selects reflect main-process cleanup. If that
   refresh fails, the renderer locally clears defaults pointing at the deleted
-  profile and surfaces the runtime preference error. This refresh/fallback path
-  runs after profile delete as well as active-profile changes.
+  profile and surfaces the runtime preference error.
+- After activating a model profile, Settings also refreshes `runtimePreferences`
+  for UI freshness. If that refresh fails, the renderer keeps the current
+  runtime preference object instead of applying the delete-profile fallback,
+  because activation does not invalidate existing Code/Write default profile ids.
 - Runtime preference controls are disabled while the runtime preference load or
   save state is `loading` / `saving`, and when the preload API is unavailable.
 - Runtime preference saves are serialized in renderer: if another runtime
@@ -900,7 +923,7 @@ Save state:
 | `saved` | Last profile operation succeeded. |
 | `error` | Handler returned error or local validation failed. |
 
-Navigation guard treats `dirty` as unsaved, and also treats `error` as unsaved when the current form still differs from the active profile after a failed save.
+Navigation guard treats `dirty` as unsaved, and also treats `error` as unsaved when the current form still differs from the active profile after a failed save. The guard applies to section tabs, sidebar categories, profile actions, and returning to the workbench.
 
 Primary save button:
 

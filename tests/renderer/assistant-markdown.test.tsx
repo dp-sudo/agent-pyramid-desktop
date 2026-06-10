@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AssistantMarkdown,
   closeDanglingCodeFence,
+  countCodeLines,
   extractCodeText,
   isCodeBlockCollapsedByDefault,
   normalizeMarkdownHref,
@@ -52,6 +53,8 @@ describe("AssistantMarkdown", () => {
     expect(isCodeBlockCollapsedByDefault("short\ncode")).toBe(false);
     expect(html).toContain("class=\"ds-code-block is-collapsed\"");
     expect(html).toContain("aria-expanded=\"false\"");
+    expect(html).toContain("class=\"ds-code-block-collapse-note\"");
+    expect(html).toContain("chat.collapsedCodePreview");
     const controlsMatch = /aria-controls="([^"]+)"/.exec(html);
     const preIdMatch = /<pre[^>]* id="([^"]+)"/.exec(html);
     if (!controlsMatch || !preIdMatch) {
@@ -82,6 +85,13 @@ describe("AssistantMarkdown", () => {
     expect(collapsedHtml).toContain("class=\"ds-code-block is-collapsed\"");
     expect(openHtml).toContain("class=\"ds-code-block\"");
     expect(openHtml).not.toContain("is-collapsed");
+    expect(openHtml).not.toContain("ds-code-block-collapse-note");
+  });
+
+  it("counts code block lines without treating a trailing newline as an extra line", () => {
+    expect(countCodeLines("")).toBe(0);
+    expect(countCodeLines("one")).toBe(1);
+    expect(countCodeLines("one\ntwo\n")).toBe(2);
   });
 
   it("updates code block collapse state only while the user has not overridden it", () => {

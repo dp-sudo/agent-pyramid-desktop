@@ -3,11 +3,14 @@ import {
   canSubmitModelSettingsSection,
   clearDeletedDefaultProfileReferences,
   getDefaultCategoryForSection,
+  getFirstVisibleSettingsCategoryForSection,
   isProfileDeletePending,
   isSettingsCategoryInSection,
   mergeRuntimePreferencesUpdates,
   messageOfUnknownError,
   prunePendingProfileDeleteId,
+  resolveRuntimePreferencesAfterProfileActivationRefreshFailure,
+  shouldAllowSettingsCategorySelection,
   shouldBlockSettingsNavigation,
   shouldDisableModelProfileControls,
   shouldDisableRuntimePreferenceControls,
@@ -19,7 +22,10 @@ import {
   validateRuntimeCommandDraft,
   type SettingsFormState,
 } from "../../src/renderer/src/ui/SettingsView";
-import { filterSettingsSidebarItems } from "../../src/renderer/src/ui/components/settings/settings-search";
+import {
+  filterSettingsSidebarItems,
+  isSettingsCategoryAdvanced,
+} from "../../src/renderer/src/ui/components/settings/settings-search";
 import {
   DEFAULT_MODEL_CONFIG,
   DEFAULT_RUNTIME_PREFERENCES,
@@ -54,6 +60,24 @@ describe("SettingsView helpers", () => {
     expect(shouldBlockSettingsNavigation("error", false)).toBe(false);
     expect(shouldBlockSettingsNavigation("loading")).toBe(false);
     expect(shouldBlockSettingsNavigation("saving")).toBe(false);
+  });
+
+  it("blocks Settings category changes while model profile edits are unsaved", () => {
+    expect(
+      shouldAllowSettingsCategorySelection("connection", "context", "dirty"),
+    ).toBe(false);
+    expect(
+      shouldAllowSettingsCategorySelection("connection", "context", "error", true),
+    ).toBe(false);
+    expect(
+      shouldAllowSettingsCategorySelection("connection", "connection", "dirty"),
+    ).toBe(true);
+    expect(
+      shouldAllowSettingsCategorySelection("connection", "context", "error", false),
+    ).toBe(true);
+    expect(
+      shouldAllowSettingsCategorySelection("connection", "context", "saved"),
+    ).toBe(true);
   });
 
   it("keeps settings categories scoped to six first-level sections", () => {
@@ -102,6 +126,7 @@ describe("SettingsView helpers", () => {
         label: "Context",
         description: "Token windows",
         marker: "02",
+        advanced: true,
         searchKeywords: ["Maximum context tokens", "Auto compact limit"],
       },
     ];
@@ -114,6 +139,22 @@ describe("SettingsView helpers", () => {
       .toEqual(["context"]);
     expect(filterSettingsSidebarItems(items, "missing")).toEqual([]);
     expect(filterSettingsSidebarItems(items, " ")).toEqual(items);
+    expect(
+      filterSettingsSidebarItems(items, "compact", { showAdvanced: false }),
+    ).toEqual([]);
+    expect(
+      filterSettingsSidebarItems(items, " ", { showAdvanced: false })
+        .map((item) => item.id),
+    ).toEqual(["appearance"]);
+  });
+
+  it("identifies advanced Settings categories and keeps safe fallbacks visible", () => {
+    expect(isSettingsCategoryAdvanced("context")).toBe(true);
+    expect(isSettingsCategoryAdvanced("toolAccess")).toBe(true);
+    expect(isSettingsCategoryAdvanced("profiles")).toBe(false);
+    expect(getFirstVisibleSettingsCategoryForSection("model", false)).toBe("profiles");
+    expect(getFirstVisibleSettingsCategoryForSection("tools", false)).toBe("permissions");
+    expect(getFirstVisibleSettingsCategoryForSection("tools", true)).toBe("permissions");
   });
 
   it("validates model token limits before submitting to IPC", () => {
@@ -291,6 +332,17 @@ describe("SettingsView helpers", () => {
         codeDefaultModelProfileId: null,
       });
     expect(clearDeletedDefaultProfileReferences(preferences, "other-profile"))
+      .toBe(preferences);
+  });
+
+  it("keeps default profile references when activation refresh cannot reload runtime preferences", () => {
+    const preferences = {
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      codeDefaultModelProfileId: "code-profile",
+      writeDefaultModelProfileId: "write-profile",
+    };
+
+    expect(resolveRuntimePreferencesAfterProfileActivationRefreshFailure(preferences))
       .toBe(preferences);
   });
 });

@@ -121,7 +121,8 @@ textarea:focus-visible {
   transition: opacity var(--ds-motion-micro) var(--ds-motion-ease);
 }
 
-.ds-workbench-divider:hover::before {
+.ds-workbench-divider:hover::before,
+.ds-workbench-divider.is-dragging::before {
   opacity: 0.8;
   background: var(--ds-accent-soft);
 }
@@ -573,6 +574,12 @@ textarea:focus-visible {
   box-shadow: var(--ds-shadow-composer);
 }
 
+.ds-composer-shell.is-write {
+  border-color: var(--ds-border-muted);
+  border-radius: var(--ds-radius-lg);
+  box-shadow: var(--ds-shadow-card-soft);
+}
+
 .ds-composer-shell textarea {
   width: 100%;
   border: 0;
@@ -585,12 +592,21 @@ textarea:focus-visible {
   max-height: 240px;
 }
 
+.ds-composer-shell.is-write textarea {
+  min-height: 92px;
+  max-height: 180px;
+}
+
 .ds-composer-toolbar {
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
   border-top: 1px solid var(--ds-border-muted);
   padding: 6px 10px 10px;
+}
+
+.ds-composer-toolbar.is-write {
+  justify-content: flex-end;
 }
 
 .ds-composer-toolbar-actions {
@@ -1148,6 +1164,14 @@ textarea:focus-visible {
   outline-offset: 1px;
 }
 
+.ds-code-block-collapse-note {
+  border-bottom: 1px solid var(--ds-border-muted);
+  background: var(--ds-surface-card);
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  padding: 6px 12px;
+}
+
 .ds-code-block.is-collapsed pre {
   max-height: 220px;
 }
@@ -1674,7 +1698,8 @@ textarea:focus-visible {
 }
 
 .ds-right-inspector-resizer:hover::before,
-.ds-right-inspector-resizer:focus-visible::before {
+.ds-right-inspector-resizer:focus-visible::before,
+.ds-right-inspector-resizer.is-dragging::before {
   opacity: 1;
   background: var(--ds-accent);
 }
@@ -2130,38 +2155,9 @@ textarea:focus-visible {
   text-align: center;
 }
 
-.ds-write-assistant-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.ds-write-assistant-composer {
   border-top: 1px solid var(--ds-border-muted);
   padding: 12px;
-}
-
-.ds-write-assistant-form textarea {
-  width: 100%;
-  min-height: 92px;
-  max-height: 180px;
-  border: 1px solid var(--ds-border-muted);
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-surface-card);
-  color: var(--ds-text);
-  font: inherit;
-  font-size: var(--ds-size-body);
-  line-height: 1.5;
-  outline: none;
-  padding: 10px;
-  resize: vertical;
-}
-
-.ds-write-assistant-form textarea:focus {
-  border-color: var(--ds-accent);
-}
-
-.ds-write-assistant-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 /* ---------- Pill button primitive ---------- */
@@ -2286,6 +2282,40 @@ textarea:focus-visible {
 .ds-settings-search input:focus-visible {
   border-color: var(--ds-border-strong);
   box-shadow: var(--ds-focus-ring);
+}
+
+.ds-settings-advanced-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 12px 12px;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-card);
+  padding: 10px 12px;
+}
+
+.ds-settings-advanced-filter div {
+  min-width: 0;
+}
+
+.ds-settings-advanced-filter span,
+.ds-settings-advanced-filter small {
+  display: block;
+}
+
+.ds-settings-advanced-filter span {
+  color: var(--ds-text);
+  font-size: var(--ds-size-body);
+  font-weight: 650;
+}
+
+.ds-settings-advanced-filter small {
+  margin-top: 2px;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-label);
+  line-height: 1.35;
 }
 
 .ds-settings-nav {

@@ -328,6 +328,7 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
         activeThreadId: null,
         items: [],
         activeTurnId: null,
+        rightPanelMode: null,
       };
     case "updateActiveThread":
       return {

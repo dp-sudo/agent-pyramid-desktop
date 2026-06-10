@@ -60,6 +60,7 @@ import {
 import {
   filterSettingsSidebarItems,
   getSettingsCategorySearchKeywords,
+  isSettingsCategoryAdvanced,
 } from "./components/settings/settings-search";
 import { i18n, persistLocale, setFollowSystemTheme, setTheme } from "../i18n";
 import {
@@ -85,7 +86,7 @@ export interface SettingsFormState {
   agent_autonomy: AgentAutonomyLevel;
 }
 
-type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
+export type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
 type RuntimeSaveState = Exclude<SaveState, "dirty">;
 type RuntimeCommandDraftField = "timeoutMs" | "maxOutputBytes";
 interface RuntimeCommandDraft {
@@ -170,6 +171,7 @@ export function SettingsView(): ReactElement {
   const [pendingDeleteProfileId, setPendingDeleteProfileId] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [settingsSearch, setSettingsSearch] = useState("");
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [basicPreferenceError, setBasicPreferenceError] = useState("");
   const [codeBlockThresholdDraft, setCodeBlockThresholdDraft] = useState(() =>
     String(state.basicPreferences.codeBlockCollapseLineThreshold),
@@ -224,8 +226,12 @@ export function SettingsView(): ReactElement {
     [section, t],
   );
   const visibleSettingsNavItems = useMemo(
-    () => filterSettingsSidebarItems(settingsNavItems, settingsSearch),
-    [settingsNavItems, settingsSearch],
+    () => filterSettingsSidebarItems(
+      settingsNavItems,
+      settingsSearch,
+      { showAdvanced: showAdvancedSettings },
+    ),
+    [settingsNavItems, settingsSearch, showAdvancedSettings],
   );
   const sidebarFooterTitle = t(`settings.sidebarFooter.${section}Title`);
   const sidebarFooterDescription = t(`settings.sidebarFooter.${section}Description`);
@@ -585,6 +591,33 @@ export function SettingsView(): ReactElement {
     setPendingDeleteProfileId(null);
   }
 
+  function handleSelectCategory(nextCategory: SettingsCategory): void {
+    if (!shouldAllowSettingsCategorySelection(
+      category,
+      nextCategory,
+      saveState,
+      profileHasUnsavedChanges,
+    )) {
+      setError(t("settings.unsavedChanges"));
+      return;
+    }
+    setCategory(nextCategory);
+  }
+
+  function handleToggleAdvancedSettings(nextShowAdvanced: boolean): void {
+    if (!nextShowAdvanced && isSettingsCategoryAdvanced(category)) {
+      const fallbackCategory = getFirstVisibleSettingsCategoryForSection(
+        section,
+        false,
+      );
+      if (fallbackCategory && fallbackCategory !== category) {
+        if (!ensureNoUnsavedProfileChanges()) return;
+        setCategory(fallbackCategory);
+      }
+    }
+    setShowAdvancedSettings(nextShowAdvanced);
+  }
+
   async function handleActivateProfile(profile: ModelConfigProfile): Promise<void> {
     if (!ensureNoUnsavedProfileChanges()) return;
     setPendingDeleteProfileId(null);
@@ -606,7 +639,7 @@ export function SettingsView(): ReactElement {
         setRuntimeError("");
       } else {
         applyRuntimePreferences(
-          clearDeletedDefaultProfileReferences(runtimePreferences, profile.id),
+          resolveRuntimePreferencesAfterProfileActivationRefreshFailure(runtimePreferences),
         );
         setRuntimeSaveState("error");
         setRuntimeError(runtimeResult.message);
@@ -774,11 +807,15 @@ export function SettingsView(): ReactElement {
         searchPlaceholder={t("settings.searchPlaceholder")}
         searchValue={settingsSearch}
         emptyLabel={t("settings.searchEmpty")}
+        showAdvanced={showAdvancedSettings}
+        showAdvancedLabel={t("settings.showAdvanced")}
+        showAdvancedDescription={t("settings.showAdvancedDesc")}
         footerTitle={sidebarFooterTitle}
         footerDescription={sidebarFooterDescription}
         backLabel={t("settings.backToWorkbench")}
         onSearch={setSettingsSearch}
-        onSelect={setCategory}
+        onToggleAdvanced={handleToggleAdvancedSettings}
+        onSelect={handleSelectCategory}
         onBack={() => {
           if (ensureNoUnsavedProfileChanges()) {
             actions.setRoute(state.lastWorkbenchRoute);
@@ -2088,6 +2125,18 @@ export function shouldBlockSettingsNavigation(
   return saveState === "dirty" || (saveState === "error" && hasUnsavedChanges);
 }
 
+export function shouldAllowSettingsCategorySelection(
+  currentCategory: SettingsCategory,
+  nextCategory: SettingsCategory,
+  saveState: SaveState,
+  hasUnsavedChanges = false,
+): boolean {
+  return (
+    currentCategory === nextCategory ||
+    !shouldBlockSettingsNavigation(saveState, hasUnsavedChanges)
+  );
+}
+
 export function shouldDisableModelProfileControls(
   hasAgentApi: boolean,
   saveState: SaveState,
@@ -2129,6 +2178,12 @@ export function clearDeletedDefaultProfileReferences(
     codeDefaultModelProfileId,
     writeDefaultModelProfileId,
   };
+}
+
+export function resolveRuntimePreferencesAfterProfileActivationRefreshFailure(
+  preferences: RuntimePreferences,
+): RuntimePreferences {
+  return preferences;
 }
 
 function hasUnsavedProfileChanges(
@@ -2180,6 +2235,14 @@ export function isSettingsCategoryInSection(
   return getSettingsCategoriesForSection(section).includes(category);
 }
 
+export function getFirstVisibleSettingsCategoryForSection(
+  section: SettingsSection,
+  showAdvanced: boolean,
+): SettingsCategory | null {
+  return getSettingsCategoriesForSection(section)
+    .find((category) => showAdvanced || !isSettingsCategoryAdvanced(category)) ?? null;
+}
+
 function getSettingsCategoriesForSection(
   section: SettingsSection,
 ): readonly SettingsCategory[] {
@@ -2208,6 +2271,7 @@ function getSettingsNavItems(
     label: t(`settings.nav.${category}`),
     description: t(`settings.nav.${category}Desc`),
     marker: String(index + 1).padStart(2, "0"),
+    advanced: isSettingsCategoryAdvanced(category),
     searchKeywords: getSettingsCategorySearchKeywords(category, t),
   }));
 }

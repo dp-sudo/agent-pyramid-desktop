@@ -22,6 +22,7 @@ export interface SettingsSidebarItem {
   label: string;
   description: string;
   marker: string;
+  advanced?: boolean;
   searchKeywords?: readonly string[];
 }
 
@@ -33,10 +34,14 @@ interface SettingsSidebarProps {
   searchPlaceholder: string;
   searchValue: string;
   emptyLabel: string;
+  showAdvanced: boolean;
+  showAdvancedLabel: string;
+  showAdvancedDescription: string;
   footerTitle: string;
   footerDescription: string;
   backLabel: string;
   onSearch(value: string): void;
+  onToggleAdvanced(value: boolean): void;
   onSelect(category: SettingsCategory): void;
   onBack(): void;
 }
@@ -49,10 +54,14 @@ export function SettingsSidebar({
   searchPlaceholder,
   searchValue,
   emptyLabel,
+  showAdvanced,
+  showAdvancedLabel,
+  showAdvancedDescription,
   footerTitle,
   footerDescription,
   backLabel,
   onSearch,
+  onToggleAdvanced,
   onSelect,
   onBack,
 }: SettingsSidebarProps): ReactElement {
@@ -73,6 +82,22 @@ export function SettingsSidebar({
           onChange={(event) => onSearch(event.target.value)}
         />
       </label>
+      <div className="ds-settings-advanced-filter">
+        <div>
+          <span>{showAdvancedLabel}</span>
+          <small>{showAdvancedDescription}</small>
+        </div>
+        <button
+          type="button"
+          className={`ds-settings-toggle-switch${showAdvanced ? " is-on" : ""}`}
+          role="switch"
+          aria-checked={showAdvanced}
+          aria-label={showAdvancedLabel}
+          onClick={() => onToggleAdvanced(!showAdvanced)}
+        >
+          <span />
+        </button>
+      </div>
       <nav className="ds-settings-nav" aria-label={navLabel}>
         {items.length === 0 ? (
           <div className="ds-settings-nav-empty">{emptyLabel}</div>

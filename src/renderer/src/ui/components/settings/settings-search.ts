@@ -2,6 +2,13 @@ import type { SettingsCategory, SettingsSidebarItem } from "./SettingsSidebar";
 
 type SettingsTranslator = (key: string) => string;
 
+const ADVANCED_SETTINGS_CATEGORIES = new Set<SettingsCategory>([
+  "context",
+  "reasoning",
+  "toolAccess",
+  "commandLimits",
+]);
+
 const SETTINGS_CATEGORY_SEARCH_KEY_PATHS: Record<SettingsCategory, readonly string[]> = {
   appearance: [
     "settings.fields.locale",
@@ -169,11 +176,20 @@ export function getSettingsCategorySearchKeywords(
 export function filterSettingsSidebarItems(
   items: readonly SettingsSidebarItem[],
   query: string,
+  options: { showAdvanced?: boolean } = {},
 ): SettingsSidebarItem[] {
+  const showAdvanced = options.showAdvanced ?? true;
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  if (!normalizedQuery) return [...items];
-  return items.filter((item) =>
+  const availableItems = showAdvanced
+    ? [...items]
+    : items.filter((item) => !item.advanced);
+  if (!normalizedQuery) return availableItems;
+  return availableItems.filter((item) =>
     [item.label, item.description, item.id, ...(item.searchKeywords ?? [])]
       .some((value) => value.toLocaleLowerCase().includes(normalizedQuery)),
   );
+}
+
+export function isSettingsCategoryAdvanced(category: SettingsCategory): boolean {
+  return ADVANCED_SETTINGS_CATEGORIES.has(category);
 }

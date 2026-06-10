@@ -13,6 +13,7 @@ import {
   formatInitialLoadErrors,
   getNextSidebarWidth,
   getResetSidebarWidth,
+  getWorkbenchDividerClassName,
   isGlobalRuntimeErrorEvent,
   messageOfWorkbenchError,
   normalizeWriteAssistantSendPayload,
@@ -107,6 +108,11 @@ describe("Workbench", () => {
     expect(getResetSidebarWidth()).toBe(268);
   });
 
+  it("marks the sidebar separator while pointer resizing is active", () => {
+    expect(getWorkbenchDividerClassName(false)).toBe("ds-workbench-divider");
+    expect(getWorkbenchDividerClassName(true)).toBe("ds-workbench-divider is-dragging");
+  });
+
   it("builds no send payload for an empty composer with no attachments", () => {
     expect(buildComposerSendPayload("   ", 0, testT)).toBeNull();
   });
@@ -135,6 +141,9 @@ describe("Workbench", () => {
       text: "internal prompt",
       displayText: "visible prompt",
       threadTitle: "title",
+      attachmentIds: [],
+      mode: "agent",
+      goalMode: false,
     });
     expect(normalizeWriteAssistantSendPayload({
       text: "internal prompt",

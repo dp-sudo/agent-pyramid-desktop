@@ -10,7 +10,10 @@ import {
 } from "./store/WorkbenchContext";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { WorkbenchTopBar } from "./components/topbar/WorkbenchTopBar";
-import { FloatingComposer } from "./components/composer/FloatingComposer";
+import {
+  FloatingComposer,
+  type FloatingComposerRequestPayload,
+} from "./components/composer";
 import { MessageTimeline } from "./components/chat/MessageTimeline";
 import { PendingApprovalPanel } from "./components/chat/PendingApprovalPanel";
 import type { ApprovalPendingDecision } from "./components/chat/ChatBlock";
@@ -40,6 +43,9 @@ const WORKBENCH_ERROR_COPY_RESET_MS = 1600;
 
 type WorkbenchErrorCopyState = "idle" | "copied" | "failed";
 type WorkbenchErrorCopyFailureReason = "empty" | "unavailable" | "failed";
+type WorkbenchComposerSendPayload = Pick<FloatingComposerRequestPayload, "text"> &
+  Partial<Omit<FloatingComposerRequestPayload, "text">> &
+  Partial<Pick<WriteAssistantPromptPayload, "displayText" | "threadTitle">>;
 
 export type WorkbenchErrorCopyResult =
   | { ok: true }
@@ -54,6 +60,7 @@ export function Workbench(): ReactElement {
   const sendInProgressRef = useRef(false);
   const subscribedThreadIdsRef = useRef(new Set<string>());
   const pendingApprovalResponsesRef = useRef<Record<string, ApprovalPendingDecision>>({});
+  const [leftSidebarDragging, setLeftSidebarDragging] = useState(false);
   const [pendingApprovalResponses, setPendingApprovalResponses] = useState<
     Record<string, ApprovalPendingDecision>
   >({});
@@ -408,10 +415,12 @@ export function Workbench(): ReactElement {
     [actions, refreshThreads],
   );
 
-  const onSend = useCallback(async (draftText: string): Promise<boolean> => {
+  const sendCodeComposerPayload = useCallback(async (
+    payload: WorkbenchComposerSendPayload,
+  ): Promise<boolean> => {
     const sendPayload = buildComposerSendPayload(
-      draftText,
-      state.composer.attachmentIds.length,
+      payload.text,
+      payload.attachmentIds?.length ?? 0,
       t,
     );
     if (!sendPayload) return false;
@@ -452,7 +461,11 @@ export function Workbench(): ReactElement {
         void refreshThreads();
       }
 
-      if (state.composer.goalMode && threadId && !state.activeThread?.goal) {
+      const goalMode = payload.goalMode ?? false;
+      const mode = payload.mode ?? "agent";
+      const attachmentIds = payload.attachmentIds ?? [];
+
+      if (goalMode && threadId && !state.activeThread?.goal) {
         const goalResult = await runWorkbenchIpc(() =>
           window.agentApi.goals.update({
             threadId,
@@ -477,9 +490,9 @@ export function Workbench(): ReactElement {
           modelProfileId: explicitComposerModelProfileId(state.composer),
           reasoningEffort:
             state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
-          attachmentIds: state.composer.attachmentIds,
-          mode: state.composer.mode,
-          goalMode: state.composer.goalMode,
+          attachmentIds,
+          mode,
+          goalMode,
         }),
       );
       if (!result.ok) {
@@ -507,8 +520,8 @@ export function Workbench(): ReactElement {
     t,
   ]);
 
-  const onSendWriteAssistantPrompt = useCallback(
-    async (payload: WriteAssistantPromptPayload): Promise<boolean> => {
+  const sendWriteComposerPayload = useCallback(
+    async (payload: WorkbenchComposerSendPayload): Promise<boolean> => {
       const sendPayload = normalizeWriteAssistantSendPayload(payload);
       if (!sendPayload) return false;
       if (activeThreadArchived) {
@@ -559,9 +572,9 @@ export function Workbench(): ReactElement {
             modelProfileId: explicitComposerModelProfileId(state.composer),
             reasoningEffort:
               state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort,
-            attachmentIds: [],
-            mode: "agent",
-            goalMode: false,
+            attachmentIds: payload.attachmentIds ?? [],
+            mode: payload.mode ?? "agent",
+            goalMode: payload.goalMode ?? false,
           }),
         );
         if (!result.ok) {
@@ -589,6 +602,15 @@ export function Workbench(): ReactElement {
       subscribeThreadEvents,
       t,
     ],
+  );
+
+  const onSend = useCallback(
+    async (payload: WorkbenchComposerSendPayload): Promise<boolean> => {
+      return state.route === "write"
+        ? sendWriteComposerPayload(payload)
+        : sendCodeComposerPayload(payload);
+    },
+    [sendCodeComposerPayload, sendWriteComposerPayload, state.route],
   );
 
   const onInterrupt = useCallback(async () => {
@@ -671,7 +693,7 @@ export function Workbench(): ReactElement {
       ) : null}
       {state.route === "code" ? (
         <div
-          className="ds-workbench-divider"
+          className={getWorkbenchDividerClassName(leftSidebarDragging)}
           role="separator"
           aria-orientation="vertical"
           aria-label={t("common.resizeLeftSidebar")}
@@ -693,18 +715,22 @@ export function Workbench(): ReactElement {
             const startX = event.clientX;
             const startWidth = state.leftSidebarWidth;
             const target = event.currentTarget;
+            setLeftSidebarDragging(true);
             target.setPointerCapture(event.pointerId);
             const onMove = (ev: PointerEvent): void => {
               const dx = ev.clientX - startX;
               const next = clampSidebarWidth(startWidth + dx);
               actions.setLeftSidebarWidth(next);
             };
-            const onUp = (): void => {
+            const clearDragListeners = (): void => {
+              setLeftSidebarDragging(false);
               target.removeEventListener("pointermove", onMove);
-              target.removeEventListener("pointerup", onUp);
+              target.removeEventListener("pointerup", clearDragListeners);
+              target.removeEventListener("pointercancel", clearDragListeners);
             };
             target.addEventListener("pointermove", onMove);
-            target.addEventListener("pointerup", onUp);
+            target.addEventListener("pointerup", clearDragListeners);
+            target.addEventListener("pointercancel", clearDragListeners);
           }}
           onDoubleClick={() => {
             actions.setLeftSidebarWidth(getResetSidebarWidth());
@@ -718,7 +744,7 @@ export function Workbench(): ReactElement {
               onWorkspaceSelected={(workspace) =>
                 selectOrCreateThreadForWorkspace(workspace, "write")
               }
-              onSendAssistantPrompt={onSendWriteAssistantPrompt}
+              onSendAssistantPrompt={onSend}
               onInterruptAssistant={() => void onInterrupt()}
               assistantBusy={Boolean(activeThreadInFlightTurn)}
             />
@@ -747,7 +773,7 @@ export function Workbench(): ReactElement {
                       pendingApprovalResponses={pendingApprovalResponses}
                     />
                     <FloatingComposer
-                      onSend={onSend}
+                      onRequestSend={onSend}
                       onInterrupt={() => void onInterrupt()}
                       disabled={activeThreadArchived}
                     />
@@ -1067,6 +1093,10 @@ export function getResetSidebarWidth(): number {
   return LEFT_SIDEBAR_DEFAULT_WIDTH;
 }
 
+export function getWorkbenchDividerClassName(isDragging: boolean): string {
+  return isDragging ? "ds-workbench-divider is-dragging" : "ds-workbench-divider";
+}
+
 export function buildComposerSendPayload(
   draftText: string,
   attachmentCount: number,
@@ -1091,11 +1121,18 @@ export function buildComposerSendPayload(
 }
 
 export function normalizeWriteAssistantSendPayload(
-  payload: WriteAssistantPromptPayload,
+  payload: WorkbenchComposerSendPayload,
 ): WriteAssistantPromptPayload | null {
   const text = payload.text.trim();
-  const displayText = payload.displayText.trim();
-  const threadTitle = payload.threadTitle.trim();
+  const displayText = payload.displayText?.trim() ?? "";
+  const threadTitle = payload.threadTitle?.trim() ?? "";
   if (!text || !displayText || !threadTitle) return null;
-  return { text, displayText, threadTitle };
+  return {
+    text,
+    displayText,
+    threadTitle,
+    attachmentIds: payload.attachmentIds ?? [],
+    mode: payload.mode ?? "agent",
+    goalMode: payload.goalMode ?? false,
+  };
 }

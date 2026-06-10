@@ -70,6 +70,46 @@
 
 ## 变更记录
 
+### 2026-06-10 - Settings advanced category filter
+- Added a functional "show advanced settings" switch to the Settings sidebar.
+  The default view keeps core categories visible, while runtime/model tuning and
+  tool-detail categories appear when advanced settings are enabled.
+- Verification: `npm run typecheck`, `npm run test`, `npm run build`.
+
+### 2026-06-10 - Code block collapsed preview hint
+- Added a visible preview hint for long AssistantMarkdown code blocks while
+  they are collapsed, including the total line count. Short code blocks remain
+  unchanged, and the existing expand/collapse and copy controls keep their
+  behavior.
+- Verification: `npm run typecheck`, `npm run test`, `npm run build`.
+
+### 2026-06-10 - Settings session copy cleanup
+- Cleaned the Workbench Settings session copy so it only describes the controls
+  that still exist: archived-thread visibility and workspace restore. Thread
+  delete confirmation is now a mandatory Sidebar interaction, not a Settings
+  toggle.
+- Verification: `npm run typecheck`, `npm run test`, `npm run build`.
+
+### 2026-06-10 - Shared code/write FloatingComposer
+- Refactored `FloatingComposer` into a shared renderer composer composed from
+  attachment tray, toolbar, send controls, draft, attachment and popover hooks.
+  The public send callback now receives `{ text, attachmentIds, mode, goalMode }`
+  instead of a bare text string.
+- Migrated `WriteWorkspaceView` to render `FloatingComposer variant="write"`.
+  The Write variant keeps the shared draft/send/interrupt behavior while hiding
+  attachments, the `+` menu, plan/goal and model controls.
+- Cleaned composer draft ownership so the textarea is the local controlled
+  source, removed the legacy key-code submit guard, and made popover
+  `aria-controls` attributes conditional on the matching popover being mounted.
+- Verification: `npm run typecheck`, `npm run test`, `npm run build`.
+
+### 2026-06-10 - Settings category unsaved-change guard
+- Fixed Settings sidebar category navigation so it uses the same unsaved model
+  profile guard as section tabs, profile activation, create, duplicate, delete
+  and back-to-workbench actions. Dirty model edits can no longer be lost by
+  switching from one model category to another through the left nav.
+- Verification: pending.
+
 ### 2026-06-10 - Chat timeline and composer width alignment
 - Added `--ds-chat-content-max-width` as the shared Code chat content column
   width. The timeline content and composer frame now both use that token, while
@@ -193,11 +233,11 @@
 - Fixed Composer keyboard submit handling so plain Enter still sends and
   Shift+Enter still inserts a newline, but Enter is ignored while IME composition
   is active.
-- The guard also treats legacy `keyCode: 229` as a composition signal, avoiding
-  accidental sends when confirming Chinese/Japanese/Korean input candidates.
+- The guard now relies only on the browser IME composition state, avoiding a
+  second legacy key-code dimension in the submit path.
 - Verification plan: renderer Floating Composer helper tests cover plain Enter,
-  Shift+Enter, active composition and `keyCode: 229`; full
-  `typecheck/test/build` verification is run before handoff.
+  Shift+Enter and active composition; full `typecheck/test/build` verification
+  is run before handoff.
 
 ### 2026-06-10 - Follow-system theme listener
 - Fixed the renderer theme helper so enabling follow-system theme registers a
@@ -349,9 +389,23 @@
 - Hardened renderer reasoning and work-process folding so controlled `<details>` updates that only mirror live/completed defaults are not recorded as user overrides; only real open-state flips from the current controlled state persist as explicit toggles.
 - Verification plan: renderer ChatBlock and MessageTimeline helper tests cover ignored programmatic details toggles and real user toggles; full `typecheck/test/build` verification is run before handoff.
 
+### 2026-06-10 - Workbench deselect inspector cleanup
+- Closed the Right Inspector when `WorkbenchContext` deselects the active thread, matching the existing remove-thread and cross-mode route cleanup paths so an empty active timeline cannot leave a stale inspector panel open.
+- Verification plan: renderer WorkbenchContext reducer tests cover `deselectThread` clearing active selection, items, active turn, and `rightPanelMode`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Settings profile activation runtime fallback
+- Fixed Settings profile activation so a failed `runtimePreferences.get()` refresh preserves the current Code/Write default model profile ids instead of reusing the delete-profile fallback and clearing still-valid references.
+- Kept the delete-profile fallback unchanged: deleting a profile still locally clears defaults pointing at the deleted profile if the runtime preference refresh fails.
+- Verification plan: renderer SettingsView helper tests cover activation refresh failure preserving runtime preferences and delete fallback clearing only deleted profile references; full `typecheck/test/build` verification is run before handoff.
+
 ### 2026-06-10 - Right inspector close control text
 - Replaced the RightInspector close button's visible glyph with stable ASCII text while keeping its localized `aria-label` and `title`, matching the other close/remove controls hardened against encoding drift.
 - Verification plan: renderer RightInspector tests cover the close button visible text; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Sidebar resizer drag feedback
+- Added explicit `is-dragging` visual state for the Code sidebar divider and Right Inspector resizer so pointer resizing keeps the active drag line highlighted until pointer up/cancel.
+- Kept the existing keyboard sizing, double-click reset, and persisted width behavior unchanged.
+- Verification plan: renderer Workbench and RightInspector helper tests cover the dragging class mapping; full `typecheck/test/build` verification is run before handoff.
 
 ### 2026-06-10 - Right inspector control relationship
 - Added stable region/title ids to `RightInspector` and wired the Workbench topbar
