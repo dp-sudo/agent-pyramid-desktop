@@ -318,6 +318,10 @@ textarea:focus-visible {
   color: var(--ds-text);
 }
 
+.ds-sidebar-row.is-busy {
+  opacity: 0.72;
+}
+
 .ds-sidebar-row-main {
   display: flex;
   min-width: 0;
@@ -391,13 +395,13 @@ textarea:focus-visible {
   padding: 0 4px;
 }
 
-.ds-sidebar-row-action:hover {
+.ds-sidebar-row-action:not(:disabled):hover {
   border-color: var(--ds-border);
   background: var(--ds-surface-hover);
   color: var(--ds-text);
 }
 
-.ds-sidebar-delete-button:hover {
+.ds-sidebar-delete-button:not(:disabled):hover {
   border-color: var(--ds-danger-soft);
   background: var(--ds-danger-soft);
   color: var(--ds-danger);
@@ -409,6 +413,7 @@ textarea:focus-visible {
   color: var(--ds-danger);
 }
 
+.ds-sidebar-row-action:disabled,
 .ds-sidebar-delete-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
@@ -908,6 +913,14 @@ textarea:focus-visible {
   min-height: 0;
   overflow-y: auto;
   padding-block: 18px 150px;
+}
+
+.ds-message-timeline-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ds-text-faint);
 }
 
 .ds-message-jump-bottom {
@@ -1939,6 +1952,76 @@ textarea:focus-visible {
   margin: 0 var(--ds-space-3) var(--ds-space-2);
 }
 
+.ds-write-document-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  border-top: 1px solid var(--ds-border-muted);
+  padding: 10px var(--ds-space-3) 8px;
+}
+
+.ds-write-document-toolbar div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ds-write-document-toolbar strong {
+  color: var(--ds-text);
+  font-size: var(--ds-size-body);
+  font-weight: 650;
+}
+
+.ds-write-document-toolbar span {
+  overflow: hidden;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-write-document-toolbar .ds-pill {
+  flex: 0 0 auto;
+}
+
+.ds-write-document-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  padding: 0 var(--ds-space-3) var(--ds-space-3);
+}
+
+.ds-write-document-form.is-inline {
+  flex: 1 1 auto;
+  padding: 0;
+}
+
+.ds-write-document-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-card);
+  color: var(--ds-text);
+  font: inherit;
+  font-size: var(--ds-size-body);
+  outline: none;
+  padding: 7px 9px;
+}
+
+.ds-write-document-form input:focus {
+  border-color: var(--ds-accent);
+  box-shadow: var(--ds-focus-ring);
+}
+
+.ds-write-document-form div {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+}
+
 .ds-write-search {
   position: relative;
   padding: 0 12px 10px;
@@ -1987,26 +2070,18 @@ textarea:focus-visible {
   display: flex;
   width: 100%;
   min-width: 0;
-  flex-direction: column;
-  gap: 3px;
-  border: 0;
+  align-items: center;
+  gap: 8px;
   border-radius: var(--ds-radius-md);
   background: transparent;
   color: var(--ds-text);
-  cursor: pointer;
-  font: inherit;
   padding: 8px 10px;
-  text-align: left;
+  transition: background-color var(--ds-motion-micro) var(--ds-motion-ease);
 }
 
 .ds-write-file-row:hover,
-.ds-write-file-row:focus-visible {
+.ds-write-file-row:focus-within {
   background: var(--ds-surface-hover);
-}
-
-.ds-write-file-row:focus-visible {
-  outline: 2px solid var(--ds-accent);
-  outline-offset: 2px;
 }
 
 .ds-write-file-row.is-active {
@@ -2014,17 +2089,141 @@ textarea:focus-visible {
   color: var(--ds-accent);
 }
 
-.ds-write-file-row span,
-.ds-write-file-row small {
+.ds-write-file-row.is-confirming-delete {
+  background: var(--ds-danger-soft);
+  color: var(--ds-text);
+}
+
+.ds-write-file-row.is-busy {
+  opacity: 0.72;
+}
+
+.ds-write-file-row-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.ds-write-file-row-main:focus-visible,
+.ds-write-file-action:focus-visible,
+.ds-write-context-menu button:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: 2px;
+}
+
+.ds-write-file-row-main span,
+.ds-write-file-row-main small {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ds-write-file-row small {
+.ds-write-file-row-main small {
   color: var(--ds-text-faint);
   font-size: var(--ds-size-caption);
+}
+
+.ds-write-file-actions,
+.ds-write-file-delete-confirm {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.ds-write-file-delete-confirm {
+  min-width: 0;
+  color: var(--ds-danger);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-write-file-delete-confirm span {
+  white-space: nowrap;
+}
+
+.ds-write-file-action {
+  display: inline-flex;
+  min-width: 24px;
+  height: 22px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-sm);
+  background: transparent;
+  color: var(--ds-text-faint);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--ds-size-caption);
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.ds-write-file-action:not(:disabled):hover {
+  border-color: var(--ds-border);
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+}
+
+.ds-write-file-action.is-danger,
+.ds-write-file-action.is-danger:not(:disabled):hover {
+  border-color: var(--ds-danger-soft);
+  background: var(--ds-danger-soft);
+  color: var(--ds-danger);
+}
+
+.ds-write-file-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ds-write-context-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  min-width: 156px;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-elevated);
+  box-shadow: var(--ds-shadow-panel);
+  padding: 4px;
+}
+
+.ds-write-context-menu button {
+  border: 0;
+  border-radius: var(--ds-radius-sm);
+  background: transparent;
+  color: var(--ds-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--ds-size-body);
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.ds-write-context-menu button:not(:disabled):hover {
+  background: var(--ds-surface-hover);
+}
+
+.ds-write-context-menu button.is-danger {
+  color: var(--ds-danger);
+}
+
+.ds-write-context-menu button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .ds-write-main {

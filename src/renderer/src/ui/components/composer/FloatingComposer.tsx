@@ -35,6 +35,9 @@ interface FloatingComposerProps {
   disabled?: boolean;
   variant?: FloatingComposerVariant;
   placeholder?: string;
+  attachmentsEnabled?: boolean;
+  modelPickerEnabled?: boolean;
+  modeControlsEnabled?: boolean;
 }
 
 export function FloatingComposer({
@@ -43,11 +46,13 @@ export function FloatingComposer({
   disabled = false,
   variant = "code",
   placeholder,
+  attachmentsEnabled = variant === "code",
+  modelPickerEnabled = variant === "code",
+  modeControlsEnabled = variant === "code",
 }: FloatingComposerProps): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
   const runtimeBusy = getActiveThreadInFlightTurn(state) !== null;
-  const codeVariant = variant === "code";
   const {
     draftText,
     textareaRef,
@@ -60,9 +65,9 @@ export function FloatingComposer({
     disabled,
     runtimeBusy,
     sendPending,
-    enabled: codeVariant,
+    enabled: attachmentsEnabled,
   });
-  const attachmentCount = codeVariant ? state.composer.attachmentIds.length : 0;
+  const attachmentCount = attachmentsEnabled ? state.composer.attachmentIds.length : 0;
   const attachmentRemovalDisabled = isAttachmentRemovalDisabled({
     disabled,
     runtimeBusy,
@@ -79,7 +84,7 @@ export function FloatingComposer({
   const composerPlaceholder = placeholder ?? t("composer.placeholder");
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    if (codeVariant) {
+    if (attachmentsEnabled) {
       const attachmentIdToRemove = getDeleteShortcutAttachmentId({
         key: event.key,
         text: event.currentTarget.value,
@@ -122,9 +127,9 @@ export function FloatingComposer({
     try {
       const sent = await onRequestSend({
         text,
-        attachmentIds: codeVariant ? state.composer.attachmentIds : [],
-        mode: codeVariant ? state.composer.mode : "agent",
-        goalMode: codeVariant ? state.composer.goalMode : false,
+        attachmentIds: attachmentsEnabled ? state.composer.attachmentIds : [],
+        mode: modeControlsEnabled ? state.composer.mode : "agent",
+        goalMode: modeControlsEnabled ? state.composer.goalMode : false,
       });
       if (sent) {
         clearDraft();
@@ -136,7 +141,7 @@ export function FloatingComposer({
 
   return (
     <div ref={popovers.shellRef} className={`ds-composer-shell is-${variant}`}>
-      {codeVariant ? (
+      {attachmentsEnabled ? (
         <ComposerAttachmentTray
           attachments={state.composer.attachments}
           removalDisabled={attachmentRemovalDisabled}
@@ -148,7 +153,7 @@ export function FloatingComposer({
         value={draftText}
         onChange={handleDraftChange}
         onKeyDown={handleKeyDown}
-        onPaste={codeVariant ? attachments.handlePaste : undefined}
+        onPaste={attachmentsEnabled ? attachments.handlePaste : undefined}
         placeholder={composerPlaceholder}
         aria-label={composerPlaceholder}
         disabled={disabled}
@@ -159,11 +164,14 @@ export function FloatingComposer({
         runtimeBusy={runtimeBusy}
         sendPending={sendPending}
         sendDisabled={sendDisabled}
-        attachmentPending={codeVariant ? attachments.attachmentPending : false}
-        attachmentPendingCount={codeVariant ? attachments.attachmentPendingCount : 0}
+        attachmentPending={attachmentsEnabled ? attachments.attachmentPending : false}
+        attachmentPendingCount={attachmentsEnabled ? attachments.attachmentPendingCount : 0}
         fileInputRef={attachments.fileInputRef}
-        menuOpen={codeVariant ? popovers.menuOpen : false}
-        pickerOpen={codeVariant ? popovers.pickerOpen : false}
+        attachmentsEnabled={attachmentsEnabled}
+        modelPickerEnabled={modelPickerEnabled}
+        modeControlsEnabled={modeControlsEnabled}
+        menuOpen={attachmentsEnabled || modeControlsEnabled ? popovers.menuOpen : false}
+        pickerOpen={modelPickerEnabled ? popovers.pickerOpen : false}
         onImageSelected={(event) => {
           void attachments.handleImageSelected(event);
           popovers.closeMenu();

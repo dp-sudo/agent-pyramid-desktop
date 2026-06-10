@@ -60,6 +60,29 @@ describe("FloatingComposer", () => {
     expect(html).not.toContain("ds-composer-attachments");
   });
 
+  it("can explicitly enable write variant attachments and model controls", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(FloatingComposer, {
+          variant: "write",
+          placeholder: "composer.writePlaceholder",
+          attachmentsEnabled: true,
+          modelPickerEnabled: true,
+          modeControlsEnabled: false,
+          onRequestSend: async () => true,
+          onInterrupt: () => undefined,
+        }),
+      ),
+    );
+
+    expect(html).toContain("class=\"ds-composer-shell is-write\"");
+    expect(html).toContain("ds-composer-tool-button");
+    expect(html).toContain("ds-composer-model-button");
+    expect(html).not.toContain("ds-composer-mode-chip");
+  });
+
   it("allows attachment-only drafts to be submitted", () => {
     expect(
       canSubmitComposerDraft({

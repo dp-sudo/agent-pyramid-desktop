@@ -231,6 +231,9 @@ export function WriteAssistantPanel({
           variant="write"
           placeholder={t("composer.writePlaceholder")}
           disabled={composerDisabled}
+          attachmentsEnabled
+          modelPickerEnabled
+          modeControlsEnabled={false}
           onRequestSend={onRequestSend}
           onInterrupt={onInterrupt}
         />

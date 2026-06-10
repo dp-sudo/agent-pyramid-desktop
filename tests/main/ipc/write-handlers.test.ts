@@ -3,12 +3,18 @@ import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   completeMarkdownInline,
+  createMarkdownFileContent,
+  deleteMarkdownFile,
   listMarkdownFiles,
   parseWriteCompleteRequest,
+  parseWriteCreateRequest,
+  parseWriteDeleteRequest,
   parseWriteGetRequest,
   parseWriteListRequest,
   parseWritePutRequest,
+  parseWriteRenameRequest,
   readMarkdownFileContent,
+  renameMarkdownFile,
   resolveWritePathForAccess,
   resolveWritePath,
   writeMarkdownFileContent,
@@ -36,6 +42,26 @@ describe("write handlers helpers", () => {
       path: "notes.md",
       content: "# Notes\n",
     });
+    expect(parseWriteCreateRequest({
+      workspace: "/workspace",
+      path: "drafts/new.md",
+      content: "# New\n",
+    })).toEqual({
+      workspace: "/workspace",
+      path: "drafts/new.md",
+      content: "# New\n",
+    });
+    expect(parseWriteRenameRequest({
+      workspace: "/workspace",
+      path: "drafts/old.md",
+      newPath: "drafts/new.md",
+    })).toEqual({
+      workspace: "/workspace",
+      path: "drafts/old.md",
+      newPath: "drafts/new.md",
+    });
+    expect(parseWriteDeleteRequest({ workspace: "/workspace", path: "notes.md" }))
+      .toEqual({ workspace: "/workspace", path: "notes.md" });
     expect(parseWriteCompleteRequest({
       workspace: "/workspace",
       path: "notes.md",
@@ -62,6 +88,20 @@ describe("write handlers helpers", () => {
       path: "notes.md",
       content: Buffer.from("draft"),
     })).toThrow("Write put content must be a string.");
+    expect(() => parseWriteCreateRequest({
+      workspace: "/workspace",
+      path: "notes.md",
+      content: 1,
+    })).toThrow("Write create content must be a string.");
+    expect(() => parseWriteRenameRequest({
+      workspace: "/workspace",
+      path: "notes.md",
+      newPath: 1,
+    })).toThrow("Write rename newPath must be a string.");
+    expect(() => parseWriteDeleteRequest({
+      workspace: "/workspace",
+      path: false,
+    })).toThrow("Write delete path must be a string.");
     expect(() => parseWriteCompleteRequest({
       workspace: "/workspace",
       path: "notes.md",
@@ -220,6 +260,67 @@ describe("write handlers helpers", () => {
     } finally {
       await removeTempDir(workspace);
       await removeTempDir(outside);
+    }
+  });
+
+  it("creates markdown documents without overwriting existing files", async () => {
+    const workspace = await makeTempDir("write-create-");
+    try {
+      await expect(createMarkdownFileContent(workspace, "drafts/new.md", "# New\n"))
+        .resolves.toBe(Buffer.byteLength("# New\n", "utf8"));
+      await expect(readMarkdownFileContent(workspace, "drafts/new.md"))
+        .resolves.toBe("# New\n");
+      await expect(createMarkdownFileContent(workspace, "drafts/new.md", "# Other\n"))
+        .rejects.toThrow();
+      await expect(createMarkdownFileContent(workspace, "drafts/new.txt", "text"))
+        .rejects.toThrow("Write service only supports Markdown files: drafts/new.txt");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("renames markdown documents without overwriting target files", async () => {
+    const workspace = await makeTempDir("write-rename-");
+    try {
+      await fs.mkdir(path.join(workspace, "docs"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "docs", "source.md"), "# Source\n", "utf8");
+      await fs.writeFile(path.join(workspace, "docs", "target.md"), "# Target\n", "utf8");
+
+      await expect(renameMarkdownFile(workspace, "docs/source.md", "docs/source.md"))
+        .rejects.toThrow("Write rename source and target must be different.");
+      await expect(renameMarkdownFile(workspace, "docs/source.md", "docs/target.md"))
+        .rejects.toThrow();
+      await expect(readMarkdownFileContent(workspace, "docs/source.md"))
+        .resolves.toBe("# Source\n");
+      await expect(readMarkdownFileContent(workspace, "docs/target.md"))
+        .resolves.toBe("# Target\n");
+
+      await renameMarkdownFile(workspace, "docs/source.md", "docs/renamed.md");
+
+      await expect(readMarkdownFileContent(workspace, "docs/renamed.md"))
+        .resolves.toBe("# Source\n");
+      await expect(readMarkdownFileContent(workspace, "docs/source.md"))
+        .rejects.toThrow();
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("deletes markdown documents through the same workspace policy", async () => {
+    const workspace = await makeTempDir("write-delete-");
+    try {
+      await fs.writeFile(path.join(workspace, "notes.md"), "# Notes\n", "utf8");
+
+      await deleteMarkdownFile(workspace, "notes.md");
+
+      await expect(fs.stat(path.join(workspace, "notes.md"))).rejects.toThrow();
+      await expect(deleteMarkdownFile(workspace, "../outside.md"))
+        .rejects.toThrow("Path escapes workspace: ../outside.md");
+      await fs.writeFile(path.join(workspace, "notes.txt"), "text", "utf8");
+      await expect(deleteMarkdownFile(workspace, "notes.txt"))
+        .rejects.toThrow("Write service only supports Markdown files: notes.txt");
+    } finally {
+      await removeTempDir(workspace);
     }
   });
 

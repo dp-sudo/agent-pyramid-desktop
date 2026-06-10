@@ -878,6 +878,23 @@ export interface WritePutRequest {
   content: string;
 }
 
+export interface WriteCreateRequest {
+  workspace: string;
+  path: string;
+  content?: string;
+}
+
+export interface WriteRenameRequest {
+  workspace: string;
+  path: string;
+  newPath: string;
+}
+
+export interface WriteDeleteRequest {
+  workspace: string;
+  path: string;
+}
+
 export interface WriteCompleteRequest {
   workspace: string;
   path: string;

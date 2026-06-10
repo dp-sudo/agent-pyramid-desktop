@@ -363,6 +363,39 @@ Rules:
 - `UserItem` stores attachment ids and metadata, not image bytes.
 - Runtime reads attachment bytes and sends them to the LLM as `AgentContentBlock[]`.
 
+## Write File Service Model
+
+Write-mode document files are not stored in Electron `userData`. They live in
+the active thread workspace and are accessed only through `window.agentApi.write`
+IPC methods.
+
+Current request models:
+
+- `WriteListRequest`: workspace plus optional case-insensitive substring search.
+- `WriteGetRequest`: workspace plus workspace-relative Markdown path.
+- `WritePutRequest`: workspace, workspace-relative Markdown path, and UTF-8 content.
+- `WriteCreateRequest`: workspace, workspace-relative Markdown path, and optional UTF-8 content.
+- `WriteRenameRequest`: workspace, current workspace-relative Markdown path, and new workspace-relative Markdown path.
+- `WriteDeleteRequest`: workspace plus workspace-relative Markdown path.
+- `WriteCompleteRequest`: workspace, path, prefix, and suffix around the current editor selection.
+
+Rules:
+
+- `workspace` must be absolute.
+- Document paths are workspace-relative and use forward slashes in renderer state.
+- Document paths must target `.md`, `.mdx`, or `.markdown`.
+- Access reuses the shared workspace path policy and realpath checks from
+  `workspace-policy.ts`; Write IPC adds only the Markdown extension constraint.
+- `write.create` uses exclusive create semantics and does not overwrite an
+  existing document.
+- `write.rename` rejects same-path renames and does not overwrite an existing
+  target document.
+- `write.delete` removes one Markdown document after the same policy checks.
+- `write.get` reads strict UTF-8 Markdown; invalid bytes fail instead of
+  entering renderer document state with replacement characters.
+- `write.complete` is local Markdown pattern completion, not persisted data and
+  not an LLM request.
+
 ## Runtime Event Model
 
 Runtime events are pushed to renderer through SSE IPC. `events.jsonl` is the audit log for persisted lifecycle/usage events; timeline content is persisted as `Item` rows in `messages.jsonl`, then surfaced to renderer as `item_appended` / `item_updated` events.

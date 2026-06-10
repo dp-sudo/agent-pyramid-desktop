@@ -575,6 +575,7 @@ export function Workbench(): ReactElement {
           actions.setError(result.message);
           return false;
         }
+        actions.clearComposerAttachments();
         actions.turnStarted(result.value);
         return true;
       } finally {

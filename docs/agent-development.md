@@ -70,6 +70,39 @@
 
 ## 变更记录
 
+### 2026-06-10 - Write document management and assistant composer upgrade
+- Added Write document management IPC and UI for Markdown create, rename and
+  delete. The main Write file service now exposes `write:create`,
+  `write:rename` and `write:delete`, keeps all operations inside the active
+  workspace policy, rejects non-Markdown paths, and avoids overwriting existing
+  create/rename targets.
+- Upgraded the Write sidebar into a document-management area with a document
+  toolbar, inline create/rename forms, inline delete confirmation, row busy
+  state and right-click context menu actions.
+- Tightened renderer-side Write document path handling: create/rename inputs
+  now normalize separators and reject ambiguous relative paths before IPC.
+  Deleting the active dirty document now treats inline confirmation as an
+  explicit discard decision instead of saving the draft immediately before
+  removing the file.
+- Enabled image attachments and quick model selection in the Write assistant
+  composer while keeping plan/goal controls hidden. Successful Write assistant
+  sends now clear composer attachments after starting the turn.
+- Verification: targeted Write IPC/preload/renderer composer tests passed;
+  full `npm run typecheck`, `npm run test`, and `npm run build` verification is
+  run before handoff.
+
+### 2026-06-10 - Code workbench sidebar action hardening
+- Hardened Code sidebar thread actions with a local submitting state for
+  archive, restore and delete confirmation. While one action is submitting,
+  row action buttons are disabled, the active row exposes `aria-busy`, and
+  callback rejections are routed into the shared workbench error state.
+- Moved the Code timeline empty-state layout from inline JSX style into the
+  `ds-message-timeline-empty` shell class so the stage structure stays in the
+  shared style layer.
+- Verification: `npm test -- tests/renderer/sidebar.test.ts
+  tests/renderer/workbench-stage.test.tsx`, `npm run typecheck`,
+  `npm run test`, `npm run build`, and `git diff --check`.
+
 ### 2026-06-10 - Write workbench interaction hardening
 - Hardened Write file/editor interactions: rejected `write.get` and inline
   completion IPC calls now surface through the Write status error path, manual

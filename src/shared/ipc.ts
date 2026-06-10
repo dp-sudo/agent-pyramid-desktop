@@ -39,6 +39,9 @@ export const WRITE_LIST_CHANNEL = "write:list";
 export const WRITE_GET_CHANNEL = "write:get";
 export const WRITE_PUT_CHANNEL = "write:put";
 export const WRITE_COMPLETE_CHANNEL = "write:complete";
+export const WRITE_CREATE_CHANNEL = "write:create";
+export const WRITE_RENAME_CHANNEL = "write:rename";
+export const WRITE_DELETE_CHANNEL = "write:delete";
 
 // Model configuration
 export const MODEL_CONFIG_GET_CHANNEL = "config:model:get";
@@ -77,6 +80,9 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   WRITE_GET_CHANNEL,
   WRITE_PUT_CHANNEL,
   WRITE_COMPLETE_CHANNEL,
+  WRITE_CREATE_CHANNEL,
+  WRITE_RENAME_CHANNEL,
+  WRITE_DELETE_CHANNEL,
   MODEL_CONFIG_GET_CHANNEL,
   MODEL_CONFIG_UPDATE_CHANNEL,
   MODEL_CONFIG_PROFILES_LIST_CHANNEL,

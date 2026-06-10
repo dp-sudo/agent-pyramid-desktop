@@ -239,6 +239,9 @@ Notes:
 | `write:list` | `write.list(request)` | `WriteListRequest` | `WriteFileEntry[]` | `WRITE_LIST_FAILED` |
 | `write:get` | `write.get(request)` | `WriteGetRequest` | `{ path; content }` | `WRITE_GET_FAILED` |
 | `write:put` | `write.put(request)` | `WritePutRequest` | `{ path; bytes }` | `WRITE_PUT_FAILED` |
+| `write:create` | `write.create(request)` | `WriteCreateRequest` | `{ path; content; bytes }` | `WRITE_CREATE_FAILED` |
+| `write:rename` | `write.rename(request)` | `WriteRenameRequest` | `{ path; newPath }` | `WRITE_RENAME_FAILED` |
+| `write:delete` | `write.delete(request)` | `WriteDeleteRequest` | `{ path }` | `WRITE_DELETE_FAILED` |
 | `write:complete` | `write.complete(request)` | `WriteCompleteRequest` | `WriteCompleteResponse` | `WRITE_COMPLETE_FAILED` |
 
 Notes:
@@ -250,6 +253,13 @@ Notes:
 - `write.put` performs a plain UTF-8 file write after workspace path validation,
   then revalidates the path after parent directory creation so a newly created
   parent cannot be swapped to a symlink outside the workspace before commit.
+- `write.create` creates Markdown files with exclusive create semantics and
+  never overwrites an existing document.
+- `write.rename` rejects identical source/target paths and copies with an
+  exclusive target before removing the source, so an existing target is not
+  overwritten.
+- `write.delete` removes a single Markdown file after the same workspace and
+  extension policy checks.
 
 - Write `workspace` must be an absolute path.
 - Write file paths are workspace-relative.

@@ -294,6 +294,19 @@ Workbench runtime failure toasts must keep the full error text visible, provide 
 
 ## 8. Write workspace
 
+- Write sidebar document management must support creating, renaming and
+  deleting Markdown documents through `write:create`, `write:rename` and
+  `write:delete`. Destructive document actions use inline confirmation or a
+  context-menu command, not browser/system confirmation dialogs.
+- New and rename path inputs must be normalized in the renderer before IPC and
+  reject ambiguous workspace-relative paths such as `.` / `..` segments,
+  trailing separators, drive roots, empty Markdown filenames and non-Markdown
+  extensions. Deleting the active dirty document treats inline confirmation as
+  an explicit discard decision and must not save it immediately before delete.
+- Write assistant composer must support text paste, image paste/upload when
+  attachment preferences allow it, attachment thumbnails and quick model
+  switching. Plan and goal controls remain hidden in Write mode.
+
 - Markdown 文件列表必须显示加载、未打开工作区、空列表和搜索无结果状态；文件行使用可聚焦 button，并展示简短元信息帮助扫描。
 - 搜索框应提供一键清空入口；保存按钮只在当前文件存在且内容有变更时可用，避免把“无变化”表现成可执行保存。
 - 从 Write 切换到 Code 或 Settings 前必须先 flush 当前脏文档保存；保存失败时保留在 Write，并通过状态栏暴露错误。

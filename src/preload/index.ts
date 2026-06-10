@@ -21,10 +21,13 @@ import type {
   TurnStartRequest,
   WriteCompleteRequest,
   WriteCompleteResponse,
+  WriteCreateRequest,
+  WriteDeleteRequest,
   WriteFileEntry,
   WriteGetRequest,
   WriteListRequest,
   WritePutRequest,
+  WriteRenameRequest,
   Item,
   UsageDailyBucket,
   UsageDailyRequest,
@@ -59,9 +62,12 @@ import {
   USAGE_DAILY_CHANNEL,
   WORKSPACE_PICK_DIRECTORY_CHANNEL,
   WRITE_COMPLETE_CHANNEL,
+  WRITE_CREATE_CHANNEL,
+  WRITE_DELETE_CHANNEL,
   WRITE_GET_CHANNEL,
   WRITE_LIST_CHANNEL,
   WRITE_PUT_CHANNEL,
+  WRITE_RENAME_CHANNEL,
   MODEL_CONFIG_GET_CHANNEL,
   MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
   MODEL_CONFIG_PROFILES_CREATE_CHANNEL,
@@ -228,6 +234,27 @@ const write = {
   ): Promise<IpcResult<{ path: string; bytes: number }>> {
     return ipcRenderer.invoke(WRITE_PUT_CHANNEL, request) as Promise<
       IpcResult<{ path: string; bytes: number }>
+    >;
+  },
+  create(
+    request: WriteCreateRequest,
+  ): Promise<IpcResult<{ path: string; content: string; bytes: number }>> {
+    return ipcRenderer.invoke(WRITE_CREATE_CHANNEL, request) as Promise<
+      IpcResult<{ path: string; content: string; bytes: number }>
+    >;
+  },
+  rename(
+    request: WriteRenameRequest,
+  ): Promise<IpcResult<{ path: string; newPath: string }>> {
+    return ipcRenderer.invoke(WRITE_RENAME_CHANNEL, request) as Promise<
+      IpcResult<{ path: string; newPath: string }>
+    >;
+  },
+  delete(
+    request: WriteDeleteRequest,
+  ): Promise<IpcResult<{ path: string }>> {
+    return ipcRenderer.invoke(WRITE_DELETE_CHANNEL, request) as Promise<
+      IpcResult<{ path: string }>
     >;
   },
   complete(

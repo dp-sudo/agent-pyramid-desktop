@@ -5,18 +5,24 @@ import {
   buildWriteAssistantPrompt,
   clampWriteSidebarWidth,
   formatWriteFileMeta,
+  getNextWriteDocumentPath,
   getNextWriteSidebarWidth,
+  getWriteAssistantPromptText,
   getWriteAssistantLocalContext,
   getWriteAssistantVisibleItems,
   getWriteCompletionAcceptState,
   getWriteCompletionRequestContext,
   getWriteDocumentEditState,
+  getWriteDocumentPathValidationError,
   getWriteListState,
   getWriteSidebarDividerClassName,
   getWriteWorkspaceSwitchState,
+  isWriteMarkdownDocumentPath,
+  normalizeWriteDocumentPathInput,
   shouldApplyWriteOpenResult,
   shouldDisableWriteSave,
   shouldRequestWriteCompletion,
+  shouldSaveWriteFileBeforeDocumentDelete,
   shouldSaveWriteFileBeforeSwitch,
   shouldUseSelectedWriteWorkspace,
   shouldWarnBeforeLeavingWriteDocument,
@@ -46,9 +52,10 @@ describe("WriteWorkspaceView helpers", () => {
     expect(html).toContain("class=\"ds-write-assistant-composer\"");
     expect(html).toContain("class=\"ds-composer-shell is-write\"");
     expect(html).toContain("placeholder=\"composer.writePlaceholder\"");
+    expect(html).toContain("ds-composer-tool-button");
+    expect(html).toContain("ds-composer-model-button");
     expect(html).not.toContain("ds-write-assistant-form");
-    expect(html).not.toContain("ds-composer-tool-button");
-    expect(html).not.toContain("ds-composer-model-button");
+    expect(html).not.toContain("ds-composer-mode-chip");
     expect(html).not.toContain("float:right");
     expect(html).not.toContain("background:var(--ds-bg-sidebar)");
   });
@@ -128,6 +135,30 @@ describe("WriteWorkspaceView helpers", () => {
       workspaceRoot: "",
       content: "draft",
       savedContent: "",
+    })).toBe(false);
+  });
+
+  it("skips pre-delete save only when deleting the active document itself", () => {
+    expect(shouldSaveWriteFileBeforeDocumentDelete({
+      deletingPath: "notes.md",
+      activePath: "notes.md",
+      workspaceRoot: "/workspace",
+      content: "dirty draft",
+      savedContent: "saved draft",
+    })).toBe(false);
+    expect(shouldSaveWriteFileBeforeDocumentDelete({
+      deletingPath: "other.md",
+      activePath: "notes.md",
+      workspaceRoot: "/workspace",
+      content: "dirty draft",
+      savedContent: "saved draft",
+    })).toBe(true);
+    expect(shouldSaveWriteFileBeforeDocumentDelete({
+      deletingPath: "other.md",
+      activePath: "notes.md",
+      workspaceRoot: "/workspace",
+      content: "saved draft",
+      savedContent: "saved draft",
     })).toBe(false);
   });
 
@@ -252,6 +283,39 @@ describe("WriteWorkspaceView helpers", () => {
     expect(meta).not.toContain("·");
   });
 
+  it("normalizes and validates markdown document paths for document actions", () => {
+    expect(normalizeWriteDocumentPathInput("  \\docs\\draft.md  "))
+      .toBe("docs/draft.md");
+    expect(normalizeWriteDocumentPathInput("/docs/draft.md"))
+      .toBe("docs/draft.md");
+    expect(normalizeWriteDocumentPathInput(" docs // nested / draft.md "))
+      .toBe("docs/nested/draft.md");
+    expect(isWriteMarkdownDocumentPath("docs/draft.md")).toBe(true);
+    expect(isWriteMarkdownDocumentPath("docs/draft.mdx")).toBe(true);
+    expect(isWriteMarkdownDocumentPath("docs/draft.markdown")).toBe(true);
+    expect(isWriteMarkdownDocumentPath("docs/draft.txt")).toBe(false);
+    expect(isWriteMarkdownDocumentPath("docs/.md")).toBe(false);
+    expect(isWriteMarkdownDocumentPath("../draft.md")).toBe(false);
+    expect(isWriteMarkdownDocumentPath("docs/")).toBe(false);
+    expect(getWriteDocumentPathValidationError("")).toBe("empty");
+    expect(getWriteDocumentPathValidationError("docs/")).toBe("directory");
+    expect(getWriteDocumentPathValidationError("../draft.md")).toBe("dot-segment");
+    expect(getWriteDocumentPathValidationError("C:/draft.md")).toBe("drive-root");
+    expect(getWriteDocumentPathValidationError("docs/draft.txt")).toBe("extension");
+    expect(getWriteDocumentPathValidationError("docs/.md")).toBe("filename");
+    expect(getWriteDocumentPathValidationError("docs/draft.md")).toBeNull();
+  });
+
+  it("suggests the next available default markdown document path", () => {
+    expect(getNextWriteDocumentPath([])).toBe("untitled.md");
+    expect(getNextWriteDocumentPath([{ path: "untitled.md" }]))
+      .toBe("untitled-2.md");
+    expect(getNextWriteDocumentPath([
+      { path: "UNTITLED.md" },
+      { path: "untitled-2.md" },
+    ])).toBe("untitled-3.md");
+  });
+
   it("keeps document edits isolated from global composer state", () => {
     const editState = getWriteDocumentEditState("draft body");
     expect(editState).toEqual({
@@ -373,6 +437,30 @@ describe("WriteWorkspaceView helpers", () => {
       content: "",
       savedContent: "",
     })).toBeNull();
+  });
+
+  it("uses attachment-only copy and carries assistant attachment payload fields", () => {
+    const t = (key: string): string => key;
+    expect(getWriteAssistantPromptText("  draft  ", 1, t)).toBe("draft");
+    expect(getWriteAssistantPromptText("  ", 1, t))
+      .toBe("composer.attachmentOnlyMessageSingle");
+    expect(getWriteAssistantPromptText("  ", 2, t))
+      .toBe("composer.attachmentOnlyMessageMultiple");
+    expect(getWriteAssistantPromptText("  ", 0, t)).toBe("");
+
+    const payload = buildWriteAssistantPrompt({
+      prompt: "analyze this image",
+      activePath: null,
+      content: "",
+      savedContent: "",
+      attachmentIds: ["attachment-1"],
+      mode: "agent",
+      goalMode: false,
+    });
+
+    expect(payload?.attachmentIds).toEqual(["attachment-1"]);
+    expect(payload?.mode).toBe("agent");
+    expect(payload?.goalMode).toBe(false);
   });
 
   it("adds selected text as explicit assistant context without mirroring the whole document", () => {

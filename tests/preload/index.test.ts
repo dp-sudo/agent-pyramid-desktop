@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SSE_PUSH_CHANNEL } from "../../src/shared/ipc";
-import type { RuntimeEvent } from "../../src/shared/agent-contracts";
+import {
+  SSE_PUSH_CHANNEL,
+  WRITE_CREATE_CHANNEL,
+  WRITE_DELETE_CHANNEL,
+  WRITE_RENAME_CHANNEL,
+} from "../../src/shared/ipc";
+import type {
+  IpcResult,
+  RuntimeEvent,
+  WriteCreateRequest,
+  WriteDeleteRequest,
+  WriteRenameRequest,
+} from "../../src/shared/agent-contracts";
 
 type IpcRendererListener = (_event: unknown, payload: unknown) => void;
 
@@ -62,11 +73,47 @@ describe("preload bridge", () => {
     expect(warn).toHaveBeenCalledWith("[preload] dropped invalid runtime event payload.");
     warn.mockRestore();
   });
+
+  it("exposes write document management IPC methods", async () => {
+    const api = getAgentApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true, value: { path: "notes.md" } });
+
+    await api.write.create({ workspace: "/workspace", path: "notes.md", content: "" });
+    await api.write.rename({
+      workspace: "/workspace",
+      path: "notes.md",
+      newPath: "drafts/notes.md",
+    });
+    await api.write.delete({ workspace: "/workspace", path: "drafts/notes.md" });
+
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      1,
+      WRITE_CREATE_CHANNEL,
+      { workspace: "/workspace", path: "notes.md", content: "" },
+    );
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      2,
+      WRITE_RENAME_CHANNEL,
+      { workspace: "/workspace", path: "notes.md", newPath: "drafts/notes.md" },
+    );
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      3,
+      WRITE_DELETE_CHANNEL,
+      { workspace: "/workspace", path: "drafts/notes.md" },
+    );
+  });
 });
 
 function getAgentApi(): {
   sse: {
     onEvent(listener: (event: RuntimeEvent) => void): () => void;
+  };
+  write: {
+    create(
+      request: WriteCreateRequest,
+    ): Promise<IpcResult<{ path: string; content: string; bytes: number }>>;
+    rename(request: WriteRenameRequest): Promise<IpcResult<{ path: string; newPath: string }>>;
+    delete(request: WriteDeleteRequest): Promise<IpcResult<{ path: string }>>;
   };
 } {
   const api = electronMock.exposed.get("agentApi");
@@ -76,6 +123,13 @@ function getAgentApi(): {
   return api as {
     sse: {
       onEvent(listener: (event: RuntimeEvent) => void): () => void;
+    };
+    write: {
+      create(
+        request: WriteCreateRequest,
+      ): Promise<IpcResult<{ path: string; content: string; bytes: number }>>;
+      rename(request: WriteRenameRequest): Promise<IpcResult<{ path: string; newPath: string }>>;
+      delete(request: WriteDeleteRequest): Promise<IpcResult<{ path: string }>>;
     };
   };
 }

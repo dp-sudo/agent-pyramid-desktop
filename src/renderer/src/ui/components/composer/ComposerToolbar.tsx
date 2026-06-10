@@ -20,6 +20,9 @@ export function ComposerToolbar({
   attachmentPending,
   attachmentPendingCount,
   fileInputRef,
+  attachmentsEnabled,
+  modelPickerEnabled,
+  modeControlsEnabled,
   menuOpen,
   pickerOpen,
   onImageSelected,
@@ -37,6 +40,9 @@ export function ComposerToolbar({
   attachmentPending: boolean;
   attachmentPendingCount: number;
   fileInputRef: RefObject<HTMLInputElement | null>;
+  attachmentsEnabled: boolean;
+  modelPickerEnabled: boolean;
+  modeControlsEnabled: boolean;
   menuOpen: boolean;
   pickerOpen: boolean;
   onImageSelected(event: ChangeEvent<HTMLInputElement>): void;
@@ -48,7 +54,8 @@ export function ComposerToolbar({
 }): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
-  const showCodeControls = variant === "code";
+  const showImagePicker = attachmentsEnabled && state.basicPreferences.allowComposerImageUpload;
+  const showMenuButton = showImagePicker || modeControlsEnabled;
 
   function handleSelectModel(profile: ModelConfigProfile): void {
     actions.setComposerModel(profile.config.model, profile.id);
@@ -58,7 +65,7 @@ export function ComposerToolbar({
 
   return (
     <div className={`ds-composer-toolbar is-${variant}`}>
-      {showCodeControls ? (
+      {attachmentsEnabled ? (
         <input
           ref={fileInputRef}
           type="file"
@@ -70,28 +77,30 @@ export function ComposerToolbar({
         />
       ) : null}
       <div className="ds-composer-toolbar-left">
-        {showCodeControls ? (
+        {showMenuButton || modelPickerEnabled ? (
           <>
-            <button
-              type="button"
-              className="ds-composer-tool-button"
-              onClick={onToggleMenu}
-              disabled={disabled || runtimeBusy || sendPending}
-              title={t("composer.more")}
-              aria-label={t("composer.more")}
-              aria-expanded={menuOpen}
-              aria-haspopup="menu"
-              {...(menuOpen ? { "aria-controls": "composer-tool-menu" } : {})}
-            >
-              +
-            </button>
-            {menuOpen ? (
+            {showMenuButton ? (
+              <button
+                type="button"
+                className="ds-composer-tool-button"
+                onClick={onToggleMenu}
+                disabled={disabled || runtimeBusy || sendPending}
+                title={t("composer.more")}
+                aria-label={t("composer.more")}
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
+                {...(menuOpen ? { "aria-controls": "composer-tool-menu" } : {})}
+              >
+                +
+              </button>
+            ) : null}
+            {showMenuButton && menuOpen ? (
               <div
                 id="composer-tool-menu"
                 className="ds-composer-popover is-menu"
                 role="menu"
               >
-                {state.basicPreferences.allowComposerImageUpload ? (
+                {showImagePicker ? (
                   <button
                     type="button"
                     className="ds-composer-menu-row"
@@ -105,58 +114,66 @@ export function ComposerToolbar({
                     <span>PNG/JPEG/WebP/GIF</span>
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  className={`ds-composer-menu-row ${state.composer.mode === "plan" ? "is-active" : ""}`}
-                  role="menuitemcheckbox"
-                  aria-checked={state.composer.mode === "plan"}
-                  onClick={() => {
-                    actions.setComposerMode(state.composer.mode === "plan" ? "agent" : "plan");
-                    onCloseMenu();
-                  }}
-                >
-                  <span>{t("composer.planMode")}</span>
-                  <span>{state.composer.mode === "plan" ? t("common.on") : t("common.off")}</span>
-                </button>
-                <button
-                  type="button"
-                  className={`ds-composer-menu-row ${state.composer.goalMode ? "is-active" : ""}`}
-                  role="menuitemcheckbox"
-                  aria-checked={state.composer.goalMode}
-                  onClick={() => {
-                    actions.setComposerGoalMode(!state.composer.goalMode);
-                    onCloseMenu();
-                  }}
-                >
-                  <span>{t("composer.goalMode")}</span>
-                  <span>{state.composer.goalMode ? t("common.on") : t("common.off")}</span>
-                </button>
+                {modeControlsEnabled ? (
+                  <>
+                    <button
+                      type="button"
+                      className={`ds-composer-menu-row ${state.composer.mode === "plan" ? "is-active" : ""}`}
+                      role="menuitemcheckbox"
+                      aria-checked={state.composer.mode === "plan"}
+                      onClick={() => {
+                        actions.setComposerMode(state.composer.mode === "plan" ? "agent" : "plan");
+                        onCloseMenu();
+                      }}
+                    >
+                      <span>{t("composer.planMode")}</span>
+                      <span>{state.composer.mode === "plan" ? t("common.on") : t("common.off")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`ds-composer-menu-row ${state.composer.goalMode ? "is-active" : ""}`}
+                      role="menuitemcheckbox"
+                      aria-checked={state.composer.goalMode}
+                      onClick={() => {
+                        actions.setComposerGoalMode(!state.composer.goalMode);
+                        onCloseMenu();
+                      }}
+                    >
+                      <span>{t("composer.goalMode")}</span>
+                      <span>{state.composer.goalMode ? t("common.on") : t("common.off")}</span>
+                    </button>
+                  </>
+                ) : null}
               </div>
             ) : null}
-            <button
-              type="button"
-              className="ds-composer-model-button"
-              aria-label={t("composer.model")}
-              aria-expanded={pickerOpen}
-              aria-haspopup="dialog"
-              {...(pickerOpen ? { "aria-controls": "composer-model-picker" } : {})}
-              onClick={onTogglePicker}
-            >
-              <span>{state.composer.model}</span>
-              <span>{state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort}</span>
-            </button>
-            {pickerOpen ? (
-              <FloatingComposerModelPicker
-                id="composer-model-picker"
-                profiles={state.modelProfiles?.profiles ?? []}
-                selectedModel={state.composer.model}
-                selectedProfileId={state.composer.modelProfileId}
-                selectedReasoningEffort={
-                  state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort
-                }
-                onSelectModel={handleSelectModel}
-                onSelectReasoningEffort={actions.setComposerReasoningEffort}
-              />
+            {modelPickerEnabled ? (
+              <>
+                <button
+                  type="button"
+                  className="ds-composer-model-button"
+                  aria-label={t("composer.model")}
+                  aria-expanded={pickerOpen}
+                  aria-haspopup="dialog"
+                  {...(pickerOpen ? { "aria-controls": "composer-model-picker" } : {})}
+                  onClick={onTogglePicker}
+                >
+                  <span>{state.composer.model}</span>
+                  <span>{state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort}</span>
+                </button>
+                {pickerOpen ? (
+                  <FloatingComposerModelPicker
+                    id="composer-model-picker"
+                    profiles={state.modelProfiles?.profiles ?? []}
+                    selectedModel={state.composer.model}
+                    selectedProfileId={state.composer.modelProfileId}
+                    selectedReasoningEffort={
+                      state.composer.reasoningEffort ?? state.modelConfig.model_reasoning_effort
+                    }
+                    onSelectModel={handleSelectModel}
+                    onSelectReasoningEffort={actions.setComposerReasoningEffort}
+                  />
+                ) : null}
+              </>
             ) : null}
           </>
         ) : null}
@@ -169,7 +186,7 @@ export function ComposerToolbar({
         attachmentPendingCount={attachmentPendingCount}
         mode={state.composer.mode}
         goalMode={state.composer.goalMode}
-        showModeChips={showCodeControls}
+        showModeChips={modeControlsEnabled}
         onInterrupt={onInterrupt}
         onSend={onSend}
       />

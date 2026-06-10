@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
 import type { ThreadSummary } from "../../../../../shared/agent-contracts";
@@ -9,9 +9,9 @@ interface SidebarProps {
   onSelectThread: (id: string) => void;
   onNewChat: () => void;
   onPickWorkspace: () => void;
-  onDeleteThread: (id: string) => void;
-  onArchiveThread: (id: string) => void;
-  onRestoreThread: (id: string) => void;
+  onDeleteThread: (id: string) => void | Promise<void>;
+  onArchiveThread: (id: string) => void | Promise<void>;
+  onRestoreThread: (id: string) => void | Promise<void>;
   onOpenSettings: () => void;
   onSwitchWorkbench: (route: Extract<WorkbenchRoute, "code" | "write">) => void;
   workspaceRoot: string;
@@ -35,13 +35,40 @@ export function Sidebar({
   onToggleArchivedThreads,
 }: SidebarProps): ReactElement {
   const { t } = useTranslation();
-  const { state } = useWorkbench();
+  const { state, actions } = useWorkbench();
   const groups = groupThreadsByWorkspace(threads);
   const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<string | null>(null);
+  const [pendingThreadActionId, setPendingThreadActionId] = useState<string | null>(null);
+  const pendingThreadActionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setPendingDeleteThreadId((current) => prunePendingThreadDeleteId(current, threads));
+    setPendingThreadActionId((current) => {
+      const next = prunePendingThreadActionId(current, threads);
+      pendingThreadActionIdRef.current = next;
+      return next;
+    });
   }, [threads]);
+
+  async function runThreadAction(
+    threadId: string,
+    action: () => void | Promise<void>,
+  ): Promise<void> {
+    if (shouldDisableThreadAction(pendingThreadActionIdRef.current)) return;
+    pendingThreadActionIdRef.current = threadId;
+    setPendingThreadActionId(threadId);
+    try {
+      await action();
+    } catch (error) {
+      actions.setError(messageOfSidebarActionError(error));
+    } finally {
+      setPendingThreadActionId((current) => {
+        const next = current === threadId ? null : current;
+        pendingThreadActionIdRef.current = next;
+        return next;
+      });
+    }
+  }
 
   return (
     <aside className="ds-sidebar">
@@ -90,6 +117,11 @@ export function Sidebar({
                 pendingDeleteThreadId,
                 thread.id,
               );
+              const isActionPending = isThreadActionPending(
+                pendingThreadActionId,
+                thread.id,
+              );
+              const actionDisabled = shouldDisableThreadAction(pendingThreadActionId);
               return (
                 <article
                   key={thread.id}
@@ -97,7 +129,8 @@ export function Sidebar({
                     isActive ? "is-active" : ""
                   } ${isArchived ? "is-archived" : ""} ${
                     isConfirmingDelete ? "is-confirming-delete" : ""
-                  }`}
+                  } ${isActionPending ? "is-busy" : ""}`}
+                  aria-busy={isActionPending || undefined}
                 >
                   <button
                     type="button"
@@ -123,9 +156,9 @@ export function Sidebar({
                       <button
                         type="button"
                         className="ds-sidebar-delete-button is-danger"
+                        disabled={actionDisabled}
                         onClick={() => {
-                          setPendingDeleteThreadId(null);
-                          onDeleteThread(thread.id);
+                          void runThreadAction(thread.id, () => onDeleteThread(thread.id));
                         }}
                       >
                         {t("threads.deleteConfirmAction")}
@@ -133,6 +166,7 @@ export function Sidebar({
                       <button
                         type="button"
                         className="ds-sidebar-row-action"
+                        disabled={actionDisabled}
                         onClick={() => setPendingDeleteThreadId(null)}
                       >
                         {t("common.cancel")}
@@ -145,10 +179,13 @@ export function Sidebar({
                         className="ds-sidebar-row-action"
                         title={isArchived ? t("threads.restore") : t("threads.archive")}
                         aria-label={isArchived ? t("threads.restore") : t("threads.archive")}
+                        disabled={actionDisabled}
                         onClick={() => {
                           setPendingDeleteThreadId(null);
-                          if (isArchived) onRestoreThread(thread.id);
-                          else onArchiveThread(thread.id);
+                          void runThreadAction(thread.id, () => {
+                            if (isArchived) return onRestoreThread(thread.id);
+                            return onArchiveThread(thread.id);
+                          });
                         }}
                       >
                         {isArchived ? t("threads.restoreShort") : t("threads.archiveShort")}
@@ -158,6 +195,7 @@ export function Sidebar({
                         className="ds-sidebar-delete-button"
                         title={t("threads.delete")}
                         aria-label={t("threads.delete")}
+                        disabled={actionDisabled}
                         onClick={() => setPendingDeleteThreadId(thread.id)}
                       >
                         {t("threads.deleteShort")}
@@ -242,6 +280,31 @@ export function prunePendingThreadDeleteId(
   return threads.some((thread) => thread.id === pendingDeleteThreadId)
     ? pendingDeleteThreadId
     : null;
+}
+
+export function prunePendingThreadActionId(
+  pendingThreadActionId: string | null,
+  threads: readonly Pick<ThreadSummary, "id">[],
+): string | null {
+  if (!pendingThreadActionId) return null;
+  return threads.some((thread) => thread.id === pendingThreadActionId)
+    ? pendingThreadActionId
+    : null;
+}
+
+export function isThreadActionPending(
+  pendingThreadActionId: string | null,
+  threadId: string,
+): boolean {
+  return pendingThreadActionId === threadId;
+}
+
+export function shouldDisableThreadAction(pendingThreadActionId: string | null): boolean {
+  return pendingThreadActionId !== null;
+}
+
+export function messageOfSidebarActionError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function getWorkbenchSwitchOptions(

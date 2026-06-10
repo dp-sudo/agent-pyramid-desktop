@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import * as path from "node:path";
 import { ipcMain } from "electron";
 import {
@@ -6,6 +6,9 @@ import {
   WRITE_GET_CHANNEL,
   WRITE_PUT_CHANNEL,
   WRITE_COMPLETE_CHANNEL,
+  WRITE_CREATE_CHANNEL,
+  WRITE_RENAME_CHANNEL,
+  WRITE_DELETE_CHANNEL,
 } from "../../shared/ipc.js";
 import type {
   WriteFileEntry,
@@ -14,6 +17,9 @@ import type {
   WritePutRequest,
   WriteCompleteRequest,
   WriteCompleteResponse,
+  WriteCreateRequest,
+  WriteRenameRequest,
+  WriteDeleteRequest,
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
 import { decodeUtf8TextBuffer } from "../application/tools/text-file.js";
@@ -69,6 +75,40 @@ export function registerWriteHandlers(): void {
     }
   });
 
+  ipcMain.handle(WRITE_CREATE_CHANNEL, async (_event, request: unknown) => {
+    try {
+      const parsed = parseWriteCreateRequest(request);
+      const bytes = await createMarkdownFileContent(
+        parsed.workspace,
+        parsed.path,
+        parsed.content ?? "",
+      );
+      return ok({ path: parsed.path, content: parsed.content ?? "", bytes });
+    } catch (error) {
+      return err("WRITE_CREATE_FAILED", messageOf(error));
+    }
+  });
+
+  ipcMain.handle(WRITE_RENAME_CHANNEL, async (_event, request: unknown) => {
+    try {
+      const parsed = parseWriteRenameRequest(request);
+      await renameMarkdownFile(parsed.workspace, parsed.path, parsed.newPath);
+      return ok({ path: parsed.path, newPath: parsed.newPath });
+    } catch (error) {
+      return err("WRITE_RENAME_FAILED", messageOf(error));
+    }
+  });
+
+  ipcMain.handle(WRITE_DELETE_CHANNEL, async (_event, request: unknown) => {
+    try {
+      const parsed = parseWriteDeleteRequest(request);
+      await deleteMarkdownFile(parsed.workspace, parsed.path);
+      return ok({ path: parsed.path });
+    } catch (error) {
+      return err("WRITE_DELETE_FAILED", messageOf(error));
+    }
+  });
+
   ipcMain.handle(
     WRITE_COMPLETE_CHANNEL,
     async (_event, request: unknown): Promise<{ ok: true; value: WriteCompleteResponse } | { ok: false; code: string; message: string }> => {
@@ -107,6 +147,33 @@ export function parseWritePutRequest(request: unknown): WritePutRequest {
     workspace: requiredString(value.workspace, "Write put workspace must be a string."),
     path: requiredString(value.path, "Write put path must be a string."),
     content: requiredString(value.content, "Write put content must be a string."),
+  };
+}
+
+export function parseWriteCreateRequest(request: unknown): WriteCreateRequest {
+  const value = parseWriteRequestObject(request, "Write create request");
+  const content = optionalString(value.content, "Write create content must be a string.");
+  return {
+    workspace: requiredString(value.workspace, "Write create workspace must be a string."),
+    path: requiredString(value.path, "Write create path must be a string."),
+    ...(content !== undefined ? { content } : {}),
+  };
+}
+
+export function parseWriteRenameRequest(request: unknown): WriteRenameRequest {
+  const value = parseWriteRequestObject(request, "Write rename request");
+  return {
+    workspace: requiredString(value.workspace, "Write rename workspace must be a string."),
+    path: requiredString(value.path, "Write rename path must be a string."),
+    newPath: requiredString(value.newPath, "Write rename newPath must be a string."),
+  };
+}
+
+export function parseWriteDeleteRequest(request: unknown): WriteDeleteRequest {
+  const value = parseWriteRequestObject(request, "Write delete request");
+  return {
+    workspace: requiredString(value.workspace, "Write delete workspace must be a string."),
+    path: requiredString(value.path, "Write delete path must be a string."),
   };
 }
 
@@ -182,6 +249,61 @@ export async function writeMarkdownFileContent(
   }
   await fs.writeFile(fullPath, content, "utf8");
   return Buffer.byteLength(content, "utf8");
+}
+
+export async function createMarkdownFileContent(
+  workspace: string,
+  relativePath: string,
+  content: string,
+): Promise<number> {
+  const fullPath = await resolveWritePathForAccess(workspace, relativePath, "write");
+  await fs.mkdir(path.dirname(fullPath), { recursive: true });
+  const checkedFullPath = await resolveWritePathForAccess(workspace, relativePath, "write");
+  if (path.resolve(checkedFullPath) !== path.resolve(fullPath)) {
+    throw new Error(`Path changed before create: ${relativePath}`);
+  }
+  const handle = await fs.open(fullPath, "wx");
+  try {
+    await handle.writeFile(content, "utf8");
+  } finally {
+    await handle.close();
+  }
+  return Buffer.byteLength(content, "utf8");
+}
+
+export async function renameMarkdownFile(
+  workspace: string,
+  currentRelativePath: string,
+  nextRelativePath: string,
+): Promise<void> {
+  if (currentRelativePath === nextRelativePath) {
+    throw new Error("Write rename source and target must be different.");
+  }
+  const currentFullPath = await resolveWritePathForAccess(
+    workspace,
+    currentRelativePath,
+    "read",
+  );
+  const nextFullPath = await resolveWritePathForAccess(workspace, nextRelativePath, "write");
+  await fs.mkdir(path.dirname(nextFullPath), { recursive: true });
+  const checkedNextFullPath = await resolveWritePathForAccess(
+    workspace,
+    nextRelativePath,
+    "write",
+  );
+  if (path.resolve(checkedNextFullPath) !== path.resolve(nextFullPath)) {
+    throw new Error(`Path changed before rename: ${nextRelativePath}`);
+  }
+  await fs.copyFile(currentFullPath, nextFullPath, fsConstants.COPYFILE_EXCL);
+  await fs.rm(currentFullPath, { force: false });
+}
+
+export async function deleteMarkdownFile(
+  workspace: string,
+  relativePath: string,
+): Promise<void> {
+  const fullPath = await resolveWritePathForAccess(workspace, relativePath, "read");
+  await fs.rm(fullPath, { force: false });
 }
 
 export function completeMarkdownInline(request: WriteCompleteRequest): WriteCompleteResponse {

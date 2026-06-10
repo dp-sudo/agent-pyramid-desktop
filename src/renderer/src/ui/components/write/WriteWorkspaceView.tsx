@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactElement,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
 import { type FloatingComposerRequestPayload } from "../composer";
@@ -21,9 +29,19 @@ const COMPLETION_DELAY_MS = 650;
 const WRITE_SEARCH_DEBOUNCE_MS = 250;
 const COMPLETION_MIN_TRAILING_CHARS = 10;
 const WRITE_SIDEBAR_KEYBOARD_STEP = 16;
+const WRITE_MARKDOWN_EXTENSIONS = [".md", ".mdx", ".markdown"] as const;
 export const WRITE_ASSISTANT_CONTEXT_MAX_CHARS = 1200;
 export const WRITE_ASSISTANT_NEARBY_CONTEXT_RADIUS = 520;
 export const WRITE_SEARCH_CLEAR_BUTTON_TEXT = "x";
+
+export type WriteDocumentPathValidationError =
+  | "empty"
+  | "directory"
+  | "empty-segment"
+  | "dot-segment"
+  | "drive-root"
+  | "extension"
+  | "filename";
 
 export interface WriteAssistantPromptPayload extends FloatingComposerRequestPayload {
   text: string;
@@ -38,6 +56,18 @@ export interface WriteWorkspaceViewProps {
   onSendAssistantPrompt?: (payload: WriteAssistantPromptPayload) => Promise<boolean>;
   onInterruptAssistant?: () => void;
   assistantBusy?: boolean;
+}
+
+type WriteDocumentAction =
+  | { kind: "create"; path: string }
+  | { kind: "rename"; path: string; newPath: string }
+  | { kind: "delete"; path: string }
+  | null;
+
+interface WriteDocumentContextMenu {
+  path: string | null;
+  x: number;
+  y: number;
 }
 
 export function WriteWorkspaceView({
@@ -64,6 +94,13 @@ export function WriteWorkspaceView({
     selectionEnd: 0,
   });
   const [sidebarDragging, setSidebarDragging] = useState(false);
+  const [creatingDocument, setCreatingDocument] = useState(false);
+  const [createPath, setCreatePath] = useState("untitled.md");
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renamePath, setRenamePath] = useState("");
+  const [deleteConfirmPath, setDeleteConfirmPath] = useState<string | null>(null);
+  const [documentAction, setDocumentAction] = useState<WriteDocumentAction>(null);
+  const [contextMenu, setContextMenu] = useState<WriteDocumentContextMenu | null>(null);
   const completionRequestId = useRef(0);
   const listRequestId = useRef(0);
   const openFileRequestId = useRef(0);
@@ -216,6 +253,199 @@ export function WriteWorkspaceView({
     }
   }
 
+  function setOpenDocument(path: string, nextContent: string): void {
+    openFileRequestId.current += 1;
+    activePathRef.current = path;
+    contentRef.current = nextContent;
+    savedContentRef.current = nextContent;
+    setActivePath(path);
+    setContent(nextContent);
+    setSavedContent(nextContent);
+    setCompletion("");
+    setEditorSelection({ selectionStart: 0, selectionEnd: 0 });
+    setStatus("idle");
+    setErrorMessage(null);
+  }
+
+  function clearOpenDocument(path: string): void {
+    if (activePathRef.current !== path) return;
+    openFileRequestId.current += 1;
+    activePathRef.current = null;
+    contentRef.current = "";
+    savedContentRef.current = "";
+    setActivePath(null);
+    setContent("");
+    setSavedContent("");
+    setCompletion("");
+    setEditorSelection({ selectionStart: 0, selectionEnd: 0 });
+  }
+
+  function beginCreateDocument(): void {
+    if (!state.workspaceRoot) {
+      setErrorMessage(t("write.workspaceRequired"));
+      setStatus("error");
+      return;
+    }
+    setCreatePath(getNextWriteDocumentPath(files));
+    setCreatingDocument(true);
+    setRenamingPath(null);
+    setDeleteConfirmPath(null);
+    setContextMenu(null);
+  }
+
+  function cancelCreateDocument(): void {
+    setCreatingDocument(false);
+    setCreatePath(getNextWriteDocumentPath(files));
+  }
+
+  async function submitCreateDocument(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const workspace = state.workspaceRoot;
+    const path = normalizeWriteDocumentPathInput(createPath);
+    if (!workspace) {
+      setErrorMessage(t("write.workspaceRequired"));
+      setStatus("error");
+      return;
+    }
+    if (getWriteDocumentPathValidationError(path)) {
+      setErrorMessage(t("write.invalidDocumentPath"));
+      setStatus("error");
+      return;
+    }
+    if (!(await saveCurrentFileBeforeSwitch())) return;
+    setDocumentAction({ kind: "create", path });
+    setStatus("loading");
+    try {
+      const result = await window.agentApi.write.create({ workspace, path, content: "" });
+      if (!result.ok) {
+        setErrorMessage(result.message);
+        setStatus("error");
+        return;
+      }
+      setCreatingDocument(false);
+      setSearch("");
+      setOpenDocument(result.value.path, result.value.content);
+      await loadList(workspace, "", { saveBeforeLoad: false });
+    } catch (error) {
+      setErrorMessage(messageOf(error));
+      setStatus("error");
+    } finally {
+      setDocumentAction(null);
+    }
+  }
+
+  function beginRenameDocument(path: string): void {
+    setRenamingPath(path);
+    setRenamePath(path);
+    setCreatingDocument(false);
+    setDeleteConfirmPath(null);
+    setContextMenu(null);
+  }
+
+  function cancelRenameDocument(): void {
+    setRenamingPath(null);
+    setRenamePath("");
+  }
+
+  async function submitRenameDocument(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const workspace = state.workspaceRoot;
+    const path = renamingPath;
+    const newPath = normalizeWriteDocumentPathInput(renamePath);
+    if (!workspace) {
+      setErrorMessage(t("write.workspaceRequired"));
+      setStatus("error");
+      return;
+    }
+    if (!path || getWriteDocumentPathValidationError(newPath)) {
+      setErrorMessage(t("write.invalidDocumentPath"));
+      setStatus("error");
+      return;
+    }
+    if (path === newPath) {
+      setErrorMessage(t("write.renameSamePath"));
+      setStatus("error");
+      return;
+    }
+    if (!(await saveCurrentFileBeforeSwitch())) return;
+    setDocumentAction({ kind: "rename", path, newPath });
+    setStatus("loading");
+    try {
+      const result = await window.agentApi.write.rename({ workspace, path, newPath });
+      if (!result.ok) {
+        setErrorMessage(result.message);
+        setStatus("error");
+        return;
+      }
+      setRenamingPath(null);
+      setSearch("");
+      if (activePathRef.current === path) {
+        setOpenDocument(result.value.newPath, contentRef.current);
+      }
+      await loadList(workspace, "", { saveBeforeLoad: false });
+    } catch (error) {
+      setErrorMessage(messageOf(error));
+      setStatus("error");
+    } finally {
+      setDocumentAction(null);
+    }
+  }
+
+  function requestDeleteDocument(path: string): void {
+    setDeleteConfirmPath(path);
+    setCreatingDocument(false);
+    setRenamingPath(null);
+    setContextMenu(null);
+  }
+
+  function cancelDeleteDocument(): void {
+    setDeleteConfirmPath(null);
+  }
+
+  async function confirmDeleteDocument(path: string): Promise<void> {
+    const workspace = state.workspaceRoot;
+    if (!workspace) {
+      setErrorMessage(t("write.workspaceRequired"));
+      setStatus("error");
+      return;
+    }
+    if (!(await saveCurrentFileBeforeDocumentDelete(path))) return;
+    setDocumentAction({ kind: "delete", path });
+    setStatus("loading");
+    try {
+      const result = await window.agentApi.write.delete({ workspace, path });
+      if (!result.ok) {
+        setErrorMessage(result.message);
+        setStatus("error");
+        return;
+      }
+      setDeleteConfirmPath(null);
+      clearOpenDocument(path);
+      await loadList(workspace, search, { saveBeforeLoad: false });
+      setStatus("idle");
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(messageOf(error));
+      setStatus("error");
+    } finally {
+      setDocumentAction(null);
+    }
+  }
+
+  function openDocumentContextMenu(
+    event: MouseEvent<HTMLElement>,
+    path: string | null,
+  ): void {
+    if (!state.workspaceRoot) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      path,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }
+
   useEffect(() => {
     if (status !== "saved") return;
     const timer = window.setTimeout(() => setStatus("idle"), 1500);
@@ -225,6 +455,25 @@ export function WriteWorkspaceView({
   useEffect(() => {
     return () => clearSearchDebounceTimer();
   }, []);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+
+    function closeContextMenu(): void {
+      setContextMenu(null);
+    }
+
+    function handleContextMenuKeyDown(event: globalThis.KeyboardEvent): void {
+      if (event.key === "Escape") closeContextMenu();
+    }
+
+    window.addEventListener("pointerdown", closeContextMenu);
+    window.addEventListener("keydown", handleContextMenuKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", closeContextMenu);
+      window.removeEventListener("keydown", handleContextMenuKeyDown);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
     if (!shouldWarnBeforeLeavingWriteDocument({
@@ -299,6 +548,22 @@ export function WriteWorkspaceView({
       return contentRef.current === savedContentRef.current;
     }
     return flushSave();
+  }
+
+  async function saveCurrentFileBeforeDocumentDelete(path: string): Promise<boolean> {
+    if (shouldSaveWriteFileBeforeDocumentDelete({
+      deletingPath: path,
+      activePath: activePathRef.current,
+      workspaceRoot: workspaceRootRef.current,
+      content: contentRef.current,
+      savedContent: savedContentRef.current,
+    })) {
+      return saveCurrentFileBeforeSwitch();
+    }
+    if (saveInFlightRef.current) {
+      await savePromiseRef.current;
+    }
+    return true;
   }
 
   async function navigateFromWrite(
@@ -429,12 +694,20 @@ export function WriteWorkspaceView({
   ): Promise<boolean> {
     if (!onSendAssistantPrompt || assistantBusy) return false;
     if (!state.workspaceRoot.trim()) return false;
+    const promptText = getWriteAssistantPromptText(
+      composerPayload.text,
+      composerPayload.attachmentIds.length,
+      t,
+    );
     const payload = buildWriteAssistantPrompt({
-      prompt: composerPayload.text,
+      prompt: promptText,
       activePath,
       content,
       savedContent,
       selection: editorSelection,
+      attachmentIds: composerPayload.attachmentIds,
+      mode: composerPayload.mode,
+      goalMode: composerPayload.goalMode,
     });
     if (!payload) return false;
 
@@ -460,6 +733,7 @@ export function WriteWorkspaceView({
     search,
     workspaceRoot: state.workspaceRoot,
   });
+  const documentActionRunning = documentAction !== null;
 
   return (
     <div className="ds-write-workspace">
@@ -512,6 +786,48 @@ export function WriteWorkspaceView({
             {state.workspaceRoot}
           </div>
         ) : null}
+        <div className="ds-write-document-toolbar">
+          <div>
+            <strong>{t("write.documentsTitle")}</strong>
+            <span>{t("write.documentsCount", { count: files.length })}</span>
+          </div>
+          <button
+            type="button"
+            className="ds-pill is-accent"
+            onClick={beginCreateDocument}
+            disabled={!state.workspaceRoot || documentActionRunning}
+          >
+            {t("write.newDocument")}
+          </button>
+        </div>
+        {creatingDocument ? (
+          <form className="ds-write-document-form" onSubmit={(event) => void submitCreateDocument(event)}>
+            <input
+              value={createPath}
+              onChange={(event) => setCreatePath(event.target.value)}
+              placeholder={t("write.documentPathPlaceholder")}
+              aria-label={t("write.documentPathPlaceholder")}
+              autoFocus
+            />
+            <div>
+              <button
+                type="submit"
+                className="ds-pill is-accent"
+                disabled={documentActionRunning}
+              >
+                {t("write.createDocument")}
+              </button>
+              <button
+                type="button"
+                className="ds-pill"
+                onClick={cancelCreateDocument}
+                disabled={documentActionRunning}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </form>
+        ) : null}
         <div className="ds-write-search">
           <input
             value={search}
@@ -541,7 +857,10 @@ export function WriteWorkspaceView({
             </button>
           ) : null}
         </div>
-        <div className="ds-sidebar-list">
+        <div
+          className="ds-sidebar-list"
+          onContextMenu={(event) => openDocumentContextMenu(event, null)}
+        >
           {listState === "loading" ? (
             <div className="ds-sidebar-empty">{t("write.loadingFiles")}</div>
           ) : null}
@@ -554,20 +873,153 @@ export function WriteWorkspaceView({
           {listState === "empty-search" ? (
             <div className="ds-sidebar-empty">{t("write.emptySearch", { search })}</div>
           ) : null}
-          {files.map((file) => (
-            <button
-              key={file.path}
-              type="button"
-              className={`ds-write-file-row ${file.path === activePath ? "is-active" : ""}`}
-              onClick={() => void openFile(file.path)}
-              aria-current={file.path === activePath ? "page" : undefined}
-              title={`${file.path} | ${formatWriteFileMeta(file)}`}
-            >
-              <span>{file.path}</span>
-              <small>{formatWriteFileMeta(file)}</small>
-            </button>
-          ))}
+          {files.map((file) => {
+            const isActive = file.path === activePath;
+            const isRenaming = renamingPath === file.path;
+            const isConfirmingDelete = deleteConfirmPath === file.path;
+            const isBusy =
+              (documentAction?.kind === "delete" && documentAction.path === file.path) ||
+              (documentAction?.kind === "rename" && documentAction.path === file.path);
+            return (
+              <div
+                key={file.path}
+                className={`ds-write-file-row ${isActive ? "is-active" : ""} ${isConfirmingDelete ? "is-confirming-delete" : ""} ${isBusy ? "is-busy" : ""}`}
+                onContextMenu={(event) => openDocumentContextMenu(event, file.path)}
+                aria-busy={isBusy || undefined}
+              >
+                {isRenaming ? (
+                  <form
+                    className="ds-write-document-form is-inline"
+                    onSubmit={(event) => void submitRenameDocument(event)}
+                  >
+                    <input
+                      value={renamePath}
+                      onChange={(event) => setRenamePath(event.target.value)}
+                      aria-label={t("write.renameDocument")}
+                      autoFocus
+                    />
+                    <div>
+                      <button
+                        type="submit"
+                        className="ds-pill is-accent"
+                        disabled={documentActionRunning}
+                      >
+                        {t("write.saveName")}
+                      </button>
+                      <button
+                        type="button"
+                        className="ds-pill"
+                        onClick={cancelRenameDocument}
+                        disabled={documentActionRunning}
+                      >
+                        {t("common.cancel")}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="ds-write-file-row-main"
+                      onClick={() => void openFile(file.path)}
+                      aria-current={isActive ? "page" : undefined}
+                      title={`${file.path} | ${formatWriteFileMeta(file)}`}
+                    >
+                      <span>{file.path}</span>
+                      <small>{formatWriteFileMeta(file)}</small>
+                    </button>
+                    {isConfirmingDelete ? (
+                      <div className="ds-write-file-delete-confirm">
+                        <span>{t("write.deleteConfirmShort")}</span>
+                        <button
+                          type="button"
+                          className="ds-write-file-action is-danger"
+                          onClick={() => void confirmDeleteDocument(file.path)}
+                          disabled={documentActionRunning}
+                        >
+                          {t("write.deleteConfirmAction")}
+                        </button>
+                        <button
+                          type="button"
+                          className="ds-write-file-action"
+                          onClick={cancelDeleteDocument}
+                          disabled={documentActionRunning}
+                        >
+                          {t("common.cancel")}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="ds-write-file-actions">
+                        <button
+                          type="button"
+                          className="ds-write-file-action"
+                          onClick={() => beginRenameDocument(file.path)}
+                          disabled={documentActionRunning}
+                          title={t("write.renameDocument")}
+                          aria-label={t("write.renameDocument")}
+                        >
+                          {t("write.renameShort")}
+                        </button>
+                        <button
+                          type="button"
+                          className="ds-write-file-action"
+                          onClick={() => requestDeleteDocument(file.path)}
+                          disabled={documentActionRunning}
+                          title={t("write.deleteDocument")}
+                          aria-label={t("write.deleteDocument")}
+                        >
+                          {t("write.deleteShort")}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
+        {contextMenu ? (
+          <div
+            className="ds-write-context-menu"
+            role="menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={beginCreateDocument}
+              disabled={documentActionRunning}
+            >
+              {t("write.newDocument")}
+            </button>
+            {contextMenu.path ? (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (contextMenu.path) beginRenameDocument(contextMenu.path);
+                  }}
+                  disabled={documentActionRunning}
+                >
+                  {t("write.renameDocument")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="is-danger"
+                  onClick={() => {
+                    if (contextMenu.path) requestDeleteDocument(contextMenu.path);
+                  }}
+                  disabled={documentActionRunning}
+                >
+                  {t("write.deleteDocument")}
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
       </aside>
       <div
         className={getWriteSidebarDividerClassName(sidebarDragging)}
@@ -673,6 +1125,13 @@ export function shouldDisableWriteSave(input: WriteSaveStateInput): boolean {
 
 export function shouldSaveWriteFileBeforeSwitch(input: WriteDirtyDocumentInput): boolean {
   return Boolean(input.activePath && input.workspaceRoot && input.content !== input.savedContent);
+}
+
+export function shouldSaveWriteFileBeforeDocumentDelete(
+  input: WriteDirtyDocumentInput & { deletingPath: string },
+): boolean {
+  if (input.activePath === input.deletingPath) return false;
+  return shouldSaveWriteFileBeforeSwitch(input);
 }
 
 export function shouldWarnBeforeLeavingWriteDocument(input: WriteDirtyDocumentInput): boolean {
@@ -798,6 +1257,9 @@ export interface WriteAssistantPromptInput {
   content: string;
   savedContent: string;
   selection?: WriteEditorSelectionState;
+  attachmentIds?: string[];
+  mode?: "agent" | "plan";
+  goalMode?: boolean;
 }
 
 export function buildWriteAssistantPrompt(
@@ -837,10 +1299,73 @@ export function buildWriteAssistantPrompt(
     ].join("\n"),
     displayText: prompt,
     threadTitle: prompt,
-    attachmentIds: [],
-    mode: "agent",
-    goalMode: false,
+    attachmentIds: input.attachmentIds ?? [],
+    mode: input.mode ?? "agent",
+    goalMode: input.goalMode ?? false,
   };
+}
+
+export function getWriteAssistantPromptText(
+  text: string,
+  attachmentCount: number,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  const trimmed = text.trim();
+  if (trimmed) return trimmed;
+  if (attachmentCount <= 0) return "";
+  return t(
+    attachmentCount === 1
+      ? "composer.attachmentOnlyMessageSingle"
+      : "composer.attachmentOnlyMessageMultiple",
+  );
+}
+
+export function normalizeWriteDocumentPathInput(value: string): string {
+  return value
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/")
+    .split("/")
+    .map((segment) => segment.trim())
+    .join("/");
+}
+
+export function isWriteMarkdownDocumentPath(path: string): boolean {
+  return getWriteDocumentPathValidationError(path) === null;
+}
+
+export function getWriteDocumentPathValidationError(
+  value: string,
+): WriteDocumentPathValidationError | null {
+  const normalized = normalizeWriteDocumentPathInput(value);
+  if (!normalized) return "empty";
+  if (normalized.endsWith("/")) return "directory";
+  const segments = normalized.split("/");
+  if (segments.some((segment) => !segment)) return "empty-segment";
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    return "dot-segment";
+  }
+  if (/^[A-Za-z]:$/.test(segments[0] ?? "")) return "drive-root";
+  const filename = segments.at(-1) ?? "";
+  const extension = WRITE_MARKDOWN_EXTENSIONS.find((candidate) =>
+    filename.toLowerCase().endsWith(candidate),
+  );
+  if (!extension) return "extension";
+  if (!filename.slice(0, -extension.length).trim()) return "filename";
+  return null;
+}
+
+export function getNextWriteDocumentPath(
+  files: readonly Pick<WriteFileEntry, "path">[],
+): string {
+  const existing = new Set(files.map((file) => file.path.toLowerCase()));
+  if (!existing.has("untitled.md")) return "untitled.md";
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `untitled-${index}.md`;
+    if (!existing.has(candidate.toLowerCase())) return candidate;
+  }
+  return `untitled-${Date.now()}.md`;
 }
 
 export function getWriteAssistantVisibleItems(

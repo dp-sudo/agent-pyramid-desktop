@@ -71,15 +71,7 @@ export function MessageTimeline({
 
   if (state.items.length === 0) {
     return (
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--ds-text-faint)",
-        }}
-      >
+      <div className="ds-message-timeline-empty">
         <InitialSessionUsageHeatmap />
       </div>
     );

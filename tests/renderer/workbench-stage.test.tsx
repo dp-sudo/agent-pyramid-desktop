@@ -28,6 +28,7 @@ describe("Workbench stage components", () => {
 
     expect(html).toContain("class=\"ds-chat-stage\"");
     expect(html).toContain("class=\"ds-chat-topbar-frame\"");
+    expect(html).toContain("class=\"ds-message-timeline-empty\"");
     expect(html).toContain("class=\"ds-chat-composer-frame\"");
     expect(html).toContain("class=\"ds-composer-shell is-code\"");
     expect(html).toContain("class=\"ds-error-toast\"");
@@ -115,6 +116,8 @@ describe("Write workspace panel components", () => {
     expect(html).toContain("class=\"ds-write-assistant-empty\"");
     expect(html).toContain("class=\"ds-composer-shell is-write\"");
     expect(html).toContain("placeholder=\"composer.writePlaceholder\"");
-    expect(html).not.toContain("ds-composer-model-button");
+    expect(html).toContain("ds-composer-tool-button");
+    expect(html).toContain("ds-composer-model-button");
+    expect(html).not.toContain("ds-composer-mode-chip");
   });
 });

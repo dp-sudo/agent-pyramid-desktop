@@ -175,10 +175,15 @@ Thread row attributes:
 - Active row: `is-active`.
 - Archived row: `is-archived`.
 - Pending delete confirmation: `is-confirming-delete`.
+- Thread operation submitting: `is-busy` with `aria-busy`.
 - Main button uses `aria-current="page"` when active.
 - Delete always uses inline confirmation before calling the thread delete API.
 - Pending delete confirmation is pruned when the backing thread disappears from
   the current list, such as after archive/delete/filter refreshes.
+- Archive, restore and delete confirmation actions enter a local submitting
+  state and disable sidebar row action buttons until the async parent callback
+  settles. If a callback rejects, the Sidebar routes the error into the shared
+  workbench error state.
 - Footer workbench switch uses the existing `WorkbenchContext.actions.setRoute`
   path for `code` / `write`; switching to a workbench route clears an active
   thread whose persisted `mode` does not match that route. Settings remains a
@@ -237,6 +242,7 @@ Purpose:
 Key classes:
 
 - `ds-message-timeline`
+- `ds-message-timeline-empty`
 - `ds-message-timeline-content`
 - `ds-message-jump-bottom`
 - `ds-message-turn`
@@ -419,9 +425,11 @@ States:
   and removal is not disabled.
 - Plan mode and goal mode menu rows expose active state with `aria-checked`,
   matching the visual `is-active` state and on/off text.
-- The Write variant hides attachment tray, image picker, `+` menu, plan/goal
-  toggles and model picker. Its payload always uses `attachmentIds: []`,
-  `mode: "agent"` and `goalMode: false`.
+- The default Write variant hides attachment tray, image picker, `+` menu,
+  plan/goal toggles and model picker. `WriteAssistantPanel` explicitly enables
+  image attachments and model picking for writing requests while keeping
+  plan/goal controls disabled, so its payload can carry `attachmentIds` but
+  still uses `mode: "agent"` and `goalMode: false`.
 
 Send behavior:
 
@@ -576,12 +584,17 @@ Purpose:
 - Search clear uses stable visible text plus localized `aria-label` / `title`,
   so the control does not depend on glyphs that can degrade under encoding
   issues.
-- Display file list and list states.
+- Create, rename and delete Markdown documents through the Write IPC file
+  service.
+- Display the document list, inline rename/delete confirmation states and
+  right-click context menu actions.
 
 Key classes:
 
 - `ds-write-route-actions`
 - `ds-write-sidebar-actions`
+- `ds-write-document-toolbar`
+- `ds-write-document-form`
 - `ds-pill`
 - `ds-sidebar-workspace ds-write-workspace-label`
 - `ds-write-search`
@@ -589,6 +602,11 @@ Key classes:
 - `ds-sidebar-list`
 - `ds-sidebar-empty`
 - `ds-write-file-row`
+- `ds-write-file-row-main`
+- `ds-write-file-actions`
+- `ds-write-file-action`
+- `ds-write-file-delete-confirm`
+- `ds-write-context-menu`
 
 List states from `getWriteListState()`:
 
@@ -604,9 +622,14 @@ File row attributes:
 
 - Active file: `is-active`.
 - Active file button uses `aria-current="page"`.
+- Pending delete confirmation: `is-confirming-delete`.
+- Create, rename and delete operations expose `is-busy` / `aria-busy` on the
+  affected row while the IPC call is in flight.
 - Title includes path and formatted file meta.
 - Meta format: `formatWriteFileMeta()` => size, stable `|` separator, and
   modified date.
+- Right-clicking a document row opens rename/delete/create actions. Right-clicking
+  empty list space opens create only.
 
 ### Editor Area
 
@@ -668,6 +691,15 @@ Behavior constants:
 - Manual workspace open/refresh cancels any pending debounced search reload, so
   a stale search timer cannot repopulate the file list after a workspace
   boundary change.
+- Creating, renaming or deleting a non-active document first flushes the current
+  dirty document through `write.put`; if that save fails, the
+  document-management action does not proceed. Deleting the active document
+  skips that pre-delete save because the inline confirmation is the user's
+  explicit discard decision for that file.
+- New and renamed document paths are normalized to workspace-relative forward
+  slashes, repeated separators are collapsed, individual path segments are
+  trimmed, and paths with `.` / `..` segments, drive roots, trailing separators,
+  empty Markdown filenames or non-Markdown extensions are rejected before IPC.
 
 ### Write Assistant
 
@@ -698,11 +730,15 @@ Key classes:
 Behavior:
 
 - Submit is handled by `FloatingComposer variant="write"` and is enabled only
-  when there is an open workspace, non-empty assistant input, and no active
-  Write assistant turn.
-- `Workbench` sends Write assistant turns with `attachmentIds: []`,
-  `mode: "agent"`, and `goalMode: false`; it does not clear or read the global
-  composer draft as the prompt source.
+  when there is an open workspace, text or image attachments to send, and no
+  active Write assistant turn.
+- The Write assistant composer supports normal text paste, image paste/upload
+  when Workbench attachment settings allow it, attachment thumbnails and quick
+  model profile/reasoning selection. Plan and goal controls remain hidden.
+- `Workbench` sends Write assistant turns with the composer `attachmentIds`,
+  `mode: "agent"`, and `goalMode: false`; it clears composer attachments after
+  a successful send and does not read the global Code composer draft as the
+  prompt source.
 - Write assistant scrolling follows the same bottom-stickiness behavior as the
   Code timeline: live output auto-follows only while the user remains near the
   bottom, otherwise a jump-to-latest control appears.
@@ -715,8 +751,9 @@ Behavior:
 - The assistant may suggest text or guidance, but current Write IPC file
   services remain renderer-owned; model replies do not directly save Markdown
   files.
-- `write.get`, `write.put`, and inline completion only accept Markdown file
-  paths (`.md`, `.mdx`, `.markdown`), matching the file list.
+- `write.get`, `write.put`, `write.create`, `write.rename`, `write.delete` and
+  inline completion only accept Markdown file paths (`.md`, `.mdx`,
+  `.markdown`), matching the file list.
 - `write.get` returns only strict UTF-8 Markdown content; invalid local bytes
   surface as a visible load error instead of replacement-character text.
 - Editing content or accepting inline completion only updates local Write
