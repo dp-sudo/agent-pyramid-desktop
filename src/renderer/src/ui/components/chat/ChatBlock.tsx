@@ -353,7 +353,7 @@ function FileDiffPreviewBlock({
       <summary className="ds-diff-preview-header">
         <span>{preview.path}</span>
         <span>
-          {t(`approvals.diff.${preview.operation}`)} · +{preview.added} / -{preview.removed}
+          {t(`approvals.diff.${preview.operation}`)} | +{preview.added} / -{preview.removed}
         </span>
       </summary>
       <div className="ds-diff-preview-lines">

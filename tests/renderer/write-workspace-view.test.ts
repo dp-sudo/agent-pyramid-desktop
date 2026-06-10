@@ -3,14 +3,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
   buildWriteAssistantPrompt,
+  clampWriteSidebarWidth,
   formatWriteFileMeta,
+  getNextWriteSidebarWidth,
+  getWriteAssistantLocalContext,
   getWriteAssistantVisibleItems,
   getWriteCompletionAcceptState,
+  getWriteCompletionRequestContext,
   getWriteDocumentEditState,
   getWriteListState,
+  getWriteSidebarDividerClassName,
   getWriteWorkspaceSwitchState,
   shouldApplyWriteOpenResult,
   shouldDisableWriteSave,
+  shouldRequestWriteCompletion,
   shouldSaveWriteFileBeforeSwitch,
   shouldUseSelectedWriteWorkspace,
   shouldWarnBeforeLeavingWriteDocument,
@@ -27,6 +33,7 @@ describe("WriteWorkspaceView helpers", () => {
 
     expect(html).toContain("aria-label=\"write.editorPlaceholder\"");
     expect(html).toContain("placeholder=\"write.editorPlaceholder\"");
+    expect(html).toContain("aria-label=\"write.previewLabel\"");
   });
 
   it("uses the shared write composer instead of the old assistant form", () => {
@@ -241,6 +248,8 @@ describe("WriteWorkspaceView helpers", () => {
     });
 
     expect(meta).toContain("1.5 KB");
+    expect(meta).toContain(" | ");
+    expect(meta).not.toContain("·");
   });
 
   it("keeps document edits isolated from global composer state", () => {
@@ -259,6 +268,77 @@ describe("WriteWorkspaceView helpers", () => {
       completion: "",
     });
     expect(nextState).not.toHaveProperty("composerText");
+  });
+
+  it("accepts local completion at the current editor selection", () => {
+    expect(
+      getWriteCompletionAcceptState("before after", " middle", {
+        selectionStart: 6,
+        selectionEnd: 6,
+      }),
+    ).toEqual({
+      content: "before middle after",
+      completion: "",
+    });
+    expect(
+      getWriteCompletionAcceptState("before old after", "new", {
+        selectionStart: 7,
+        selectionEnd: 10,
+      }),
+    ).toEqual({
+      content: "before new after",
+      completion: "",
+    });
+  });
+
+  it("sends completion prefix and suffix around the cursor", () => {
+    expect(
+      getWriteCompletionRequestContext({
+        content: "alpha beta gamma",
+        selection: { selectionStart: 6, selectionEnd: 10 },
+      }),
+    ).toEqual({
+      prefix: "alpha ",
+      suffix: " gamma",
+    });
+  });
+
+  it("requests completion only when the current prefix has enough context", () => {
+    expect(
+      shouldRequestWriteCompletion({
+        activePath: "notes.md",
+        workspaceRoot: "/workspace",
+        prefix: "short",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRequestWriteCompletion({
+        activePath: "notes.md",
+        workspaceRoot: "/workspace",
+        prefix: "0123456789",
+      }),
+    ).toBe(true);
+    expect(
+      shouldRequestWriteCompletion({
+        activePath: "notes.md",
+        workspaceRoot: "/workspace",
+        prefix: "0123456789   ",
+      }),
+    ).toBe(true);
+    expect(
+      shouldRequestWriteCompletion({
+        activePath: null,
+        workspaceRoot: "/workspace",
+        prefix: "0123456789",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRequestWriteCompletion({
+        activePath: "notes.md",
+        workspaceRoot: "",
+        prefix: "0123456789",
+      }),
+    ).toBe(false);
   });
 
   it("builds explicit assistant prompts without mirroring the full document", () => {
@@ -295,7 +375,46 @@ describe("WriteWorkspaceView helpers", () => {
     })).toBeNull();
   });
 
-  it("keeps the write assistant panel focused on conversational items", () => {
+  it("adds selected text as explicit assistant context without mirroring the whole document", () => {
+    const payload = buildWriteAssistantPrompt({
+      prompt: "polish this",
+      activePath: "drafts/intro.md",
+      content: "private before\nselected paragraph\nprivate after",
+      savedContent: "private before\nselected paragraph\nprivate after",
+      selection: {
+        selectionStart: "private before\n".length,
+        selectionEnd: "private before\nselected paragraph".length,
+      },
+    });
+
+    expect(payload?.text).toContain("- Selected text:");
+    expect(payload?.text).toContain("selected paragraph");
+    expect(payload?.text).not.toContain("private before\nselected paragraph\nprivate after");
+  });
+
+  it("uses bounded nearby context only when it does not equal the whole document", () => {
+    expect(
+      getWriteAssistantLocalContext({
+        content: "short private draft",
+        selection: { selectionStart: 5, selectionEnd: 5 },
+      }),
+    ).toBeNull();
+
+    const longContent = `${"a".repeat(1300)}CURSOR${"b".repeat(1300)}`;
+    const context = getWriteAssistantLocalContext({
+      content: longContent,
+      selection: { selectionStart: 1300, selectionEnd: 1300 },
+      maxChars: 240,
+      nearbyRadius: 80,
+    });
+
+    expect(context?.label).toBe("Nearby text");
+    expect(context?.text).toContain("[...]");
+    expect(context?.text.length).toBeLessThanOrEqual(240);
+    expect(context?.text).not.toBe(longContent);
+  });
+
+  it("keeps all recent write assistant process items visible", () => {
     const items = [
       makeItem("system", "system-1"),
       makeItem("user", "user-1"),
@@ -304,15 +423,51 @@ describe("WriteWorkspaceView helpers", () => {
     ];
 
     expect(getWriteAssistantVisibleItems(items).map((item) => item.id))
-      .toEqual(["system-1", "user-1", "assistant-1"]);
+      .toEqual(["system-1", "user-1", "tool-1", "assistant-1"]);
+  });
+
+  it("keeps the leading recent turn complete when limiting assistant items", () => {
+    const firstTurn = Array.from({ length: 10 }, (_, index) =>
+      makeItem("tool", `turn-a-${index}`, "turn-a"),
+    );
+    const secondTurn = Array.from({ length: 75 }, (_, index) =>
+      makeItem("tool", `turn-b-${index}`, "turn-b"),
+    );
+
+    const visible = getWriteAssistantVisibleItems([...firstTurn, ...secondTurn], 80);
+
+    expect(visible).toHaveLength(85);
+    expect(visible[0]?.id).toBe("turn-a-0");
+    expect(visible[visible.length - 1]?.id).toBe("turn-b-74");
+  });
+
+  it("maps write sidebar resize controls to the shared width range", () => {
+    expect(clampWriteSidebarWidth(120)).toBe(180);
+    expect(clampWriteSidebarWidth(260)).toBe(260);
+    expect(clampWriteSidebarWidth(520)).toBe(420);
+    expect(getNextWriteSidebarWidth(260, "ArrowLeft")).toBe(244);
+    expect(getNextWriteSidebarWidth(260, "ArrowRight")).toBe(276);
+    expect(getNextWriteSidebarWidth(260, "Home")).toBe(180);
+    expect(getNextWriteSidebarWidth(260, "End")).toBe(420);
+    expect(getNextWriteSidebarWidth(260, "Enter")).toBe(260);
+    expect(getWriteSidebarDividerClassName(false)).toBe(
+      "ds-workbench-divider ds-write-sidebar-divider",
+    );
+    expect(getWriteSidebarDividerClassName(true)).toBe(
+      "ds-workbench-divider ds-write-sidebar-divider is-dragging",
+    );
   });
 });
 
-function makeItem(kind: "system" | "user" | "assistant" | "tool", id: string) {
+function makeItem(
+  kind: "system" | "user" | "assistant" | "tool",
+  id: string,
+  turnId = "turn-1",
+) {
   const base = {
     id,
     threadId: "thread-1",
-    turnId: "turn-1",
+    turnId,
     createdAt: "2026-06-08T00:00:00.000Z",
   };
   if (kind === "system") {

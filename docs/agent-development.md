@@ -70,6 +70,33 @@
 
 ## 变更记录
 
+### 2026-06-10 - Write workbench interaction hardening
+- Hardened Write file/editor interactions: rejected `write.get` and inline
+  completion IPC calls now surface through the Write status error path, manual
+  workspace open/refresh cancels pending debounced search reloads, and double
+  click resets the Write sidebar divider to the shared default width.
+- Tightened inline completion behavior so requests require enough text before
+  the current caret/selection boundary, accepting a completion restores the
+  textarea selection near the inserted text, and assistant timeline limiting
+  preserves the complete leading turn instead of starting mid-turn.
+- Verification: `npm test -- tests/renderer/write-workspace-view.test.ts
+  tests/renderer/workbench-stage.test.tsx`, `npm run typecheck`,
+  `npm run test`, `npm run build`, and `git diff --check`.
+
+### 2026-06-10 - Write workbench audit fixes
+- Closed the Write workbench audit follow-up: the Write route now passes
+  approval handlers into the assistant panel, renders grouped turn process
+  items with reasoning/tool/approval/plan visibility, and shows the pending
+  approval panel with submitting allow/deny states.
+- Upgraded the Write editor to a source/preview split using the shared safe
+  Markdown renderer, moved local completion display near the caret context, and
+  sends only explicit selected text or bounded nearby snippets as assistant
+  context.
+- Added Write sidebar resizing with the shared left-sidebar width range,
+  improved disabled save/status layout, and replaced unstable metadata/diff
+  separators with a stable `|` separator.
+- Verification: `npm run typecheck`, `npm run test`, `npm run build`.
+
 ### 2026-06-10 - Workbench stage component split
 - Split the renderer workbench stage JSX into `CodeWorkbenchStage` and
   `WriteWorkbenchStage`, while keeping `Workbench.tsx` as the owner for SSE,

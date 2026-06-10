@@ -734,6 +734,8 @@ export function Workbench(): ReactElement {
       <main className="ds-stage-surface">
         {state.route === "write" ? (
           <WriteWorkbenchStage
+            onApprove={onApprove}
+            pendingApprovalResponses={pendingApprovalResponses}
             onWorkspaceSelected={(workspace) =>
               selectOrCreateThreadForWorkspace(workspace, "write")
             }

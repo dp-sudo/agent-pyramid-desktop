@@ -524,20 +524,24 @@ flowchart LR
   Sidebar["Write Sidebar"]
   Stage["WriteWorkbenchStage"]
   Workspace["WriteWorkspaceView"]
-  Editor["WriteEditorPanel\nMarkdown Editor"]
+  Editor["WriteEditorPanel\nMarkdown Source"]
+  Preview["Markdown Preview"]
   Ghost["Inline completion ghost"]
   Status["Save/status bar"]
   Assistant["WriteAssistantPanel\nWrite Assistant"]
-  Messages["Thread messages"]
+  Messages["Grouped thread timeline"]
+  Pending["Pending approvals"]
   Prompt["Explicit assistant input"]
 
   Stage --> Workspace
   Workspace --> Sidebar
   Workspace --> Editor
+  Workspace --> Preview
   Editor --> Ghost
   Editor --> Status
   Editor --> Assistant
   Assistant --> Messages
+  Assistant --> Pending
   Assistant --> Prompt
 ```
 
@@ -547,9 +551,12 @@ Top-level:
 - `WriteWorkbenchStage` wraps `WriteWorkspaceView` and the floating error toast.
 - `WriteWorkspaceView` renders its own sidebar inside the stage.
 - `WriteWorkspaceView` owns file list, active file, dirty content, completion,
-  save refs, autosave timers and Write IPC calls; `WriteEditorPanel` and
-  `WriteAssistantPanel` receive controlled props and callbacks.
-- Sidebar width uses the same `state.leftSidebarWidth`.
+  editor selection, save refs, autosave timers and Write IPC calls;
+  `WriteEditorPanel` and `WriteAssistantPanel` receive controlled props and
+  callbacks.
+- Sidebar width uses the same `state.leftSidebarWidth`, and the Write route
+  exposes its own `ds-workbench-divider ds-write-sidebar-divider` separator for
+  pointer and keyboard resizing.
 - Main area uses `ds-write-main`: editor remains the primary pane and the
   right assistant pane stays inside the Write route, not the Code composer.
 
@@ -598,35 +605,53 @@ File row attributes:
 - Active file: `is-active`.
 - Active file button uses `aria-current="page"`.
 - Title includes path and formatted file meta.
-- Meta format: `formatWriteFileMeta()` => size + modified date.
+- Meta format: `formatWriteFileMeta()` => size, stable `|` separator, and
+  modified date.
 
 ### Editor Area
 
 Purpose:
 
 - Edit markdown content.
+- Preview rendered markdown content beside the source editor.
 - Autosave changed file content.
-- Request simple inline markdown completion.
+- Request simple inline markdown completion around the current editor
+  selection/caret.
 - Accept completion with Tab, dismiss with Escape.
 
 Key classes:
 
 - `ds-write-workspace`
 - `ds-write-sidebar`
+- `ds-write-sidebar-divider`
 - `ds-write-main`
 - `ds-write-editor`
+- `ds-write-editor-split`
 - `ds-write-editor-frame`
+- `ds-write-preview`
+- `ds-write-preview-empty`
 - `ds-write-ghost`
 - `ds-write-status`
+- `ds-write-status-message`
 - `ds-write-save-button`
 
 Behavior constants:
 
 - Autosave delay: `800ms`.
 - Completion delay: `650ms`.
-- Completion requires at least `10` trailing content characters.
+- Completion requires at least `10` characters before the current caret or
+  selection start, so long documents do not request completions from an empty
+  or near-empty prefix.
 - Main Markdown textarea has an `aria-label` that matches its localized editor
   placeholder.
+- The Markdown preview reuses the same safe renderer used by assistant
+  messages, including code block controls, GFM tables/task lists and
+  link/image safety rules.
+- Inline completion is positioned near the current caret line and shows the
+  localized Tab/Escape hint.
+- Accepting inline completion restores the editor selection to the inserted
+  completion boundary, keeping the caret near the accepted text instead of
+  falling back to the end of the document.
 - Sidebar width/flex-basis remains a dynamic inline style sourced from
   `state.leftSidebarWidth`; static sidebar colors, borders, action spacing and
   status layout live in `shell.css`.
@@ -638,6 +663,11 @@ Behavior constants:
   under the new workspace root.
 - Open-file responses are request-id guarded, so a slower `write.get` response
   from an earlier click cannot overwrite the later active file.
+- Rejected `write.get` and inline completion IPC calls surface through the
+  Write status error path instead of becoming unhandled renderer promises.
+- Manual workspace open/refresh cancels any pending debounced search reload, so
+  a stale search timer cannot repopulate the file list after a workspace
+  boundary change.
 
 ### Write Assistant
 
@@ -645,15 +675,22 @@ Purpose:
 
 - Send explicit writing requests from the Write route through the active
   `mode: "write"` thread.
-- Display recent user, assistant, and system items for that Write thread.
-- Include current Markdown file path and save state in the prompt context
-  without mirroring the full document body into the global Code composer.
+- Display grouped Write thread timeline turns, including user input, work
+  process entries, reasoning, tool records, approvals, plans, system messages
+  and assistant responses.
+- Show current pending approvals next to the Write composer, reusing the same
+  approval card, diff preview and allow/deny submission state as the Code route.
+- Include current Markdown file path, save state and explicit local context in
+  the prompt. Selected text is sent only when the user selects it; otherwise a
+  bounded nearby snippet may be sent. The full document body is not mirrored
+  into the global Code composer.
 
 Key classes:
 
 - `ds-write-assistant`
 - `ds-write-assistant-header`
 - `ds-write-assistant-messages`
+- `ds-write-assistant-timeline`
 - `ds-write-assistant-empty`
 - `ds-write-assistant-composer`
 - `ds-composer-shell.is-write`
@@ -666,6 +703,15 @@ Behavior:
 - `Workbench` sends Write assistant turns with `attachmentIds: []`,
   `mode: "agent"`, and `goalMode: false`; it does not clear or read the global
   composer draft as the prompt source.
+- Write assistant scrolling follows the same bottom-stickiness behavior as the
+  Code timeline: live output auto-follows only while the user remains near the
+  bottom, otherwise a jump-to-latest control appears.
+- The recent assistant item window preserves the complete leading turn at the
+  truncation boundary, so the grouped timeline does not start in the middle of
+  a user/process/assistant sequence.
+- Read-only tool record visibility follows
+  `runtimePreferences.approvalExperience.showReadOnlyToolRecords`; failed tool
+  records remain visible.
 - The assistant may suggest text or guidance, but current Write IPC file
   services remain renderer-owned; model replies do not directly save Markdown
   files.

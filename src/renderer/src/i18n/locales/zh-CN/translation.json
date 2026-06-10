@@ -86,7 +86,11 @@
     "assistantTitle": "写作助手",
     "assistantCurrentFile": "当前文件：{{path}}",
     "assistantNoFile": "未选择文件",
-    "assistantEmpty": "输入写作请求后，回复会显示在这里。"
+    "assistantEmpty": "输入写作请求后，回复会显示在这里。",
+    "sourceLabel": "源码",
+    "previewLabel": "预览",
+    "previewEmpty": "预览会在这里显示。",
+    "completionHint": "Tab 接受，Esc 取消"
   },
   "threads": {
     "newChat": "新建会话",

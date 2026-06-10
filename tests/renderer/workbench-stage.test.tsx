@@ -1,4 +1,4 @@
-import { createElement, type RefObject } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CodeWorkbenchStage } from "../../src/renderer/src/ui/components/workbench/CodeWorkbenchStage";
@@ -40,6 +40,8 @@ describe("Workbench stage components", () => {
         WorkbenchProvider,
         null,
         createElement(WriteWorkbenchStage, {
+          onApprove: async () => undefined,
+          pendingApprovalResponses: {},
           onWorkspaceSelected: () => true,
           onSendAssistantPrompt: async () => true,
           onInterruptAssistant: () => undefined,
@@ -67,17 +69,22 @@ describe("Write workspace panel components", () => {
         content: "draft body",
         savedContent: "saved body",
         completion: " completion",
+        selectionStart: 5,
+        selectionEnd: 5,
         status: "idle",
         errorMessage: null,
         activePath: "notes.md",
         saveDisabled: false,
         onContentChange: () => undefined,
+        onSelectionChange: () => undefined,
         onEditorKeyDown: () => undefined,
         onSave: () => undefined,
       }),
     );
 
     expect(html).toContain("class=\"ds-write-editor\"");
+    expect(html).toContain("class=\"ds-write-editor-split\"");
+    expect(html).toContain("class=\"ds-write-preview\"");
     expect(html).toContain("aria-label=\"write.editorPlaceholder\"");
     expect(html).toContain("draft body");
     expect(html).toContain("class=\"ds-write-ghost\"");
@@ -87,7 +94,6 @@ describe("Write workspace panel components", () => {
   });
 
   it("keeps the assistant panel on the Write composer variant", () => {
-    const assistantMessagesRef: RefObject<HTMLDivElement | null> = { current: null };
     const html = renderToStaticMarkup(
       createElement(
         WorkbenchProvider,
@@ -97,7 +103,6 @@ describe("Write workspace panel components", () => {
           activeTurnId: null,
           assistantBusy: true,
           assistantItems: [],
-          assistantMessagesRef,
           composerDisabled: true,
           onRequestSend: async () => true,
           onInterrupt: () => undefined,

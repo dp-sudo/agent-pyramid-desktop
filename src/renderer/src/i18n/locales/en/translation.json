@@ -86,7 +86,11 @@
     "assistantTitle": "Writing assistant",
     "assistantCurrentFile": "Current file: {{path}}",
     "assistantNoFile": "No file selected",
-    "assistantEmpty": "Send a writing request and replies will appear here."
+    "assistantEmpty": "Send a writing request and replies will appear here.",
+    "sourceLabel": "Source",
+    "previewLabel": "Preview",
+    "previewEmpty": "Preview appears here.",
+    "completionHint": "Tab accepts, Esc cancels"
   },
   "threads": {
     "newChat": "New thread",
