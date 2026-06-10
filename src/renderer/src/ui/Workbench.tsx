@@ -61,6 +61,7 @@ export function Workbench(): ReactElement {
   const activeThreadArchived = state.activeThread?.status === "archived";
   const activeThreadInFlightTurn = getActiveThreadInFlightTurn(state);
   const codeThreads = filterThreadsForWorkbench(state.threads, "code");
+  const writeThreads = filterThreadsForWorkbench(state.threads, "write");
 
   useEffect(() => {
     activeThreadIdRef.current = state.activeThreadId;
@@ -321,6 +322,27 @@ export function Workbench(): ReactElement {
         title: "New thread",
         workspace,
         mode: "code",
+      }),
+    );
+    if (!result.ok) {
+      actions.setError(result.message);
+      return;
+    }
+    activeThreadIdRef.current = result.value.id;
+    if (!await subscribeThreadEvents(result.value.id)) return;
+    actions.selectThread(result.value, []);
+    actions.setError(null);
+    void refreshThreads();
+  }, [actions, ensureWorkspaceRoot, refreshThreads, subscribeThreadEvents]);
+
+  const onNewWriteThread = useCallback(async () => {
+    const workspace = await ensureWorkspaceRoot();
+    if (!workspace) return;
+    const result = await runWorkbenchIpc(() =>
+      window.agentApi.threads.create({
+        title: "New thread",
+        workspace,
+        mode: "write",
       }),
     );
     if (!result.ok) {
@@ -743,6 +765,16 @@ export function Workbench(): ReactElement {
             onSendAssistantPrompt={onSend}
             onInterruptAssistant={() => void onInterrupt()}
             assistantBusy={Boolean(activeThreadInFlightTurn)}
+            writeThreads={writeThreads}
+            onSelectWriteThread={(id) => void onSelectThread(id)}
+            onNewWriteThread={() => void onNewWriteThread()}
+            onDeleteWriteThread={(id) => void onDeleteThread(id)}
+            onArchiveWriteThread={(id) => void onArchiveThread(id)}
+            onRestoreWriteThread={(id) => void onRestoreThread(id)}
+            showArchivedThreads={state.showArchivedThreads}
+            onToggleArchivedThreads={() =>
+              actions.setShowArchivedThreads(!state.showArchivedThreads)
+            }
             toastMessage={state.errorMessage}
             toastEnabled={state.runtimePreferences.approvalExperience.showFailureToasts}
             onDismissToast={() => actions.setError(null)}

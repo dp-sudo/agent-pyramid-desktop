@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getApprovalPendingDecision,
   getTimelineBottomScrollTop,
+  getVisibleTimelineItems,
   isTimelineProcessOpen,
   shouldShowTimelineProcessItem,
   shouldShowTimelineJumpToBottom,
@@ -114,14 +115,89 @@ describe("MessageTimeline helpers", () => {
       "approval-1": "allow",
     })).toBeNull();
   });
+
+  it("keeps all items visible when the turn count is within the initial render limit", () => {
+    const items = [
+      userItem("turn-1"),
+      userItem("turn-2"),
+      userItem("turn-3"),
+    ];
+
+    expect(getVisibleTimelineItems(items, false, 5)).toEqual({
+      visibleItems: items,
+      hiddenTurnCount: 0,
+    });
+  });
+
+  it("keeps full item groups for the latest turns before older history is expanded", () => {
+    const turn3User = userItem("turn-3");
+    const turn3Tool = toolItem("read_file", "completed", "turn-3");
+    const turn4User = userItem("turn-4");
+    const items = [
+      userItem("turn-1"),
+      toolItem("read_file", "completed", "turn-1"),
+      userItem("turn-2"),
+      turn3User,
+      turn3Tool,
+      turn4User,
+    ];
+
+    expect(getVisibleTimelineItems(items, false, 2)).toEqual({
+      visibleItems: [turn3User, turn3Tool, turn4User],
+      hiddenTurnCount: 2,
+    });
+  });
+
+  it("shows the full item stream after older history is expanded", () => {
+    const items = [
+      userItem("turn-1"),
+      userItem("turn-2"),
+      userItem("turn-3"),
+      userItem("turn-4"),
+    ];
+
+    expect(getVisibleTimelineItems(items, true, 2)).toEqual({
+      visibleItems: items,
+      hiddenTurnCount: 0,
+    });
+  });
+
+  it("normalizes invalid visible turn limits to at least one turn", () => {
+    const turn2 = userItem("turn-2");
+    const items = [userItem("turn-1"), turn2];
+
+    expect(getVisibleTimelineItems(items, false, 0)).toEqual({
+      visibleItems: [turn2],
+      hiddenTurnCount: 1,
+    });
+    expect(getVisibleTimelineItems(items, false, Number.NaN)).toEqual({
+      visibleItems: [turn2],
+      hiddenTurnCount: 1,
+    });
+  });
 });
 
-function toolItem(name: string, status: ToolItem["status"]): ToolItem {
+function userItem(turnId: string): Extract<Item, { kind: "user" }> {
+  return {
+    kind: "user",
+    id: `${turnId}-user`,
+    threadId: "thread-1",
+    turnId,
+    text: turnId,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function toolItem(
+  name: string,
+  status: ToolItem["status"],
+  turnId = "turn-1",
+): ToolItem {
   return {
     kind: "tool",
-    id: `${name}-${status}`,
+    id: `${turnId}-${name}-${status}`,
     threadId: "thread-1",
-    turnId: "turn-1",
+    turnId,
     toolCallId: `${name}-call`,
     name,
     args: {},

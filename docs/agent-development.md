@@ -70,6 +70,75 @@
 
 ## 变更记录
 
+### 2026-06-10 - Code workbench long timeline performance
+- Optimized Code `MessageTimeline` for long histories by windowing at the raw
+  `Item[]` boundary before turn grouping. The initial render keeps the latest
+  turns together without splitting a shared `turnId`, and exposes a localized
+  show-older control for loading the full history on demand.
+- Hardened `RightInspector` for long Code sessions: Changes now summarizes
+  only recent tool activity, tool details use bounded preview formatting that
+  avoids building full large result strings, and Todo/Plan latest-plan lookup
+  scans from the end instead of collecting all plan items.
+- Verification plan: renderer MessageTimeline, timeline-model and
+  RightInspector helper tests cover recent-window boundaries, bounded tool
+  previews and latest-plan lookup; full `typecheck/test/build` verification is
+  run before handoff.
+
+### 2026-06-10 - Write document state and completion race cleanup
+- Consolidated Write document view state reset/open paths so file open, file
+  clear and workspace-switch branches share the same active path, content,
+  saved content, inline completion and editor-selection defaults.
+- Hardened inline completion settling so stale responses are ignored unless the
+  request id, workspace and active Markdown path still match the current editor
+  context.
+- Verification plan: renderer Write workspace helper tests cover centralized
+  document view state, unchanged selection checks and completion response
+  guards; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Write large document performance hardening
+- Hardened Write editor performance for large Markdown files. The source
+  textarea now uses a hybrid uncontrolled boundary so normal typing does not
+  force React to rewrite the whole document string on every keystroke, while
+  programmatic updates such as file switches and completion acceptance still
+  synchronize the DOM value.
+- Added a large-document source mode that disables soft wrapping, spellcheck,
+  autocomplete and autocapitalize to reduce browser layout/text-assist work for
+  very large Markdown source files.
+- Made Write preview rendering snapshot-based: small documents remain live,
+  medium documents refresh after typing pauses, and very large documents pause
+  automatic Markdown rendering until the user explicitly refreshes the preview.
+  `AssistantMarkdown` is memoized so unchanged preview snapshots do not reparse
+  through `react-markdown` / `remark-gfm`.
+- Bounded inline completion prefix/suffix extraction around the current
+  selection so large documents do not slice and send the full source body for
+  local Markdown completion.
+- Verification plan: renderer tests cover preview modes, large source mode,
+  hybrid textarea synchronization, caret line counting, bounded completion
+  context and large-document SSR markup; full `typecheck/test/build`
+  verification is run before handoff.
+
+### 2026-06-10 - Write document context menu viewport clamp
+- Hardened the Write document context menu so right-click actions are clamped
+  inside the visible viewport near right and bottom edges, with CSS width and
+  max-height bounds as a layout fallback for narrow windows.
+- Verification plan: renderer Write workspace helper tests cover normal,
+  edge, negative-coordinate and tiny-viewport positioning; full
+  `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Write workbench session management layout
+- Reworked the Write workbench sidebar into distinct navigation, workspace,
+  writing session and Markdown document sections. The active Write route now
+  exposes the current Write tab state beside Code and Settings controls.
+- Reused the shared thread session list behavior for `mode: "write"` sessions,
+  including selection, archive, restore, delete and archived visibility. New
+  writing sessions are created through the existing `threads.create` path with
+  `mode: "write"`.
+- Guarded writing-session switches and creation behind the existing dirty
+  Markdown save flow, so a failed document save keeps the user in the current
+  Write context instead of switching sessions.
+- Verification: targeted renderer tests passed, followed by full
+  `npm run typecheck`, `npm run test`, `npm run build`, and `git diff --check`.
+
 ### 2026-06-10 - Write document management and assistant composer upgrade
 - Added Write document management IPC and UI for Markdown create, rename and
   delete. The main Write file service now exposes `write:create`,

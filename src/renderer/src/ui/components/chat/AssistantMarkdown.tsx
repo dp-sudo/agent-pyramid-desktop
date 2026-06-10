@@ -1,6 +1,7 @@
 import {
   Children,
   isValidElement,
+  memo,
   useEffect,
   useId,
   useMemo,
@@ -22,7 +23,7 @@ interface AssistantMarkdownProps {
   codeBlockCollapseLineThreshold?: number;
 }
 
-export function AssistantMarkdown({
+export const AssistantMarkdown = memo(function AssistantMarkdown({
   text,
   streaming,
   codeBlockCollapseLineThreshold = CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
@@ -39,7 +40,7 @@ export function AssistantMarkdown({
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 function createMarkdownComponents(codeBlockCollapseLineThreshold: number): Components {
   return {

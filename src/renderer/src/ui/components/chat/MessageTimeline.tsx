@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
   getActiveThreadInFlightTurn,
@@ -7,7 +7,7 @@ import {
 import { RUNTIME_READ_ONLY_TOOL_NAMES, type Item } from "../../../../../shared/agent-contracts";
 import { ChatBlock, type ApprovalPendingDecision } from "./ChatBlock";
 import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
-import { groupTimelineTurns } from "./timeline-model";
+import { getTimelineItemTurnId, groupTimelineTurns } from "./timeline-model";
 
 interface MessageTimelineProps {
   onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
@@ -15,6 +15,7 @@ interface MessageTimelineProps {
 }
 
 const TIMELINE_BOTTOM_STICKY_THRESHOLD_PX = 96;
+const TIMELINE_INITIAL_TURN_LIMIT = 80;
 
 export function MessageTimeline({
   onApprove,
@@ -26,7 +27,15 @@ export function MessageTimeline({
   const stickToBottomRef = useRef(true);
   const [processOpenByTurnId, setProcessOpenByTurnId] = useState<Record<string, boolean>>({});
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const turns = useMemo(() => groupTimelineTurns(state.items), [state.items]);
+  const [showAllTurns, setShowAllTurns] = useState(false);
+  const visibleItemState = useMemo(
+    () => getVisibleTimelineItems(state.items, showAllTurns),
+    [showAllTurns, state.items],
+  );
+  const turns = useMemo(
+    () => groupTimelineTurns(visibleItemState.visibleItems),
+    [visibleItemState.visibleItems],
+  );
   const activeInFlightTurn = getActiveThreadInFlightTurn(state);
   const showReadOnlyToolRecords =
     state.runtimePreferences.approvalExperience.showReadOnlyToolRecords;
@@ -40,6 +49,10 @@ export function MessageTimeline({
       return Object.keys(next).length === Object.keys(current).length ? current : next;
     });
   }, [turns]);
+
+  useEffect(() => {
+    setShowAllTurns(false);
+  }, [state.activeThreadId]);
 
   useLayoutEffect(() => {
     const element = scrollRef.current;
@@ -79,6 +92,15 @@ export function MessageTimeline({
   return (
     <div ref={scrollRef} className="ds-message-timeline" onScroll={handleScroll}>
       <div className="ds-message-timeline-content">
+        {visibleItemState.hiddenTurnCount > 0 ? (
+          <button
+            type="button"
+            className="ds-message-show-older"
+            onClick={() => setShowAllTurns(true)}
+          >
+            {t("chat.showOlderTurns", { count: visibleItemState.hiddenTurnCount })}
+          </button>
+        ) : null}
         {turns.map((turn) => {
           const isActiveTurn = activeInFlightTurn?.id === turn.id;
           const processItems = showReadOnlyToolRecords
@@ -237,6 +259,48 @@ export function shouldShowTimelineJumpToBottom(shouldStickToBottom: boolean): bo
 
 export function getTimelineBottomScrollTop(scrollHeight: number): number {
   return Math.max(0, scrollHeight);
+}
+
+// Windowing happens before turn grouping so old large turns do not build
+// Markdown/tool block models during the initial Code timeline render.
+export function getVisibleTimelineItems(
+  items: readonly Item[],
+  showAll: boolean,
+  limit = TIMELINE_INITIAL_TURN_LIMIT,
+): { visibleItems: Item[]; hiddenTurnCount: number } {
+  const normalizedLimit = Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 1));
+  if (showAll || items.length === 0) {
+    return { visibleItems: [...items], hiddenTurnCount: 0 };
+  }
+
+  const visibleTurnIds = new Set<string>();
+  let startIndex = items.length;
+
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const turnId = getTimelineItemTurnId(items[index]);
+    if (!visibleTurnIds.has(turnId)) {
+      if (visibleTurnIds.size >= normalizedLimit) break;
+      visibleTurnIds.add(turnId);
+    }
+    startIndex = index;
+  }
+
+  if (startIndex === 0) {
+    return { visibleItems: [...items], hiddenTurnCount: 0 };
+  }
+
+  const hiddenTurnIds = new Set<string>();
+  for (let index = 0; index < startIndex; index += 1) {
+    const turnId = getTimelineItemTurnId(items[index]);
+    if (!visibleTurnIds.has(turnId)) {
+      hiddenTurnIds.add(turnId);
+    }
+  }
+
+  return {
+    visibleItems: items.slice(startIndex),
+    hiddenTurnCount: hiddenTurnIds.size,
+  };
 }
 
 export function isTimelineProcessOpen({

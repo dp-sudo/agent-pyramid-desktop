@@ -232,6 +232,10 @@ Component: `MessageTimeline`.
 Purpose:
 
 - Group raw `Item[]` into turns via `groupTimelineTurns()`.
+- Before grouping long Code histories, keep only the most recent visible turn
+  window at the raw `Item[]` boundary. Older turns stay available through the
+  localized `ds-message-show-older` control, and the window boundary must never
+  split items that share one `turnId`.
 - Render user, pre-answer work process, assistant, and follow-up items without
   moving post-answer items ahead of the answer.
 - Keep scroll pinned to bottom while user is near the bottom.
@@ -244,6 +248,7 @@ Key classes:
 - `ds-message-timeline`
 - `ds-message-timeline-empty`
 - `ds-message-timeline-content`
+- `ds-message-show-older`
 - `ds-message-jump-bottom`
 - `ds-message-turn`
 - `ds-work-process`
@@ -474,8 +479,8 @@ Panels:
 
 | Mode | Component | Content source |
 | --- | --- | --- |
-| `changes` | `ChangesPanel` | Tool item summaries. |
-| `todo` | `TodoPanel` | Pending approvals, failed tools, error system items, incomplete plan steps. |
+| `changes` | `ChangesPanel` | Recent tool item summaries with bounded detail previews. |
+| `todo` | `TodoPanel` | Pending approvals, failed tools, error system items, incomplete latest-plan steps. |
 | `plan` | `PlanPanel` | Latest `PlanItem`, progress meter, steps. |
 
 Key classes:
@@ -485,6 +490,7 @@ Key classes:
 - `ds-right-inspector-body`
 - `ds-inspector-empty`
 - `ds-inspector-change-list`
+- `ds-inspector-detail-note`
 - `ds-inspector-todo-list`
 - `ds-inspector-plan`
 - `ds-inspector-plan-meter`
@@ -530,6 +536,9 @@ Implementation entry: `Workbench` when `state.route === "write"`.
 ```mermaid
 flowchart LR
   Sidebar["Write Sidebar"]
+  WorkspaceBlock["Workspace controls"]
+  Sessions["Writing sessions\nThreadSessionList"]
+  Documents["Markdown documents"]
   Stage["WriteWorkbenchStage"]
   Workspace["WriteWorkspaceView"]
   Editor["WriteEditorPanel\nMarkdown Source"]
@@ -543,6 +552,9 @@ flowchart LR
 
   Stage --> Workspace
   Workspace --> Sidebar
+  Sidebar --> WorkspaceBlock
+  Sidebar --> Sessions
+  Sidebar --> Documents
   Workspace --> Editor
   Workspace --> Preview
   Editor --> Ghost
@@ -557,9 +569,11 @@ Top-level:
 
 - Shares `ds-stage-surface` from `Workbench`.
 - `WriteWorkbenchStage` wraps `WriteWorkspaceView` and the floating error toast.
-- `WriteWorkspaceView` renders its own sidebar inside the stage.
-- `WriteWorkspaceView` owns file list, active file, dirty content, completion,
-  editor selection, save refs, autosave timers and Write IPC calls;
+- `WriteWorkspaceView` renders its own sidebar inside the stage. The sidebar is
+  organized as workbench navigation, workspace controls, writing sessions, and
+  Markdown documents.
+- `WriteWorkspaceView` owns document file list, active file, dirty content,
+  completion, editor selection, save refs, autosave timers and Write IPC calls;
   `WriteEditorPanel` and `WriteAssistantPanel` receive controlled props and
   callbacks.
 - Sidebar width uses the same `state.leftSidebarWidth`, and the Write route
@@ -580,6 +594,14 @@ Purpose:
   area surfaces the failure.
 - Refresh markdown file list.
 - Show active workspace.
+- Show `mode: "write"` sessions by reusing the shared `ThreadSessionList`
+  behavior for selecting, archiving, restoring and deleting threads.
+- Create a new writing session with `mode: "write"` through the existing
+  thread creation path. Switching or creating a writing session first flushes
+  the current dirty Markdown document; if save fails, the session action does
+  not proceed.
+- Toggle archived session visibility with the same renderer preference used by
+  the Code sidebar.
 - Search markdown files.
 - Search clear uses stable visible text plus localized `aria-label` / `title`,
   so the control does not depend on glyphs that can degrade under encoding
@@ -592,14 +614,19 @@ Purpose:
 Key classes:
 
 - `ds-write-route-actions`
+- `ds-write-sidebar-section`
+- `ds-write-sidebar-section-header`
 - `ds-write-sidebar-actions`
+- `ds-write-sessions-section`
+- `ds-write-session-list`
+- `ds-write-documents-section`
 - `ds-write-document-toolbar`
 - `ds-write-document-form`
 - `ds-pill`
 - `ds-sidebar-workspace ds-write-workspace-label`
 - `ds-write-search`
 - `ds-write-search-clear`
-- `ds-sidebar-list`
+- `ds-write-document-list`
 - `ds-sidebar-empty`
 - `ds-write-file-row`
 - `ds-write-file-row-main`
@@ -630,6 +657,8 @@ File row attributes:
   modified date.
 - Right-clicking a document row opens rename/delete/create actions. Right-clicking
   empty list space opens create only.
+- `getWriteContextMenuPosition()` clamps the context menu against the viewport
+  margin, so menu actions remain reachable near the right and bottom edges.
 
 ### Editor Area
 
@@ -652,6 +681,7 @@ Key classes:
 - `ds-write-editor-split`
 - `ds-write-editor-frame`
 - `ds-write-preview`
+- `ds-write-preview-controls`
 - `ds-write-preview-empty`
 - `ds-write-ghost`
 - `ds-write-status`
@@ -667,11 +697,28 @@ Behavior constants:
   or near-empty prefix.
 - Main Markdown textarea has an `aria-label` that matches its localized editor
   placeholder.
+- Source editing uses a hybrid textarea boundary: user typing updates Write
+  state through `onChange`, but React does not push the whole Markdown string
+  back into the DOM on every keystroke. Programmatic changes such as opening a
+  different file or accepting inline completion still synchronize the textarea.
+- Large source documents enter `data-source-mode="large-document"` and disable
+  soft wrapping, spellcheck, autocomplete and autocapitalize so the browser does
+  less layout and text-assist work while editing.
 - The Markdown preview reuses the same safe renderer used by assistant
   messages, including code block controls, GFM tables/task lists and
   link/image safety rules.
+- Preview rendering is snapshot-based. Small documents update live, medium
+  documents update after typing pauses, and very large documents pause automatic
+  preview rendering until the user explicitly refreshes the preview. This keeps
+  `react-markdown` / `remark-gfm` parsing off the per-keystroke path.
 - Inline completion is positioned near the current caret line and shows the
   localized Tab/Escape hint.
+- Inline completion requests send only bounded text around the current
+  caret/selection rather than slicing and sending the whole document prefix and
+  suffix.
+- Inline completion responses are request-id, workspace and active-path
+  guarded, so late responses from an older file, workspace or caret context are
+  ignored before they can replace the visible ghost text.
 - Accepting inline completion restores the editor selection to the inserted
   completion boundary, keeping the caret near the accepted text instead of
   falling back to the end of the document.
@@ -684,6 +731,9 @@ Behavior constants:
 - Switching workspace clears the previous workspace file list and active file
   immediately, so a failed list request cannot leave stale file-relative state
   under the new workspace root.
+- File open, file clear and workspace-switch flows share the same document view
+  state helpers, keeping active path, source text, saved text, completion and
+  editor selection reset from diverging across those branches.
 - Open-file responses are request-id guarded, so a slower `write.get` response
   from an earlier click cannot overwrite the later active file.
 - Rejected `write.get` and inline completion IPC calls surface through the

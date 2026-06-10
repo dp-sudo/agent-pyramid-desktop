@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../store/WorkbenchContext";
 import {
@@ -6,7 +6,7 @@ import {
   RIGHT_INSPECTOR_MAX_WIDTH,
   RIGHT_INSPECTOR_MIN_WIDTH,
 } from "../../preferences";
-import { summarizeToolItem } from "../chat/timeline-model";
+import { summarizeToolItemHeader, summarizeToolItemPreview } from "../chat/timeline-model";
 import type {
   Item,
   PlanItem,
@@ -15,6 +15,8 @@ import type {
 } from "../../../../../shared/agent-contracts";
 
 const RIGHT_INSPECTOR_KEYBOARD_STEP = 24;
+const RIGHT_INSPECTOR_CHANGE_LIMIT = 80;
+const RIGHT_INSPECTOR_CHANGE_DETAIL_MAX_CHARS = 2000;
 export const RIGHT_INSPECTOR_REGION_ID = "workbench-right-inspector";
 export const RIGHT_INSPECTOR_TITLE_ID = "workbench-right-inspector-title";
 export const RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT = "x";
@@ -101,7 +103,7 @@ export function RightInspector(): ReactElement | null {
 function ChangesPanel(): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
-  const changes = summarizeInspectorChanges(state.items, t);
+  const changes = useMemo(() => summarizeInspectorChanges(state.items, t), [state.items, t]);
   if (changes.length === 0) {
     return <div className="ds-inspector-empty">{t("inspector.noChanges")}</div>;
   }
@@ -114,6 +116,11 @@ function ChangesPanel(): ReactElement {
             <span>{item.statusText}</span>
           </div>
           {item.detail ? <pre>{item.detail}</pre> : null}
+          {item.detailTruncated ? (
+            <p className="ds-inspector-detail-note">
+              {t("inspector.changeDetailTruncated", { count: item.hiddenCharCount })}
+            </p>
+          ) : null}
         </li>
       ))}
     </ul>
@@ -123,7 +130,7 @@ function ChangesPanel(): ReactElement {
 function TodoPanel(): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
-  const todos = deriveInspectorTodos(state.items, t);
+  const todos = useMemo(() => deriveInspectorTodos(state.items, t), [state.items, t]);
   if (todos.length === 0) {
     return <div className="ds-inspector-empty">{t("inspector.todoEmpty")}</div>;
   }
@@ -142,8 +149,7 @@ function TodoPanel(): ReactElement {
 function PlanPanel(): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
-  const plans = state.items.filter((item): item is PlanItem => item.kind === "plan");
-  const latest = plans.at(-1);
+  const latest = useMemo(() => findLatestPlanItem(state.items), [state.items]);
   if (!latest) {
     return <div className="ds-inspector-empty">{t("inspector.planEmpty")}</div>;
   }
@@ -204,6 +210,8 @@ export interface InspectorChangeSummary {
   id: string;
   title: string;
   detail: string;
+  detailTruncated: boolean;
+  hiddenCharCount: number;
   statusText: string;
   tone: "neutral" | "running" | "success" | "danger";
 }
@@ -216,25 +224,43 @@ export interface InspectorTodo {
 }
 
 export function summarizeInspectorChanges(
-  items: Item[],
+  items: readonly Item[],
   t: (key: string, options?: Record<string, unknown>) => string,
+  limit = RIGHT_INSPECTOR_CHANGE_LIMIT,
+  detailMaxChars = RIGHT_INSPECTOR_CHANGE_DETAIL_MAX_CHARS,
 ): InspectorChangeSummary[] {
-  return items
-    .filter((item): item is ToolItem => item.kind === "tool")
+  return getRecentInspectorToolItems(items, limit)
     .map((item) => {
-      const display = summarizeToolItem(item, t);
+      const display = summarizeToolItemPreview(item, t, detailMaxChars);
       return {
         id: item.id,
         title: display.title,
         detail: display.detail,
+        detailTruncated: display.detailTruncated,
+        hiddenCharCount: display.hiddenCharCount,
         statusText: display.statusText,
         tone: display.tone,
       };
     });
 }
 
+export function getRecentInspectorToolItems(
+  items: readonly Item[],
+  limit = RIGHT_INSPECTOR_CHANGE_LIMIT,
+): ToolItem[] {
+  const normalizedLimit = Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 1));
+  const tools: ToolItem[] = [];
+  for (let index = items.length - 1; index >= 0 && tools.length < normalizedLimit; index -= 1) {
+    const item = items[index];
+    if (item.kind === "tool") {
+      tools.push(item);
+    }
+  }
+  return tools.reverse();
+}
+
 export function deriveInspectorTodos(
-  items: Item[],
+  items: readonly Item[],
   t: (key: string, options?: Record<string, unknown>) => string,
 ): InspectorTodo[] {
   const todos: InspectorTodo[] = [];
@@ -252,7 +278,7 @@ export function deriveInspectorTodos(
     if (item.kind === "tool" && item.status === "failed") {
       todos.push({
         id: item.id,
-        title: summarizeToolItem(item, t).title,
+        title: summarizeToolItemHeader(item, t).title,
         label: t("inspector.todoFailedTool"),
         tone: "danger",
       });
@@ -269,7 +295,7 @@ export function deriveInspectorTodos(
     }
   }
 
-  const latestPlan = items.filter((item): item is PlanItem => item.kind === "plan").at(-1);
+  const latestPlan = findLatestPlanItem(items);
   if (latestPlan) {
     for (const step of latestPlan.steps) {
       if (step.status === "completed") continue;
@@ -283,6 +309,14 @@ export function deriveInspectorTodos(
   }
 
   return todos;
+}
+
+export function findLatestPlanItem(items: readonly Item[]): PlanItem | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.kind === "plan") return item;
+  }
+  return null;
 }
 
 export function summarizePlanProgress(

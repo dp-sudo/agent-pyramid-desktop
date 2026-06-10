@@ -12,13 +12,18 @@ import {
   getWriteAssistantVisibleItems,
   getWriteCompletionAcceptState,
   getWriteCompletionRequestContext,
+  getWriteContextMenuPosition,
+  getWriteClearedDocumentState,
   getWriteDocumentEditState,
   getWriteDocumentPathValidationError,
   getWriteListState,
+  getWriteOpenDocumentState,
   getWriteSidebarDividerClassName,
   getWriteWorkspaceSwitchState,
+  isWriteEditorSelectionEqual,
   isWriteMarkdownDocumentPath,
   normalizeWriteDocumentPathInput,
+  shouldApplyWriteCompletionResult,
   shouldApplyWriteOpenResult,
   shouldDisableWriteSave,
   shouldRequestWriteCompletion,
@@ -48,6 +53,10 @@ describe("WriteWorkspaceView helpers", () => {
     );
 
     expect(html).toContain("class=\"ds-write-sidebar-actions\"");
+    expect(html).toContain("class=\"ds-write-sidebar-section ds-write-sessions-section\"");
+    expect(html).toContain("class=\"ds-write-session-list\"");
+    expect(html).toContain("class=\"ds-write-sidebar-section ds-write-documents-section\"");
+    expect(html).toContain("class=\"ds-write-document-list\"");
     expect(html).toContain("class=\"ds-pill is-accent ds-write-save-button\"");
     expect(html).toContain("class=\"ds-write-assistant-composer\"");
     expect(html).toContain("class=\"ds-composer-shell is-write\"");
@@ -215,6 +224,44 @@ describe("WriteWorkspaceView helpers", () => {
     })).toBe(false);
   });
 
+  it("applies only completion responses that still match the current document", () => {
+    expect(shouldApplyWriteCompletionResult({
+      requestId: 2,
+      latestRequestId: 2,
+      requestedWorkspace: "/workspace",
+      currentWorkspace: "/workspace",
+      requestedPath: "notes.md",
+      currentPath: "notes.md",
+    })).toBe(true);
+
+    expect(shouldApplyWriteCompletionResult({
+      requestId: 1,
+      latestRequestId: 2,
+      requestedWorkspace: "/workspace",
+      currentWorkspace: "/workspace",
+      requestedPath: "notes.md",
+      currentPath: "notes.md",
+    })).toBe(false);
+
+    expect(shouldApplyWriteCompletionResult({
+      requestId: 2,
+      latestRequestId: 2,
+      requestedWorkspace: "/workspace-a",
+      currentWorkspace: "/workspace-b",
+      requestedPath: "notes.md",
+      currentPath: "notes.md",
+    })).toBe(false);
+
+    expect(shouldApplyWriteCompletionResult({
+      requestId: 2,
+      latestRequestId: 2,
+      requestedWorkspace: "/workspace",
+      currentWorkspace: "/workspace",
+      requestedPath: "notes.md",
+      currentPath: "other.md",
+    })).toBe(false);
+  });
+
   it("uses selected workspaces only when the thread selection gate allows it", async () => {
     await expect(shouldUseSelectedWriteWorkspace("/workspace")).resolves.toBe(true);
     await expect(
@@ -235,6 +282,25 @@ describe("WriteWorkspaceView helpers", () => {
       content: "",
       savedContent: "",
       completion: "",
+      selection: { selectionStart: 0, selectionEnd: 0 },
+    });
+  });
+
+  it("centralizes open and cleared document view state", () => {
+    expect(getWriteOpenDocumentState("notes.md", "draft")).toEqual({
+      activePath: "notes.md",
+      content: "draft",
+      savedContent: "draft",
+      completion: "",
+      selection: { selectionStart: 0, selectionEnd: 0 },
+    });
+
+    expect(getWriteClearedDocumentState()).toEqual({
+      activePath: null,
+      content: "",
+      savedContent: "",
+      completion: "",
+      selection: { selectionStart: 0, selectionEnd: 0 },
     });
   });
 
@@ -355,6 +421,17 @@ describe("WriteWorkspaceView helpers", () => {
     });
   });
 
+  it("detects unchanged editor selections before invalidating completion", () => {
+    expect(isWriteEditorSelectionEqual(
+      { selectionStart: 4, selectionEnd: 4 },
+      { selectionStart: 4, selectionEnd: 4 },
+    )).toBe(true);
+    expect(isWriteEditorSelectionEqual(
+      { selectionStart: 4, selectionEnd: 8 },
+      { selectionStart: 4, selectionEnd: 9 },
+    )).toBe(false);
+  });
+
   it("sends completion prefix and suffix around the cursor", () => {
     expect(
       getWriteCompletionRequestContext({
@@ -364,6 +441,18 @@ describe("WriteWorkspaceView helpers", () => {
     ).toEqual({
       prefix: "alpha ",
       suffix: " gamma",
+    });
+
+    expect(
+      getWriteCompletionRequestContext({
+        content: "0123456789abcdef",
+        selection: { selectionStart: 10, selectionEnd: 10 },
+        maxPrefixChars: 4,
+        maxSuffixChars: 3,
+      }),
+    ).toEqual({
+      prefix: "6789",
+      suffix: "abc",
     });
   });
 
@@ -544,6 +633,36 @@ describe("WriteWorkspaceView helpers", () => {
     expect(getWriteSidebarDividerClassName(true)).toBe(
       "ds-workbench-divider ds-write-sidebar-divider is-dragging",
     );
+  });
+
+  it("keeps write document context menus inside the viewport", () => {
+    expect(getWriteContextMenuPosition({
+      clientX: 120,
+      clientY: 80,
+      viewportWidth: 800,
+      viewportHeight: 600,
+    })).toEqual({ x: 120, y: 80 });
+
+    expect(getWriteContextMenuPosition({
+      clientX: 780,
+      clientY: 580,
+      viewportWidth: 800,
+      viewportHeight: 600,
+    })).toEqual({ x: 616, y: 468 });
+
+    expect(getWriteContextMenuPosition({
+      clientX: -20,
+      clientY: -10,
+      viewportWidth: 800,
+      viewportHeight: 600,
+    })).toEqual({ x: 8, y: 8 });
+
+    expect(getWriteContextMenuPosition({
+      clientX: 100,
+      clientY: 100,
+      viewportWidth: 120,
+      viewportHeight: 90,
+    })).toEqual({ x: 8, y: 8 });
   });
 });
 

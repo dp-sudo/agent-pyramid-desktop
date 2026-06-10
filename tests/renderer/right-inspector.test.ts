@@ -3,7 +3,9 @@ import type { Item, PlanItem, ToolItem } from "../../src/shared/agent-contracts"
 import {
   clampRightInspectorWidth,
   deriveInspectorTodos,
+  findLatestPlanItem,
   getNextRightInspectorWidth,
+  getRecentInspectorToolItems,
   getResetRightInspectorWidth,
   getRightInspectorResizerClassName,
   RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT,
@@ -67,6 +69,56 @@ describe("RightInspector helpers", () => {
         id: "tool-1",
         title: "read_file:src/main/index.ts",
         detail: "{\n  \"path\": \"src/main/index.ts\"\n}\n\nmain",
+        detailTruncated: false,
+        hiddenCharCount: 0,
+        statusText: "Completed",
+        tone: "success",
+      },
+    ]);
+  });
+
+  it("keeps only recent tool items for the changes panel", () => {
+    const tool1 = toolItem("tool-1", "read_file", "completed");
+    const tool2 = toolItem("tool-2", "search_files", "completed");
+    const tool3 = toolItem("tool-3", "write_file", "failed");
+    const items: Item[] = [
+      tool1,
+      {
+        kind: "system",
+        id: "system-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "ignored",
+        level: "info",
+        createdAt,
+      },
+      tool2,
+      tool3,
+    ];
+
+    expect(getRecentInspectorToolItems(items, 2).map((item) => item.id)).toEqual([
+      "tool-2",
+      "tool-3",
+    ]);
+    expect(getRecentInspectorToolItems(items, 0).map((item) => item.id)).toEqual([
+      "tool-3",
+    ]);
+  });
+
+  it("uses bounded detail previews for long change summaries", () => {
+    const item: ToolItem = {
+      ...toolItem("tool-1", "read_file", "completed"),
+      args: { path: "src/main/index.ts" },
+      result: { content: "abcdef" },
+    };
+
+    expect(summarizeInspectorChanges([item], testT, 10, 40)).toEqual([
+      {
+        id: "tool-1",
+        title: "read_file:src/main/index.ts",
+        detail: "{\n  \"path\": \"src/main/index.ts\"\n}\n\nabcde",
+        detailTruncated: true,
+        hiddenCharCount: 1,
         statusText: "Completed",
         tone: "success",
       },
@@ -163,9 +215,52 @@ describe("RightInspector helpers", () => {
       ]),
     ).toEqual({ completed: 1, total: 3, percent: 33 });
   });
+
+  it("finds the latest plan without collecting every plan item", () => {
+    const firstPlan = planItem("plan-1", "First");
+    const secondPlan = planItem("plan-2", "Second");
+    const items: Item[] = [
+      firstPlan,
+      toolItem("tool-1", "read_file", "completed"),
+      secondPlan,
+    ];
+
+    expect(findLatestPlanItem(items)).toBe(secondPlan);
+    expect(findLatestPlanItem([toolItem("tool-1", "read_file", "completed")])).toBeNull();
+  });
 });
 
 const createdAt = "2026-01-01T00:00:00.000Z";
+
+function toolItem(
+  id: string,
+  name: string,
+  status: ToolItem["status"],
+): ToolItem {
+  return {
+    kind: "tool",
+    id,
+    threadId: "thread-1",
+    turnId: "turn-1",
+    toolCallId: `${id}-call`,
+    name,
+    args: {},
+    status,
+    createdAt,
+  };
+}
+
+function planItem(id: string, title: string): PlanItem {
+  return {
+    kind: "plan",
+    id,
+    title,
+    threadId: "thread-1",
+    turnId: "turn-1",
+    steps: [],
+    createdAt,
+  };
+}
 
 function testT(key: string, options?: Record<string, unknown>): string {
   if (key === "chat.tools.readFilePath") return `read_file:${String(options?.path)}`;

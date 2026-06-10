@@ -10,13 +10,18 @@ import {
 import { useTranslation } from "react-i18next";
 import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
 import { type FloatingComposerRequestPayload } from "../composer";
-import type { Item, WriteFileEntry } from "../../../../../shared/agent-contracts";
+import type {
+  Item,
+  ThreadSummary,
+  WriteFileEntry,
+} from "../../../../../shared/agent-contracts";
 import {
   LEFT_SIDEBAR_DEFAULT_WIDTH,
   LEFT_SIDEBAR_MAX_WIDTH,
   LEFT_SIDEBAR_MIN_WIDTH,
 } from "../../preferences";
 import type { ApprovalPendingDecision } from "../chat/ChatBlock";
+import { ThreadSessionList } from "../sidebar/Sidebar";
 import { WriteAssistantPanel } from "./WriteAssistantPanel";
 import {
   WriteEditorPanel,
@@ -28,7 +33,12 @@ const AUTOSAVE_DELAY_MS = 800;
 const COMPLETION_DELAY_MS = 650;
 const WRITE_SEARCH_DEBOUNCE_MS = 250;
 const COMPLETION_MIN_TRAILING_CHARS = 10;
+const WRITE_COMPLETION_PREFIX_MAX_CHARS = 4096;
+const WRITE_COMPLETION_SUFFIX_MAX_CHARS = 1024;
 const WRITE_SIDEBAR_KEYBOARD_STEP = 16;
+const WRITE_CONTEXT_MENU_WIDTH_PX = 176;
+const WRITE_CONTEXT_MENU_HEIGHT_PX = 124;
+const WRITE_CONTEXT_MENU_VIEWPORT_MARGIN_PX = 8;
 const WRITE_MARKDOWN_EXTENSIONS = [".md", ".mdx", ".markdown"] as const;
 export const WRITE_ASSISTANT_CONTEXT_MAX_CHARS = 1200;
 export const WRITE_ASSISTANT_NEARBY_CONTEXT_RADIUS = 520;
@@ -56,6 +66,14 @@ export interface WriteWorkspaceViewProps {
   onSendAssistantPrompt?: (payload: WriteAssistantPromptPayload) => Promise<boolean>;
   onInterruptAssistant?: () => void;
   assistantBusy?: boolean;
+  writeThreads?: ThreadSummary[];
+  onSelectWriteThread?: (id: string) => void | Promise<void>;
+  onNewWriteThread?: () => void | Promise<void>;
+  onDeleteWriteThread?: (id: string) => void | Promise<void>;
+  onArchiveWriteThread?: (id: string) => void | Promise<void>;
+  onRestoreWriteThread?: (id: string) => void | Promise<void>;
+  showArchivedThreads?: boolean;
+  onToggleArchivedThreads?: () => void;
 }
 
 type WriteDocumentAction =
@@ -70,6 +88,14 @@ interface WriteDocumentContextMenu {
   y: number;
 }
 
+export interface WriteDocumentViewState {
+  activePath: string | null;
+  content: string;
+  savedContent: string;
+  completion: string;
+  selection: WriteEditorSelectionState;
+}
+
 export function WriteWorkspaceView({
   onApprove,
   pendingApprovalResponses = {},
@@ -77,6 +103,14 @@ export function WriteWorkspaceView({
   onSendAssistantPrompt,
   onInterruptAssistant,
   assistantBusy = false,
+  writeThreads = [],
+  onSelectWriteThread,
+  onNewWriteThread,
+  onDeleteWriteThread,
+  onArchiveWriteThread,
+  onRestoreWriteThread,
+  showArchivedThreads = false,
+  onToggleArchivedThreads,
 }: WriteWorkspaceViewProps = {}): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
@@ -111,6 +145,7 @@ export function WriteWorkspaceView({
   const saveInFlightRef = useRef(false);
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const searchDebounceTimerRef = useRef<number | null>(null);
+  const listedWorkspaceRef = useRef("");
 
   useEffect(() => {
     activePathRef.current = activePath;
@@ -120,6 +155,26 @@ export function WriteWorkspaceView({
   }, [activePath, content, savedContent, state.workspaceRoot]);
 
   const assistantItems = getWriteAssistantVisibleItems(state.items);
+
+  function invalidateCompletionRequests(): void {
+    completionRequestId.current += 1;
+  }
+
+  function applyWriteDocumentState(
+    nextState: WriteDocumentViewState,
+    options: { invalidateOpenRequests?: boolean } = {},
+  ): void {
+    if (options.invalidateOpenRequests) openFileRequestId.current += 1;
+    invalidateCompletionRequests();
+    activePathRef.current = nextState.activePath;
+    contentRef.current = nextState.content;
+    savedContentRef.current = nextState.savedContent;
+    setActivePath(nextState.activePath);
+    setContent(nextState.content);
+    setSavedContent(nextState.savedContent);
+    setCompletion(nextState.completion);
+    setEditorSelection(nextState.selection);
+  }
 
   async function pickWorkspace(): Promise<string | null> {
     const result = await window.agentApi.workspace.pickDirectory();
@@ -155,21 +210,16 @@ export function WriteWorkspaceView({
     if (!workspace) return;
     const requestId = listRequestId.current + 1;
     listRequestId.current = requestId;
-    const switchingWorkspace = workspace !== state.workspaceRoot;
+    const switchingWorkspace =
+      workspace !== workspaceRootRef.current ||
+      workspace !== listedWorkspaceRef.current;
     if (switchingWorkspace) {
-      openFileRequestId.current += 1;
       // A workspace boundary invalidates all file-relative state even if listing fails.
       const clearedState = getWriteWorkspaceSwitchState();
       setFiles(clearedState.files);
-      activePathRef.current = clearedState.activePath;
-      contentRef.current = clearedState.content;
-      savedContentRef.current = clearedState.savedContent;
-      setActivePath(clearedState.activePath);
-      setContent(clearedState.content);
-      setSavedContent(clearedState.savedContent);
-      setCompletion(clearedState.completion);
-      setEditorSelection({ selectionStart: 0, selectionEnd: 0 });
+      applyWriteDocumentState(clearedState, { invalidateOpenRequests: true });
     }
+    listedWorkspaceRef.current = workspace;
     setListLoading(true);
     setStatus("loading");
     try {
@@ -231,14 +281,7 @@ export function WriteWorkspaceView({
         return;
       }
       if (result.ok) {
-        activePathRef.current = path;
-        contentRef.current = result.value.content;
-        savedContentRef.current = result.value.content;
-        setActivePath(path);
-        setContent(result.value.content);
-        setSavedContent(result.value.content);
-        setCompletion("");
-        setEditorSelection({ selectionStart: 0, selectionEnd: 0 });
+        applyWriteDocumentState(getWriteOpenDocumentState(path, result.value.content));
         setStatus("idle");
         setErrorMessage(null);
       } else {
@@ -254,30 +297,18 @@ export function WriteWorkspaceView({
   }
 
   function setOpenDocument(path: string, nextContent: string): void {
-    openFileRequestId.current += 1;
-    activePathRef.current = path;
-    contentRef.current = nextContent;
-    savedContentRef.current = nextContent;
-    setActivePath(path);
-    setContent(nextContent);
-    setSavedContent(nextContent);
-    setCompletion("");
-    setEditorSelection({ selectionStart: 0, selectionEnd: 0 });
+    applyWriteDocumentState(getWriteOpenDocumentState(path, nextContent), {
+      invalidateOpenRequests: true,
+    });
     setStatus("idle");
     setErrorMessage(null);
   }
 
   function clearOpenDocument(path: string): void {
     if (activePathRef.current !== path) return;
-    openFileRequestId.current += 1;
-    activePathRef.current = null;
-    contentRef.current = "";
-    savedContentRef.current = "";
-    setActivePath(null);
-    setContent("");
-    setSavedContent("");
-    setCompletion("");
-    setEditorSelection({ selectionStart: 0, selectionEnd: 0 });
+    applyWriteDocumentState(getWriteClearedDocumentState(), {
+      invalidateOpenRequests: true,
+    });
   }
 
   function beginCreateDocument(): void {
@@ -439,10 +470,16 @@ export function WriteWorkspaceView({
     if (!state.workspaceRoot) return;
     event.preventDefault();
     event.stopPropagation();
+    const position = getWriteContextMenuPosition({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
     setContextMenu({
       path,
-      x: event.clientX,
-      y: event.clientY,
+      x: position.x,
+      y: position.y,
     });
   }
 
@@ -455,6 +492,18 @@ export function WriteWorkspaceView({
   useEffect(() => {
     return () => clearSearchDebounceTimer();
   }, []);
+
+  useEffect(() => {
+    if (!state.workspaceRoot) {
+      listedWorkspaceRef.current = "";
+      const clearedState = getWriteWorkspaceSwitchState();
+      setFiles(clearedState.files);
+      applyWriteDocumentState(clearedState, { invalidateOpenRequests: true });
+      return;
+    }
+    if (state.workspaceRoot === listedWorkspaceRef.current) return;
+    void loadList(state.workspaceRoot, search, { saveBeforeLoad: false });
+  }, [state.workspaceRoot]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -573,6 +622,19 @@ export function WriteWorkspaceView({
     actions.setRoute(route);
   }
 
+  async function runWriteSessionAction(action?: () => void | Promise<void>): Promise<void> {
+    if (!action) return;
+    if (!(await saveCurrentFileBeforeSwitch())) return;
+    await action();
+  }
+
+  async function runWriteThreadAction(
+    id: string,
+    action?: (threadId: string) => void | Promise<void>,
+  ): Promise<void> {
+    await runWriteSessionAction(() => action?.(id));
+  }
+
   async function flushSave(): Promise<boolean> {
     if (savePromiseRef.current) return savePromiseRef.current;
     savePromiseRef.current = flushSaveNow();
@@ -625,6 +687,8 @@ export function WriteWorkspaceView({
 
   async function requestCompletion(requestId: number): Promise<void> {
     if (!activePath || !state.workspaceRoot) return;
+    const requestedPath = activePath;
+    const requestedWorkspace = state.workspaceRoot;
     const completionContext = getWriteCompletionRequestContext({
       content,
       selection: editorSelection,
@@ -639,12 +703,21 @@ export function WriteWorkspaceView({
     }
     try {
       const result = await window.agentApi.write.complete({
-        workspace: state.workspaceRoot,
-        path: activePath,
+        workspace: requestedWorkspace,
+        path: requestedPath,
         prefix: completionContext.prefix,
         suffix: completionContext.suffix,
       });
-      if (requestId !== completionRequestId.current) return;
+      if (!shouldApplyWriteCompletionResult({
+        requestId,
+        latestRequestId: completionRequestId.current,
+        requestedWorkspace,
+        currentWorkspace: workspaceRootRef.current,
+        requestedPath,
+        currentPath: activePathRef.current,
+      })) {
+        return;
+      }
       if (result.ok) {
         setCompletion(result.value.score > 0 ? result.value.completion : "");
         return;
@@ -653,7 +726,16 @@ export function WriteWorkspaceView({
       setErrorMessage(result.message);
       setStatus("error");
     } catch (error) {
-      if (requestId !== completionRequestId.current) return;
+      if (!shouldApplyWriteCompletionResult({
+        requestId,
+        latestRequestId: completionRequestId.current,
+        requestedWorkspace,
+        currentWorkspace: workspaceRootRef.current,
+        requestedPath,
+        currentPath: activePathRef.current,
+      })) {
+        return;
+      }
       setCompletion("");
       setErrorMessage(messageOf(error));
       setStatus("error");
@@ -666,6 +748,7 @@ export function WriteWorkspaceView({
       const normalizedSelection = normalizeWriteEditorSelection(editorSelection, content.length);
       const nextState = getWriteCompletionAcceptState(content, completion, editorSelection);
       const nextCaret = normalizedSelection.selectionStart + completion.length;
+      invalidateCompletionRequests();
       contentRef.current = nextState.content;
       setContent(nextState.content);
       setCompletion(nextState.completion);
@@ -683,10 +766,17 @@ export function WriteWorkspaceView({
     nextSelection?: WriteEditorSelectionState,
   ): void {
     const nextState = getWriteDocumentEditState(nextContent);
+    invalidateCompletionRequests();
     contentRef.current = nextState.content;
     setContent(nextState.content);
     setCompletion(nextState.completion);
     if (nextSelection) setEditorSelection(nextSelection);
+  }
+
+  function handleEditorSelectionChange(nextSelection: WriteEditorSelectionState): void {
+    if (isWriteEditorSelectionEqual(editorSelection, nextSelection)) return;
+    invalidateCompletionRequests();
+    setEditorSelection(nextSelection);
   }
 
   async function handleWriteComposerRequest(
@@ -744,7 +834,11 @@ export function WriteWorkspaceView({
           flex: `0 0 ${state.leftSidebarWidth}px`,
         }}
       >
-        <div className="ds-write-route-actions">
+        <div
+          className="ds-write-route-actions"
+          role="group"
+          aria-label={t("routes.switchWorkbench")}
+        >
           <button
             type="button"
             className="ds-pill"
@@ -754,230 +848,276 @@ export function WriteWorkspaceView({
           </button>
           <button
             type="button"
+            className="ds-pill is-active"
+            aria-current="page"
+          >
+            {t("routes.write")}
+          </button>
+          <button
+            type="button"
             className="ds-pill"
             onClick={() => void navigateFromWrite("settings")}
           >
             {t("common.settings")}
           </button>
         </div>
-        <div className="ds-write-sidebar-actions">
-          <button
-            type="button"
-            className="ds-pill"
-            onClick={() => void loadList(undefined, search, { saveBeforeLoad: true })}
-          >
-            {t("write.openWorkspace")}
-          </button>
-          {state.workspaceRoot ? (
+        <section className="ds-write-sidebar-section">
+          <div className="ds-write-sidebar-section-header">
+            <div>
+              <strong>{t("write.workspaceTitle")}</strong>
+              <span>{state.workspaceRoot || t("threads.noWorkspace")}</span>
+            </div>
+          </div>
+          <div className="ds-write-sidebar-actions">
             <button
               type="button"
               className="ds-pill"
+              onClick={() => void loadList(undefined, search, { saveBeforeLoad: true })}
+            >
+              {t("write.openWorkspace")}
+            </button>
+            <button
+              type="button"
+              className="ds-pill"
+              disabled={!state.workspaceRoot}
               onClick={() => void loadList(state.workspaceRoot, search, { saveBeforeLoad: true })}
             >
               {t("write.refresh")}
             </button>
-          ) : null}
-        </div>
-        {state.workspaceRoot ? (
+          </div>
           <div
             className="ds-sidebar-workspace ds-write-workspace-label"
-            title={state.workspaceRoot}
+            title={state.workspaceRoot || t("threads.noWorkspace")}
           >
-            {state.workspaceRoot}
+            {state.workspaceRoot || t("threads.noWorkspace")}
           </div>
-        ) : null}
-        <div className="ds-write-document-toolbar">
-          <div>
-            <strong>{t("write.documentsTitle")}</strong>
-            <span>{t("write.documentsCount", { count: files.length })}</span>
+        </section>
+        <section className="ds-write-sidebar-section ds-write-sessions-section">
+          <div className="ds-write-sidebar-section-header">
+            <div>
+              <strong>{t("write.sessionsTitle")}</strong>
+              <span>{t("write.sessionsCount", { count: writeThreads.length })}</span>
+            </div>
+            <button
+              type="button"
+              className="ds-pill is-accent"
+              onClick={() => void runWriteSessionAction(onNewWriteThread)}
+              disabled={!onNewWriteThread}
+            >
+              {t("threads.newChat")}
+            </button>
           </div>
           <button
             type="button"
-            className="ds-pill is-accent"
-            onClick={beginCreateDocument}
-            disabled={!state.workspaceRoot || documentActionRunning}
+            className="ds-sidebar-archive-toggle ds-write-archive-toggle"
+            onClick={onToggleArchivedThreads}
+            disabled={!onToggleArchivedThreads}
           >
-            {t("write.newDocument")}
+            {showArchivedThreads ? t("threads.hideArchived") : t("threads.showArchived")}
           </button>
-        </div>
-        {creatingDocument ? (
-          <form className="ds-write-document-form" onSubmit={(event) => void submitCreateDocument(event)}>
-            <input
-              value={createPath}
-              onChange={(event) => setCreatePath(event.target.value)}
-              placeholder={t("write.documentPathPlaceholder")}
-              aria-label={t("write.documentPathPlaceholder")}
-              autoFocus
-            />
-            <div>
-              <button
-                type="submit"
-                className="ds-pill is-accent"
-                disabled={documentActionRunning}
-              >
-                {t("write.createDocument")}
-              </button>
-              <button
-                type="button"
-                className="ds-pill"
-                onClick={cancelCreateDocument}
-                disabled={documentActionRunning}
-              >
-                {t("common.cancel")}
-              </button>
-            </div>
-          </form>
-        ) : null}
-        <div className="ds-write-search">
-          <input
-            value={search}
-            onChange={(event) => {
-              const nextSearch = event.target.value;
-              setSearch(nextSearch);
-              if (state.workspaceRoot) {
-                clearSearchDebounceTimer();
-                searchDebounceTimerRef.current = window.setTimeout(() => {
-                  searchDebounceTimerRef.current = null;
-                  void loadList(state.workspaceRoot, nextSearch, { saveBeforeLoad: false });
-                }, WRITE_SEARCH_DEBOUNCE_MS);
-              }
-            }}
-            placeholder={t("write.searchPlaceholder")}
-            aria-label={t("write.searchPlaceholder")}
+          <ThreadSessionList
+            threads={writeThreads}
+            className="ds-write-session-list"
+            onSelectThread={(id) => void runWriteThreadAction(id, onSelectWriteThread)}
+            onDeleteThread={(id) => runWriteThreadAction(id, onDeleteWriteThread)}
+            onArchiveThread={(id) => runWriteThreadAction(id, onArchiveWriteThread)}
+            onRestoreThread={(id) => runWriteThreadAction(id, onRestoreWriteThread)}
           />
-          {search ? (
+        </section>
+        <section className="ds-write-sidebar-section ds-write-documents-section">
+          <div className="ds-write-document-toolbar">
+            <div>
+              <strong>{t("write.documentsTitle")}</strong>
+              <span>{t("write.documentsCount", { count: files.length })}</span>
+            </div>
             <button
               type="button"
-              className="ds-write-search-clear"
-              onClick={handleClearSearch}
-              aria-label={t("write.clearSearch")}
-              title={t("write.clearSearch")}
+              className="ds-pill is-accent"
+              onClick={beginCreateDocument}
+              disabled={!state.workspaceRoot || documentActionRunning}
             >
-              {WRITE_SEARCH_CLEAR_BUTTON_TEXT}
+              {t("write.newDocument")}
             </button>
+          </div>
+          {creatingDocument ? (
+            <form className="ds-write-document-form" onSubmit={(event) => void submitCreateDocument(event)}>
+              <input
+                value={createPath}
+                onChange={(event) => setCreatePath(event.target.value)}
+                placeholder={t("write.documentPathPlaceholder")}
+                aria-label={t("write.documentPathPlaceholder")}
+                autoFocus
+              />
+              <div>
+                <button
+                  type="submit"
+                  className="ds-pill is-accent"
+                  disabled={documentActionRunning}
+                >
+                  {t("write.createDocument")}
+                </button>
+                <button
+                  type="button"
+                  className="ds-pill"
+                  onClick={cancelCreateDocument}
+                  disabled={documentActionRunning}
+                >
+                  {t("common.cancel")}
+                </button>
+              </div>
+            </form>
           ) : null}
-        </div>
-        <div
-          className="ds-sidebar-list"
-          onContextMenu={(event) => openDocumentContextMenu(event, null)}
-        >
-          {listState === "loading" ? (
-            <div className="ds-sidebar-empty">{t("write.loadingFiles")}</div>
-          ) : null}
-          {listState === "no-workspace" ? (
-            <div className="ds-sidebar-empty">{t("write.noWorkspace")}</div>
-          ) : null}
-          {listState === "empty" ? (
-            <div className="ds-sidebar-empty">{t("write.emptyFiles")}</div>
-          ) : null}
-          {listState === "empty-search" ? (
-            <div className="ds-sidebar-empty">{t("write.emptySearch", { search })}</div>
-          ) : null}
-          {files.map((file) => {
-            const isActive = file.path === activePath;
-            const isRenaming = renamingPath === file.path;
-            const isConfirmingDelete = deleteConfirmPath === file.path;
-            const isBusy =
-              (documentAction?.kind === "delete" && documentAction.path === file.path) ||
-              (documentAction?.kind === "rename" && documentAction.path === file.path);
-            return (
-              <div
-                key={file.path}
-                className={`ds-write-file-row ${isActive ? "is-active" : ""} ${isConfirmingDelete ? "is-confirming-delete" : ""} ${isBusy ? "is-busy" : ""}`}
-                onContextMenu={(event) => openDocumentContextMenu(event, file.path)}
-                aria-busy={isBusy || undefined}
+          <div className="ds-write-search">
+            <input
+              value={search}
+              onChange={(event) => {
+                const nextSearch = event.target.value;
+                setSearch(nextSearch);
+                if (state.workspaceRoot) {
+                  clearSearchDebounceTimer();
+                  searchDebounceTimerRef.current = window.setTimeout(() => {
+                    searchDebounceTimerRef.current = null;
+                    void loadList(state.workspaceRoot, nextSearch, { saveBeforeLoad: false });
+                  }, WRITE_SEARCH_DEBOUNCE_MS);
+                }
+              }}
+              placeholder={t("write.searchPlaceholder")}
+              aria-label={t("write.searchPlaceholder")}
+            />
+            {search ? (
+              <button
+                type="button"
+                className="ds-write-search-clear"
+                onClick={handleClearSearch}
+                aria-label={t("write.clearSearch")}
+                title={t("write.clearSearch")}
               >
-                {isRenaming ? (
-                  <form
-                    className="ds-write-document-form is-inline"
-                    onSubmit={(event) => void submitRenameDocument(event)}
-                  >
-                    <input
-                      value={renamePath}
-                      onChange={(event) => setRenamePath(event.target.value)}
-                      aria-label={t("write.renameDocument")}
-                      autoFocus
-                    />
-                    <div>
-                      <button
-                        type="submit"
-                        className="ds-pill is-accent"
-                        disabled={documentActionRunning}
-                      >
-                        {t("write.saveName")}
-                      </button>
-                      <button
-                        type="button"
-                        className="ds-pill"
-                        onClick={cancelRenameDocument}
-                        disabled={documentActionRunning}
-                      >
-                        {t("common.cancel")}
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      className="ds-write-file-row-main"
-                      onClick={() => void openFile(file.path)}
-                      aria-current={isActive ? "page" : undefined}
-                      title={`${file.path} | ${formatWriteFileMeta(file)}`}
+                {WRITE_SEARCH_CLEAR_BUTTON_TEXT}
+              </button>
+            ) : null}
+          </div>
+          <div
+            className="ds-write-document-list"
+            onContextMenu={(event) => openDocumentContextMenu(event, null)}
+          >
+            {listState === "loading" ? (
+              <div className="ds-sidebar-empty">{t("write.loadingFiles")}</div>
+            ) : null}
+            {listState === "no-workspace" ? (
+              <div className="ds-sidebar-empty">{t("write.noWorkspace")}</div>
+            ) : null}
+            {listState === "empty" ? (
+              <div className="ds-sidebar-empty">{t("write.emptyFiles")}</div>
+            ) : null}
+            {listState === "empty-search" ? (
+              <div className="ds-sidebar-empty">{t("write.emptySearch", { search })}</div>
+            ) : null}
+            {files.map((file) => {
+              const isActive = file.path === activePath;
+              const isRenaming = renamingPath === file.path;
+              const isConfirmingDelete = deleteConfirmPath === file.path;
+              const isBusy =
+                (documentAction?.kind === "delete" && documentAction.path === file.path) ||
+                (documentAction?.kind === "rename" && documentAction.path === file.path);
+              return (
+                <div
+                  key={file.path}
+                  className={`ds-write-file-row ${isActive ? "is-active" : ""} ${isConfirmingDelete ? "is-confirming-delete" : ""} ${isBusy ? "is-busy" : ""}`}
+                  onContextMenu={(event) => openDocumentContextMenu(event, file.path)}
+                  aria-busy={isBusy || undefined}
+                >
+                  {isRenaming ? (
+                    <form
+                      className="ds-write-document-form is-inline"
+                      onSubmit={(event) => void submitRenameDocument(event)}
                     >
-                      <span>{file.path}</span>
-                      <small>{formatWriteFileMeta(file)}</small>
-                    </button>
-                    {isConfirmingDelete ? (
-                      <div className="ds-write-file-delete-confirm">
-                        <span>{t("write.deleteConfirmShort")}</span>
+                      <input
+                        value={renamePath}
+                        onChange={(event) => setRenamePath(event.target.value)}
+                        aria-label={t("write.renameDocument")}
+                        autoFocus
+                      />
+                      <div>
                         <button
-                          type="button"
-                          className="ds-write-file-action is-danger"
-                          onClick={() => void confirmDeleteDocument(file.path)}
+                          type="submit"
+                          className="ds-pill is-accent"
                           disabled={documentActionRunning}
                         >
-                          {t("write.deleteConfirmAction")}
+                          {t("write.saveName")}
                         </button>
                         <button
                           type="button"
-                          className="ds-write-file-action"
-                          onClick={cancelDeleteDocument}
+                          className="ds-pill"
+                          onClick={cancelRenameDocument}
                           disabled={documentActionRunning}
                         >
                           {t("common.cancel")}
                         </button>
                       </div>
-                    ) : (
-                      <div className="ds-write-file-actions">
-                        <button
-                          type="button"
-                          className="ds-write-file-action"
-                          onClick={() => beginRenameDocument(file.path)}
-                          disabled={documentActionRunning}
-                          title={t("write.renameDocument")}
-                          aria-label={t("write.renameDocument")}
-                        >
-                          {t("write.renameShort")}
-                        </button>
-                        <button
-                          type="button"
-                          className="ds-write-file-action"
-                          onClick={() => requestDeleteDocument(file.path)}
-                          disabled={documentActionRunning}
-                          title={t("write.deleteDocument")}
-                          aria-label={t("write.deleteDocument")}
-                        >
-                          {t("write.deleteShort")}
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                    </form>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="ds-write-file-row-main"
+                        onClick={() => void openFile(file.path)}
+                        aria-current={isActive ? "page" : undefined}
+                        title={`${file.path} | ${formatWriteFileMeta(file)}`}
+                      >
+                        <span>{file.path}</span>
+                        <small>{formatWriteFileMeta(file)}</small>
+                      </button>
+                      {isConfirmingDelete ? (
+                        <div className="ds-write-file-delete-confirm">
+                          <span>{t("write.deleteConfirmShort")}</span>
+                          <button
+                            type="button"
+                            className="ds-write-file-action is-danger"
+                            onClick={() => void confirmDeleteDocument(file.path)}
+                            disabled={documentActionRunning}
+                          >
+                            {t("write.deleteConfirmAction")}
+                          </button>
+                          <button
+                            type="button"
+                            className="ds-write-file-action"
+                            onClick={cancelDeleteDocument}
+                            disabled={documentActionRunning}
+                          >
+                            {t("common.cancel")}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="ds-write-file-actions">
+                          <button
+                            type="button"
+                            className="ds-write-file-action"
+                            onClick={() => beginRenameDocument(file.path)}
+                            disabled={documentActionRunning}
+                            title={t("write.renameDocument")}
+                            aria-label={t("write.renameDocument")}
+                          >
+                            {t("write.renameShort")}
+                          </button>
+                          <button
+                            type="button"
+                            className="ds-write-file-action"
+                            onClick={() => requestDeleteDocument(file.path)}
+                            disabled={documentActionRunning}
+                            title={t("write.deleteDocument")}
+                            aria-label={t("write.deleteDocument")}
+                          >
+                            {t("write.deleteShort")}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
         {contextMenu ? (
           <div
             className="ds-write-context-menu"
@@ -1074,7 +1214,7 @@ export function WriteWorkspaceView({
           activePath={activePath}
           saveDisabled={saveDisabled}
           onContentChange={handleEditorContentChange}
-          onSelectionChange={setEditorSelection}
+          onSelectionChange={handleEditorSelectionChange}
           onEditorKeyDown={handleEditorKeyDown}
           onSave={() => void save()}
         />
@@ -1153,6 +1293,21 @@ export function shouldApplyWriteOpenResult(input: {
   );
 }
 
+export function shouldApplyWriteCompletionResult(input: {
+  requestId: number;
+  latestRequestId: number;
+  requestedWorkspace: string;
+  currentWorkspace: string;
+  requestedPath: string;
+  currentPath: string | null;
+}): boolean {
+  return (
+    input.requestId === input.latestRequestId &&
+    input.requestedWorkspace === input.currentWorkspace &&
+    input.requestedPath === input.currentPath
+  );
+}
+
 export async function shouldUseSelectedWriteWorkspace(
   workspace: string,
   onWorkspaceSelected?: (workspace: string) => boolean | void | Promise<boolean | void>,
@@ -1160,19 +1315,35 @@ export async function shouldUseSelectedWriteWorkspace(
   return (await onWorkspaceSelected?.(workspace)) !== false;
 }
 
-export function getWriteWorkspaceSwitchState(): {
+export function getWriteWorkspaceSwitchState(): WriteDocumentViewState & {
   files: WriteFileEntry[];
-  activePath: null;
-  content: string;
-  savedContent: string;
-  completion: string;
 } {
   return {
     files: [],
+    ...getWriteClearedDocumentState(),
+  };
+}
+
+export function getWriteOpenDocumentState(
+  path: string,
+  content: string,
+): WriteDocumentViewState {
+  return {
+    activePath: path,
+    content,
+    savedContent: content,
+    completion: "",
+    selection: { selectionStart: 0, selectionEnd: 0 },
+  };
+}
+
+export function getWriteClearedDocumentState(): WriteDocumentViewState {
+  return {
     activePath: null,
     content: "",
     savedContent: "",
     completion: "",
+    selection: { selectionStart: 0, selectionEnd: 0 },
   };
 }
 
@@ -1226,14 +1397,20 @@ export function getWriteCompletionAcceptState(
 export function getWriteCompletionRequestContext({
   content,
   selection,
+  maxPrefixChars = WRITE_COMPLETION_PREFIX_MAX_CHARS,
+  maxSuffixChars = WRITE_COMPLETION_SUFFIX_MAX_CHARS,
 }: {
   content: string;
   selection: WriteEditorSelectionState;
+  maxPrefixChars?: number;
+  maxSuffixChars?: number;
 }): { prefix: string; suffix: string } {
   const normalized = normalizeWriteEditorSelection(selection, content.length);
+  const prefixStart = Math.max(0, normalized.selectionStart - Math.max(0, maxPrefixChars));
+  const suffixEnd = Math.min(content.length, normalized.selectionEnd + Math.max(0, maxSuffixChars));
   return {
-    prefix: content.slice(0, normalized.selectionStart),
-    suffix: content.slice(normalized.selectionEnd),
+    prefix: content.slice(prefixStart, normalized.selectionStart),
+    suffix: content.slice(normalized.selectionEnd, suffixEnd),
   };
 }
 
@@ -1463,6 +1640,13 @@ export function normalizeWriteEditorSelection(
   };
 }
 
+export function isWriteEditorSelectionEqual(
+  left: WriteEditorSelectionState,
+  right: WriteEditorSelectionState,
+): boolean {
+  return left.selectionStart === right.selectionStart && left.selectionEnd === right.selectionEnd;
+}
+
 export function clampWriteSidebarWidth(width: number): number {
   return Math.min(LEFT_SIDEBAR_MAX_WIDTH, Math.max(LEFT_SIDEBAR_MIN_WIDTH, width));
 }
@@ -1477,6 +1661,32 @@ export function getNextWriteSidebarWidth(
   if (key === "Home") return LEFT_SIDEBAR_MIN_WIDTH;
   if (key === "End") return LEFT_SIDEBAR_MAX_WIDTH;
   return currentWidth;
+}
+
+export function getWriteContextMenuPosition({
+  clientX,
+  clientY,
+  viewportWidth,
+  viewportHeight,
+  menuWidth = WRITE_CONTEXT_MENU_WIDTH_PX,
+  menuHeight = WRITE_CONTEXT_MENU_HEIGHT_PX,
+  margin = WRITE_CONTEXT_MENU_VIEWPORT_MARGIN_PX,
+}: {
+  clientX: number;
+  clientY: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  menuWidth?: number;
+  menuHeight?: number;
+  margin?: number;
+}): { x: number; y: number } {
+  const safeMargin = Math.max(0, margin);
+  const maxX = Math.max(safeMargin, viewportWidth - menuWidth - safeMargin);
+  const maxY = Math.max(safeMargin, viewportHeight - menuHeight - safeMargin);
+  return {
+    x: Math.min(maxX, Math.max(safeMargin, clientX)),
+    y: Math.min(maxY, Math.max(safeMargin, clientY)),
+  };
 }
 
 export function getWriteSidebarDividerClassName(isDragging: boolean): string {

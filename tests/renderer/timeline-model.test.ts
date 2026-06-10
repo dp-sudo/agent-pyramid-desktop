@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Item, ToolItem } from "../../src/shared/agent-contracts";
-import { groupTimelineTurns, summarizeToolItem } from "../../src/renderer/src/ui/components/chat/timeline-model";
+import {
+  groupTimelineTurns,
+  summarizeToolItem,
+  summarizeToolItemHeader,
+  summarizeToolItemPreview,
+} from "../../src/renderer/src/ui/components/chat/timeline-model";
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 
@@ -359,5 +364,59 @@ describe("timeline model", () => {
 
     expect(display.title).toBe("chat.tools.diagnoseFilePath:src/index.ts");
     expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
+  it("summarizes tool headers without formatting result detail", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "run_command",
+      args: { command: "npm run build" },
+      result: { stdout: "x".repeat(100) },
+      status: "running",
+      createdAt,
+    };
+
+    expect(
+      summarizeToolItemHeader(item, (key, options) =>
+        options?.command ? `${key}:${String(options.command)}` : key,
+      ),
+    ).toEqual({
+      title: "chat.tools.runCommandCommand:npm run build",
+      statusText: "chat.toolStatus.running",
+      tone: "running",
+    });
+  });
+
+  it("summarizes tool detail previews without exposing full long results", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "read_file",
+      args: { path: "src/main/index.ts" },
+      result: { content: "abcdef" },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItemPreview(
+      item,
+      (key, options) => options?.path ? `${key}:${String(options.path)}` : key,
+      40,
+    );
+
+    expect(display).toEqual({
+      title: "chat.tools.readFilePath:src/main/index.ts",
+      detail: "{\n  \"path\": \"src/main/index.ts\"\n}\n\nabcde",
+      detailTruncated: true,
+      hiddenCharCount: 1,
+      statusText: "chat.toolStatus.completed",
+      tone: "success",
+    });
   });
 });

@@ -26,9 +26,7 @@ export function groupTimelineTurns(items: Item[]): TimelineTurn[] {
   const byTurnId = new Map<string, MutableTimelineTurn>();
 
   for (const item of items) {
-    const turnId = "turnId" in item && typeof item.turnId === "string"
-      ? item.turnId
-      : `item:${item.id}`;
+    const turnId = getTimelineItemTurnId(item);
     let turn = byTurnId.get(turnId);
     if (!turn) {
       turn = { id: turnId, user: null, blocks: [] };
@@ -44,6 +42,12 @@ export function groupTimelineTurns(items: Item[]): TimelineTurn[] {
   }
 
   return turns.map((turn) => deriveTurnSections(turn));
+}
+
+export function getTimelineItemTurnId(item: Item): string {
+  return "turnId" in item && typeof item.turnId === "string"
+    ? item.turnId
+    : `item:${item.id}`;
 }
 
 function deriveTurnSections(turn: MutableTimelineTurn): TimelineTurn {
@@ -115,18 +119,52 @@ export interface ToolDisplay {
   tone: "neutral" | "running" | "success" | "danger";
 }
 
+export interface ToolPreviewDisplay extends ToolDisplay {
+  detailTruncated: boolean;
+  hiddenCharCount: number;
+}
+
+const JSON_PREVIEW_COLLECTION_LIMIT = 24;
+const JSON_PREVIEW_MAX_DEPTH = 4;
+
 export function summarizeToolItem(
   item: ToolItem,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): ToolDisplay {
+  const header = summarizeToolItemHeader(item, t);
+  return {
+    ...header,
+    detail: formatToolDetail(item),
+  };
+}
+
+export function summarizeToolItemPreview(
+  item: ToolItem,
+  t: (key: string, options?: Record<string, unknown>) => string,
+  maxDetailChars: number,
+): ToolPreviewDisplay {
+  // Inspector panels need bounded summaries; ChatBlock still owns the full
+  // detail path so explicit timeline expansion can show complete tool output.
+  const header = summarizeToolItemHeader(item, t);
+  const detail = formatToolDetailPreview(item, maxDetailChars);
+  return {
+    ...header,
+    detail: detail.text,
+    detailTruncated: detail.truncated,
+    hiddenCharCount: detail.hiddenCharCount,
+  };
+}
+
+export function summarizeToolItemHeader(
+  item: ToolItem,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): Omit<ToolDisplay, "detail"> {
   const path = readStringArg(item.args, "path") ?? readStringArg(item.args, "workspace");
   const query = readStringArg(item.args, "query");
   const command = readStringArg(item.args, "command");
   const title = titleForTool(item.name, { path, query, command }, t);
-  const detail = formatToolDetail(item);
   return {
     title,
-    detail,
     statusText: statusText(item.status, t),
     tone: statusTone(item.status),
   };
@@ -196,6 +234,46 @@ function formatToolDetail(item: ToolItem): string {
   return parts.join("\n\n");
 }
 
+function formatToolDetailPreview(
+  item: ToolItem,
+  maxChars: number,
+): { text: string; truncated: boolean; hiddenCharCount: number } {
+  const normalizedMaxChars = normalizePreviewLimit(maxChars);
+  let text = "";
+  let truncated = false;
+  let hiddenCharCount = 0;
+
+  const appendPart = (part: { text: string; truncated: boolean; hiddenCharCount: number }): void => {
+    if (!part.text.trim()) {
+      truncated = truncated || part.truncated;
+      hiddenCharCount += part.hiddenCharCount;
+      return;
+    }
+
+    const separator = text ? "\n\n" : "";
+    const remaining = normalizedMaxChars - text.length - separator.length;
+    if (remaining <= 0) {
+      truncated = true;
+      hiddenCharCount += part.text.length + part.hiddenCharCount;
+      return;
+    }
+
+    const visibleText = part.text.length > remaining ? part.text.slice(0, remaining) : part.text;
+    text += `${separator}${visibleText}`;
+    truncated = truncated || part.truncated || visibleText.length < part.text.length;
+    hiddenCharCount += part.hiddenCharCount + Math.max(0, part.text.length - visibleText.length);
+  };
+
+  appendPart(stringifyJsonPreview(item.args, normalizedMaxChars));
+  appendPart(extractToolResultPreview(item.result, normalizedMaxChars - text.length));
+
+  return {
+    text,
+    truncated,
+    hiddenCharCount: normalizeHiddenCharCount(truncated, hiddenCharCount),
+  };
+}
+
 function extractToolResultText(result: unknown): string {
   if (result === undefined) return "";
   if (typeof result === "string") return result;
@@ -204,6 +282,111 @@ function extractToolResultText(result: unknown): string {
     return typeof content === "string" ? content : JSON.stringify(content, null, 2);
   }
   return JSON.stringify(result, null, 2);
+}
+
+function extractToolResultPreview(
+  result: unknown,
+  maxChars: number,
+): { text: string; truncated: boolean; hiddenCharCount: number } {
+  const normalizedMaxChars = normalizePreviewLimit(maxChars);
+  if (result === undefined) return { text: "", truncated: false, hiddenCharCount: 0 };
+  if (typeof result === "string") return previewPlainText(result, normalizedMaxChars);
+  if (result && typeof result === "object" && "content" in result) {
+    const content = (result as { content: unknown }).content;
+    return typeof content === "string"
+      ? previewPlainText(content, normalizedMaxChars)
+      : stringifyJsonPreview(content, normalizedMaxChars);
+  }
+  return stringifyJsonPreview(result, normalizedMaxChars);
+}
+
+function previewPlainText(
+  text: string,
+  maxChars: number,
+): { text: string; truncated: boolean; hiddenCharCount: number } {
+  const normalizedMaxChars = normalizePreviewLimit(maxChars);
+  if (text.length <= normalizedMaxChars) {
+    return { text, truncated: false, hiddenCharCount: 0 };
+  }
+  return {
+    text: text.slice(0, normalizedMaxChars),
+    truncated: true,
+    hiddenCharCount: text.length - normalizedMaxChars,
+  };
+}
+
+function stringifyJsonPreview(
+  value: unknown,
+  maxChars: number,
+): { text: string; truncated: boolean; hiddenCharCount: number } {
+  const normalizedMaxChars = normalizePreviewLimit(maxChars);
+  const state = { truncated: false, hiddenCharCount: 0 };
+  const previewValue = normalizeJsonPreviewValue(value, normalizedMaxChars, state, 0);
+  const text = JSON.stringify(previewValue, null, 2) ?? "";
+  if (text.length <= normalizedMaxChars) {
+    return {
+      text,
+      truncated: state.truncated,
+      hiddenCharCount: normalizeHiddenCharCount(state.truncated, state.hiddenCharCount),
+    };
+  }
+  return {
+    text: text.slice(0, normalizedMaxChars),
+    truncated: true,
+    hiddenCharCount: normalizeHiddenCharCount(
+      true,
+      state.hiddenCharCount + text.length - normalizedMaxChars,
+    ),
+  };
+}
+
+function normalizeJsonPreviewValue(
+  value: unknown,
+  maxStringChars: number,
+  state: { truncated: boolean; hiddenCharCount: number },
+  depth: number,
+): unknown {
+  if (typeof value === "string") {
+    if (value.length <= maxStringChars) return value;
+    state.truncated = true;
+    state.hiddenCharCount += value.length - maxStringChars;
+    return value.slice(0, maxStringChars);
+  }
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= JSON_PREVIEW_MAX_DEPTH) {
+    state.truncated = true;
+    return "[Max preview depth reached]";
+  }
+  if (Array.isArray(value)) {
+    const visible = value
+      .slice(0, JSON_PREVIEW_COLLECTION_LIMIT)
+      .map((entry) => normalizeJsonPreviewValue(entry, maxStringChars, state, depth + 1));
+    if (value.length > visible.length) {
+      state.truncated = true;
+      visible.push(`[${value.length - visible.length} more items hidden]`);
+    }
+    return visible;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  const visibleEntries = entries.slice(0, JSON_PREVIEW_COLLECTION_LIMIT);
+  const preview: Record<string, unknown> = {};
+  for (const [key, entryValue] of visibleEntries) {
+    preview[key] = normalizeJsonPreviewValue(entryValue, maxStringChars, state, depth + 1);
+  }
+  if (entries.length > visibleEntries.length) {
+    state.truncated = true;
+    preview.__preview__ = `${entries.length - visibleEntries.length} more fields hidden`;
+  }
+  return preview;
+}
+
+function normalizePreviewLimit(limit: number): number {
+  return Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 1));
+}
+
+function normalizeHiddenCharCount(truncated: boolean, hiddenCharCount: number): number {
+  return truncated ? Math.max(1, hiddenCharCount) : 0;
 }
 
 function readStringArg(args: Record<string, unknown>, key: string): string | undefined {

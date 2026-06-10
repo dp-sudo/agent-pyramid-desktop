@@ -5,6 +5,7 @@ import {
 } from "../write/WriteWorkspaceView";
 import type { ApprovalPendingDecision } from "../chat/ChatBlock";
 import { WorkbenchErrorToast } from "./WorkbenchErrorToast";
+import type { ThreadSummary } from "../../../../../shared/agent-contracts";
 
 export interface WriteWorkbenchStageProps {
   onApprove: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
@@ -13,6 +14,14 @@ export interface WriteWorkbenchStageProps {
   onSendAssistantPrompt: (payload: WriteAssistantPromptPayload) => Promise<boolean>;
   onInterruptAssistant: () => void;
   assistantBusy: boolean;
+  writeThreads: ThreadSummary[];
+  onSelectWriteThread: (id: string) => void | Promise<void>;
+  onNewWriteThread: () => void | Promise<void>;
+  onDeleteWriteThread: (id: string) => void | Promise<void>;
+  onArchiveWriteThread: (id: string) => void | Promise<void>;
+  onRestoreWriteThread: (id: string) => void | Promise<void>;
+  showArchivedThreads: boolean;
+  onToggleArchivedThreads: () => void;
   toastMessage: string | null;
   toastEnabled: boolean;
   onDismissToast: () => void;
@@ -25,6 +34,14 @@ export function WriteWorkbenchStage({
   onSendAssistantPrompt,
   onInterruptAssistant,
   assistantBusy,
+  writeThreads,
+  onSelectWriteThread,
+  onNewWriteThread,
+  onDeleteWriteThread,
+  onArchiveWriteThread,
+  onRestoreWriteThread,
+  showArchivedThreads,
+  onToggleArchivedThreads,
   toastMessage,
   toastEnabled,
   onDismissToast,
@@ -38,6 +55,14 @@ export function WriteWorkbenchStage({
         onSendAssistantPrompt={onSendAssistantPrompt}
         onInterruptAssistant={onInterruptAssistant}
         assistantBusy={assistantBusy}
+        writeThreads={writeThreads}
+        onSelectWriteThread={onSelectWriteThread}
+        onNewWriteThread={onNewWriteThread}
+        onDeleteWriteThread={onDeleteWriteThread}
+        onArchiveWriteThread={onArchiveWriteThread}
+        onRestoreWriteThread={onRestoreWriteThread}
+        showArchivedThreads={showArchivedThreads}
+        onToggleArchivedThreads={onToggleArchivedThreads}
       />
       <WorkbenchErrorToast
         message={toastMessage}
