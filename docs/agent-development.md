@@ -70,6 +70,19 @@
 
 ## 变更记录
 
+### 2026-06-10 - Workbench stage component split
+- Split the renderer workbench stage JSX into `CodeWorkbenchStage` and
+  `WriteWorkbenchStage`, while keeping `Workbench.tsx` as the owner for SSE,
+  IPC, send/interrupt, approval and route orchestration.
+- Split the Write route main panes into controlled `WriteEditorPanel` and
+  `WriteAssistantPanel` components. `WriteWorkspaceView` still owns file list,
+  active file, dirty content, completion, autosave, save refs, workspace refs
+  and Write IPC calls.
+- Added renderer markup coverage for the extracted stage and panel components,
+  including Code composer layout, Write floating toast, editor ghost text and
+  Write composer variant boundaries.
+- Verification: `npm run typecheck`, `npm run test`, `npm run build`.
+
 ### 2026-06-10 - Settings advanced category filter
 - Added a functional "show advanced settings" switch to the Settings sidebar.
   The default view keeps core categories visible, while runtime/model tuning and

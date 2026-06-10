@@ -1,19 +1,18 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
-import { ChatBlock } from "../chat/ChatBlock";
 import {
-  FloatingComposer,
   type FloatingComposerRequestPayload,
 } from "../composer";
 import type { Item, WriteFileEntry } from "../../../../../shared/agent-contracts";
+import { WriteAssistantPanel } from "./WriteAssistantPanel";
+import { WriteEditorPanel, type WriteStatus } from "./WriteEditorPanel";
 
 const AUTOSAVE_DELAY_MS = 800;
 const COMPLETION_DELAY_MS = 650;
 const WRITE_SEARCH_DEBOUNCE_MS = 250;
 const COMPLETION_MIN_TRAILING_CHARS = 10;
 export const WRITE_SEARCH_CLEAR_BUTTON_TEXT = "x";
-type WriteStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
 export interface WriteAssistantPromptPayload extends FloatingComposerRequestPayload {
   text: string;
@@ -365,6 +364,13 @@ export function WriteWorkspaceView({
     }
   }
 
+  function handleEditorContentChange(nextContent: string): void {
+    const nextState = getWriteDocumentEditState(nextContent);
+    contentRef.current = nextState.content;
+    setContent(nextState.content);
+    setCompletion(nextState.completion);
+  }
+
   async function handleWriteComposerRequest(
     composerPayload: FloatingComposerRequestPayload,
   ): Promise<boolean> {
@@ -510,73 +516,28 @@ export function WriteWorkspaceView({
         </div>
       </aside>
       <div className="ds-write-main">
-        <section className="ds-write-editor">
-          <div className="ds-write-editor-frame">
-            <textarea
-              value={content}
-              onChange={(event) => {
-                const nextState = getWriteDocumentEditState(event.target.value);
-                contentRef.current = nextState.content;
-                setContent(nextState.content);
-                setCompletion(nextState.completion);
-              }}
-              onKeyDown={handleEditorKeyDown}
-              placeholder={t("write.editorPlaceholder")}
-              aria-label={t("write.editorPlaceholder")}
-            />
-            {completion ? <div className="ds-write-ghost">{completion}</div> : null}
-          </div>
-          <div className="ds-write-status">
-            {status === "saving" ? t("write.saving") : null}
-            {status === "saved" ? t("write.saved") : null}
-            {status === "error" ? `${t("write.error")}: ${errorMessage ?? ""}` : null}
-            {status === "idle" && activePath ? t("write.activeFile", { path: activePath }) : null}
-            {status === "idle" && !activePath ? t("write.noActiveFile") : null}
-            <button
-              type="button"
-              className="ds-pill is-accent ds-write-save-button"
-              onClick={() => void save()}
-              disabled={saveDisabled}
-            >
-              {content !== savedContent ? t("write.save") : t("write.saved")}
-            </button>
-          </div>
-        </section>
-        <aside className="ds-write-assistant">
-          <div className="ds-write-assistant-header">
-            <div>
-              <strong>{t("write.assistantTitle")}</strong>
-              <span>
-                {activePath
-                  ? t("write.assistantCurrentFile", { path: activePath })
-                  : t("write.assistantNoFile")}
-              </span>
-            </div>
-            {assistantBusy ? <span className="ds-shiny-text">{t("chat.running")}</span> : null}
-          </div>
-          <div ref={assistantMessagesRef} className="ds-write-assistant-messages">
-            {assistantItems.length > 0 ? (
-              assistantItems.map((item) => (
-                <ChatBlock
-                  key={item.id}
-                  item={item}
-                  {...(item.turnId === state.activeTurnId ? { isLive: true } : {})}
-                />
-              ))
-            ) : (
-              <div className="ds-write-assistant-empty">{t("write.assistantEmpty")}</div>
-            )}
-          </div>
-          <div className="ds-write-assistant-composer">
-            <FloatingComposer
-              variant="write"
-              placeholder={t("composer.writePlaceholder")}
-              disabled={!state.workspaceRoot || !onSendAssistantPrompt}
-              onRequestSend={handleWriteComposerRequest}
-              onInterrupt={onInterruptAssistant ?? (() => undefined)}
-            />
-          </div>
-        </aside>
+        <WriteEditorPanel
+          content={content}
+          savedContent={savedContent}
+          completion={completion}
+          status={status}
+          errorMessage={errorMessage}
+          activePath={activePath}
+          saveDisabled={saveDisabled}
+          onContentChange={handleEditorContentChange}
+          onEditorKeyDown={handleEditorKeyDown}
+          onSave={() => void save()}
+        />
+        <WriteAssistantPanel
+          activePath={activePath}
+          activeTurnId={state.activeTurnId}
+          assistantBusy={assistantBusy}
+          assistantItems={assistantItems}
+          assistantMessagesRef={assistantMessagesRef}
+          composerDisabled={!state.workspaceRoot || !onSendAssistantPrompt}
+          onRequestSend={handleWriteComposerRequest}
+          onInterrupt={onInterruptAssistant ?? (() => undefined)}
+        />
       </div>
     </div>
   );

@@ -89,7 +89,7 @@ Implementation entry: `Workbench` when `state.route === "code"`.
 flowchart LR
   Sidebar["Left Sidebar\nThread/workspace navigation"]
   Divider["Resizable divider"]
-  Stage["Chat Stage"]
+  Stage["CodeWorkbenchStage\nChat Stage"]
   Topbar["Topbar"]
   Timeline["MessageTimeline"]
   Composer["FloatingComposer + error toast"]
@@ -117,7 +117,8 @@ Top-level regions:
   - Double click resets width to `LEFT_SIDEBAR_DEFAULT_WIDTH`.
 - Main stage:
   - Class: `ds-stage-surface`.
-  - Code route child: `ds-chat-stage`.
+  - Code route child component: `CodeWorkbenchStage`.
+  - Code route child class: `ds-chat-stage`.
 - Topbar frame:
   - Class: `ds-chat-topbar-frame`.
   - Padding: `--ds-space-3`.
@@ -134,6 +135,8 @@ Top-level regions:
   - Class: `ds-right-inspector`.
   - Width: `state.rightSidebarWidth`.
   - Visible only when `rightPanelMode !== null`.
+  - Rendered by `CodeWorkbenchStage`; `Workbench` keeps SSE, IPC, send,
+    interrupt, approval and route orchestration.
 
 ### Sidebar
 
@@ -519,14 +522,18 @@ Implementation entry: `Workbench` when `state.route === "write"`.
 ```mermaid
 flowchart LR
   Sidebar["Write Sidebar"]
-  Editor["Markdown Editor"]
+  Stage["WriteWorkbenchStage"]
+  Workspace["WriteWorkspaceView"]
+  Editor["WriteEditorPanel\nMarkdown Editor"]
   Ghost["Inline completion ghost"]
   Status["Save/status bar"]
-  Assistant["Write Assistant"]
+  Assistant["WriteAssistantPanel\nWrite Assistant"]
   Messages["Thread messages"]
   Prompt["Explicit assistant input"]
 
-  Sidebar --> Editor
+  Stage --> Workspace
+  Workspace --> Sidebar
+  Workspace --> Editor
   Editor --> Ghost
   Editor --> Status
   Editor --> Assistant
@@ -537,7 +544,11 @@ flowchart LR
 Top-level:
 
 - Shares `ds-stage-surface` from `Workbench`.
+- `WriteWorkbenchStage` wraps `WriteWorkspaceView` and the floating error toast.
 - `WriteWorkspaceView` renders its own sidebar inside the stage.
+- `WriteWorkspaceView` owns file list, active file, dirty content, completion,
+  save refs, autosave timers and Write IPC calls; `WriteEditorPanel` and
+  `WriteAssistantPanel` receive controlled props and callbacks.
 - Sidebar width uses the same `state.leftSidebarWidth`.
 - Main area uses `ds-write-main`: editor remains the primary pane and the
   right assistant pane stays inside the Write route, not the Code composer.
