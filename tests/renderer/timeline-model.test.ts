@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Item, ToolItem } from "../../src/shared/agent-contracts";
 import {
   groupTimelineTurns,
+  sortTimelineItems,
   summarizeToolItem,
   summarizeToolItemHeader,
   summarizeToolItemPreview,
@@ -10,6 +11,32 @@ import {
 const createdAt = "2026-01-01T00:00:00.000Z";
 
 describe("timeline model", () => {
+  it("sorts timeline items by createdAt while preserving stable order for ties", () => {
+    const first = userItem("user-1", "2026-01-01T00:00:01.000Z");
+    const second = userItem("user-2", "2026-01-01T00:00:01.000Z");
+    const older = userItem("user-older", "2026-01-01T00:00:00.000Z");
+
+    expect(sortTimelineItems([first, second, older]).map((item) => item.id)).toEqual([
+      "user-older",
+      "user-1",
+      "user-2",
+    ]);
+  });
+
+  it("groups out-of-order timeline items into chronological turn sections", () => {
+    const items: Item[] = [
+      assistantItem("assistant-final", "turn-1", "2026-01-01T00:00:03.000Z"),
+      userItem("user-1", "2026-01-01T00:00:01.000Z", "turn-1"),
+      reasoningItem("reasoning-1", "turn-1", "2026-01-01T00:00:02.000Z"),
+    ];
+
+    const [turn] = groupTimelineTurns(items);
+
+    expect(turn.user?.id).toBe("user-1");
+    expect(turn.processItems.map((item) => item.id)).toEqual(["reasoning-1"]);
+    expect(turn.assistantItems.map((item) => item.id)).toEqual(["assistant-final"]);
+  });
+
   it("groups process items before the final assistant answer within a turn", () => {
     const items: Item[] = [
       {
@@ -420,3 +447,48 @@ describe("timeline model", () => {
     });
   });
 });
+
+function userItem(
+  id: string,
+  createdAtValue: string,
+  turnId = id,
+): Extract<Item, { kind: "user" }> {
+  return {
+    kind: "user",
+    id,
+    threadId: "thread-1",
+    turnId,
+    text: id,
+    createdAt: createdAtValue,
+  };
+}
+
+function assistantItem(
+  id: string,
+  turnId: string,
+  createdAtValue: string,
+): Extract<Item, { kind: "assistant" }> {
+  return {
+    kind: "assistant",
+    id,
+    threadId: "thread-1",
+    turnId,
+    text: id,
+    createdAt: createdAtValue,
+  };
+}
+
+function reasoningItem(
+  id: string,
+  turnId: string,
+  createdAtValue: string,
+): Extract<Item, { kind: "reasoning" }> {
+  return {
+    kind: "reasoning",
+    id,
+    threadId: "thread-1",
+    turnId,
+    text: id,
+    createdAt: createdAtValue,
+  };
+}

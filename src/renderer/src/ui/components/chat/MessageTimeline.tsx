@@ -7,7 +7,7 @@ import {
 import { RUNTIME_READ_ONLY_TOOL_NAMES, type Item } from "../../../../../shared/agent-contracts";
 import { ChatBlock, type ApprovalPendingDecision } from "./ChatBlock";
 import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
-import { getTimelineItemTurnId, groupTimelineTurns } from "./timeline-model";
+import { getTimelineItemTurnId, groupTimelineTurns, sortTimelineItems } from "./timeline-model";
 
 interface MessageTimelineProps {
   onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
@@ -33,7 +33,7 @@ export function MessageTimeline({
     [showAllTurns, state.items],
   );
   const turns = useMemo(
-    () => groupTimelineTurns(visibleItemState.visibleItems),
+    () => groupTimelineTurns(visibleItemState.visibleItems, { sorted: true }),
     [visibleItemState.visibleItems],
   );
   const activeInFlightTurn = getActiveThreadInFlightTurn(state);
@@ -153,21 +153,23 @@ export function MessageTimeline({
                     <span>{processLabel}</span>
                     {isActiveTurn ? <span className="ds-shiny-text">{t("chat.running")}</span> : null}
                   </summary>
-                  <div className="ds-work-process-body">
-                    {processItems.map((item) => (
-                      <ChatBlock
-                        key={item.id}
-                        item={item}
-                        nested
-                        {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
-                        {...(onApprove ? { onApprove } : {})}
-                        approvalPendingDecision={getApprovalPendingDecision(
-                          item,
-                          pendingApprovalResponses,
-                        )}
-                      />
-                    ))}
-                  </div>
+                  {processOpen ? (
+                    <div className="ds-work-process-body">
+                      {processItems.map((item) => (
+                        <ChatBlock
+                          key={item.id}
+                          item={item}
+                          nested
+                          {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
+                          {...(onApprove ? { onApprove } : {})}
+                          approvalPendingDecision={getApprovalPendingDecision(
+                            item,
+                            pendingApprovalResponses,
+                          )}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
                 </details>
               ) : null}
 
@@ -269,15 +271,16 @@ export function getVisibleTimelineItems(
   limit = TIMELINE_INITIAL_TURN_LIMIT,
 ): { visibleItems: Item[]; hiddenTurnCount: number } {
   const normalizedLimit = Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 1));
-  if (showAll || items.length === 0) {
-    return { visibleItems: [...items], hiddenTurnCount: 0 };
+  const sortedItems = sortTimelineItems(items);
+  if (showAll || sortedItems.length === 0) {
+    return { visibleItems: sortedItems, hiddenTurnCount: 0 };
   }
 
   const visibleTurnIds = new Set<string>();
-  let startIndex = items.length;
+  let startIndex = sortedItems.length;
 
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const turnId = getTimelineItemTurnId(items[index]);
+  for (let index = sortedItems.length - 1; index >= 0; index -= 1) {
+    const turnId = getTimelineItemTurnId(sortedItems[index]);
     if (!visibleTurnIds.has(turnId)) {
       if (visibleTurnIds.size >= normalizedLimit) break;
       visibleTurnIds.add(turnId);
@@ -286,19 +289,19 @@ export function getVisibleTimelineItems(
   }
 
   if (startIndex === 0) {
-    return { visibleItems: [...items], hiddenTurnCount: 0 };
+    return { visibleItems: sortedItems, hiddenTurnCount: 0 };
   }
 
   const hiddenTurnIds = new Set<string>();
   for (let index = 0; index < startIndex; index += 1) {
-    const turnId = getTimelineItemTurnId(items[index]);
+    const turnId = getTimelineItemTurnId(sortedItems[index]);
     if (!visibleTurnIds.has(turnId)) {
       hiddenTurnIds.add(turnId);
     }
   }
 
   return {
-    visibleItems: items.slice(startIndex),
+    visibleItems: sortedItems.slice(startIndex),
     hiddenTurnCount: hiddenTurnIds.size,
   };
 }

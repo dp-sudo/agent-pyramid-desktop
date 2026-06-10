@@ -7,6 +7,7 @@ import { useWorkbench } from "../../store/WorkbenchContext";
 
 export const TOOL_DETAIL_PREVIEW_MAX_CHARS = 4000;
 export const TOOL_DETAIL_PREVIEW_MAX_LINES = 80;
+const REASONING_COLLAPSED_PREVIEW_MAX_CHARS = 180;
 
 interface ChatBlockProps {
   item: Item;
@@ -161,13 +162,20 @@ function ReasoningBlock({
     >
       <summary className="ds-process-entry-summary">
         <span className="ds-process-entry-title">{t("chat.reasoningLabel")}</span>
+        {!open ? (
+          <span className="ds-process-reasoning-preview">
+            {getReasoningCollapsedPreview(item.text)}
+          </span>
+        ) : null}
       </summary>
-      <div className="ds-process-entry-detail ds-process-reasoning">
-        <AssistantMarkdownWithPreferences
-          text={item.text}
-          streaming={isLive}
-        />
-      </div>
+      {open ? (
+        <div className="ds-process-entry-detail ds-process-reasoning">
+          <AssistantMarkdownWithPreferences
+            text={item.text}
+            streaming={isLive}
+          />
+        </div>
+      ) : null}
     </details>
   );
 }
@@ -218,6 +226,19 @@ export function shouldRecordReasoningToggle({
   nextOpen: boolean;
 }): boolean {
   return currentOpen !== nextOpen;
+}
+
+export function getReasoningCollapsedPreview(
+  text: string,
+  maxChars = REASONING_COLLAPSED_PREVIEW_MAX_CHARS,
+): string {
+  const normalizedMaxChars = Math.max(1, Math.floor(Number.isFinite(maxChars) ? maxChars : 1));
+  const preview = text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (preview.length <= normalizedMaxChars) return preview;
+  return `${preview.slice(0, normalizedMaxChars).trimEnd()}...`;
 }
 
 function ApprovalBlock({

@@ -17,6 +17,8 @@ import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT } from "../../preferences";
 
+const COLLAPSED_CODE_BLOCK_PREVIEW_LINES = 12;
+
 interface AssistantMarkdownProps {
   text: string;
   streaming?: boolean;
@@ -60,6 +62,10 @@ function createMarkdownComponents(codeBlockCollapseLineThreshold: number): Compo
       );
     },
     code({ node: _node, className, children, ...props }) {
+      const codeText = extractCodeText(children);
+      if (!className && !hasVisibleCodeText(codeText)) {
+        return codeText ? <>{codeText}</> : null;
+      }
       return (
         <code {...props} className={className}>
           {children}
@@ -93,15 +99,14 @@ function createMarkdownComponents(codeBlockCollapseLineThreshold: number): Compo
     },
     pre({ node: _node, children, ...props }) {
       const language = extractCodeLanguage(children);
+      const code = extractCodeText(children);
       return (
         <CodeBlock
           language={language}
-          code={extractCodeText(children)}
+          code={code}
           preProps={props}
           collapseLineThreshold={codeBlockCollapseLineThreshold}
-        >
-          {children}
-        </CodeBlock>
+        />
       );
     },
     table({ node: _node, children, ...props }) {
@@ -119,13 +124,11 @@ type CodeElementProps = ComponentPropsWithoutRef<"code"> & {
 };
 
 function CodeBlock({
-  children,
   code,
   collapseLineThreshold,
   language,
   preProps,
 }: {
-  children: ReactNode;
   code: string;
   collapseLineThreshold: number;
   language: string | null;
@@ -142,6 +145,7 @@ function CodeBlock({
   const copyResetTimerRef = useRef<number | null>(null);
   const codeContentId = useId();
   const codeLineCount = countCodeLines(code);
+  const collapsedCodePreview = resolveCollapsedCodeBlockDisplay(code);
   const copyLabel = t("chat.copyCode");
 
   useEffect(() => {
@@ -218,7 +222,11 @@ function CodeBlock({
           {t("chat.collapsedCodePreview", { count: codeLineCount })}
         </div>
       ) : null}
-      <pre {...preProps} id={codeContentId}>{children}</pre>
+      <pre {...preProps} id={codeContentId}>
+        <code className={language ? `language-${language}` : undefined}>
+          {collapsed ? collapsedCodePreview.text : code}
+        </code>
+      </pre>
     </div>
   );
 }
@@ -256,8 +264,28 @@ function clearCopyResetTimer(timerRef: { current: number | null }): void {
 
 export function countCodeLines(code: string): number {
   if (!code) return 0;
+  return splitCodeLines(code).length;
+}
+
+export function resolveCollapsedCodeBlockDisplay(
+  code: string,
+  maxLines = COLLAPSED_CODE_BLOCK_PREVIEW_LINES,
+): { text: string; hiddenLineCount: number } {
+  const normalizedMaxLines = Math.max(1, Math.floor(Number.isFinite(maxLines) ? maxLines : 1));
+  const lines = splitCodeLines(code);
+  if (lines.length <= normalizedMaxLines) {
+    return { text: code, hiddenLineCount: 0 };
+  }
+  return {
+    text: lines.slice(0, normalizedMaxLines).join("\n"),
+    hiddenLineCount: lines.length - normalizedMaxLines,
+  };
+}
+
+function splitCodeLines(code: string): string[] {
+  if (!code) return [];
   const normalized = code.endsWith("\n") ? code.slice(0, -1) : code;
-  return normalized.split("\n").length;
+  return normalized.split("\n");
 }
 
 function extractCodeLanguage(children: ReactNode): string | null {
@@ -278,6 +306,10 @@ export function extractCodeText(node: ReactNode): string {
       return "";
     })
     .join("");
+}
+
+function hasVisibleCodeText(code: string): boolean {
+  return code.replace(/[\s\u200B\u200C\u200D\uFEFF]/g, "").length > 0;
 }
 
 function isExternalHref(href: string | undefined): boolean {
@@ -318,9 +350,10 @@ function isSafeImageDataUrl(value: string): boolean {
 }
 
 export function closeDanglingCodeFence(text: string): string {
-  const fenceCount = text
-    .split("\n")
-    .filter((line) => /^\s*```/.test(line))
-    .length;
+  let fenceCount = 0;
+  const fencePattern = /(^|\n)\s*```/g;
+  while (fencePattern.exec(text)) {
+    fenceCount += 1;
+  }
   return fenceCount % 2 === 1 ? `${text}\n\`\`\`` : text;
 }

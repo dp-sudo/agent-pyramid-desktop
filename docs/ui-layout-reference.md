@@ -232,6 +232,9 @@ Component: `MessageTimeline`.
 Purpose:
 
 - Group raw `Item[]` into turns via `groupTimelineTurns()`.
+- Sort timeline items by `createdAt` with stable tie-breaking before grouping,
+  so renderer event arrival order cannot reshuffle user text, reasoning, tool
+  records or final assistant output.
 - Before grouping long Code histories, keep only the most recent visible turn
   window at the raw `Item[]` boundary. Older turns stay available through the
   localized `ds-message-show-older` control, and the window boundary must never
@@ -268,6 +271,9 @@ Scroll behavior:
 - User toggles are stored by turn id and pruned when turns disappear. Controlled
   `details` updates that only mirror the active-turn default are ignored, so a
   programmatic live/completed state change does not become a user override.
+- Closed work-process sections render only their summary. Process item blocks
+  are mounted after the section opens, avoiding markdown/tool/diff work for
+  folded historical turns.
 
 ### Chat Blocks
 
@@ -279,7 +285,7 @@ Item rendering:
 | --- | --- |
 | `user` | Right-side user bubble with optional attachment names. |
 | `assistant` | Markdown assistant bubble. Live output gets shiny styling. |
-| `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning follows `basicPreferences.openReasoningByDefault` until the user explicitly toggles it. |
+| `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning follows `basicPreferences.openReasoningByDefault` until the user explicitly toggles it. Closed completed reasoning shows a light text preview and does not mount the markdown body. |
 | `tool` | Collapsible process entry with status/tone summary. Long details render as a bounded preview with an explicit full-detail toggle. |
 | `approval` | Approval block with args JSON and allow/deny buttons. |
 | `user_input` | System-style user input prompt. |
@@ -297,6 +303,7 @@ Key classes:
 - `ds-process-reasoning-entry`
 - `ds-process-entry-summary`
 - `ds-process-entry-title`
+- `ds-process-reasoning-preview`
 - `ds-process-entry-status`
 - `ds-process-entry-detail`
 - `ds-process-entry-detail-frame`
@@ -339,12 +346,20 @@ Renderer:
   protocols render as plain text instead of clickable anchors.
 - Code blocks are wrapped in `ds-code-block`.
 - Code language header is extracted from `language-*` class.
+- Fenced code blocks render from the extracted source string inside the
+  `ds-code-block` `<pre>`, so inline-code styling cannot leave an empty code
+  block while a turn is streaming or after it completes.
+- Empty or whitespace-only inline code spans are rendered as plain text or
+  omitted instead of creating visible placeholder pills.
 - Long code blocks start collapsed with expand/collapse controls while short code
   blocks remain open. The line threshold comes from
   `basicPreferences.codeBlockCollapseLineThreshold`, and the expand/collapse
   control owns the rendered `<pre>` via `aria-controls`.
 - Collapsed long code blocks show a preview note with the total line count so the
   bounded code area is not mistaken for the full block.
+- Collapsed long code blocks render only a bounded source preview inside the
+  `<pre>`. Expanding restores the full code node, and copy still uses the full
+  source string.
 - Code block copy controls keep a stable accessible label/title while the
   visible text can briefly show copied or failed state before returning to idle.
   Repeated copy attempts replace the previous feedback timer, and unmount clears

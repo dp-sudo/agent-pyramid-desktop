@@ -186,8 +186,15 @@ flowchart TD
 - Read-only workspace tools skip approval.
 - `edit_file` / `write_file` / `apply_patch` require approval, strict UTF-8 text, and fresh read-state before writing existing files.
 - `rollback_file` uses in-memory runtime file history to undo the latest agent write when the current file still matches that history entry.
-- `run_command` runs foreground workspace commands with timeout, output truncation, interrupt cancellation, and approval.
-- `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through command execution and therefore requires approval; `diagnose_file` uses TypeScript Language Service for file-level diagnostics and remains read-only.
+- `run_command`, `shell_command`, `git_bash_command`, `powershell_command`,
+  `wsl_command`, package/task wrappers, Git commit, and command session write /
+  stop tools run through the command approval boundary.
+- Read-only developer tools include `rg_search`, `git_status`, `git_diff`,
+  `git_log`, `git_branch`, `package_scripts`, `read_command_session`,
+  `detect_shell_environment`, and `diagnose_file`.
+- `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through
+  command execution and therefore requires approval; `diagnose_file` uses
+  TypeScript Language Service for file-level diagnostics and remains read-only.
 - Write threads use `AgentRuntime` tool access policy and persisted
   `RuntimePreferences.toolAvailability` to hide and reject Code-only
   coding/command tools by default; policy overrides can allow or deny

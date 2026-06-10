@@ -1,15 +1,17 @@
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, existsSync, promises as fs } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import ts from "typescript";
 import type { AgentTool, AgentToolContext, AgentToolResult } from "../../domain/agent/types";
 import {
   requireWorkspace,
   resolveWorkspacePathForAccess,
+  shouldSkipEntry,
   toWorkspaceRelative,
 } from "./workspace-policy.js";
-import { assertUtf8TextBuffer } from "./text-file.js";
+import { assertUtf8TextBuffer, decodeUtf8TextBuffer } from "./text-file.js";
 import { isPathInsideOrEqual, isSamePath } from "../path-utils.js";
 import {
   DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
@@ -27,11 +29,36 @@ const DEFAULT_COMMAND_MAX_OUTPUT_BYTES = DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTE
 const MIN_COMMAND_MAX_OUTPUT_BYTES = MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MAX_COMMAND_MAX_OUTPUT_BYTES = MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MAX_COMMAND_BYTES = 4_096;
+const MAX_SEARCH_FILE_BYTES = 1_000_000;
 const KILL_GRACE_MS = 1_000;
+const MAX_REGEX_PATTERN_BYTES = 4_096;
+const MAX_GIT_LOG_COUNT = 100;
+const DEFAULT_GIT_LOG_COUNT = 20;
+const MAX_SESSION_COUNT = 8;
+const MAX_SESSION_BUFFER_BYTES = 256 * 1024;
+const DEFAULT_SESSION_BUFFER_BYTES = 64 * 1024;
+const DEFAULT_SESSION_TAIL_BYTES = 32 * 1024;
+const MAX_PACKAGE_SCRIPT_NAME_BYTES = 128;
 const COMMAND_TIMEOUT_DESCRIPTION =
   `Maximum runtime in milliseconds. Defaults to the runtime command preference ` +
   `(${DEFAULT_COMMAND_TIMEOUT_MS}). Overrides must be between ${MIN_COMMAND_TIMEOUT_MS} ` +
   `and the current runtime command preference, which cannot exceed ${MAX_COMMAND_TIMEOUT_MS}.`;
+
+type ShellKind =
+  | "default"
+  | "cmd"
+  | "sh"
+  | "bash"
+  | "git_bash"
+  | "powershell"
+  | "pwsh";
+
+type PackageManagerName = "npm" | "pnpm" | "yarn" | "bun";
+
+interface PackageJsonShape {
+  packageManager?: unknown;
+  scripts?: Record<string, unknown>;
+}
 
 interface CommandRunResult {
   command: string;
@@ -76,7 +103,34 @@ interface DiagnoseFileResult extends DiagnoseWorkspaceResult {
 }
 
 export function createCommandTools(): AgentTool[] {
-  return [runCommandTool, diagnoseWorkspaceTool, diagnoseFileTool];
+  return [
+    runCommandTool,
+    shellCommandTool,
+    gitBashCommandTool,
+    powershellCommandTool,
+    wslCommandTool,
+    rgSearchTool,
+    gitStatusTool,
+    gitDiffTool,
+    gitLogTool,
+    gitBranchTool,
+    gitCommitTool,
+    packageScriptsTool,
+    packageInstallTool,
+    packageTestTool,
+    packageBuildTool,
+    runLintTool,
+    runFormatTool,
+    runTestsTool,
+    runBuildTool,
+    startCommandSessionTool,
+    readCommandSessionTool,
+    writeCommandSessionTool,
+    stopCommandSessionTool,
+    detectShellEnvironmentTool,
+    diagnoseWorkspaceTool,
+    diagnoseFileTool,
+  ];
 }
 
 const runCommandTool: AgentTool = {
@@ -114,6 +168,655 @@ const runCommandTool: AgentTool = {
   async execute(input, context) {
     const result = await executeRunCommand(input, context);
     return toToolResult(result);
+  },
+};
+
+const shellCommandTool: AgentTool = {
+  /**
+   * This exposes an explicit shell selector while keeping the same workspace
+   * cwd and approval boundary as run_command.
+   */
+  metadata: {
+    category: "command",
+    isDestructive: true,
+  },
+  definition: {
+    name: "shell_command",
+    description:
+      "Run a foreground workspace command through a selected shell. Supports default, cmd, sh, bash, Git Bash, powershell, pwsh, or a custom shell_path/shell_args.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "Command text passed to the selected shell.",
+        },
+        shell: {
+          type: "string",
+          enum: ["default", "cmd", "sh", "bash", "git_bash", "powershell", "pwsh"],
+          description: "Shell family to use. Defaults to the platform default shell.",
+        },
+        shell_path: {
+          type: "string",
+          description:
+            "Optional executable path for a custom shell. If provided, shell_args controls how the command is passed.",
+        },
+        shell_args: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional custom shell arguments. Use {command} as a placeholder; otherwise the command is appended.",
+        },
+        cwd: {
+          type: "string",
+          description: "Workspace-relative directory to run from. Defaults to the workspace root.",
+        },
+        timeout_ms: {
+          type: "number",
+          description: COMMAND_TIMEOUT_DESCRIPTION,
+        },
+      },
+      required: ["command"],
+    },
+  },
+  async execute(input, context) {
+    const result = await executeShellCommand(input, context, "shell_command");
+    return toNamedToolResult("shell_command", result);
+  },
+};
+
+const gitBashCommandTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isDestructive: true,
+  },
+  definition: {
+    name: "git_bash_command",
+    description:
+      "Run a foreground workspace command through Git Bash on Windows, or bash on Unix-like hosts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "Command text passed to bash -lc.",
+        },
+        git_bash_path: {
+          type: "string",
+          description: "Optional Git Bash bash.exe path. Defaults to detected Windows Git installation.",
+        },
+        cwd: {
+          type: "string",
+          description: "Workspace-relative directory to run from. Defaults to the workspace root.",
+        },
+        timeout_ms: {
+          type: "number",
+          description: COMMAND_TIMEOUT_DESCRIPTION,
+        },
+      },
+      required: ["command"],
+    },
+  },
+  async execute(input, context) {
+    const result = await executeShellCommand(
+      { ...input, shell: "git_bash", shell_path: optionalString(input.git_bash_path) },
+      context,
+      "git_bash_command",
+    );
+    return toNamedToolResult("git_bash_command", result);
+  },
+};
+
+const powershellCommandTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isDestructive: true,
+  },
+  definition: {
+    name: "powershell_command",
+    description:
+      "Run a foreground workspace command through PowerShell. Use executable=pwsh for PowerShell 7 or powershell for Windows PowerShell.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "PowerShell command text.",
+        },
+        executable: {
+          type: "string",
+          enum: ["pwsh", "powershell"],
+          description: "PowerShell executable to use. Defaults to pwsh, then powershell on Windows.",
+        },
+        cwd: {
+          type: "string",
+          description: "Workspace-relative directory to run from. Defaults to the workspace root.",
+        },
+        timeout_ms: {
+          type: "number",
+          description: COMMAND_TIMEOUT_DESCRIPTION,
+        },
+      },
+      required: ["command"],
+    },
+  },
+  async execute(input, context) {
+    const executable = optionalEnum(input.executable, ["pwsh", "powershell"], "executable");
+    const result = await executeShellCommand(
+      { ...input, shell: executable ?? "pwsh" },
+      context,
+      "powershell_command",
+    );
+    return toNamedToolResult("powershell_command", result);
+  },
+};
+
+const wslCommandTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isDestructive: true,
+  },
+  definition: {
+    name: "wsl_command",
+    description:
+      "Run a foreground workspace command through WSL using wsl.exe. Windows workspace paths are converted to /mnt/<drive>/ paths for the Linux shell.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "Linux shell command passed to sh -lc inside WSL.",
+        },
+        distro: {
+          type: "string",
+          description: "Optional WSL distribution name.",
+        },
+        cwd: {
+          type: "string",
+          description: "Workspace-relative directory to run from. Defaults to the workspace root.",
+        },
+        timeout_ms: {
+          type: "number",
+          description: COMMAND_TIMEOUT_DESCRIPTION,
+        },
+      },
+      required: ["command"],
+    },
+  },
+  async execute(input, context) {
+    const result = await executeWslCommand(input, context);
+    return toNamedToolResult("wsl_command", result);
+  },
+};
+
+const rgSearchTool: AgentTool = {
+  metadata: {
+    category: "workspace",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "rg_search",
+    description:
+      "Run a ripgrep-style regular expression search over UTF-8 workspace text files. Use this when literal search_files is not expressive enough.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description: "JavaScript regular expression pattern to search for.",
+        },
+        path: {
+          type: "string",
+          description: "Optional workspace-relative directory or file to search.",
+        },
+        case_sensitive: {
+          type: "boolean",
+          description: "Whether matching is case-sensitive. Defaults to true.",
+        },
+        max_results: {
+          type: "number",
+          description:
+            `Maximum matching lines to return. Defaults to 80, maximum 300.`,
+        },
+      },
+      required: ["pattern"],
+    },
+  },
+  async execute(input, context) {
+    const result = await executeRegexSearch(input, context);
+    return JSON.stringify(result);
+  },
+};
+
+const gitStatusTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "git_status",
+    description: "Return structured git status for the current workspace or a workspace subdirectory.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: {
+          type: "string",
+          description: "Workspace-relative git working tree directory. Defaults to the workspace root.",
+        },
+        pathspecs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional workspace-relative pathspecs to limit status.",
+        },
+      },
+    },
+  },
+  async execute(input, context) {
+    const result = await executeGitStatus(input, context);
+    return JSON.stringify(result);
+  },
+};
+
+const gitDiffTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "git_diff",
+    description: "Return a workspace git diff, optionally staged/stat-only/path-limited.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: {
+          type: "string",
+          description: "Workspace-relative git working tree directory. Defaults to the workspace root.",
+        },
+        staged: {
+          type: "boolean",
+          description: "Show staged diff with --staged.",
+        },
+        stat: {
+          type: "boolean",
+          description: "Return --stat output instead of a patch.",
+        },
+        pathspecs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional workspace-relative pathspecs.",
+        },
+      },
+    },
+  },
+  async execute(input, context) {
+    const result = await executeGitDiff(input, context);
+    return JSON.stringify(result);
+  },
+};
+
+const gitLogTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "git_log",
+    description: "Return structured git log entries for the workspace.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: {
+          type: "string",
+          description: "Workspace-relative git working tree directory. Defaults to the workspace root.",
+        },
+        max_count: {
+          type: "number",
+          description: `Maximum commits to return. Defaults to ${DEFAULT_GIT_LOG_COUNT}, maximum ${MAX_GIT_LOG_COUNT}.`,
+        },
+        ref: {
+          type: "string",
+          description: "Optional branch, tag, or revision range.",
+        },
+        pathspecs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional workspace-relative pathspecs.",
+        },
+      },
+    },
+  },
+  async execute(input, context) {
+    const result = await executeGitLog(input, context);
+    return JSON.stringify(result);
+  },
+};
+
+const gitBranchTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "git_branch",
+    description: "Return current, local, and remote git branches for the workspace.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: {
+          type: "string",
+          description: "Workspace-relative git working tree directory. Defaults to the workspace root.",
+        },
+      },
+    },
+  },
+  async execute(input, context) {
+    const result = await executeGitBranch(input, context);
+    return JSON.stringify(result);
+  },
+};
+
+const gitCommitTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isDestructive: true,
+  },
+  definition: {
+    name: "git_commit",
+    description:
+      "Create a git commit in the workspace. Optionally stage all changes or selected workspace-relative paths before committing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description: "Commit message.",
+        },
+        cwd: {
+          type: "string",
+          description: "Workspace-relative git working tree directory. Defaults to the workspace root.",
+        },
+        all: {
+          type: "boolean",
+          description: "Stage all modified/deleted/untracked files before commit.",
+        },
+        pathspecs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Workspace-relative paths to stage before commit.",
+        },
+      },
+      required: ["message"],
+    },
+  },
+  async execute(input, context) {
+    const result = await executeGitCommit(input, context);
+    return JSON.stringify(result);
+  },
+};
+
+const packageScriptsTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "package_scripts",
+    description:
+      "Inspect package.json scripts and detect the npm/pnpm/yarn/bun package manager for a workspace package.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: {
+          type: "string",
+          description: "Workspace-relative package directory. Defaults to the workspace root.",
+        },
+      },
+    },
+  },
+  async execute(input, context) {
+    const result = await inspectPackageScripts(input, context);
+    return JSON.stringify(result);
+  },
+};
+
+const packageInstallTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isDestructive: true,
+  },
+  definition: {
+    name: "package_install",
+    description: "Install dependencies with the detected or specified npm/pnpm/yarn/bun package manager.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: {
+          type: "string",
+          description: "Workspace-relative package directory. Defaults to the workspace root.",
+        },
+        manager: {
+          type: "string",
+          enum: ["npm", "pnpm", "yarn", "bun"],
+          description: "Optional package manager override.",
+        },
+        frozen_lockfile: {
+          type: "boolean",
+          description: "Prefer lockfile-respecting install mode when supported.",
+        },
+        timeout_ms: {
+          type: "number",
+          description: COMMAND_TIMEOUT_DESCRIPTION,
+        },
+      },
+    },
+  },
+  async execute(input, context) {
+    const result = await executePackageInstall(input, context);
+    return toNamedToolResult("package_install", result);
+  },
+};
+
+const packageTestTool: AgentTool = createPackageScriptCommandTool(
+  "package_test",
+  "Run the package test script with the detected or specified npm/pnpm/yarn/bun manager.",
+  "test",
+);
+
+const packageBuildTool: AgentTool = createPackageScriptCommandTool(
+  "package_build",
+  "Run the package build script with the detected or specified npm/pnpm/yarn/bun manager.",
+  "build",
+);
+
+const runLintTool: AgentTool = createTaskCommandTool(
+  "run_lint",
+  "Run the workspace lint task through the detected package manager.",
+  "lint",
+  ["lint"],
+);
+
+const runFormatTool: AgentTool = createTaskCommandTool(
+  "run_format",
+  "Run the workspace format task through the detected package manager.",
+  "format",
+  ["format", "format:write"],
+);
+
+const runTestsTool: AgentTool = createTaskCommandTool(
+  "run_tests",
+  "Run the workspace test task through the detected package manager.",
+  "test",
+  ["test", "tests"],
+);
+
+const runBuildTool: AgentTool = createTaskCommandTool(
+  "run_build",
+  "Run the workspace build task through the detected package manager.",
+  "build",
+  ["build"],
+);
+
+const startCommandSessionTool: AgentTool = {
+  /**
+   * Sessions intentionally outlive a single tool call. Runtime interruption
+   * stops the current turn, while this manager keeps background process state
+   * visible until the model or user stops the session explicitly.
+   */
+  metadata: {
+    category: "command",
+    isDestructive: true,
+  },
+  definition: {
+    name: "start_command_session",
+    description:
+      "Start a long-running workspace command session and return immediately with a session id. Use read/write/stop_command_session to interact with it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "Command text for the session shell.",
+        },
+        shell: {
+          type: "string",
+          enum: ["default", "cmd", "sh", "bash", "git_bash", "powershell", "pwsh"],
+          description: "Shell family. Defaults to the platform default shell.",
+        },
+        cwd: {
+          type: "string",
+          description: "Workspace-relative directory to run from. Defaults to the workspace root.",
+        },
+        max_buffer_bytes: {
+          type: "number",
+          description: `Maximum stdout/stderr bytes retained per stream. Defaults to ${DEFAULT_SESSION_BUFFER_BYTES}, maximum ${MAX_SESSION_BUFFER_BYTES}.`,
+        },
+      },
+      required: ["command"],
+    },
+  },
+  async execute(input, context) {
+    const result = await commandSessionManager.start(input, context);
+    return JSON.stringify(result);
+  },
+};
+
+const readCommandSessionTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "read_command_session",
+    description: "Read retained stdout/stderr and status for a long-running command session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: {
+          type: "string",
+          description: "Session id returned by start_command_session.",
+        },
+        tail_bytes: {
+          type: "number",
+          description: `Return only the trailing bytes from each stream. Defaults to ${DEFAULT_SESSION_TAIL_BYTES}.`,
+        },
+      },
+      required: ["session_id"],
+    },
+  },
+  async execute(input) {
+    const result = commandSessionManager.read(input);
+    return JSON.stringify(result);
+  },
+};
+
+const writeCommandSessionTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isDestructive: true,
+  },
+  definition: {
+    name: "write_command_session",
+    description: "Write text to a running command session stdin.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: {
+          type: "string",
+          description: "Session id returned by start_command_session.",
+        },
+        input: {
+          type: "string",
+          description: "Text to write to stdin.",
+        },
+        newline: {
+          type: "boolean",
+          description: "Append a newline after input. Defaults to true.",
+        },
+      },
+      required: ["session_id", "input"],
+    },
+  },
+  async execute(input) {
+    const result = commandSessionManager.write(input);
+    return JSON.stringify(result);
+  },
+};
+
+const stopCommandSessionTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isDestructive: true,
+  },
+  definition: {
+    name: "stop_command_session",
+    description: "Stop a running command session and return its final retained output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: {
+          type: "string",
+          description: "Session id returned by start_command_session.",
+        },
+      },
+      required: ["session_id"],
+    },
+  },
+  async execute(input) {
+    const result = commandSessionManager.stop(input);
+    return JSON.stringify(result);
+  },
+};
+
+const detectShellEnvironmentTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "detect_shell_environment",
+    description:
+      "Detect available shell executables, Git Bash, PowerShell/pwsh, WSL, PATH entries, and workspace path conversions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspace_path: {
+          type: "string",
+          description: "Optional absolute path to include in Windows-to-WSL path conversion output.",
+        },
+      },
+    },
+  },
+  async execute(input, context) {
+    const result = await detectShellEnvironment(input, context);
+    return JSON.stringify(result);
   },
 };
 
@@ -251,6 +954,562 @@ async function executeRunCommand(
   };
 }
 
+async function executeShellCommand(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+  toolName: string,
+): Promise<CommandRunResult & { shell: string; shellFile: string; shellArgs: string[] }> {
+  const workspace = requireWorkspace(context);
+  const command = requiredCommandForTool(input.command, toolName);
+  const cwdArg = optionalString(input.cwd) ?? ".";
+  const timeoutMs = numberInRange(
+    input.timeout_ms,
+    MIN_COMMAND_TIMEOUT_MS,
+    commandTimeoutMs(context),
+    commandTimeoutMs(context),
+    "timeout_ms",
+  );
+  const maxOutputBytes = commandMaxOutputBytes(context);
+  const cwdPath = await resolveWorkspacePathForAccess(workspace, cwdArg, "read");
+  const stat = await fs.stat(cwdPath);
+  if (!stat.isDirectory()) {
+    throw new Error(`${toolName} cwd is not a directory: ${cwdArg}`);
+  }
+  const shell = optionalEnum(
+    input.shell,
+    ["default", "cmd", "sh", "bash", "git_bash", "powershell", "pwsh"],
+    "shell",
+  ) ?? "default";
+  const invocation = await createSelectedShellInvocation(command, {
+    shell,
+    shellPath: optionalString(input.shell_path),
+    shellArgs: optionalStringArray(input.shell_args, "shell_args"),
+  });
+  const startedAt = Date.now();
+  const output = await spawnWorkspaceProcess(
+    invocation,
+    cwdPath,
+    timeoutMs,
+    maxOutputBytes,
+    context.signal,
+  );
+  return {
+    command,
+    cwd: toWorkspaceRelative(workspace, cwdPath) || ".",
+    exitCode: output.exitCode,
+    signal: output.signal,
+    timedOut: output.timedOut,
+    durationMs: Date.now() - startedAt,
+    stdout: output.stdout.text,
+    stderr: output.stderr.text,
+    stdoutBytes: output.stdout.bytes,
+    stderrBytes: output.stderr.bytes,
+    stdoutTruncated: output.stdout.truncated,
+    stderrTruncated: output.stderr.truncated,
+    shell,
+    shellFile: invocation.file,
+    shellArgs: invocation.args,
+  };
+}
+
+async function executeWslCommand(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<CommandRunResult & { distro?: string; wslCwd: string }> {
+  const workspace = requireWorkspace(context);
+  const command = requiredCommandForTool(input.command, "wsl_command");
+  const cwdArg = optionalString(input.cwd) ?? ".";
+  const timeoutMs = numberInRange(
+    input.timeout_ms,
+    MIN_COMMAND_TIMEOUT_MS,
+    commandTimeoutMs(context),
+    commandTimeoutMs(context),
+    "timeout_ms",
+  );
+  const maxOutputBytes = commandMaxOutputBytes(context);
+  const cwdPath = await resolveWorkspacePathForAccess(workspace, cwdArg, "read");
+  const stat = await fs.stat(cwdPath);
+  if (!stat.isDirectory()) {
+    throw new Error(`wsl_command cwd is not a directory: ${cwdArg}`);
+  }
+  const distro = optionalString(input.distro);
+  const wslCwd = toWslPath(cwdPath);
+  const invocation = createWslInvocation(command, wslCwd, distro);
+  const startedAt = Date.now();
+  const output = await spawnWorkspaceProcess(
+    invocation,
+    cwdPath,
+    timeoutMs,
+    maxOutputBytes,
+    context.signal,
+  );
+  return {
+    command,
+    cwd: toWorkspaceRelative(workspace, cwdPath) || ".",
+    exitCode: output.exitCode,
+    signal: output.signal,
+    timedOut: output.timedOut,
+    durationMs: Date.now() - startedAt,
+    stdout: output.stdout.text,
+    stderr: output.stderr.text,
+    stdoutBytes: output.stdout.bytes,
+    stderrBytes: output.stderr.bytes,
+    stdoutTruncated: output.stdout.truncated,
+    stderrTruncated: output.stderr.truncated,
+    ...(distro ? { distro } : {}),
+    wslCwd,
+  };
+}
+
+async function executeRegexSearch(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<{
+  pattern: string;
+  path: string;
+  flags: string;
+  results: Array<{ path: string; line: number; column: number; text: string; match: string }>;
+  skippedLargeFiles: number;
+  truncated: boolean;
+}> {
+  const workspace = requireWorkspace(context);
+  const pattern = requiredRegexPattern(input.pattern);
+  const relativePath = optionalString(input.path) ?? ".";
+  const limit = numberInRange(
+    input.max_results,
+    1,
+    300,
+    80,
+    "max_results",
+  );
+  const caseSensitive = input.case_sensitive === undefined
+    ? true
+    : requiredBoolean(input.case_sensitive, "case_sensitive");
+  const flags = caseSensitive ? "u" : "iu";
+  const regex = createLineRegex(pattern, flags);
+  const root = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
+  const stat = await fs.stat(root);
+  if (!stat.isDirectory() && !stat.isFile()) {
+    throw new Error(`rg_search path is not a file or directory: ${relativePath}`);
+  }
+  const results: Array<{ path: string; line: number; column: number; text: string; match: string }> = [];
+  let skippedLargeFiles = 0;
+  const searchFile = async (filePath: string): Promise<void> => {
+    if (results.length >= limit) return;
+    const fileStat = await fs.stat(filePath);
+    if (fileStat.size > MAX_SEARCH_FILE_BYTES) {
+      skippedLargeFiles += 1;
+      return;
+    }
+    if (!looksTextFile(filePath)) return;
+    const relativeFilePath = toWorkspaceRelative(workspace, filePath);
+    const content = decodeUtf8TextBuffer(
+      await fs.readFile(filePath),
+      relativeFilePath,
+      "rg_search path",
+    );
+    const lines = content.split(/\r?\n/);
+    for (const [index, line] of lines.entries()) {
+      regex.lastIndex = 0;
+      const match = regex.exec(line);
+      if (!match) continue;
+      results.push({
+        path: relativeFilePath,
+        line: index + 1,
+        column: match.index + 1,
+        text: line.trimEnd(),
+        match: match[0],
+      });
+      if (results.length >= limit) break;
+    }
+  };
+  if (stat.isFile()) {
+    await searchFile(root);
+  } else {
+    await walkTextFiles(root, searchFile);
+  }
+  return {
+    pattern,
+    path: toWorkspaceRelative(workspace, root) || ".",
+    flags,
+    results,
+    skippedLargeFiles,
+    truncated: results.length >= limit,
+  };
+}
+
+async function executeGitStatus(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<{
+  command: string[];
+  cwd: string;
+  exitCode: number | null;
+  branch: string | null;
+  entries: Array<{ xy: string; path: string; originalPath?: string }>;
+  stdout: string;
+  stderr: string;
+}> {
+  const { workspace, cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "git_status");
+  const pathspecs = await resolvePathspecs(input.pathspecs, workspace, "git_status");
+  const args = ["status", "--short", "--branch", "--untracked-files=all", ...gitPathspecArgs(pathspecs)];
+  const output = await executeGitCommand(args, cwdPath, context);
+  const lines = output.stdout.text.split(/\r?\n/).filter(Boolean);
+  const branchLine = lines.find((line) => line.startsWith("## "));
+  const branch = branchLine ? branchLine.slice(3).trim() : null;
+  const entries = lines
+    .filter((line) => !line.startsWith("## "))
+    .map(parseGitStatusLine);
+  return {
+    command: ["git", ...args],
+    cwd,
+    exitCode: output.exitCode,
+    branch,
+    entries,
+    stdout: output.stdout.text,
+    stderr: output.stderr.text,
+  };
+}
+
+async function executeGitDiff(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<CommandRunResult & { commandArgs: string[] }> {
+  const { cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "git_diff");
+  const staged = input.staged === undefined ? false : requiredBoolean(input.staged, "staged");
+  const stat = input.stat === undefined ? false : requiredBoolean(input.stat, "stat");
+  const pathspecs = await resolvePathspecs(input.pathspecs, requireWorkspace(context), "git_diff");
+  const args = [
+    "-c",
+    "diff.external=",
+    "diff",
+    "--no-ext-diff",
+    "--no-textconv",
+    ...(staged ? ["--staged"] : []),
+    ...(stat ? ["--stat"] : []),
+    ...gitPathspecArgs(pathspecs),
+  ];
+  const startedAt = Date.now();
+  const output = await executeGitCommand(args, cwdPath, context);
+  return commandOutputToRunResult(["git", ...args].join(" "), cwd, startedAt, output, {
+    commandArgs: ["git", ...args],
+  });
+}
+
+async function executeGitLog(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<{
+  command: string[];
+  cwd: string;
+  exitCode: number | null;
+  commits: Array<{
+    hash: string;
+    shortHash: string;
+    authorName: string;
+    authorEmail: string;
+    date: string;
+    subject: string;
+  }>;
+  stderr: string;
+}> {
+  const { workspace, cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "git_log");
+  const maxCount = numberInRange(
+    input.max_count,
+    1,
+    MAX_GIT_LOG_COUNT,
+    DEFAULT_GIT_LOG_COUNT,
+    "max_count",
+  );
+  const ref = optionalString(input.ref);
+  const pathspecs = await resolvePathspecs(input.pathspecs, workspace, "git_log");
+  const format = "%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s";
+  const args = [
+    "log",
+    `--max-count=${maxCount}`,
+    "--date=iso-strict",
+    `--pretty=format:${format}`,
+    ...(ref ? [ref] : []),
+    ...gitPathspecArgs(pathspecs),
+  ];
+  const output = await executeGitCommand(args, cwdPath, context);
+  const commits = output.stdout.text
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const [hash = "", shortHash = "", authorName = "", authorEmail = "", date = "", subject = ""] =
+        line.split("\x1f");
+      return { hash, shortHash, authorName, authorEmail, date, subject };
+    });
+  return {
+    command: ["git", ...args],
+    cwd,
+    exitCode: output.exitCode,
+    commits,
+    stderr: output.stderr.text,
+  };
+}
+
+async function executeGitBranch(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<{
+  command: string[];
+  cwd: string;
+  exitCode: number | null;
+  current: string | null;
+  branches: Array<{ name: string; current: boolean; remote: boolean; raw: string }>;
+  stderr: string;
+}> {
+  const { cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "git_branch");
+  const args = ["branch", "--all", "--verbose", "--no-abbrev"];
+  const output = await executeGitCommand(args, cwdPath, context);
+  const branches = output.stdout.text
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const current = line.startsWith("*");
+      const rawName = line.slice(current ? 2 : 2).trim().split(/\s+/, 1)[0] ?? "";
+      return {
+        name: rawName,
+        current,
+        remote: rawName.startsWith("remotes/"),
+        raw: line,
+      };
+    });
+  return {
+    command: ["git", ...args],
+    cwd,
+    exitCode: output.exitCode,
+    current: branches.find((branch) => branch.current)?.name ?? null,
+    branches,
+    stderr: output.stderr.text,
+  };
+}
+
+async function executeGitCommit(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<{
+  cwd: string;
+  staged: boolean;
+  add?: CommandRunResult;
+  commit: CommandRunResult;
+}> {
+  const { workspace, cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "git_commit");
+  const message = requiredLimitedString(input.message, "git_commit requires a non-empty message.", 10_000);
+  const all = input.all === undefined ? false : requiredBoolean(input.all, "all");
+  const pathspecs = await resolvePathspecs(input.pathspecs, workspace, "git_commit");
+  let addResult: CommandRunResult | undefined;
+  if (all || pathspecs.length > 0) {
+    const addArgs = ["add", ...(all ? ["-A"] : gitPathspecArgs(pathspecs))];
+    const startedAt = Date.now();
+    const addOutput = await executeGitCommand(addArgs, cwdPath, context);
+    addResult = commandOutputToRunResult(
+      ["git", ...addArgs].join(" "),
+      cwd,
+      startedAt,
+      addOutput,
+    );
+    if (addResult.exitCode !== 0) {
+      throw new Error(formatFailedCommandMessage("git_commit staging failed", addResult));
+    }
+  }
+  const commitArgs = ["commit", "-m", message];
+  const startedAt = Date.now();
+  const commitOutput = await executeGitCommand(commitArgs, cwdPath, context);
+  return {
+    cwd,
+    staged: Boolean(addResult),
+    ...(addResult ? { add: addResult } : {}),
+    commit: commandOutputToRunResult(
+      ["git", "commit", "-m", "<message>"].join(" "),
+      cwd,
+      startedAt,
+      commitOutput,
+    ),
+  };
+}
+
+async function inspectPackageScripts(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<{
+  cwd: string;
+  manager: PackageManagerName;
+  packageManagerField?: string;
+  scripts: Record<string, string>;
+}> {
+  const { cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "package_scripts");
+  const packageJson = await readPackageJson(cwdPath);
+  const manager = optionalPackageManager(input.manager) ?? await detectPackageManager(cwdPath, packageJson);
+  return {
+    cwd,
+    manager,
+    ...(typeof packageJson.packageManager === "string"
+      ? { packageManagerField: packageJson.packageManager }
+      : {}),
+    scripts: normalizePackageScripts(packageJson.scripts),
+  };
+}
+
+async function executePackageInstall(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<CommandRunResult & { manager: PackageManagerName; commandArgs: string[] }> {
+  const { cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "package_install");
+  const packageJson = await readPackageJson(cwdPath);
+  const manager = optionalPackageManager(input.manager) ?? await detectPackageManager(cwdPath, packageJson);
+  const frozenLockfile = input.frozen_lockfile === undefined
+    ? false
+    : requiredBoolean(input.frozen_lockfile, "frozen_lockfile");
+  const args = packageInstallArgs(manager, frozenLockfile, cwdPath);
+  return executePackageCommand(manager, args, cwdPath, cwd, input, context, "package_install");
+}
+
+function createPackageScriptCommandTool(
+  name: string,
+  description: string,
+  defaultScript: string,
+): AgentTool {
+  return {
+    metadata: {
+      category: "command",
+      isDestructive: true,
+    },
+    definition: {
+      name,
+      description,
+      inputSchema: {
+        type: "object",
+        properties: {
+          cwd: {
+            type: "string",
+            description: "Workspace-relative package directory. Defaults to the workspace root.",
+          },
+          manager: {
+            type: "string",
+            enum: ["npm", "pnpm", "yarn", "bun"],
+            description: "Optional package manager override.",
+          },
+          script: {
+            type: "string",
+            description: `Script name to run. Defaults to ${defaultScript}.`,
+          },
+          timeout_ms: {
+            type: "number",
+            description: COMMAND_TIMEOUT_DESCRIPTION,
+          },
+        },
+      },
+    },
+    async execute(input, context) {
+      const script = optionalPackageScriptName(input.script) ?? defaultScript;
+      const result = await executePackageScript(input, context, name, script);
+      return toNamedToolResult(name, result);
+    },
+  };
+}
+
+function createTaskCommandTool(
+  name: string,
+  description: string,
+  task: string,
+  scriptCandidates: string[],
+): AgentTool {
+  return {
+    metadata: {
+      category: "command",
+      isDestructive: true,
+    },
+    definition: {
+      name,
+      description,
+      inputSchema: {
+        type: "object",
+        properties: {
+          cwd: {
+            type: "string",
+            description: "Workspace-relative package directory. Defaults to the workspace root.",
+          },
+          manager: {
+            type: "string",
+            enum: ["npm", "pnpm", "yarn", "bun"],
+            description: "Optional package manager override.",
+          },
+          timeout_ms: {
+            type: "number",
+            description: COMMAND_TIMEOUT_DESCRIPTION,
+          },
+        },
+      },
+    },
+    async execute(input, context) {
+      const { cwdPath } = await resolveWorkspaceDirectory(input, context, name);
+      const packageJson = await readPackageJson(cwdPath);
+      const scripts = normalizePackageScripts(packageJson.scripts);
+      const script = scriptCandidates.find((candidate) => scripts[candidate] !== undefined);
+      if (!script) {
+        throw new Error(`${name} could not find a package script for ${task}.`);
+      }
+      const result = await executePackageScript(input, context, name, script);
+      return toNamedToolResult(name, result);
+    },
+  };
+}
+
+async function executePackageScript(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+  toolName: string,
+  script: string,
+): Promise<CommandRunResult & { manager: PackageManagerName; commandArgs: string[]; script: string }> {
+  const { cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, toolName);
+  const packageJson = await readPackageJson(cwdPath);
+  const scripts = normalizePackageScripts(packageJson.scripts);
+  if (scripts[script] === undefined) {
+    throw new Error(`${toolName} package script not found: ${script}`);
+  }
+  const manager = optionalPackageManager(input.manager) ?? await detectPackageManager(cwdPath, packageJson);
+  const args = packageRunScriptArgs(manager, script);
+  const result = await executePackageCommand(manager, args, cwdPath, cwd, input, context, toolName);
+  return { ...result, script };
+}
+
+async function executePackageCommand(
+  manager: PackageManagerName,
+  args: string[],
+  cwdPath: string,
+  cwd: string,
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+  toolName: string,
+): Promise<CommandRunResult & { manager: PackageManagerName; commandArgs: string[] }> {
+  const timeoutMs = numberInRange(
+    input.timeout_ms,
+    MIN_COMMAND_TIMEOUT_MS,
+    commandTimeoutMs(context),
+    commandTimeoutMs(context),
+    "timeout_ms",
+  );
+  const maxOutputBytes = commandMaxOutputBytes(context);
+  const startedAt = Date.now();
+  const output = await spawnWorkspaceProcess(
+    createPackageManagerInvocation(manager, args),
+    cwdPath,
+    timeoutMs,
+    maxOutputBytes,
+    context.signal,
+  );
+  return commandOutputToRunResult(
+    [manager, ...args].join(" "),
+    cwd,
+    startedAt,
+    output,
+    { manager, commandArgs: [manager, ...args] },
+  );
+}
+
 async function executeDiagnoseFile(
   input: Record<string, unknown>,
   context: AgentToolContext,
@@ -368,6 +1627,22 @@ async function spawnWorkspaceCommand(
   maxOutputBytes: number,
   signal: AbortSignal | undefined,
 ): Promise<CommandOutput> {
+  return spawnWorkspaceProcess(
+    createShellInvocation(command),
+    cwd,
+    timeoutMs,
+    maxOutputBytes,
+    signal,
+  );
+}
+
+async function spawnWorkspaceProcess(
+  invocation: ShellInvocation,
+  cwd: string,
+  timeoutMs: number,
+  maxOutputBytes: number,
+  signal: AbortSignal | undefined,
+): Promise<CommandOutput> {
   if (signal?.aborted) {
     throw new Error("Command was interrupted.");
   }
@@ -379,8 +1654,7 @@ async function spawnWorkspaceCommand(
     let settled = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
 
-    const shell = createShellInvocation(command);
-    const child = spawn(shell.file, shell.args, {
+    const child = spawn(invocation.file, invocation.args, {
       cwd,
       shell: false,
       detached: process.platform !== "win32",
@@ -393,20 +1667,7 @@ async function spawnWorkspaceCommand(
      * timeout cannot leave a foreground verification command running unseen.
      */
     const killChild = (killSignal: NodeJS.Signals): void => {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      if (process.platform === "win32") {
-        killWindowsProcessTree(child, killSignal);
-      } else if (child.pid) {
-        try {
-          process.kill(-child.pid, killSignal);
-        } catch (error) {
-          if (!isProcessAlreadyExited(error)) {
-            child.kill(killSignal);
-          }
-        }
-      } else {
-        child.kill(killSignal);
-      }
+      killProcessTree(child, killSignal);
     };
 
     const cleanup = (): void => {
@@ -463,6 +1724,26 @@ async function spawnWorkspaceCommand(
   });
 }
 
+function killProcessTree(
+  child: ChildProcess,
+  killSignal: NodeJS.Signals,
+): void {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === "win32") {
+    killWindowsProcessTree(child, killSignal);
+  } else if (child.pid) {
+    try {
+      process.kill(-child.pid, killSignal);
+    } catch (error) {
+      if (!isProcessAlreadyExited(error)) {
+        child.kill(killSignal);
+      }
+    }
+  } else {
+    child.kill(killSignal);
+  }
+}
+
 function killWindowsProcessTree(
   child: ChildProcess,
   fallbackSignal: NodeJS.Signals,
@@ -492,6 +1773,99 @@ export function createShellInvocation(command: string): ShellInvocation {
     file: process.env.SHELL || "/bin/sh",
     args: ["-c", command],
   };
+}
+
+async function createSelectedShellInvocation(
+  command: string,
+  options: {
+    shell: ShellKind;
+    shellPath?: string;
+    shellArgs?: string[];
+  },
+): Promise<ShellInvocation> {
+  if (options.shellPath) {
+    return {
+      file: options.shellPath,
+      args: applyShellArgs(options.shellArgs ?? ["-lc", "{command}"], command),
+    };
+  }
+  switch (options.shell) {
+    case "default":
+      return createShellInvocation(command);
+    case "cmd":
+      return {
+        file: process.env.ComSpec || "cmd.exe",
+        args: ["/d", "/s", "/c", command],
+      };
+    case "sh":
+      return { file: process.platform === "win32" ? "sh.exe" : "/bin/sh", args: ["-c", command] };
+    case "bash":
+      return { file: "bash", args: ["-lc", command] };
+    case "git_bash":
+      return { file: await resolveGitBashExecutable(), args: ["-lc", command] };
+    case "powershell":
+      return createPowerShellInvocation(command, "powershell");
+    case "pwsh":
+      return createPowerShellInvocation(command, "pwsh");
+    default:
+      return assertNever(options.shell);
+  }
+}
+
+function createPowerShellInvocation(
+  command: string,
+  executable: "pwsh" | "powershell",
+): ShellInvocation {
+  return {
+    file: executable,
+    args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+  };
+}
+
+function createWslInvocation(
+  command: string,
+  wslCwd: string,
+  distro?: string,
+): ShellInvocation {
+  const linuxCommand = `cd ${quotePosix(wslCwd)} && ${command}`;
+  return {
+    file: "wsl.exe",
+    args: [
+      ...(distro ? ["-d", distro] : []),
+      "--",
+      "sh",
+      "-lc",
+      linuxCommand,
+    ],
+  };
+}
+
+function applyShellArgs(args: string[], command: string): string[] {
+  if (args.some((arg) => arg.includes("{command}"))) {
+    return args.map((arg) => arg.replaceAll("{command}", command));
+  }
+  return [...args, command];
+}
+
+async function resolveGitBashExecutable(): Promise<string> {
+  if (process.platform !== "win32") {
+    return "bash";
+  }
+  const explicit = process.env.GIT_BASH_PATH;
+  const candidates = [
+    explicit,
+    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, "Git", "bin", "bash.exe") : undefined,
+    process.env["ProgramFiles(x86)"]
+      ? path.join(process.env["ProgramFiles(x86)"], "Git", "bin", "bash.exe")
+      : undefined,
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe")
+      : undefined,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  for (const candidate of candidates) {
+    if (await canExecute(candidate)) return candidate;
+  }
+  return "bash.exe";
 }
 
 function createOutputCollector(maxOutputBytes: number): {
@@ -564,6 +1938,561 @@ function toToolResult(result: CommandRunResult): AgentToolResult {
     displayResult: result,
   };
 }
+
+function toNamedToolResult(name: string, result: unknown): AgentToolResult {
+  return {
+    toolCallId: "",
+    name,
+    content: JSON.stringify(result),
+    displayResult: result,
+  };
+}
+
+function commandOutputToRunResult<T extends Record<string, unknown> = Record<string, never>>(
+  command: string,
+  cwd: string,
+  startedAt: number,
+  output: CommandOutput,
+  extra?: T,
+): CommandRunResult & T {
+  return {
+    command,
+    cwd,
+    exitCode: output.exitCode,
+    signal: output.signal,
+    timedOut: output.timedOut,
+    durationMs: Date.now() - startedAt,
+    stdout: output.stdout.text,
+    stderr: output.stderr.text,
+    stdoutBytes: output.stdout.bytes,
+    stderrBytes: output.stderr.bytes,
+    stdoutTruncated: output.stdout.truncated,
+    stderrTruncated: output.stderr.truncated,
+    ...(extra ?? {} as T),
+  };
+}
+
+function formatFailedCommandMessage(prefix: string, result: CommandRunResult): string {
+  const detail = result.stderr.trim() || result.stdout.trim() || "no output";
+  return `${prefix} with exit code ${result.exitCode ?? "null"}: ${detail}`;
+}
+
+async function resolveWorkspaceDirectory(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+  toolName: string,
+): Promise<{ workspace: string; cwdPath: string; cwd: string }> {
+  const workspace = requireWorkspace(context);
+  const cwdArg = optionalString(input.cwd) ?? ".";
+  const cwdPath = await resolveWorkspacePathForAccess(workspace, cwdArg, "read");
+  const stat = await fs.stat(cwdPath);
+  if (!stat.isDirectory()) {
+    throw new Error(`${toolName} cwd is not a directory: ${cwdArg}`);
+  }
+  return {
+    workspace,
+    cwdPath,
+    cwd: toWorkspaceRelative(workspace, cwdPath) || ".",
+  };
+}
+
+async function executeGitCommand(
+  args: string[],
+  cwdPath: string,
+  context: AgentToolContext,
+): Promise<CommandOutput> {
+  return spawnWorkspaceProcess(
+    { file: "git", args },
+    cwdPath,
+    commandTimeoutMs(context),
+    commandMaxOutputBytes(context),
+    context.signal,
+  );
+}
+
+function parseGitStatusLine(line: string): { xy: string; path: string; originalPath?: string } {
+  const xy = line.slice(0, 2);
+  const payload = line.slice(3);
+  const renameSeparator = " -> ";
+  if (payload.includes(renameSeparator)) {
+    const [originalPath = "", nextPath = ""] = payload.split(renameSeparator);
+    return {
+      xy,
+      path: nextPath,
+      originalPath,
+    };
+  }
+  return {
+    xy,
+    path: payload,
+  };
+}
+
+async function resolvePathspecs(
+  value: unknown,
+  workspace: string,
+  toolName: string,
+): Promise<string[]> {
+  const pathspecs = optionalStringArray(value, "pathspecs") ?? [];
+  for (const pathspec of pathspecs) {
+    await resolveWorkspacePathForAccess(workspace, pathspec, "read");
+    if (pathspec.includes("\0")) {
+      throw new Error(`${toolName} pathspec cannot contain NUL bytes.`);
+    }
+  }
+  return pathspecs;
+}
+
+function gitPathspecArgs(pathspecs: string[]): string[] {
+  return pathspecs.length > 0 ? ["--", ...pathspecs] : [];
+}
+
+async function readPackageJson(cwdPath: string): Promise<PackageJsonShape> {
+  const packageJsonPath = path.join(cwdPath, "package.json");
+  try {
+    const parsed = JSON.parse(await fs.readFile(packageJsonPath, "utf8")) as unknown;
+    if (!isRecord(parsed)) {
+      throw new Error("package.json must contain a JSON object.");
+    }
+    return parsed;
+  } catch (error) {
+    if (hasNodeErrorCode(error, "ENOENT")) {
+      throw new Error(`package.json not found in ${cwdPath}.`);
+    }
+    throw error;
+  }
+}
+
+function normalizePackageScripts(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const scripts: Record<string, string> = {};
+  for (const [name, command] of Object.entries(value)) {
+    if (typeof command === "string") {
+      scripts[name] = command;
+    }
+  }
+  return scripts;
+}
+
+async function detectPackageManager(
+  cwdPath: string,
+  packageJson: PackageJsonShape,
+): Promise<PackageManagerName> {
+  if (typeof packageJson.packageManager === "string") {
+    const [manager] = packageJson.packageManager.split("@");
+    if (isPackageManagerName(manager)) return manager;
+  }
+  const lockfiles: Array<[string, PackageManagerName]> = [
+    ["pnpm-lock.yaml", "pnpm"],
+    ["yarn.lock", "yarn"],
+    ["bun.lockb", "bun"],
+    ["bun.lock", "bun"],
+    ["package-lock.json", "npm"],
+    ["npm-shrinkwrap.json", "npm"],
+  ];
+  for (const [fileName, manager] of lockfiles) {
+    if (await pathExists(path.join(cwdPath, fileName))) return manager;
+  }
+  return "npm";
+}
+
+function packageRunScriptArgs(manager: PackageManagerName, script: string): string[] {
+  switch (manager) {
+    case "npm":
+    case "pnpm":
+    case "bun":
+      return ["run", script];
+    case "yarn":
+      return ["run", script];
+    default:
+      return assertNever(manager);
+  }
+}
+
+function packageInstallArgs(
+  manager: PackageManagerName,
+  frozenLockfile: boolean,
+  cwdPath: string,
+): string[] {
+  switch (manager) {
+    case "npm":
+      return frozenLockfile && pathExistsSync(path.join(cwdPath, "package-lock.json"))
+        ? ["ci"]
+        : ["install"];
+    case "pnpm":
+      return ["install", ...(frozenLockfile ? ["--frozen-lockfile"] : [])];
+    case "yarn":
+      return ["install", ...(frozenLockfile ? ["--frozen-lockfile"] : [])];
+    case "bun":
+      return ["install", ...(frozenLockfile ? ["--frozen-lockfile"] : [])];
+    default:
+      return assertNever(manager);
+  }
+}
+
+export function createPackageManagerInvocation(
+  manager: PackageManagerName,
+  args: string[],
+): ShellInvocation {
+  if (process.platform === "win32") {
+    return createShellInvocation([manager, ...args].map(quoteCmdArg).join(" "));
+  }
+  return { file: manager, args };
+}
+
+function quoteCmdArg(value: string): string {
+  if (/^[A-Za-z0-9_./:=@+-]+$/.test(value)) return value;
+  return `"${value.replaceAll('"', '\\"')}"`;
+}
+
+function optionalPackageManager(value: unknown): PackageManagerName | undefined {
+  if (value === undefined) return undefined;
+  if (!isPackageManagerName(value)) {
+    throw new Error("manager must be npm, pnpm, yarn, or bun.");
+  }
+  return value;
+}
+
+function isPackageManagerName(value: unknown): value is PackageManagerName {
+  return value === "npm" || value === "pnpm" || value === "yarn" || value === "bun";
+}
+
+function optionalPackageScriptName(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  return requiredLimitedString(
+    value,
+    "script must be a non-empty string.",
+    MAX_PACKAGE_SCRIPT_NAME_BYTES,
+  );
+}
+
+async function detectShellEnvironment(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<{
+  platform: NodeJS.Platform;
+  defaultShell: string | null;
+  pathEntries: string[];
+  executables: Record<string, { found: boolean; path?: string }>;
+  gitBashCandidates: Array<{ path: string; exists: boolean }>;
+  workspacePath?: string;
+  wslWorkspacePath?: string;
+}> {
+  const workspacePath = optionalString(input.workspace_path) ?? context.workspace;
+  const executables = {
+    git: await findExecutableOnPath(["git"]),
+    bash: await findExecutableOnPath(process.platform === "win32" ? ["bash.exe", "bash"] : ["bash"]),
+    sh: await findExecutableOnPath(process.platform === "win32" ? ["sh.exe", "sh"] : ["sh"]),
+    powershell: await findExecutableOnPath(["powershell.exe", "powershell"]),
+    pwsh: await findExecutableOnPath(["pwsh.exe", "pwsh"]),
+    wsl: await findExecutableOnPath(["wsl.exe", "wsl"]),
+  };
+  const gitBashCandidatePaths = gitBashDetectionCandidates();
+  const gitBashCandidates = await Promise.all(
+    gitBashCandidatePaths.map(async (candidate) => ({
+      path: candidate,
+      exists: await canExecute(candidate),
+    })),
+  );
+  return {
+    platform: process.platform,
+    defaultShell: process.platform === "win32"
+      ? process.env.ComSpec ?? null
+      : process.env.SHELL ?? null,
+    pathEntries: getPathEntries(),
+    executables,
+    gitBashCandidates,
+    ...(workspacePath ? { workspacePath, wslWorkspacePath: toWslPath(workspacePath) } : {}),
+  };
+}
+
+function gitBashDetectionCandidates(): string[] {
+  if (process.platform !== "win32") return ["bash"];
+  return [
+    process.env.GIT_BASH_PATH,
+    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, "Git", "bin", "bash.exe") : undefined,
+    process.env["ProgramFiles(x86)"]
+      ? path.join(process.env["ProgramFiles(x86)"], "Git", "bin", "bash.exe")
+      : undefined,
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe")
+      : undefined,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+}
+
+async function findExecutableOnPath(
+  names: string[],
+): Promise<{ found: boolean; path?: string }> {
+  const pathEntries = getPathEntries();
+  const extensions = process.platform === "win32"
+    ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM")
+        .split(";")
+        .filter(Boolean)
+    : [""];
+  for (const entry of pathEntries) {
+    for (const name of names) {
+      const hasExt = path.extname(name).length > 0;
+      const candidateNames = hasExt ? [name] : extensions.map((ext) => `${name}${ext.toLowerCase()}`);
+      for (const candidateName of candidateNames) {
+        const candidate = path.join(entry, candidateName);
+        if (await canExecute(candidate)) {
+          return { found: true, path: candidate };
+        }
+      }
+    }
+  }
+  return { found: false };
+}
+
+function getPathEntries(): string[] {
+  const rawPath = process.env.PATH ?? process.env.Path ?? "";
+  return rawPath.split(path.delimiter).filter((entry) => entry.length > 0);
+}
+
+export function toWslPath(value: string): string {
+  const normalized = value.replaceAll("\\", "/");
+  const driveMatch = /^([A-Za-z]):\/(.*)$/.exec(normalized);
+  if (driveMatch) {
+    return `/mnt/${driveMatch[1].toLowerCase()}/${driveMatch[2]}`;
+  }
+  return normalized;
+}
+
+class CommandSessionManager {
+  private readonly sessions = new Map<string, CommandSession>();
+
+  async start(
+    input: Record<string, unknown>,
+    context: AgentToolContext,
+  ): Promise<CommandSessionSnapshot> {
+    this.pruneExitedSessions();
+    if (this.sessions.size >= MAX_SESSION_COUNT) {
+      throw new Error(`start_command_session allows at most ${MAX_SESSION_COUNT} sessions.`);
+    }
+    const workspace = requireWorkspace(context);
+    const command = requiredCommandForTool(input.command, "start_command_session");
+    const cwdArg = optionalString(input.cwd) ?? ".";
+    const cwdPath = await resolveWorkspacePathForAccess(workspace, cwdArg, "read");
+    const stat = await fs.stat(cwdPath);
+    if (!stat.isDirectory()) {
+      throw new Error(`start_command_session cwd is not a directory: ${cwdArg}`);
+    }
+    const shell = optionalEnum(
+      input.shell,
+      ["default", "cmd", "sh", "bash", "git_bash", "powershell", "pwsh"],
+      "shell",
+    ) ?? "default";
+    const maxBufferBytes = numberInRange(
+      input.max_buffer_bytes,
+      MIN_COMMAND_MAX_OUTPUT_BYTES,
+      MAX_SESSION_BUFFER_BYTES,
+      DEFAULT_SESSION_BUFFER_BYTES,
+      "max_buffer_bytes",
+    );
+    const invocation = await createSelectedShellInvocation(command, { shell });
+    const child = spawn(invocation.file, invocation.args, {
+      cwd: cwdPath,
+      shell: false,
+      detached: process.platform !== "win32",
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const now = new Date().toISOString();
+    const session: CommandSession = {
+      id: randomUUID(),
+      command,
+      cwd: toWorkspaceRelative(workspace, cwdPath) || ".",
+      cwdPath,
+      shell,
+      invocation,
+      child,
+      status: "running",
+      startedAt: now,
+      updatedAt: now,
+      stdout: createSessionCapture(maxBufferBytes),
+      stderr: createSessionCapture(maxBufferBytes),
+    };
+    child.stdout?.on("data", (data: Buffer | string) => {
+      session.stdout.collect(data);
+      session.updatedAt = new Date().toISOString();
+    });
+    child.stderr?.on("data", (data: Buffer | string) => {
+      session.stderr.collect(data);
+      session.updatedAt = new Date().toISOString();
+    });
+    child.on("error", (error) => {
+      session.status = "failed";
+      session.error = error.message;
+      session.updatedAt = new Date().toISOString();
+    });
+    child.on("close", (exitCode, signal) => {
+      session.status = "exited";
+      session.exitCode = exitCode;
+      session.signal = signal;
+      session.updatedAt = new Date().toISOString();
+    });
+    this.sessions.set(session.id, session);
+    return this.snapshot(session, DEFAULT_SESSION_TAIL_BYTES);
+  }
+
+  read(input: Record<string, unknown>): CommandSessionSnapshot {
+    const session = this.requireSession(input.session_id);
+    const tailBytes = numberInRange(
+      input.tail_bytes,
+      1,
+      MAX_SESSION_BUFFER_BYTES,
+      DEFAULT_SESSION_TAIL_BYTES,
+      "tail_bytes",
+    );
+    return this.snapshot(session, tailBytes);
+  }
+
+  write(input: Record<string, unknown>): { sessionId: string; bytesWritten: number } {
+    const session = this.requireSession(input.session_id);
+    if (session.status !== "running") {
+      throw new Error(`write_command_session session is not running: ${session.id}`);
+    }
+    const text = requiredLimitedString(
+      input.input,
+      "write_command_session requires a string input.",
+      MAX_COMMAND_BYTES,
+    );
+    const newline = input.newline === undefined ? true : requiredBoolean(input.newline, "newline");
+    const payload = newline ? `${text}\n` : text;
+    session.child.stdin?.write(payload);
+    session.updatedAt = new Date().toISOString();
+    return {
+      sessionId: session.id,
+      bytesWritten: Buffer.byteLength(payload, "utf8"),
+    };
+  }
+
+  stop(input: Record<string, unknown>): CommandSessionSnapshot {
+    const session = this.requireSession(input.session_id);
+    if (session.status === "running") {
+      session.status = "stopping";
+      killProcessTree(session.child, "SIGTERM");
+      setTimeout(() => killProcessTree(session.child, "SIGKILL"), KILL_GRACE_MS);
+      session.updatedAt = new Date().toISOString();
+    }
+    return this.snapshot(session, DEFAULT_SESSION_TAIL_BYTES);
+  }
+
+  private requireSession(value: unknown): CommandSession {
+    const id = requiredLimitedString(value, "session_id must be a non-empty string.", 128);
+    const session = this.sessions.get(id);
+    if (!session) {
+      throw new Error(`Command session not found: ${id}`);
+    }
+    return session;
+  }
+
+  private pruneExitedSessions(): void {
+    for (const [id, session] of this.sessions) {
+      if (session.status !== "running" && session.status !== "stopping") {
+        this.sessions.delete(id);
+      }
+    }
+  }
+
+  private snapshot(session: CommandSession, tailBytes: number): CommandSessionSnapshot {
+    return {
+      sessionId: session.id,
+      command: session.command,
+      cwd: session.cwd,
+      shell: session.shell,
+      shellFile: session.invocation.file,
+      pid: session.child.pid ?? null,
+      status: session.status,
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt,
+      exitCode: session.exitCode,
+      signal: session.signal,
+      error: session.error,
+      stdout: session.stdout.snapshot(tailBytes),
+      stderr: session.stderr.snapshot(tailBytes),
+    };
+  }
+}
+
+interface CommandSession {
+  id: string;
+  command: string;
+  cwd: string;
+  cwdPath: string;
+  shell: ShellKind;
+  invocation: ShellInvocation;
+  child: ChildProcess;
+  status: "running" | "stopping" | "exited" | "failed";
+  startedAt: string;
+  updatedAt: string;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: string;
+  stdout: SessionCapture;
+  stderr: SessionCapture;
+}
+
+interface CommandSessionSnapshot {
+  sessionId: string;
+  command: string;
+  cwd: string;
+  shell: ShellKind;
+  shellFile: string;
+  pid: number | null;
+  status: CommandSession["status"];
+  startedAt: string;
+  updatedAt: string;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: string;
+  stdout: StreamCapture;
+  stderr: StreamCapture;
+}
+
+interface SessionCapture {
+  collect(data: Buffer | string): void;
+  snapshot(tailBytes: number): StreamCapture;
+}
+
+function createSessionCapture(maxOutputBytes: number): SessionCapture {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  let storedBytes = 0;
+  let truncated = false;
+  return {
+    collect(data) {
+      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      bytes += buffer.length;
+      const remaining = maxOutputBytes - storedBytes;
+      if (remaining <= 0) {
+        truncated = true;
+        return;
+      }
+      if (buffer.length > remaining) {
+        chunks.push(buffer.subarray(0, remaining));
+        storedBytes += remaining;
+        truncated = true;
+        return;
+      }
+      chunks.push(buffer);
+      storedBytes += buffer.length;
+    },
+    snapshot(tailBytes) {
+      const fullBuffer = Buffer.concat(chunks, storedBytes);
+      const start = Math.max(0, fullBuffer.byteLength - tailBytes);
+      const buffer = fullBuffer.subarray(start);
+      const decoder = new StringDecoder("utf8");
+      return {
+        text: decoder.write(buffer),
+        bytes,
+        truncated: truncated || start > 0,
+      };
+    },
+  };
+}
+
+const commandSessionManager = new CommandSessionManager();
 
 function parseTypeScriptDiagnostics(
   output: string,
@@ -740,6 +2669,44 @@ function requiredCommand(value: unknown): string {
   return value.trim();
 }
 
+function requiredCommandForTool(value: unknown, toolName: string): string {
+  return requiredLimitedString(
+    value,
+    `${toolName} requires a non-empty command string.`,
+    MAX_COMMAND_BYTES,
+  );
+}
+
+function requiredLimitedString(value: unknown, message: string, maxBytes: number): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(message);
+  }
+  if (value.includes("\0")) {
+    throw new Error("string value cannot contain NUL bytes.");
+  }
+  if (Buffer.byteLength(value, "utf8") > maxBytes) {
+    throw new Error(`string value exceeds ${maxBytes} bytes.`);
+  }
+  return value.trim();
+}
+
+function requiredRegexPattern(value: unknown): string {
+  return requiredLimitedString(
+    value,
+    "rg_search requires a non-empty pattern string.",
+    MAX_REGEX_PATTERN_BYTES,
+  );
+}
+
+function createLineRegex(pattern: string, flags: string): RegExp {
+  try {
+    return new RegExp(pattern, flags);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`rg_search pattern is invalid: ${message}`);
+  }
+}
+
 function requiredPath(value: unknown, message: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(message);
@@ -758,9 +2725,44 @@ async function assertTextFile(filePath: string, relativePath: string): Promise<v
 function optionalString(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") {
-    throw new Error("cwd must be a string.");
+    throw new Error("optional string value must be a string.");
   }
   return value.trim() || undefined;
+}
+
+function optionalStringArray(value: unknown, name: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`${name} must be an array of strings.`);
+  }
+  return value.map((entry) => {
+    if (typeof entry !== "string" || !entry.trim()) {
+      throw new Error(`${name} entries must be non-empty strings.`);
+    }
+    if (entry.includes("\0")) {
+      throw new Error(`${name} entries cannot contain NUL bytes.`);
+    }
+    return entry.trim();
+  });
+}
+
+function optionalEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  name: string,
+): T | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw new Error(`${name} must be one of: ${allowed.join(", ")}.`);
+  }
+  return value as T;
+}
+
+function requiredBoolean(value: unknown, name: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${name} must be a boolean.`);
+  }
+  return value;
 }
 
 function numberInRange(
@@ -778,6 +2780,106 @@ function numberInRange(
     throw new Error(`${name} must be an integer between ${min} and ${max}.`);
   }
   return value;
+}
+
+async function walkTextFiles(
+  directory: string,
+  onFile: (filePath: string) => Promise<void>,
+): Promise<void> {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isSymbolicLink() || shouldSkipCommandSearchEntry(entry.name)) continue;
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await walkTextFiles(fullPath, onFile);
+    } else if (entry.isFile() && looksTextFile(entry.name)) {
+      await onFile(fullPath);
+    }
+  }
+}
+
+function shouldSkipCommandSearchEntry(name: string): boolean {
+  return shouldSkipEntry(name) || name === ".hg" || name === ".svn";
+}
+
+function looksTextFile(name: string): boolean {
+  const ext = path.extname(name).toLowerCase();
+  return [
+    "",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".css",
+    ".go",
+    ".h",
+    ".html",
+    ".java",
+    ".js",
+    ".json",
+    ".jsx",
+    ".kt",
+    ".md",
+    ".mdx",
+    ".mjs",
+    ".py",
+    ".rs",
+    ".sh",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+  ].includes(ext);
+}
+
+async function canExecute(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(
+      filePath,
+      process.platform === "win32" ? fsConstants.F_OK : fsConstants.F_OK | fsConstants.X_OK,
+    );
+    return true;
+  } catch (error) {
+    if (
+      hasNodeErrorCode(error, "ENOENT") ||
+      hasNodeErrorCode(error, "EACCES") ||
+      hasNodeErrorCode(error, "ENOTDIR")
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath, fsConstants.F_OK);
+    return true;
+  } catch (error) {
+    if (hasNodeErrorCode(error, "ENOENT") || hasNodeErrorCode(error, "ENOTDIR")) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function pathExistsSync(filePath: string): boolean {
+  return existsSync(filePath);
+}
+
+function quotePosix(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected value: ${String(value)}`);
 }
 
 function isProcessAlreadyExited(error: unknown): boolean {

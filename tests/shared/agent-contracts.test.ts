@@ -146,6 +146,14 @@ describe("shared agent contracts", () => {
       "list_files",
       "read_file",
       "search_files",
+      "rg_search",
+      "git_status",
+      "git_diff",
+      "git_log",
+      "git_branch",
+      "package_scripts",
+      "read_command_session",
+      "detect_shell_environment",
       "diagnose_file",
     ]);
     expect(RUNTIME_READ_ONLY_TOOL_NAMES.every((toolName) =>

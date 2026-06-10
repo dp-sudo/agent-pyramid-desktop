@@ -3,7 +3,12 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createCommandTools, createShellInvocation } from "../../../src/main/application/tools/command-tools";
+import {
+  createPackageManagerInvocation,
+  createCommandTools,
+  createShellInvocation,
+  toWslPath,
+} from "../../../src/main/application/tools/command-tools";
 import { createCodingTools } from "../../../src/main/application/tools/coding-tools";
 import { createPlanTool } from "../../../src/main/application/tools/create-plan-tool";
 import { FileHistoryStore } from "../../../src/main/application/tools/file-history-state";
@@ -82,6 +87,36 @@ function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
   }
 }
 
+async function waitUntil(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 1000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!(await predicate())) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("Timed out waiting for condition.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch (error) {
+    if (hasNodeErrorCode(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+function hasNodeErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code;
+}
+
 describe("application tools", () => {
   it("registers and executes tools by name", async () => {
     const registry = new InMemoryToolRegistry([sampleTool]);
@@ -158,6 +193,37 @@ describe("application tools", () => {
     });
     expect(Object.keys(diagnoseFile?.definition.inputSchema.properties ?? {}))
       .toEqual(["path"]);
+  });
+
+  it("registers dedicated development command tools", () => {
+    const names = createCommandTools().map((tool) => tool.definition.name);
+
+    expect(names).toEqual(expect.arrayContaining([
+      "run_command",
+      "shell_command",
+      "git_bash_command",
+      "powershell_command",
+      "wsl_command",
+      "rg_search",
+      "git_status",
+      "git_diff",
+      "git_log",
+      "git_branch",
+      "git_commit",
+      "package_scripts",
+      "package_install",
+      "package_test",
+      "package_build",
+      "run_lint",
+      "run_format",
+      "run_tests",
+      "run_build",
+      "start_command_session",
+      "read_command_session",
+      "write_command_session",
+      "stop_command_session",
+      "detect_shell_environment",
+    ]));
   });
 
   it("keeps workspace tool limit schema aligned with runtime bounds", () => {
@@ -1566,6 +1632,167 @@ describe("application tools", () => {
     });
   });
 
+  it("runs configurable shell commands with an explicit shell path and arguments", async () => {
+    const workspace = await makeTempDir("shell-command-tools-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-shell-command",
+          name: "shell_command",
+          arguments: {
+            command: "process.stdout.write(process.cwd());",
+            shell_path: process.execPath,
+            shell_args: ["-e", "{command}"],
+            cwd: "src",
+          },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        cwd: string;
+        stdout: string;
+        shellFile: string;
+      };
+
+      expect(parsed.cwd).toBe("src");
+      expect(path.resolve(parsed.stdout)).toBe(path.join(workspace, "src"));
+      expect(parsed.shellFile).toBe(process.execPath);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("converts Windows paths for WSL commands", () => {
+    expect(toWslPath("C:\\Users\\Ada\\project")).toBe("/mnt/c/Users/Ada/project");
+    expect(toWslPath("/mnt/d/workspace")).toBe("/mnt/d/workspace");
+  });
+
+  it("routes package manager shims through cmd on Windows", () => {
+    withPlatform("win32", () => {
+      const invocation = createPackageManagerInvocation("npm", ["run", "build"]);
+
+      expect(invocation).toEqual({
+        file: process.env.ComSpec || "cmd.exe",
+        args: ["/d", "/s", "/c", "npm run build"],
+      });
+    });
+
+    withPlatform("linux", () => {
+      expect(createPackageManagerInvocation("npm", ["run", "build"])).toEqual({
+        file: "npm",
+        args: ["run", "build"],
+      });
+    });
+  });
+
+  it("detects shell environment facts without requiring approval-only command execution", async () => {
+    const workspace = await makeTempDir("shell-detect-tools-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-detect-shell",
+          name: "detect_shell_environment",
+          arguments: {},
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        platform: string;
+        pathEntries: string[];
+        executables: Record<string, { found: boolean; path?: string }>;
+        workspacePath: string;
+        wslWorkspacePath: string;
+      };
+
+      expect(parsed.platform).toBe(process.platform);
+      expect(Array.isArray(parsed.pathEntries)).toBe(true);
+      expect(parsed.executables).toHaveProperty("git");
+      expect(parsed.workspacePath).toBe(workspace);
+      expect(parsed.wslWorkspacePath).toBe(toWslPath(workspace));
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("runs regex workspace searches separately from literal search_files", async () => {
+    const workspace = await makeTempDir("rg-search-tools-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(
+        path.join(workspace, "src", "index.ts"),
+        "const alpha1 = true;\nconst beta = false;\n",
+        "utf8",
+      );
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-rg-search",
+          name: "rg_search",
+          arguments: {
+            pattern: "alpha\\d",
+            path: "src",
+          },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        results: Array<{ path: string; line: number; column: number; match: string }>;
+      };
+
+      expect(parsed.results).toEqual([
+        {
+          path: "src/index.ts",
+          line: 1,
+          column: 7,
+          match: "alpha1",
+          text: "const alpha1 = true;",
+        },
+      ]);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("skips hidden files during regex workspace search", async () => {
+    const workspace = await makeTempDir("rg-search-hidden-tools-");
+    try {
+      await fs.writeFile(path.join(workspace, ".env"), "SECRET_TOKEN=hidden\n", "utf8");
+      await fs.writeFile(path.join(workspace, "visible.txt"), "SECRET_TOKEN=visible\n", "utf8");
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-rg-hidden-search",
+          name: "rg_search",
+          arguments: {
+            pattern: "SECRET_TOKEN",
+            path: ".",
+          },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        results: Array<{ path: string; text: string }>;
+      };
+
+      expect(parsed.results).toEqual([
+        expect.objectContaining({
+          path: "visible.txt",
+          text: "SECRET_TOKEN=visible",
+        }),
+      ]);
+      expect(parsed.results.some((entry) => entry.path === ".env")).toBe(false);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("guards run_command cwd, timeouts, and output truncation", async () => {
     const workspace = await makeTempDir("command-tools-guard-");
     const outside = await makeTempDir("command-tools-outside-");
@@ -1832,6 +2059,382 @@ describe("application tools", () => {
         ),
       ).rejects.toThrow("timeout_ms must be an integer between 100 and 100.");
     } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("returns structured git status, diff, log, branch, and commit results", async () => {
+    const workspace = await makeTempDir("git-tools-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      await registry.execute(
+        { id: "git-init", name: "run_command", arguments: { command: "git init" } },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-email",
+          name: "run_command",
+          arguments: { command: "git config user.email test@example.test" },
+        },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-name",
+          name: "run_command",
+          arguments: { command: "git config user.name Tester" },
+        },
+        context,
+      );
+      await fs.writeFile(path.join(workspace, "file.txt"), "one\n", "utf8");
+
+      const status = JSON.parse(
+        (
+          await registry.execute(
+            { id: "git-status", name: "git_status", arguments: {} },
+            context,
+          )
+        ).content,
+      ) as { entries: Array<{ xy: string; path: string }> };
+      expect(status.entries).toEqual([
+        expect.objectContaining({ xy: "??", path: "file.txt" }),
+      ]);
+
+      const commit = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "git-commit",
+              name: "git_commit",
+              arguments: { message: "initial commit", all: true },
+            },
+            context,
+          )
+        ).content,
+      ) as { staged: boolean; commit: { exitCode: number | null } };
+      expect(commit.staged).toBe(true);
+      expect(commit.commit.exitCode).toBe(0);
+
+      await fs.writeFile(path.join(workspace, "file.txt"), "two\n", "utf8");
+      const diff = JSON.parse(
+        (
+          await registry.execute(
+            { id: "git-diff", name: "git_diff", arguments: { pathspecs: ["file.txt"] } },
+            context,
+          )
+        ).content,
+      ) as { stdout: string };
+      expect(diff.stdout).toContain("-one");
+      expect(diff.stdout).toContain("+two");
+
+      const log = JSON.parse(
+        (
+          await registry.execute(
+            { id: "git-log", name: "git_log", arguments: { max_count: 1 } },
+            context,
+          )
+        ).content,
+      ) as { commits: Array<{ subject: string }> };
+      expect(log.commits).toEqual([expect.objectContaining({ subject: "initial commit" })]);
+
+      const branch = JSON.parse(
+        (
+          await registry.execute(
+            { id: "git-branch", name: "git_branch", arguments: {} },
+            context,
+          )
+        ).content,
+      ) as { current: string | null; branches: Array<{ current: boolean }> };
+      expect(branch.current).toBeTruthy();
+      expect(branch.branches.some((entry) => entry.current)).toBe(true);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("disables configured external diff commands for read-only git_diff", async () => {
+    const workspace = await makeTempDir("git-diff-safe-tools-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const markerPath = path.join(workspace, "external-ran.txt");
+      const externalScriptPath = path.join(workspace, "external-diff.cjs");
+      await fs.writeFile(
+        externalScriptPath,
+        "require('fs').writeFileSync('external-ran.txt', '1');\n",
+        "utf8",
+      );
+      await registry.execute(
+        { id: "git-init", name: "run_command", arguments: { command: "git init" } },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-email",
+          name: "run_command",
+          arguments: { command: "git config user.email test@example.test" },
+        },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-name",
+          name: "run_command",
+          arguments: { command: "git config user.name Tester" },
+        },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-external",
+          name: "run_command",
+          arguments: {
+            command: `git config diff.external ${JSON.stringify(`${process.execPath} ${externalScriptPath}`)}`,
+          },
+        },
+        context,
+      );
+      await fs.writeFile(path.join(workspace, "file.txt"), "one\n", "utf8");
+      await registry.execute(
+        { id: "git-add", name: "run_command", arguments: { command: "git add file.txt" } },
+        context,
+      );
+      await registry.execute(
+        { id: "git-commit", name: "run_command", arguments: { command: "git commit -m initial" } },
+        context,
+      );
+      await fs.writeFile(path.join(workspace, "file.txt"), "two\n", "utf8");
+
+      const diff = JSON.parse(
+        (
+          await registry.execute(
+            { id: "git-diff", name: "git_diff", arguments: { pathspecs: ["file.txt"] } },
+            context,
+          )
+        ).content,
+      ) as { commandArgs: string[]; stdout: string };
+
+      expect(diff.commandArgs).toEqual(expect.arrayContaining(["--no-ext-diff", "--no-textconv"]));
+      expect(diff.stdout).toContain("+two");
+      expect(await fileExists(markerPath)).toBe(false);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("stops git_commit when staging requested paths fails", async () => {
+    const workspace = await makeTempDir("git-commit-add-failure-tools-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      await registry.execute(
+        { id: "git-init", name: "run_command", arguments: { command: "git init" } },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-email",
+          name: "run_command",
+          arguments: { command: "git config user.email test@example.test" },
+        },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-name",
+          name: "run_command",
+          arguments: { command: "git config user.name Tester" },
+        },
+        context,
+      );
+      await fs.writeFile(path.join(workspace, ".gitignore"), "*.log\n", "utf8");
+      await fs.writeFile(path.join(workspace, "base.txt"), "base\n", "utf8");
+      await registry.execute(
+        { id: "git-add-base", name: "run_command", arguments: { command: "git add ." } },
+        context,
+      );
+      await registry.execute(
+        { id: "git-commit-base", name: "run_command", arguments: { command: "git commit -m initial" } },
+        context,
+      );
+      await fs.writeFile(path.join(workspace, "staged.txt"), "staged\n", "utf8");
+      await registry.execute(
+        { id: "git-add-staged", name: "run_command", arguments: { command: "git add staged.txt" } },
+        context,
+      );
+      await fs.writeFile(path.join(workspace, "ignored.log"), "ignored\n", "utf8");
+
+      await expect(
+        registry.execute(
+          {
+            id: "git-commit-fail",
+            name: "git_commit",
+            arguments: { message: "should not commit staged file", pathspecs: ["ignored.log"] },
+          },
+          context,
+        ),
+      ).rejects.toThrow("git_commit staging failed");
+
+      const log = JSON.parse(
+        (
+          await registry.execute(
+            { id: "git-log", name: "git_log", arguments: { max_count: 5 } },
+            context,
+          )
+        ).content,
+      ) as { commits: Array<{ subject: string }> };
+      expect(log.commits.map((commit) => commit.subject)).toEqual(["initial"]);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("detects package scripts and runs package/build/lint/test wrappers", async () => {
+    const workspace = await makeTempDir("package-tools-");
+    try {
+      await fs.writeFile(
+        path.join(workspace, "package.json"),
+        JSON.stringify({
+          scripts: {
+            build: "node -e \"process.stdout.write('built')\"",
+            lint: "node -e \"process.stdout.write('linted')\"",
+            test: "node -e \"process.stdout.write('tested')\"",
+          },
+        }),
+        "utf8",
+      );
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      const scripts = JSON.parse(
+        (
+          await registry.execute(
+            { id: "package-scripts", name: "package_scripts", arguments: {} },
+            context,
+          )
+        ).content,
+      ) as { manager: string; scripts: Record<string, string> };
+      expect(scripts.manager).toBe("npm");
+      expect(Object.keys(scripts.scripts).sort()).toEqual(["build", "lint", "test"]);
+
+      const build = JSON.parse(
+        (
+          await registry.execute(
+            { id: "package-build", name: "package_build", arguments: {} },
+            context,
+          )
+        ).content,
+      ) as { manager: string; script: string; stdout: string };
+      expect(build).toMatchObject({ manager: "npm", script: "build" });
+      expect(build.stdout).toContain("built");
+
+      const lint = JSON.parse(
+        (
+          await registry.execute(
+            { id: "run-lint", name: "run_lint", arguments: {} },
+            context,
+          )
+        ).content,
+      ) as { script: string; stdout: string };
+      expect(lint).toMatchObject({ script: "lint" });
+      expect(lint.stdout).toContain("linted");
+
+      const tests = JSON.parse(
+        (
+          await registry.execute(
+            { id: "run-tests", name: "run_tests", arguments: {} },
+            context,
+          )
+        ).content,
+      ) as { script: string; stdout: string };
+      expect(tests).toMatchObject({ script: "test" });
+      expect(tests.stdout).toContain("tested");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("starts, reads, writes, and stops long-running command sessions", async () => {
+    const workspace = await makeTempDir("command-session-tools-");
+    let sessionId: string | undefined;
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const start = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-start",
+              name: "start_command_session",
+              arguments: {
+                command: nodeCommand(
+                  "process.stdout.write('ready\\n'); process.stdin.on('data', (chunk) => process.stdout.write('echo:' + chunk.toString())); setInterval(() => undefined, 1000);",
+                ),
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionId: string; status: string };
+      sessionId = start.sessionId;
+      expect(start.status).toBe("running");
+
+      await registry.execute(
+        {
+          id: "session-write",
+          name: "write_command_session",
+          arguments: { session_id: sessionId, input: "ping" },
+        },
+        context,
+      );
+
+      await waitUntil(async () => {
+        const read = JSON.parse(
+          (
+            await registry.execute(
+              {
+                id: "session-read",
+                name: "read_command_session",
+                arguments: { session_id: sessionId },
+              },
+              context,
+            )
+          ).content,
+        ) as { stdout: { text: string } };
+        return read.stdout.text.includes("ready") && read.stdout.text.includes("echo:ping");
+      });
+
+      const stopped = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-stop",
+              name: "stop_command_session",
+              arguments: { session_id: sessionId },
+            },
+            context,
+          )
+        ).content,
+      ) as { status: string };
+      expect(["running", "stopping", "exited"]).toContain(stopped.status);
+    } finally {
+      if (sessionId) {
+        const registry = new InMemoryToolRegistry(createCommandTools());
+        await registry.execute(
+          {
+            id: "session-cleanup",
+            name: "stop_command_session",
+            arguments: { session_id: sessionId },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ).catch((error: unknown) => {
+          if (error instanceof Error && error.message.includes("Command session not found")) return;
+          throw error;
+        });
+      }
       await removeTempDir(workspace);
     }
   });

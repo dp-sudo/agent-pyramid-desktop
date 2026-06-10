@@ -21,11 +21,15 @@ interface MutableTimelineTurn {
   blocks: TimelineProcessItem[];
 }
 
-export function groupTimelineTurns(items: Item[]): TimelineTurn[] {
+export function groupTimelineTurns(
+  items: readonly Item[],
+  options: { sorted?: boolean } = {},
+): TimelineTurn[] {
   const turns: MutableTimelineTurn[] = [];
   const byTurnId = new Map<string, MutableTimelineTurn>();
+  const orderedItems = options.sorted ? items : sortTimelineItems(items);
 
-  for (const item of items) {
+  for (const item of orderedItems) {
     const turnId = getTimelineItemTurnId(item);
     let turn = byTurnId.get(turnId);
     if (!turn) {
@@ -44,10 +48,25 @@ export function groupTimelineTurns(items: Item[]): TimelineTurn[] {
   return turns.map((turn) => deriveTurnSections(turn));
 }
 
+export function sortTimelineItems(items: readonly Item[]): Item[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const timeDelta = getTimelineItemTime(left.item) - getTimelineItemTime(right.item);
+      return timeDelta !== 0 ? timeDelta : left.index - right.index;
+    })
+    .map(({ item }) => item);
+}
+
 export function getTimelineItemTurnId(item: Item): string {
   return "turnId" in item && typeof item.turnId === "string"
     ? item.turnId
     : `item:${item.id}`;
+}
+
+function getTimelineItemTime(item: Item): number {
+  const timestamp = Date.parse(item.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function deriveTurnSections(turn: MutableTimelineTurn): TimelineTurn {

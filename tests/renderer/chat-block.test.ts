@@ -6,6 +6,7 @@ import {
   TOOL_DETAIL_PREVIEW_MAX_CHARS,
   approvalStatusText,
   canRespondToApproval,
+  getReasoningCollapsedPreview,
   isReasoningOpenByDefault,
   isLongToolDetail,
   resolveToolDetailDisplay,
@@ -141,6 +142,32 @@ describe("ChatBlock approval helpers", () => {
     expect(html).toContain("is-nested");
     expect(html).toContain("open=\"\"");
     expect(html).toContain("chat.reasoningLabel");
+  });
+
+  it("renders completed folded reasoning as a light preview without markdown body", () => {
+    const reasoningItem: Extract<Item, { kind: "reasoning" }> = {
+      kind: "reasoning",
+      id: "reasoning-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      text: "Need to inspect files.\n\n```ts\nconst expensive = true;\n```",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, { item: reasoningItem, nested: true }),
+      ),
+    );
+
+    expect(getReasoningCollapsedPreview(" one\n\n two ", 20)).toBe("one two");
+    expect(getReasoningCollapsedPreview("abcdef", 3)).toBe("abc...");
+    expect(html).toContain("ds-process-reasoning-preview");
+    expect(html).toContain("Need to inspect files.");
+    expect(html).not.toContain("ds-process-entry-detail ds-process-reasoning");
+    expect(html).not.toContain("const expensive");
   });
 
   it("updates reasoning open state from live defaults until the user overrides it", () => {

@@ -8,6 +8,7 @@ import {
   isCodeBlockCollapsedByDefault,
   normalizeMarkdownHref,
   normalizeMarkdownImageSrc,
+  resolveCollapsedCodeBlockDisplay,
   resolveNextCodeBlockCollapsedState,
   shouldReplaceCopyResetTimer,
 } from "../../src/renderer/src/ui/components/chat/AssistantMarkdown";
@@ -43,6 +44,32 @@ describe("AssistantMarkdown", () => {
     expect(html).toContain("class=\"ds-markdown-task-checkbox");
   });
 
+  it("renders visible inline code without leaving empty placeholder pills", () => {
+    const html = renderToStaticMarkup(
+      <AssistantMarkdown text={"Use `src/main` and `window.agentApi`; ignore `` and `   `."} />,
+    );
+
+    expect(html).toContain("<code>src/main</code>");
+    expect(html).toContain("<code>window.agentApi</code>");
+    expect(html).not.toContain("<code></code>");
+    expect(html).not.toContain("<code>   </code>");
+  });
+
+  it("renders short fenced code blocks from the extracted source text", () => {
+    const html = renderToStaticMarkup(
+      <AssistantMarkdown
+        text={["```ts", "const value = 1;", "console.log(value);", "```"].join("\n")}
+        codeBlockCollapseLineThreshold={8}
+      />,
+    );
+
+    expect(html).toContain("class=\"ds-code-block\"");
+    expect(html).toContain("<span>ts</span>");
+    expect(html).toContain("<code class=\"language-ts\">const value = 1;");
+    expect(html).toContain("console.log(value);");
+    expect(html).not.toContain("is-collapsed");
+  });
+
   it("collapses long code blocks by default without hiding the copy control", () => {
     const longCode = Array.from({ length: 19 }, (_, index) => `line ${index + 1}`).join("\n");
     const html = renderToStaticMarkup(
@@ -63,6 +90,17 @@ describe("AssistantMarkdown", () => {
     expect(controlsMatch[1]).toBe(preIdMatch[1]);
     expect(html).toContain("chat.expandCode");
     expect(html).toContain("chat.copyCode");
+    expect(html).toContain("line 12");
+    expect(html).not.toContain("line 19");
+  });
+
+  it("renders only a bounded source preview while a long code block is collapsed", () => {
+    const longCode = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n");
+
+    expect(resolveCollapsedCodeBlockDisplay(longCode, 5)).toEqual({
+      text: ["line 1", "line 2", "line 3", "line 4", "line 5"].join("\n"),
+      hiddenLineCount: 15,
+    });
   });
 
   it("uses the configured code block collapse threshold", () => {

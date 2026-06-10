@@ -162,6 +162,17 @@ describe("MessageTimeline helpers", () => {
     });
   });
 
+  it("sorts visible timeline items before choosing the recent turn window", () => {
+    const turn1 = userItem("turn-1", "2026-01-01T00:00:01.000Z");
+    const turn2 = userItem("turn-2", "2026-01-01T00:00:02.000Z");
+    const turn3 = userItem("turn-3", "2026-01-01T00:00:03.000Z");
+
+    expect(getVisibleTimelineItems([turn3, turn1, turn2], false, 2)).toEqual({
+      visibleItems: [turn2, turn3],
+      hiddenTurnCount: 1,
+    });
+  });
+
   it("normalizes invalid visible turn limits to at least one turn", () => {
     const turn2 = userItem("turn-2");
     const items = [userItem("turn-1"), turn2];
@@ -177,14 +188,17 @@ describe("MessageTimeline helpers", () => {
   });
 });
 
-function userItem(turnId: string): Extract<Item, { kind: "user" }> {
+function userItem(
+  turnId: string,
+  createdAt = "2026-01-01T00:00:00.000Z",
+): Extract<Item, { kind: "user" }> {
   return {
     kind: "user",
     id: `${turnId}-user`,
     threadId: "thread-1",
     turnId,
     text: turnId,
-    createdAt: "2026-01-01T00:00:00.000Z",
+    createdAt,
   };
 }
 

@@ -333,7 +333,9 @@ Notes:
   persistence. AgentRuntime uses it to filter tool definitions sent to the model
   and to reject forced calls to disabled tools.
 - `command.timeoutMs` and `command.maxOutputBytes` must stay within shared
-  integer bounds from `src/shared/agent-contracts.ts`.
+  integer bounds from `src/shared/agent-contracts.ts`; command-backed shell,
+  Git, package/task, session-start, and workspace diagnostics tools consume
+  those defaults.
 - `approvalExperience` and `compaction` are persisted runtime preference
   contracts. `approvalExperience` controls renderer presentation only, while
   `compaction` is consumed by runtime message preparation before model

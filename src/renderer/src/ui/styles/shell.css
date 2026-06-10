@@ -1417,6 +1417,16 @@ textarea:focus-visible {
   font-family: var(--ds-font-sans);
 }
 
+.ds-process-reasoning-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  font-weight: 450;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ds-process-tool.is-running {
   background: var(--ds-accent-soft);
 }

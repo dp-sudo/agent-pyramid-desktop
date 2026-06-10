@@ -22,7 +22,7 @@
 - 建立多 turn Agent 编排器：`src/main/application/agent-runtime.ts`。
 - 建立工具注册机制：`src/main/application/tools/`。
 - 建立首批 coding agent 写入工具：`read_file` 会记录文件读状态，`read_file` / `search_files` 都严格校验 UTF-8 文本；`edit_file` / `write_file` 使用共享 workspace 路径策略、读后未过期校验和结构化 diff preview，经 approval gate 后写入工作区文本文件；`apply_patch` 支持受限 unified diff dry-run、多文件 diff preview、`No newline at end of file` 语义保留和一次性提交；`rollback_file` 可回滚当前 app 会话内最近一次 agent 文件写入。
-- 建立首批命令执行工具：`run_command` 在 active workspace 内运行前台 shell 命令，支持 workspace-relative `cwd`、timeout、stdout/stderr 截断、结构化结果和 turn interrupt 取消。
+- 建立开发命令工具组：`run_command`、可配置 `shell_command`、`git_bash_command`、`powershell_command`、`wsl_command`、`rg_search`、结构化 Git 工具、npm/pnpm/yarn/bun 包管理器包装器、通用 lint/format/test/build 包装器、长驻 command session 和 shell 环境探测都通过 `createCommandTools()` 独立注册。
 - 建立首批诊断工具：`diagnose_workspace` 在 active workspace 内运行 TypeScript/typecheck 并解析结构化错误；`diagnose_file` 使用 TypeScript Language Service 对单文件做语法/语义/建议诊断，用于编辑后的 workspace 级与文件级验证闭环。
 - 建立 Code/Write tool access 边界：`AgentRuntime` 默认在 Write threads 中隐藏并拒绝 Code-only 编码/命令工具，同时保留可注入的 per-mode tool access policy 以便单独允许或禁用指定工具。
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
@@ -75,14 +75,21 @@
   `Item[]` boundary before turn grouping. The initial render keeps the latest
   turns together without splitting a shared `turnId`, and exposes a localized
   show-older control for loading the full history on demand.
+- Stabilized timeline text ordering by sorting items by `createdAt` with stable
+  tie-breaking before turn grouping and recent-window selection, so replay/SSE
+  arrival order no longer affects visible user/reasoning/tool/assistant order.
+- Reduced folded historical render cost: closed work-process sections no longer
+  mount their process item blocks, closed completed reasoning renders only a
+  lightweight text preview, and collapsed long code blocks render a bounded
+  source preview while retaining full-source copy and expand behavior.
 - Hardened `RightInspector` for long Code sessions: Changes now summarizes
   only recent tool activity, tool details use bounded preview formatting that
   avoids building full large result strings, and Todo/Plan latest-plan lookup
   scans from the end instead of collecting all plan items.
 - Verification plan: renderer MessageTimeline, timeline-model and
-  RightInspector helper tests cover recent-window boundaries, bounded tool
-  previews and latest-plan lookup; full `typecheck/test/build` verification is
-  run before handoff.
+  RightInspector helper tests cover recent-window boundaries, stable sorting,
+  folded reasoning/code previews, bounded tool previews and latest-plan lookup;
+  full `typecheck/test/build` verification is run before handoff.
 
 ### 2026-06-10 - Write document state and completion race cleanup
 - Consolidated Write document view state reset/open paths so file open, file
@@ -223,6 +230,12 @@
   they are collapsed, including the total line count. Short code blocks remain
   unchanged, and the existing expand/collapse and copy controls keep their
   behavior.
+- Verification: `npm run typecheck`, `npm run test`, `npm run build`.
+
+### 2026-06-10 - Markdown code render completion fix
+- Fixed AssistantMarkdown code rendering so fenced code blocks render from their
+  extracted source string instead of relying on an already-rendered child node,
+  and whitespace-only inline code no longer creates empty placeholder pills.
 - Verification: `npm run typecheck`, `npm run test`, `npm run build`.
 
 ### 2026-06-10 - Settings session copy cleanup
@@ -582,6 +595,12 @@
 ### 2026-06-10 - Code/Write default profile send boundary
 - Fixed Workbench turn send payloads so automatically synced active composer profiles are not sent as explicit `modelProfileId`; config-backed Code/Write default model profile preferences now reach `AgentRuntime.resolveModelProfile()` unless the user explicitly chooses a profile.
 - Verification plan: renderer Workbench and WorkbenchContext tests cover the auto-vs-explicit composer profile boundary; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-10 - Development command tool suite
+- Expanded `createCommandTools()` beyond `run_command` / TypeScript diagnostics with independently registered development tools: configurable shell execution, Git Bash, PowerShell/pwsh, WSL, regex `rg_search`, structured Git status/diff/log/branch/commit, package manager script/install/test/build wrappers, generic lint/format/test/build wrappers, bounded long-running command sessions, and shell environment detection.
+- Kept foreground shell, Git commit, package/task, and command session write/stop operations on the approval path; read-only wrappers such as `rg_search`, Git status/diff/log/branch, package script discovery, session read, shell environment detection, and `diagnose_file` skip approval through metadata.
+- Updated shared `RUNTIME_TOOL_NAMES`, default Code/Write availability, Code-only runtime policy, settings i18n/search metadata, and runtime/tool docs so model catalog filtering and renderer settings do not drift from the registered tool suite.
+- Verification plan: command tool tests cover shell selection, WSL path conversion, regex search, Git wrappers, package/task wrappers, and session lifecycle; full `typecheck/test/build` verification is run before handoff.
 
 ### 2026-06-09 - Command output UTF-8 truncation
 - Hardened `run_command` stdout/stderr truncation so byte-limited command output is decoded on a UTF-8 character boundary and does not introduce replacement characters into tool results.

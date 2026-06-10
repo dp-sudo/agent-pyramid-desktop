@@ -543,9 +543,10 @@ Key semantics:
   does not specify `modelProfileId`.
 - `defaultApprovalPolicy` and `defaultSandboxMode` are consumed by thread
   creation as defaults when the create request omits explicit values.
-- `command.timeoutMs` and `command.maxOutputBytes` are consumed by
-  `run_command` and `diagnose_workspace` when a tool call does not provide a
-  stricter override.
+- `command.timeoutMs` and `command.maxOutputBytes` are consumed by foreground
+  command-backed tools, package/task wrappers, Git wrappers that spawn `git`,
+  and `diagnose_workspace` when a tool call does not provide a stricter
+  override.
 - `compaction.enabled` and `compaction.strategy` are consumed by
   `AgentRuntime.prepareMessagesForRequest()` before every model request.
 - `approvalExperience` is consumed by renderer presentation only; it controls
