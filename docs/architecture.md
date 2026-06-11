@@ -19,8 +19,11 @@ Authoritative source areas:
 Out of scope:
 
 - `docs/minimax/` protocol notes are reference material only.
-- External reference source directories under `/mnt/f/cc_src/*` are not project
-  source, dependencies, implementation inputs, or build inputs.
+- `/mnt/f/cc_src/DeepSeek` is a read-only design reference only when a task
+  explicitly asks to inspect DeepSeek GUI; it is not project source, a
+  dependency, an implementation input, or a build input.
+- `docs/external-references/` is not project source or project documentation
+  for normal search, audit, build, test, or documentation maintenance.
 
 ## System Overview
 

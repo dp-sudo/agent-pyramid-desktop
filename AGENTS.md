@@ -66,23 +66,8 @@ Verification_Strategy: "如何验证本次改动"
 严格规则：
 
 - **不得**将仓库外 DeepSeek GUI 参考源码纳入构建、运行、测试、打包、发布流程。
-- **不得**在 `package.json`、`tsconfig.json`、Vite / Electron / eslint / vitest / tailwind 等配置中新增对 DeepSeek GUI 参考源码路径的引用。
-- **不得**在 `docs/agent-development.md` 或其他项目文档中把 DeepSeek GUI 参考源码列为依赖、来源或实现依据。
-- **不得**在 `package.json`、`tsconfig*.json`、Vite / Electron / Vitest 或运行时配置中新增对 `docs/external-references/` 下任何路径的引用。
 - 如需借鉴设计，必须在 `src/` 下独立实现，不得直接 import、link、copy 或 build 参考源码下的任何文件。
-
-本规则对人类协作者与 LLM Agent（包括本仓库内置 Agent 运行框架）一律生效；任何把外部参考源码接入实现链路的行为都视为越界。
-
-### 3.1 外部设计学习参考源码
-
-以下目录位于本仓库外，仅允许作为**只读设计学习参考**。它们不是本项目源码、依赖、实现依据或构建输入；不得 import、link、copy、build、test、打包、发布这些目录下的任何文件，也不得把它们写入本项目配置链路。
-
-- Claude Code 参考：Windows 路径 `F:\cc_src\claude code`，WSL 路径 `/mnt/f/cc_src/claude code`。
-  - 源码观察：该项目 package 名为 `claude-code-best`，以 Bun + TypeScript 为主，使用 React Ink/TUI 形态实现终端 coding agent；`src/QueryEngine.ts` 和 `src/query.ts` 承担会话生命周期、流式查询、上下文压缩、预算、权限拒绝、工具执行和 SDK/REPL 复用；`src/tools.ts` 和 `src/Tool.ts` 定义大规模工具目录与工具上下文；`src/services/` 覆盖 MCP、LSP、compact、Langfuse、provider registry、plugin、skill、memory、remote-control、telemetry 等平台能力。
-  - 学习重点：成熟完整的技术类 agent 平台结构，包括 QueryEngine / query loop 边界、工具注册与权限策略、命令系统、MCP / LSP 接入、上下文压缩、遥测与远程控制。只借鉴架构分层和机制设计，不复用其代码、协议私有实现或配置。
-- DeepSeek GUI 参考：Windows 路径 `F:\cc_src\DeepSeek`，WSL 路径 `/mnt/f/cc_src/DeepSeek`。
-  - 源码观察：该项目 package 名为 `deepseek-gui`，是 Electron + React 桌面工作台；`src/renderer/src/components/Workbench.tsx` 呈现 sidebar、topbar、timeline、floating composer、right panels、write workspace、SDD/计划/插件/定时任务等布局组合，和本项目前端界面布局相似；`src/main/runtime/kun-adapter.ts` 通过主进程管理本地 Kun runtime；`kun/src/loop/agent-loop.ts`、`kun/src/server/routes/index.ts`、`kun/src/contracts/` 展示 HTTP/SSE runtime、thread/turn/event/approval/usage/attachment/workspace 等契约边界。
-  - 学习重点：桌面 agent workbench 的前端布局、运行时托管边界、HTTP/SSE contract、Code / Write 工作台、计划/Todo/Goal/审批/用量/附件/插件等用户体验组织方式。只用于 UI 布局和产品机制学习，不得把 `/mnt/f/cc_src/DeepSeek` 作为实现来源。
+- **不得**在 `package.json`、`tsconfig*.json`、Vite / Electron / Vitest 或运行时配置中新增对 `docs/external-references/` 下任何路径的引用。
 
 ---
 
@@ -582,7 +567,6 @@ PR 需说明：
 - [ ] 如果涉及接口/类型变更，所有调用方和测试是否已同步更新？
 - [ ] 函数、API handler、工具、协议转换、持久化、安全边界等重要机制是否已有准确注释？已有注释是否仍然与代码一致？
 - [ ] 如果涉及 Agent、LLM、工具、IPC、持久化、UI 或 i18n，是否已同步更新 `docs/agent-development.md`？
-- [ ] 是否避免了把仓库外 DeepSeek GUI 参考路径写入依赖、构建引用或实现依据？
 
 ---
 

@@ -402,7 +402,10 @@ of reusing Code write/command tools.
 
 ## Tool Budget
 
-Maximum automatic tool rounds are resolved by `agent_autonomy` and optional environment override:
+Maximum automatic tool rounds are resolved by `agent_autonomy` and optional environment override.
+The runtime values are defined by `AGENT_AUTONOMY_TOOL_ROUNDS`,
+`MIN_MAX_TOOL_ROUNDS`, and `MAX_MAX_TOOL_ROUNDS` in
+`src/main/application/constants.ts`:
 
 - `conservative`: 12
 - `balanced`: 32

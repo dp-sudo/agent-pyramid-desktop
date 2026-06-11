@@ -64,6 +64,7 @@
 ## 测试与验证
 
 - `npm run test`：运行 Vitest 自动化测试。
+- `npm run test:coverage`：运行 Vitest V8 覆盖率报告，报告覆盖 `src/**/*.{ts,tsx}` 并包含未被测试导入的源码文件；报告输出到已忽略的 `coverage/` 目录。
 - `npm run typecheck`：同时检查 renderer/shared、main/preload/shared 和测试源码。
 - `npm run build`：构建 Electron main、preload 与 renderer 产物。
 - 新增或修改 Agent 运行框架、LLM 接入、工具、IPC、持久化、UI 状态或 i18n 时，应优先补充对应 `tests/` 用例，再运行上述命令。
@@ -890,7 +891,7 @@
 - 落地大模型配置设置：新增 `ModelConfig` 契约、`config:model:get/update` IPC、`ModelConfigStore` 持久化到 `userData/config`、设置页表单和运行时配置读取；MiniMax 网关改为使用配置的 `base_url/max_tokens/thinking`。
 - 验证方式：`npm run typecheck`、`npm run build`。
 - 扩展大模型多配置档案：`config` 文件由单个 `ModelConfig` 自动迁移为 `ModelConfigProfilesState`；新增配置档案 list/create/update/delete/activate IPC 和 preload API；设置页新增档案卡片区，表单继续编辑当前激活配置。
-- 扩展供应商感知 LLM 请求：运行时传递 `model_provide/model_reasoning_effort`；API key 回退逻辑改为 DeepSeek 读取 `DEEPSEEK_API_KEY`、MiniMax 读取 `MINIMAX_API_KEY`，最后回退 `OPENAI_API_KEY`；网关按 MiniMax、DeepSeek、自定义供应商方言构造请求体。
+- 扩展供应商感知 LLM 请求：运行时传递 `model_provide/model_reasoning_effort` 和 profile API key；网关负责 API key 回退逻辑，DeepSeek 读取 `DEEPSEEK_API_KEY`、MiniMax 读取 `MINIMAX_API_KEY`，最后回退 `OPENAI_API_KEY`；网关按 MiniMax、DeepSeek、自定义供应商方言构造请求体。
 - 验证方式：`npm run typecheck`、`npm run build`。
 
 # 变更记录
@@ -1043,7 +1044,7 @@
 
 ## 2026-06-07 - 大模型输出展示与工具闭环
 
-- 扩展 `AgentRuntime` 工具循环：模型返回 tool calls 后，运行时执行工具、把 assistant tool call 和 tool result 追加进后续 `LlmRequest.messages`，按模型档案的 `agent_autonomy` 选择工具预算（conservative 12、balanced 32、deep 64），也可通过 `AGENT_MAX_TOOL_ROUNDS` 在 1 到 128 之间覆盖；运行时接近预算时会向模型注入纠偏提示，耗尽后会记录未执行 tool call 的 failed tool result、发出 `tool_budget_reached` 事件，并把 turn 标记为 `needs_continuation`，方便用户继续线程而不是把体验等同于失败；工具失败会发出 `runtime_error(code: "tool_failed")`，不会静默吞错。
+- 扩展 `AgentRuntime` 工具循环：模型返回 tool calls 后，运行时执行工具、把 assistant tool call 和 tool result 追加进后续 `LlmRequest.messages`，按模型档案的 `agent_autonomy` 选择工具预算（conservative 12、balanced 32、deep 64），也可通过 `AGENT_MAX_TOOL_ROUNDS` 在 1 到 128 之间覆盖；这些预算和 clamp 值的代码权威来源是 `src/main/application/constants.ts` 中的 `AGENT_AUTONOMY_TOOL_ROUNDS`、`MIN_MAX_TOOL_ROUNDS` 和 `MAX_MAX_TOOL_ROUNDS`；运行时接近预算时会向模型注入纠偏提示，耗尽后会记录未执行 tool call 的 failed tool result、发出 `tool_budget_reached` 事件，并把 turn 标记为 `needs_continuation`，方便用户继续线程而不是把体验等同于失败；工具失败会发出 `runtime_error(code: "tool_failed")`，不会静默吞错。
 - 扩展工具上下文：`AgentToolContext` 新增 `workspace`，新增只读工作区工具 `list_files`、`read_file`、`search_files`，并在 `src/main/index.ts` 注册；这些工具只允许访问当前线程 workspace，默认跳过 `.git`、`DeepSeek`、`external-references`、`node_modules`、`out` 等非项目源码或构建目录。
 - 扩展 LLM 消息转换：`AgentMessage` 支持 assistant `toolCalls`，OpenAI-compatible 与 Anthropic-compatible 请求构造都会把历史 tool call / tool result 转成供应商可理解的结构。
 - 优化 renderer 时间线：`MessageTimeline` 先按 `turnId` 分组，再将 reasoning、工具调用、过程性 assistant 文本归入可折叠“工作过程”，最终 assistant 文本作为 Markdown 正文显示；工具项显示本地化标题、状态和可展开详情。
@@ -1181,3 +1182,19 @@
 - Hardened provider SSE error handling: OpenAI-compatible and Anthropic-compatible `event: error` frames now throw a traceable provider stream error instead of being consumed as empty normal payloads.
 - Current model profile protocol behavior: `AgentRuntime` forwards the selected profile `protocol` into `LlmRequest`; OpenAI-compatible and Anthropic-compatible profiles share the same runtime path while `MiniMaxGateway` owns provider-specific body and SSE mapping.
 - Verification: `npm test -- tests/main/infrastructure/minimax-types.test.ts tests/main/infrastructure/minimax-gateway.test.ts`, `npm test -- tests/main/application/agent-runtime.test.ts tests/main/infrastructure/worker-pool.test.ts`, `npm test -- tests/main/infrastructure/worker-diagnostics.test.ts tests/main/infrastructure/worker-pool.test.ts tests/main/application/agent-runtime.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-11 - Maintenance audit cleanup
+- Added `npm run test:coverage` with `@vitest/coverage-v8` and source-wide V8 coverage config. The current measured run passes and shows `src/main/application/agent-runtime.ts` at 86.26% statements, 77.21% branches, 93.65% functions, and 87.46% lines after adding focused historical tool-call argument hygiene coverage, so the audit tracks remaining AgentRuntime coverage as a measured gap rather than claiming 100%.
+- Centralized Write workbench completion and assistant context UI policy limits in `src/renderer/src/ui/components/write/write-constants.ts`, with renderer tests covering default prefix/suffix and selected-context truncation boundaries.
+- Moved provider-specific API key environment fallback into `MiniMaxGateway`, so `AgentRuntime` no longer branches on provider names and gateway tests cover DeepSeek, MiniMax, custom fallback, and explicit profile-key precedence.
+- Centralized AgentRuntime runtime policy constants in `src/main/application/constants.ts`, including tool autonomy rounds, tool-round clamps, warning thresholds, context budget safety ratio, tool result/argument limits, compaction thresholds, token estimation, and active-tool interrupt settle timeout.
+- Centralized IPC error-code wire values in `src/shared/ipc-errors.ts`, typed `IpcErr.code` against that shared union, and updated main IPC handlers plus renderer IPC fallbacks to reference `IPC_ERROR_CODES` instead of scattering new string literals.
+- Centralized the shared search-file byte threshold for workspace and command search tools in `src/main/application/constants.ts`, so `search_files` and `rg_search` keep one main-process policy source.
+- Centralized `usage:daily` default days, max days, and cache TTL in `src/main/application/constants.ts`, preserving the existing usage aggregation behavior while avoiding local IPC threshold ownership.
+- Centralized command and command-session policy limits in `src/main/application/constants.ts`, preserving existing command byte, regex byte, git log, session count, buffer, tail, spawn timeout, stop grace, and package-script bounds with one main-process authority.
+- Cleaned a renderer dead-parameter signal in `ChatBlock` without changing the visible fallback behavior for unknown item kinds.
+- Kept legacy thread persistence migration complete by defaulting missing stored `relation` fields to `primary` for both `thread.json` and `index.json`, matching the existing mode/status/policy defaults.
+- Hardened shared model config normalization so duplicate persisted profile ids are deduplicated before profile update/delete/activation logic runs, preserving the first valid record and keeping profile mutations unambiguous.
+- Hardened runtime preferences parsing so `toolAvailability` mode objects must include at least one concrete tool toggle, avoiding successful but no-op settings writes such as `{ code: {} }`.
+- Aligned project boundary docs with the current AGENTS rule: ordinary project search, audit, build, test, and documentation work exclude `docs/external-references/`; `/mnt/f/cc_src/DeepSeek` remains a read-only design reference only when explicitly requested.
+- Verification: `npx tsc --noEmit -p tsconfig.test.json --noUnusedLocals --noUnusedParameters`, `npm test -- tests/renderer/chat-block.test.ts tests/renderer/message-timeline.test.ts`, `npm test -- tests/main/persistence/model-config-store.test.ts tests/main/persistence/runtime-preferences-store.test.ts`; full `typecheck/test/build` verification is run before handoff.

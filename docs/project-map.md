@@ -44,7 +44,7 @@ flowchart TB
   Tests["tests/\nVitest coverage"]
   Docs["docs/\nproject docs and provider references"]
   Config["package.json / tsconfig* / electron.vite.config.ts / vitest.config.ts"]
-  External["/mnt/f/cc_src/*\nread-only design references only"]
+  External["/mnt/f/cc_src/DeepSeek\nread-only design reference only when explicitly requested"]
 
   Repo --> Src
   Repo --> Tests
@@ -65,7 +65,8 @@ flowchart TB
 
 禁止误判：
 
-- `/mnt/f/cc_src/*` 不是本项目源码、依赖或构建输入。
+- `/mnt/f/cc_src/DeepSeek` 不是本项目源码、依赖或构建输入；仅在任务明确要求参考 DeepSeek GUI 时可只读查看。
+- `docs/external-references/` 及其子目录不是本项目源码或项目文档，不纳入普通搜索、审计、构建、测试或文档维护范围。
 - `docs/minimax/` 是本地协议资料，不是运行时代码。
 - `out/`、`dist/`、`node_modules/` 是生成物或依赖目录，不应作为实现权威来源。
 
@@ -112,7 +113,7 @@ flowchart LR
 | Persistence | `src/main/persistence/*` | 线程 JSONL、附件、模型配置 profiles、runtime preferences 的 userData 持久化。 |
 | IPC handlers | `src/main/ipc/*-handlers.ts` | 将 renderer 调用映射到 runtime、stores 和文件服务，统一返回 `IpcResult<T>`。 |
 | Preload bridge | `src/preload/index.ts` | 暴露 `window.agentApi`，隐藏 Electron IPC 细节。 |
-| Shared contracts | `src/shared/agent-contracts.ts`、`src/shared/ipc.ts`、`src/shared/locale.ts` | 跨进程类型、IPC channel 常量和语言列表权威来源。 |
+| Shared contracts | `src/shared/agent-contracts.ts`、`src/shared/ipc.ts`、`src/shared/ipc-errors.ts`、`src/shared/locale.ts` | 跨进程类型、IPC channel 常量、IPC error code 和语言列表权威来源。 |
 | Renderer shell | `src/renderer/src/ui/AppShell.tsx`、`src/renderer/src/ui/Workbench.tsx`、`src/renderer/src/ui/SettingsView.tsx` | 路由、工作台、设置页和主要交互流程。 |
 | Renderer state | `src/renderer/src/ui/store/WorkbenchContext.tsx` | `useReducer` 状态中心，不使用外部状态库。 |
 | UI components | `src/renderer/src/ui/components/**` | sidebar、topbar、composer、timeline、inspector、write、settings 和 primitives。 |
@@ -165,7 +166,7 @@ flowchart TD
 | --- | --- | --- |
 | Start a turn | `src/renderer/src/ui/Workbench.tsx` | `src/preload/index.ts`、`src/main/ipc/turns-handlers.ts`、`src/main/application/agent-runtime.ts` |
 | Stream runtime events | `src/main/event-bus.ts` | `src/main/ipc/sse-handlers.ts`、`src/preload/index.ts`、`Workbench.tsx` |
-| Add or change IPC | `src/shared/ipc.ts` | `src/shared/agent-contracts.ts`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts` |
+| Add or change IPC | `src/shared/ipc.ts`、`src/shared/ipc-errors.ts` | `src/shared/agent-contracts.ts`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts` |
 | Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、`AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime` tool access policy、`AgentRuntime.resolveToolPolicy()` |
 | Change thread data | `src/shared/agent-contracts.ts` | `src/main/persistence/index.ts`、IPC handlers、renderer state and tests |
 | Change model config | `src/shared/agent-contracts.ts` | `src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`SettingsView.tsx` |

@@ -480,6 +480,9 @@ Key semantics:
 - Shared config normalization also clears stored Code/Write default profile ids
   that do not match any normalized profile in `profiles[]`.
 - Store normalizes older single-config files into profile state.
+- Store deduplicates persisted `profiles[]` by profile id while preserving the
+  first valid record, so hand-edited or damaged config files cannot make later
+  profile mutations ambiguous.
 - Store normalizes missing profile `protocol` to `openai-compatible`.
 - Stored profile `createdAt` / `updatedAt` values use the shared
   `isIsoTimestampString()` boundary; missing or malformed legacy values are
@@ -536,6 +539,9 @@ Key semantics:
   update payloads fail before persistence.
 - Updates that set Code/Write default profile ids must reference existing
   `profiles[]` entries or use `null`; stale stored values are normalized on read.
+- `toolAvailability` updates must include at least one concrete tool toggle in
+  every provided mode object, so `{ code: {} }` cannot persist as a successful
+  no-op update.
 - `toolAvailability` is currently consumed by `AgentRuntime` as a catalog-level
   tool switch. Disabled tools are omitted from LLM tool definitions and forced
   calls to disabled tools produce failed tool items.
