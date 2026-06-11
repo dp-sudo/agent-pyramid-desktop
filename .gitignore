@@ -64,4 +64,6 @@ DeepSeek
 .claude
 .codegraph
 .reasonix
-openspec
+
+# Stray local binaries
+Agent.rar

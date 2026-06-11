@@ -39,6 +39,7 @@ const MAX_SESSION_COUNT = 8;
 const MAX_SESSION_BUFFER_BYTES = 256 * 1024;
 const DEFAULT_SESSION_BUFFER_BYTES = 64 * 1024;
 const DEFAULT_SESSION_TAIL_BYTES = 32 * 1024;
+const SESSION_SPAWN_TIMEOUT_MS = 5_000;
 const MAX_PACKAGE_SCRIPT_NAME_BYTES = 128;
 const COMMAND_TIMEOUT_DESCRIPTION =
   `Maximum runtime in milliseconds. Defaults to the runtime command preference ` +
@@ -1269,8 +1270,11 @@ async function executeGitBranch(
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => {
+      // `git branch --all --verbose` prefixes every line with exactly two
+      // characters: `* ` for the current branch, `  ` for non-current locals
+      // and remote-tracking branches, and `+ ` for worktree entries.
       const current = line.startsWith("*");
-      const rawName = line.slice(current ? 2 : 2).trim().split(/\s+/, 1)[0] ?? "";
+      const rawName = line.slice(2).trim().split(/\s+/, 1)[0] ?? "";
       return {
         name: rawName,
         current,
@@ -1365,7 +1369,7 @@ async function executePackageInstall(
     ? false
     : requiredBoolean(input.frozen_lockfile, "frozen_lockfile");
   const args = packageInstallArgs(manager, frozenLockfile, cwdPath);
-  return executePackageCommand(manager, args, cwdPath, cwd, input, context, "package_install");
+  return executePackageCommand(manager, args, cwdPath, cwd, input, context);
 }
 
 function createPackageScriptCommandTool(
@@ -1473,7 +1477,7 @@ async function executePackageScript(
   }
   const manager = optionalPackageManager(input.manager) ?? await detectPackageManager(cwdPath, packageJson);
   const args = packageRunScriptArgs(manager, script);
-  const result = await executePackageCommand(manager, args, cwdPath, cwd, input, context, toolName);
+  const result = await executePackageCommand(manager, args, cwdPath, cwd, input, context);
   return { ...result, script };
 }
 
@@ -1484,7 +1488,6 @@ async function executePackageCommand(
   cwd: string,
   input: Record<string, unknown>,
   context: AgentToolContext,
-  toolName: string,
 ): Promise<CommandRunResult & { manager: PackageManagerName; commandArgs: string[] }> {
   const timeoutMs = numberInRange(
     input.timeout_ms,
@@ -2408,6 +2411,7 @@ class CommandSessionManager {
       session.signal = signal;
       session.updatedAt = new Date().toISOString();
     });
+    await this.waitForSessionSpawn(session);
     this.sessions.set(session.id, session);
     return this.snapshot(session, DEFAULT_SESSION_TAIL_BYTES);
   }
@@ -2490,6 +2494,62 @@ class CommandSessionManager {
         this.sessions.delete(id);
       }
     }
+  }
+
+  private async waitForSessionSpawn(session: CommandSession): Promise<void> {
+    // start_command_session must only return a usable session id after the OS
+    // accepted the child process. A pid covers already-emitted spawn events,
+    // while close/error/timeout keep startup failures traceable to this call.
+    if (typeof session.child.pid === "number") return;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = (): void => {
+        clearTimeout(timeout);
+        session.child.off("spawn", onSpawn);
+        session.child.off("error", onError);
+        session.child.off("close", onClose);
+      };
+      const settleResolve = (): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+      const settleReject = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error(`start_command_session failed to start command: ${error.message}`));
+      };
+      const onSpawn = (): void => {
+        settleResolve();
+      };
+      const onError = (error: Error): void => {
+        settleReject(error);
+      };
+      const onClose = (exitCode: number | null, signal: NodeJS.Signals | null): void => {
+        if (session.status === "failed") {
+          settleReject(new Error(session.error ?? "unknown spawn failure"));
+          return;
+        }
+        settleReject(
+          new Error(`process closed before spawn event (exitCode: ${exitCode}, signal: ${signal})`),
+        );
+      };
+      const timeout = setTimeout(() => {
+        settleReject(new Error("timed out waiting for process spawn"));
+      }, SESSION_SPAWN_TIMEOUT_MS);
+      session.child.once("spawn", onSpawn);
+      session.child.once("error", onError);
+      session.child.once("close", onClose);
+      if (typeof session.child.pid === "number") {
+        settleResolve();
+        return;
+      }
+      if (session.status === "failed") {
+        settleReject(new Error(session.error ?? "unknown spawn failure"));
+      }
+    });
   }
 
   private async waitForTerminalSession(
@@ -2651,24 +2711,27 @@ function createSessionCapture(maxOutputBytes: number): SessionCapture {
     collect(data) {
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
       bytes += buffer.length;
-      const remaining = maxOutputBytes - storedBytes;
-      if (remaining <= 0) {
-        truncated = true;
-        return;
-      }
-      if (buffer.length > remaining) {
-        chunks.push(buffer.subarray(0, remaining));
-        storedBytes += remaining;
-        truncated = true;
-        return;
-      }
       chunks.push(buffer);
       storedBytes += buffer.length;
+      // Long-running sessions are read by tail, so the bounded buffer keeps the
+      // newest bytes instead of freezing at the first max_buffer_bytes output.
+      while (storedBytes > maxOutputBytes && chunks.length > 0) {
+        truncated = true;
+        const overflow = storedBytes - maxOutputBytes;
+        const first = chunks[0];
+        if (overflow >= first.length) {
+          chunks.shift();
+          storedBytes -= first.length;
+          continue;
+        }
+        chunks[0] = first.subarray(overflow);
+        storedBytes -= overflow;
+      }
     },
     snapshot(tailBytes) {
       const fullBuffer = Buffer.concat(chunks, storedBytes);
       const start = Math.max(0, fullBuffer.byteLength - tailBytes);
-      const buffer = fullBuffer.subarray(start);
+      const buffer = dropLeadingUtf8ContinuationBytes(fullBuffer.subarray(start));
       const decoder = new StringDecoder("utf8");
       return {
         text: decoder.write(buffer),
@@ -2677,6 +2740,16 @@ function createSessionCapture(maxOutputBytes: number): SessionCapture {
       };
     },
   };
+}
+
+function dropLeadingUtf8ContinuationBytes(buffer: Buffer): Buffer {
+  // tail_bytes can start inside a multi-byte UTF-8 sequence; discard only the
+  // orphaned continuation bytes so snapshots stay valid without widening output.
+  let index = 0;
+  while (index < buffer.length && (buffer[index] & 0b1100_0000) === 0b1000_0000) {
+    index += 1;
+  }
+  return index === 0 ? buffer : buffer.subarray(index);
 }
 
 const commandSessionManager = new CommandSessionManager();

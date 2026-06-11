@@ -108,7 +108,7 @@ flowchart LR
 | Runtime orchestration | `src/main/application/agent-runtime.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、approval gate、中断和事件广播。 |
 | Tool system | `src/main/application/tools/*`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口和内置工具。 |
 | LLM worker | `src/main/infrastructure/llm-worker/*` | main 到 worker 的请求路由、流式 chunk 转发和取消。 |
-| Provider gateway | `src/main/infrastructure/minimax/*` | MiniMax、DeepSeek、自定义 OpenAI-compatible 请求适配；Anthropic-compatible 映射保留在 gateway 层并有单元测试，但当前 runtime profile 仍固定发送 OpenAI-compatible 请求。 |
+| Provider gateway | `src/main/infrastructure/minimax/*` | MiniMax、DeepSeek、自定义 OpenAI-compatible 请求适配；runtime 会把所选模型 profile 的 `protocol` 传入 `LlmRequest`，由 gateway 分流到 OpenAI-compatible 或 Anthropic-compatible 请求形态。 |
 | Persistence | `src/main/persistence/*` | 线程 JSONL、附件、模型配置 profiles、runtime preferences 的 userData 持久化。 |
 | IPC handlers | `src/main/ipc/*-handlers.ts` | 将 renderer 调用映射到 runtime、stores 和文件服务，统一返回 `IpcResult<T>`。 |
 | Preload bridge | `src/preload/index.ts` | 暴露 `window.agentApi`，隐藏 Electron IPC 细节。 |

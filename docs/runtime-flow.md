@@ -340,7 +340,7 @@ Approval policy currently implemented in runtime:
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
 - All remaining non-read-only tools require approval.
 
-Workspace tools require an absolute thread workspace path before resolving file paths. `read_file`, `search_files`, `rg_search`, `edit_file`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the history entry belongs to another thread or the file no longer matches the latest agent-written content. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
+Workspace tools require an absolute thread workspace path before resolving file paths. `list_files.path` and `search_files.path` reject non-string values instead of treating them as omitted root-path requests, and workspace string parameters reject NUL bytes before path resolution or search execution. `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, and `search_files.max_results` are strict integer ranges; invalid or out-of-range values fail instead of being silently clamped to defaults. `read_file`, `search_files`, `rg_search`, `edit_file`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. Single-file coding tools restore the original file content if post-write metadata collection fails before file history and read state are updated. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write or post-write metadata step fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the history entry belongs to another thread or the file no longer matches the latest agent-written content. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
 
 `apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written. A patch may include multiple hunks for one file under a single file header, but duplicate file sections for the same resolved target are rejected so successful writes and failure rollback both have one authoritative pre-write snapshot per file. The parser treats `\ No newline at end of file` as part of the neighboring hunk line, so patches cannot silently add or remove the final newline. Existing lines keep their original LF or CRLF endings; added lines use the local file ending around the insertion point, falling back to LF for new files.
 
@@ -376,17 +376,22 @@ candidates, PowerShell/pwsh, WSL, and workspace path conversion facts.
 Long-running command sessions are held in main-process memory by
 `start_command_session`, `read_command_session`, `write_command_session`, and
 `stop_command_session`. Starting a session returns a session id immediately
-while stdout/stderr are retained in bounded per-stream buffers. Read, write and
-stop calls must come from the same thread and workspace that created the
-session. `write_command_session` writes the provided input string to stdin
-without trimming, waits for stdin to accept it, and surfaces a write/closed-stdin
-error instead of reporting a best-effort success.
+while stdout/stderr are retained in bounded per-stream buffers that keep the
+latest bytes for long-running watcher/dev-server output. Read, write and stop
+calls must come from the same thread and workspace that created the session.
+`read_command_session` tail output is decoded on a UTF-8 character boundary, so
+byte-limited reads cannot introduce replacement characters into the retained
+stdout/stderr snapshot. `write_command_session` writes the provided input string
+to stdin without trimming, waits for stdin to accept it, and surfaces a
+write/closed-stdin error instead of reporting a best-effort success.
 `stop_command_session` waits for the child process to reach a terminal state
 before returning, so callers can safely clean up or reuse the workspace after a
-stop result. Spawn/runtime errors keep the session in `failed` state with the
-captured error message even if the child later emits a close event. Session
-state is not persisted across app restarts; callers must stop sessions
-explicitly.
+stop result. `start_command_session` waits for the child process to spawn before
+returning a session id; shell spawn failures are surfaced as tool errors instead
+of successful failed-session snapshots. Runtime errors after a successful spawn
+keep the session in `failed` state with the captured error message even if the
+child later emits a close event. Session state is not persisted across app
+restarts; callers must stop sessions explicitly.
 
 `diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass and receives the same runtime command defaults as `run_command`. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths; diagnostics that resolve outside the active workspace are omitted instead of being surfaced as `../...` paths. A malformed package manifest is reported as a `diagnose_workspace package.json is invalid` tool error instead of a raw JSON parser failure. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. Language-service diagnostics are also limited to files inside the active workspace. This is the current TypeScript diagnostics loop; it does not keep a persistent language server process alive.
 

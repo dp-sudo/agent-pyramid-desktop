@@ -366,8 +366,30 @@ async function writePreparedChange(
   toolName: string,
 ): Promise<PreparedFileChange> {
   await commitPreparedChange(change);
-  const stat = change.operation === "delete" ? undefined : await fs.stat(change.filePath);
   const contentHash = sha256(change.nextContent);
+  let stat: Stats | undefined;
+  try {
+    // Post-write stat is best-effort metadata; if it fails (file evicted by a
+    // hook, anti-virus scanner, etc.) the bytes are already on disk, so the
+    // single-file tool must roll back to the pre-write content just like
+    // apply_patch does when one of its files hits the same failure.
+    stat = change.operation === "delete" ? undefined : await fs.stat(change.filePath);
+  } catch (error) {
+    try {
+      await restoreCommittedChanges([{
+        ...change,
+        bytes: change.operation === "delete" ? 0 : Buffer.byteLength(change.nextContent, "utf8"),
+        modifiedAt: new Date().toISOString(),
+        mtimeMs: 0,
+        sha256: contentHash,
+      }]);
+    } catch (rollbackError) {
+      throw new Error(
+        `${toolName} failed: ${messageOf(error)}; rollback failed: ${messageOf(rollbackError)}`,
+      );
+    }
+    throw error;
+  }
   recordFileHistory(context, change, toolName);
   updateReadStateForCommittedChange(context, change, stat, contentHash);
   return {
@@ -388,15 +410,25 @@ async function writePreparedChanges(
   try {
     for (const change of changes) {
       await commitPreparedChange(change);
-      const stat = change.operation === "delete" ? undefined : await fs.stat(change.filePath);
       const contentHash = sha256(change.nextContent);
-      committed.push({
+      // Register the write for rollback before collecting post-write metadata;
+      // stat can fail after bytes reached disk, and apply_patch must stay all-or-nothing.
+      const committedChange: PreparedFileChange = {
         ...change,
+        bytes: change.operation === "delete" ? 0 : Buffer.byteLength(change.nextContent, "utf8"),
+        modifiedAt: new Date().toISOString(),
+        mtimeMs: 0,
+        sha256: contentHash,
+      };
+      committed.push(committedChange);
+      const stat = change.operation === "delete" ? undefined : await fs.stat(change.filePath);
+      committed[committed.length - 1] = {
+        ...committedChange,
         bytes: stat?.size ?? 0,
         modifiedAt: stat?.mtime.toISOString() ?? new Date().toISOString(),
         mtimeMs: stat?.mtimeMs ?? 0,
         sha256: contentHash,
-      });
+      };
     }
   } catch (error) {
     try {
@@ -466,7 +498,7 @@ async function assertNoSymlinkPath(
   if (!relative) return;
   const segments = relative.split(path.sep).filter(Boolean);
   let current = root;
-  for (const [index, segment] of segments.entries()) {
+  for (const segment of segments) {
     current = path.join(current, segment);
     try {
       const stat = await fs.lstat(current);

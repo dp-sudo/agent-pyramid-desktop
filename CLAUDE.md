@@ -12,10 +12,11 @@ Read in this order before making a non-trivial change:
 4. `docs/ipc-contracts.md` before touching IPC, preload or renderer API calls.
 5. `docs/data-model.md` before touching shared contracts, JSONL persistence, attachments, model config or migrations.
 6. `docs/ui-design.md` and `docs/ui-layout-reference.md` before touching UI layout, styles, tokens or page structure.
+7. `openspec/changes/<change-id>/{proposal.md, design.md, tasks.md, specs/}` if the task belongs to an OpenSpec change.
 
 `docs/architecture.md` is the diagram-first architecture reference. `docs/agent-development.md` is the long-running development log and must be updated when Agent framework capabilities change.
 
-If a task belongs to an OpenSpec change, inspect `openspec/changes/<change-id>/proposal.md`, `design.md`, `tasks.md` and `specs/` before editing. Keep `tasks.md` checked off as implementation work lands.
+If a task belongs to an OpenSpec change, inspect `openspec/changes/<change-id>/proposal.md`, `design.md`, `tasks.md` and `specs/` before editing. Keep `tasks.md` checked off as implementation work lands. The OpenSpec workflow is also exposed as installed skills in `.claude/skills/` (`openspec-propose`, `openspec-explore`, `openspec-apply-change`, `openspec-archive-change`); use them to drive the change end-to-end.
 
 ## External Reference Boundary
 
@@ -146,8 +147,10 @@ Tool rules:
 
 - Tools implement `AgentTool` and are registered through `InMemoryToolRegistry` in `src/main/index.ts`.
 - `list_files`, `read_file` and `search_files` are read-only workspace tools and skip approval.
-- `edit_file`, `write_file`, `apply_patch` and `rollback_file` are coding write tools; they require approval, workspace path validation and strict UTF-8 text handling.
-- `run_command` and `diagnose_workspace` execute workspace commands and require approval. `diagnose_file` uses TypeScript Language Service for one file and remains read-only.
+- `edit_file`, `write_file`, `apply_patch` and `rollback_file` are coding write tools; they require approval, workspace path validation and strict UTF-8 text handling. `rollback_file` uses in-memory runtime file history (`file-history-state`) to undo the latest agent write when the current file still matches that history entry.
+- `run_command`, `shell_command`, `git_bash_command`, `powershell_command`, `wsl_command`, package/task wrappers, Git commit, and command session write/stop tools all run workspace shell commands and require approval.
+- `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through command execution and requires approval. `diagnose_file` uses TypeScript Language Service for one file and remains read-only.
+- Read-only developer tools (`rg_search`, `git_status`, `git_diff`, `git_log`, `git_branch`, `package_scripts`, `read_command_session`, `detect_shell_environment`, `diagnose_file`) skip approval.
 - `create_plan` is enabled only in plan mode and skips approval.
 - `update_goal` is enabled only in goal mode or active-goal threads and skips approval.
 - Write threads hide and reject Code-only coding/command tools by default. Tool access policy may allow or deny tool names per `code` / `write` mode, but approval and sandbox checks still run after catalog filtering.
@@ -278,7 +281,7 @@ Adding IPC requires updating:
 - `tests/renderer/` - renderer reducer, components and timeline helpers.
 - `tests/helpers/temp-dir.ts` - temporary directory helper.
 
-Vitest config (`vitest.config.ts`) sets `environment: "node"`, scans `tests/**/*.test.ts` and `.test.tsx`, and excludes `DeepSeek/`, `node_modules/`, `out/`. Persistence tests construct a `JsonlThreadStore` against the temp dir helper, never against the real Electron `userData` path.
+Vitest config (`vitest.config.ts`) sets `environment: "node"`, scans `tests/**/*.test.ts` and `.test.tsx`, and excludes `DeepSeek/**` (a defensive local-path exclude, not the external `/mnt/f/cc_src/DeepSeek` reference), `node_modules/`, `out/`. Persistence tests construct a `JsonlThreadStore` against the temp dir helper, never against the real Electron `userData` path.
 
 Run targeted tests while iterating, then the full validation gate for code changes.
 

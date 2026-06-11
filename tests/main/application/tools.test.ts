@@ -19,6 +19,7 @@ import { createWorkspaceTools } from "../../../src/main/application/tools/worksp
 import type { AgentTool } from "../../../src/main/domain/agent/types";
 import {
   RUNTIME_READ_ONLY_TOOL_NAMES,
+  RUNTIME_TOOL_NAMES,
   type ThreadGoalStatus,
 } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
@@ -192,6 +193,19 @@ describe("application tools", () => {
     expect(RUNTIME_READ_ONLY_TOOL_NAMES.every((toolName) =>
       tools.some((tool) => tool.definition.name === toolName),
     )).toBe(true);
+  });
+
+  it("keeps shared runtime tool names aligned with built-in tool registration", () => {
+    const tools = [
+      ...createWorkspaceTools(),
+      ...createCommandTools(),
+      createPlanTool,
+      ...createGoalTools({ updateGoal: async () => undefined }),
+      ...createCodingTools(),
+    ];
+    const registeredNames = tools.map((tool) => tool.definition.name).sort();
+
+    expect(registeredNames).toEqual([...RUNTIME_TOOL_NAMES].sort());
   });
 
   it("keeps diagnose_file schema aligned with the language service implementation", () => {
@@ -649,6 +663,102 @@ describe("application tools", () => {
     } finally {
       await removeTempDir(workspace);
       await removeTempDir(outside);
+    }
+  });
+
+  it("rejects invalid workspace tool numeric limits instead of clamping them", async () => {
+    const workspace = await makeTempDir("workspace-tool-limits-");
+    try {
+      await fs.writeFile(path.join(workspace, "file.txt"), "marker\n", "utf8");
+      const registry = new InMemoryToolRegistry(createWorkspaceTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      await expect(
+        registry.execute(
+          { id: "call-list-invalid-limit", name: "list_files", arguments: { max_entries: "10" } },
+          context,
+        ),
+      ).rejects.toThrow("max_entries must be a finite number.");
+
+      await expect(
+        registry.execute(
+          { id: "call-read-over-limit", name: "read_file", arguments: { path: "file.txt", max_bytes: 240_001 } },
+          context,
+        ),
+      ).rejects.toThrow("max_bytes must be an integer between 1 and 240000.");
+
+      await expect(
+        registry.execute(
+          { id: "call-read-negative-offset", name: "read_file", arguments: { path: "file.txt", offset_bytes: -1 } },
+          context,
+        ),
+      ).rejects.toThrow("offset_bytes must be an integer between 0 and 9007199254740991.");
+
+      await expect(
+        registry.execute(
+          { id: "call-search-fractional-limit", name: "search_files", arguments: { query: "marker", max_results: 1.5 } },
+          context,
+        ),
+      ).rejects.toThrow("max_results must be an integer between 1 and 300.");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects invalid workspace optional path parameters instead of using the root path", async () => {
+    const workspace = await makeTempDir("workspace-tool-paths-");
+    try {
+      await fs.writeFile(path.join(workspace, "file.txt"), "marker\n", "utf8");
+      const registry = new InMemoryToolRegistry(createWorkspaceTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      await expect(
+        registry.execute(
+          { id: "call-list-invalid-path", name: "list_files", arguments: { path: 1 } },
+          context,
+        ),
+      ).rejects.toThrow("path must be a string.");
+
+      await expect(
+        registry.execute(
+          { id: "call-search-invalid-path", name: "search_files", arguments: { query: "marker", path: false } },
+          context,
+        ),
+      ).rejects.toThrow("path must be a string.");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects NUL bytes in workspace string parameters", async () => {
+    const workspace = await makeTempDir("workspace-tool-nul-strings-");
+    try {
+      await fs.writeFile(path.join(workspace, "file.txt"), "marker\n", "utf8");
+      const registry = new InMemoryToolRegistry(createWorkspaceTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      await expect(
+        registry.execute(
+          { id: "call-list-nul-path", name: "list_files", arguments: { path: "src\0index.ts" } },
+          context,
+        ),
+      ).rejects.toThrow("path cannot contain NUL bytes.");
+
+      await expect(
+        registry.execute(
+          { id: "call-read-nul-path", name: "read_file", arguments: { path: "file.txt\0" } },
+          context,
+        ),
+      ).rejects.toThrow("path cannot contain NUL bytes.");
+
+      await expect(
+        registry.execute(
+          { id: "call-search-nul-query", name: "search_files", arguments: { query: "marker\0" } },
+          context,
+        ),
+      ).rejects.toThrow("query cannot contain NUL bytes.");
+    } finally {
+      await removeTempDir(workspace);
     }
   });
 
@@ -1635,6 +1745,162 @@ describe("application tools", () => {
         .toBe("const value = 1;\n");
       await expect(fs.access(failingPath)).rejects.toThrow();
       expect(fileHistory.latest(path.join(workspace, "src", "index.ts"))).toBeUndefined();
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rolls back apply_patch writes when post-write metadata collection fails", async () => {
+    const workspace = await makeTempDir("apply-patch-stat-failure-");
+    const createdPath = path.join(workspace, "generated", "new.ts");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value = 1;\n", "utf8");
+      const readState = new FileReadStateStore();
+      const fileHistory = new FileHistoryStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState, fileHistory };
+      await registry.execute(
+        { id: "call-read-index", name: "read_file", arguments: { path: "src/index.ts" } },
+        context,
+      );
+
+      let failCreatedStat = false;
+      const originalWriteFile = fs.writeFile.bind(fs);
+      const originalStat = fs.stat.bind(fs);
+      const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation((async (
+        ...args: Parameters<typeof fs.writeFile>
+      ) => {
+        const result = await originalWriteFile(...args);
+        const targetPath = args[0];
+        if (typeof targetPath === "string" && path.resolve(targetPath) === createdPath) {
+          failCreatedStat = true;
+        }
+        return result;
+      }) as typeof fs.writeFile);
+      const statSpy = vi.spyOn(fs, "stat").mockImplementation((async (
+        ...args: Parameters<typeof fs.stat>
+      ) => {
+        const targetPath = args[0];
+        if (
+          failCreatedStat &&
+          typeof targetPath === "string" &&
+          path.resolve(targetPath) === createdPath
+        ) {
+          throw new Error("simulated post-write stat failure");
+        }
+        return originalStat(...args);
+      }) as typeof fs.stat);
+
+      try {
+        await expect(
+          registry.execute(
+            {
+              id: "call-post-write-stat-failure",
+              name: "apply_patch",
+              arguments: {
+                patch: [
+                  "--- a/src/index.ts",
+                  "+++ b/src/index.ts",
+                  "@@ -1 +1 @@",
+                  "-const value = 1;",
+                  "+const value = 2;",
+                  "--- /dev/null",
+                  "+++ b/generated/new.ts",
+                  "@@ -0,0 +1 @@",
+                  "+created",
+                ].join("\n"),
+              },
+            },
+            context,
+          ),
+        ).rejects.toThrow("simulated post-write stat failure");
+      } finally {
+        statSpy.mockRestore();
+        writeFileSpy.mockRestore();
+      }
+
+      expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
+        .toBe("const value = 1;\n");
+      await expect(fs.access(createdPath)).rejects.toThrow();
+      expect(fileHistory.latest(path.join(workspace, "src", "index.ts"))).toBeUndefined();
+      expect(fileHistory.latest(createdPath)).toBeUndefined();
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rolls back single-file edits when post-write metadata collection fails", async () => {
+    const workspace = await makeTempDir("edit-file-stat-failure-");
+    const targetPath = path.join(workspace, "src", "index.ts");
+    try {
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.writeFile(targetPath, "const value = 1;\n", "utf8");
+      const readState = new FileReadStateStore();
+      const fileHistory = new FileHistoryStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState, fileHistory };
+      await registry.execute(
+        { id: "call-read-edit-stat-failure", name: "read_file", arguments: { path: "src/index.ts" } },
+        context,
+      );
+
+      let failTargetStat = false;
+      const originalWriteFile = fs.writeFile.bind(fs);
+      const originalStat = fs.stat.bind(fs);
+      const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation((async (
+        ...args: Parameters<typeof fs.writeFile>
+      ) => {
+        const result = await originalWriteFile(...args);
+        const target = args[0];
+        if (typeof target === "string" && path.resolve(target) === targetPath) {
+          failTargetStat = true;
+        }
+        return result;
+      }) as typeof fs.writeFile);
+      const statSpy = vi.spyOn(fs, "stat").mockImplementation((async (
+        ...args: Parameters<typeof fs.stat>
+      ) => {
+        const target = args[0];
+        if (
+          failTargetStat &&
+          typeof target === "string" &&
+          path.resolve(target) === targetPath
+        ) {
+          throw new Error("simulated single-file post-write stat failure");
+        }
+        return originalStat(...args);
+      }) as typeof fs.stat);
+
+      try {
+        await expect(
+          registry.execute(
+            {
+              id: "call-edit-post-write-stat-failure",
+              name: "edit_file",
+              arguments: {
+                path: "src/index.ts",
+                old_string: "const value = 1;",
+                new_string: "const value = 2;",
+              },
+            },
+            context,
+          ),
+        ).rejects.toThrow("simulated single-file post-write stat failure");
+      } finally {
+        statSpy.mockRestore();
+        writeFileSpy.mockRestore();
+      }
+
+      expect(await fs.readFile(targetPath, "utf8")).toBe("const value = 1;\n");
+      expect(fileHistory.latest(targetPath)).toBeUndefined();
+      expect(readState.get(targetPath)?.content).toBe("const value = 1;\n");
     } finally {
       await removeTempDir(workspace);
     }
@@ -3019,7 +3285,163 @@ describe("application tools", () => {
     }
   });
 
-  it("preserves failed command session status after spawn errors", async () => {
+  it("keeps command session tail output on a UTF-8 character boundary", async () => {
+    const workspace = await makeTempDir("command-session-utf8-tail-");
+    let sessionId: string | undefined;
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const start = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-start-utf8-tail",
+              name: "start_command_session",
+              arguments: {
+                command: nodeCommand(
+                  "process.stdout.write('x' + '你' + 'tail'); setInterval(() => undefined, 1000);",
+                ),
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionId: string };
+      sessionId = start.sessionId;
+
+      await waitUntil(async () => {
+        const read = JSON.parse(
+          (
+            await registry.execute(
+              {
+                id: "session-read-utf8-tail-wait",
+                name: "read_command_session",
+                arguments: { session_id: sessionId },
+              },
+              context,
+            )
+          ).content,
+        ) as { stdout: { text: string } };
+        return read.stdout.text.includes("tail");
+      });
+
+      const tail = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-read-utf8-tail",
+              name: "read_command_session",
+              arguments: { session_id: sessionId, tail_bytes: 6 },
+            },
+            context,
+          )
+        ).content,
+      ) as { stdout: { text: string; truncated: boolean; bytes: number } };
+
+      expect(tail.stdout.text).toBe("tail");
+      expect(tail.stdout.text).not.toContain("\uFFFD");
+      expect(tail.stdout.truncated).toBe(true);
+      expect(tail.stdout.bytes).toBe(Buffer.byteLength("x你tail", "utf8"));
+    } finally {
+      if (sessionId) {
+        const registry = new InMemoryToolRegistry(createCommandTools());
+        await registry.execute(
+          {
+            id: "session-cleanup-utf8-tail",
+            name: "stop_command_session",
+            arguments: { session_id: sessionId },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ).catch((error: unknown) => {
+          if (error instanceof Error && error.message.includes("Command session not found")) return;
+          throw error;
+        });
+      }
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("keeps the latest command session output when the session buffer fills", async () => {
+    const workspace = await makeTempDir("command-session-latest-buffer-");
+    let sessionId: string | undefined;
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const script = [
+        "process.stdout.write('old' + '你' + 'x'.repeat(1016) + 'latest');",
+        "setInterval(() => undefined, 1000);",
+      ].join(" ");
+      const start = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-start-latest-buffer",
+              name: "start_command_session",
+              arguments: {
+                command: nodeCommand(script),
+                max_buffer_bytes: 1024,
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionId: string };
+      sessionId = start.sessionId;
+
+      await waitUntil(async () => {
+        const read = JSON.parse(
+          (
+            await registry.execute(
+              {
+                id: "session-read-latest-buffer-wait",
+                name: "read_command_session",
+                arguments: { session_id: sessionId },
+              },
+              context,
+            )
+          ).content,
+        ) as { stdout: { text: string } };
+        return read.stdout.text.includes("latest");
+      });
+
+      const read = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-read-latest-buffer",
+              name: "read_command_session",
+              arguments: { session_id: sessionId },
+            },
+            context,
+          )
+        ).content,
+      ) as { stdout: { text: string; truncated: boolean; bytes: number } };
+
+      expect(read.stdout.text).toContain("latest");
+      expect(read.stdout.text).not.toContain("old");
+      expect(read.stdout.text).not.toContain("\uFFFD");
+      expect(read.stdout.truncated).toBe(true);
+      expect(read.stdout.bytes).toBe(Buffer.byteLength(`old你${"x".repeat(1016)}latest`, "utf8"));
+    } finally {
+      if (sessionId) {
+        const registry = new InMemoryToolRegistry(createCommandTools());
+        await registry.execute(
+          {
+            id: "session-cleanup-latest-buffer",
+            name: "stop_command_session",
+            arguments: { session_id: sessionId },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ).catch((error: unknown) => {
+          if (error instanceof Error && error.message.includes("Command session not found")) return;
+          throw error;
+        });
+      }
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("fails command session start when the shell cannot spawn", async () => {
     const workspace = await makeTempDir("command-session-spawn-failure-");
     const envKey = process.platform === "win32" ? "ComSpec" : "SHELL";
     const originalShell = process.env[envKey];
@@ -3027,49 +3449,16 @@ describe("application tools", () => {
       process.env[envKey] = path.join(workspace, "missing-shell");
       const registry = new InMemoryToolRegistry(createCommandTools());
       const context = { threadId: "thread-1", turnId: "turn-1", workspace };
-      const start = JSON.parse(
-        (
-          await registry.execute(
-            {
-              id: "session-start-missing-shell",
-              name: "start_command_session",
-              arguments: { command: "echo unreachable" },
-            },
-            context,
-          )
-        ).content,
-      ) as { sessionId: string };
-
-      await waitUntil(async () => {
-        const read = JSON.parse(
-          (
-            await registry.execute(
-              {
-                id: "session-read-missing-shell",
-                name: "read_command_session",
-                arguments: { session_id: start.sessionId },
-              },
-              context,
-            )
-          ).content,
-        ) as { status: string };
-        return read.status === "failed";
-      });
-
-      const failed = JSON.parse(
-        (
-          await registry.execute(
-            {
-              id: "session-read-failed-shell",
-              name: "read_command_session",
-              arguments: { session_id: start.sessionId },
-            },
-            context,
-          )
-        ).content,
-      ) as { status: string; error?: string };
-      expect(failed.status).toBe("failed");
-      expect(failed.error).toBeTruthy();
+      await expect(
+        registry.execute(
+          {
+            id: "session-start-missing-shell",
+            name: "start_command_session",
+            arguments: { command: "echo unreachable" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("start_command_session failed to start command:");
     } finally {
       if (originalShell === undefined) {
         delete process.env[envKey];

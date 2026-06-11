@@ -52,12 +52,13 @@ const listFilesTool: AgentTool = {
   },
   async execute(input, context) {
     const workspace = requireWorkspace(context);
-    const relativePath = optionalString(input.path) ?? ".";
+    const relativePath = optionalString(input.path, "path") ?? ".";
     const limit = numberInRange(
       input.max_entries,
       LIST_LIMIT_MIN,
       LIST_LIMIT_MAX,
       DEFAULT_LIST_LIMIT,
+      "max_entries",
     );
     const directory = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(directory);
@@ -126,18 +127,20 @@ const readFileTool: AgentTool = {
   },
   async execute(input, context) {
     const workspace = requireWorkspace(context);
-    const relativePath = requiredString(input.path, "read_file requires a string path.");
+    const relativePath = requiredString(input.path, "read_file requires a string path.", "path");
     const maxBytes = numberInRange(
       input.max_bytes,
       READ_LIMIT_MIN_BYTES,
       MAX_READ_LIMIT_BYTES,
       DEFAULT_READ_LIMIT_BYTES,
+      "max_bytes",
     );
     const offsetBytes = numberInRange(
       input.offset_bytes,
       DEFAULT_READ_OFFSET_BYTES,
       Number.MAX_SAFE_INTEGER,
       DEFAULT_READ_OFFSET_BYTES,
+      "offset_bytes",
     );
     const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(filePath);
@@ -227,13 +230,14 @@ const searchFilesTool: AgentTool = {
   },
   async execute(input, context) {
     const workspace = requireWorkspace(context);
-    const query = requiredString(input.query, "search_files requires a string query.");
-    const relativePath = optionalString(input.path) ?? ".";
+    const query = requiredString(input.query, "search_files requires a string query.", "query");
+    const relativePath = optionalString(input.path, "path") ?? ".";
     const limit = numberInRange(
       input.max_results,
       SEARCH_LIMIT_MIN,
       SEARCH_LIMIT_MAX,
       DEFAULT_SEARCH_LIMIT,
+      "max_results",
     );
     const root = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
     const stat = await fs.stat(root);
@@ -327,9 +331,12 @@ function looksTextFile(name: string): boolean {
   ].includes(ext);
 }
 
-function requiredString(value: unknown, message: string): string {
+function requiredString(value: unknown, message: string, name: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(message);
+  }
+  if (value.includes("\0")) {
+    throw new Error(`${name} cannot contain NUL bytes.`);
   }
   return value.trim();
 }
@@ -349,8 +356,15 @@ async function inspectFile(
   return { sha256: hash.digest("hex") };
 }
 
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function optionalString(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`${name} must be a string.`);
+  }
+  if (value.includes("\0")) {
+    throw new Error(`${name} cannot contain NUL bytes.`);
+  }
+  return value.trim() || undefined;
 }
 
 function numberInRange(
@@ -358,9 +372,16 @@ function numberInRange(
   min: number,
   max: number,
   fallback: number,
+  name: string,
 ): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (value === undefined) {
     return fallback;
   }
-  return Math.max(min, Math.min(max, Math.floor(value)));
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${name} must be a finite number.`);
+  }
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}.`);
+  }
+  return value;
 }
