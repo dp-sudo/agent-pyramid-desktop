@@ -21,6 +21,12 @@ describe("renderer style tokens", () => {
       referencedTokens.filter((token) => !definedTokens.has(token)),
     ).toEqual([]);
   });
+
+  it("keeps component styles on tokenized color and elevation values", () => {
+    expect(shellCss).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(shellCss).not.toMatch(/:\s*(?:white|black)\s*;/i);
+    expect(shellCss).not.toMatch(/\brgba\(/i);
+  });
 });
 
 function extractDefinedDesignTokens(css: string): Set<string> {

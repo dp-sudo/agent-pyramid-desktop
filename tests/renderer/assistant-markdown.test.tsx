@@ -119,11 +119,10 @@ describe("AssistantMarkdown", () => {
     );
 
     expect(isCodeBlockCollapsedByDefault(code, 3)).toBe(true);
-    expect(isCodeBlockCollapsedByDefault(code, 4)).toBe(false);
+    expect(isCodeBlockCollapsedByDefault(code, 4)).toBe(true);
     expect(collapsedHtml).toContain("class=\"ds-code-block is-collapsed\"");
-    expect(openHtml).toContain("class=\"ds-code-block\"");
-    expect(openHtml).not.toContain("is-collapsed");
-    expect(openHtml).not.toContain("ds-code-block-collapse-note");
+    expect(openHtml).toContain("class=\"ds-code-block is-collapsed\"");
+    expect(openHtml).toContain("ds-code-block-collapse-note");
   });
 
   it("counts code block lines without treating a trailing newline as an extra line", () => {

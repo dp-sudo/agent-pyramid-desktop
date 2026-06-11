@@ -1198,3 +1198,23 @@
 - Hardened runtime preferences parsing so `toolAvailability` mode objects must include at least one concrete tool toggle, avoiding successful but no-op settings writes such as `{ code: {} }`.
 - Aligned project boundary docs with the current AGENTS rule: ordinary project search, audit, build, test, and documentation work exclude `docs/external-references/`; `/mnt/f/cc_src/DeepSeek` remains a read-only design reference only when explicitly requested.
 - Verification: `npx tsc --noEmit -p tsconfig.test.json --noUnusedLocals --noUnusedParameters`, `npm test -- tests/renderer/chat-block.test.ts tests/renderer/message-timeline.test.ts`, `npm test -- tests/main/persistence/model-config-store.test.ts tests/main/persistence/runtime-preferences-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### Sub-domain 1 - Layout grammar
+- Code route sidebar now renders a single `aside.ds-sidebar` with the reducer-owned width style applied directly to that element, avoiding a nested duplicate sidebar surface while preserving the existing resizable divider behavior.
+
+### Sub-domain 3 - Color and elevation
+- Removed component-level literal colors and hard-coded rgba elevation from `shell.css` by replacing them with existing `--ds-*` tokens.
+- Added renderer style-token regression coverage so `shell.css` cannot reintroduce raw hex colors, literal black/white color values, or component-level `rgba(...)` declarations.
+
+### Sub-domain 5/6/7 - Timeline, reasoning, and code fold behavior
+- Aligned code block folding with the documented `line count >= threshold` rule and updated markdown rendering tests for the boundary case.
+- Write assistant work-process sections now match the Code timeline by not mounting nested Markdown/tool/diff blocks while collapsed, and its bottom-stickiness threshold is aligned to the shared 96px timeline behavior.
+- Verification so far: `npm run typecheck`; `npm test -- tests/renderer/style-tokens.test.ts tests/renderer/assistant-markdown.test.tsx tests/renderer/workbench-stage.test.tsx tests/renderer/sidebar.test.ts`.
+
+### 2026-06-12 - Windows packaging readiness
+- Removed the root dependency on `@rollup/rollup-win32-x64-msvc`; Rollup already owns platform native packages through optional dependencies, so the app package no longer pins a Windows-only native artifact as a production dependency.
+- Added a main-process Windows AppUserModelID boundary using `com.agentpyramid.desktop`, set before BrowserWindow creation so taskbar grouping and future installer shortcuts share the same stable identity.
+- Added a minimal `package:win` build path through `electron-builder --win --x64`, targeting Windows `portable` and `zip` artifacts from the existing `out/**` Electron-Vite output.
+- Added `resources/icons/icon.ico` and wired `build.win.icon`, so Windows artifacts no longer use Electron's default icon.
+- Added `package:win:signed` with `forceCodeSigning=true`; release signing uses `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` or `CSC_LINK` / `CSC_KEY_PASSWORD` from the local environment and keeps PFX files and passwords out of the repository.
+- Deferred final branded icon replacement, certificate procurement, and NSIS/MSIX installer UX until release assets and signing identity are confirmed.

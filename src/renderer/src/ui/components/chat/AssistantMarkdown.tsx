@@ -235,7 +235,7 @@ export function isCodeBlockCollapsedByDefault(
   code: string,
   lineThreshold = CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
 ): boolean {
-  return countCodeLines(code) > lineThreshold;
+  return countCodeLines(code) >= lineThreshold;
 }
 
 export function resolveNextCodeBlockCollapsedState({

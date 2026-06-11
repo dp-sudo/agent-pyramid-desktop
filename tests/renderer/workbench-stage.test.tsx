@@ -152,6 +152,49 @@ describe("Write workspace panel components", () => {
     expect(html).not.toContain("ds-composer-mode-chip");
   });
 
+  it("does not mount folded Write assistant process blocks", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(WriteAssistantPanel, {
+          activePath: "draft.md",
+          activeTurnId: null,
+          assistantBusy: false,
+          assistantItems: [
+            {
+              kind: "user",
+              id: "user-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              text: "Inspect",
+              createdAt: "2026-06-10T09:00:00.000Z",
+            },
+            {
+              kind: "tool",
+              id: "tool-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              toolCallId: "call-1",
+              name: "read_file",
+              args: { path: "draft.md" },
+              result: "heavy tool detail",
+              status: "completed",
+              createdAt: "2026-06-10T09:00:01.000Z",
+            },
+          ],
+          composerDisabled: false,
+          onRequestSend: async () => true,
+          onInterrupt: () => undefined,
+        }),
+      ),
+    );
+
+    expect(html).toContain("class=\"ds-work-process\"");
+    expect(html).not.toContain("heavy tool detail");
+    expect(html).not.toContain("class=\"ds-work-process-body\"");
+  });
+
   it("pauses initial markdown preview rendering for very large documents", () => {
     const largeContent = `# Large\n${"paragraph\n".repeat(15000)}`;
     const html = renderToStaticMarkup(

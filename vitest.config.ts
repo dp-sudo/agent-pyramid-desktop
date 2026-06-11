@@ -7,5 +7,12 @@ export default defineConfig({
     exclude: ["node_modules/**", "out/**"],
     clearMocks: true,
     restoreMocks: true,
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.d.ts"],
+      reporter: ["text", "json-summary", "html"],
+      reportsDirectory: "coverage",
+    },
   },
 });

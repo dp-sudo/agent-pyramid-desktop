@@ -15,6 +15,7 @@ import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
 import { createCodingTools } from "./application/tools/coding-tools.js";
 import { createCommandTools } from "./application/tools/command-tools.js";
 import { InMemoryToolRegistry } from "./application/tools/in-memory-tool-registry.js";
+import { configureWindowsAppIdentity } from "./application/app-identity.js";
 import { registerThreadHandlers } from "./ipc/threads-handlers.js";
 import { registerTurnHandlers } from "./ipc/turns-handlers.js";
 import { registerSseHandlers } from "./ipc/sse-handlers.js";
@@ -33,6 +34,7 @@ import { isSamePath } from "./application/path-utils.js";
 // ---------------------------------------------------------------------------
 
 const userDataDir = app.getPath("userData");
+configureWindowsAppIdentity(app);
 const secretCodec = new SafeStorageSecretCodec(safeStorage);
 const store = new JsonlThreadStore(userDataDir);
 const attachmentStore = new AttachmentStore(userDataDir);

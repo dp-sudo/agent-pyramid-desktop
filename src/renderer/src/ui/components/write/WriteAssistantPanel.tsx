@@ -19,7 +19,7 @@ import {
 } from "../composer";
 import { useWorkbench } from "../../store/WorkbenchContext";
 
-const WRITE_ASSISTANT_BOTTOM_STICKY_THRESHOLD_PX = 72;
+const WRITE_ASSISTANT_BOTTOM_STICKY_THRESHOLD_PX = 96;
 
 export interface WriteAssistantPanelProps {
   activePath: string | null;
@@ -162,21 +162,23 @@ export function WriteAssistantPanel({
                           <span className="ds-shiny-text">{t("chat.running")}</span>
                         ) : null}
                       </summary>
-                      <div className="ds-work-process-body">
-                        {processItems.map((item) => (
-                          <ChatBlock
-                            key={item.id}
-                            item={item}
-                            nested
-                            {...(item.turnId === activeTurnId ? { isLive: true } : {})}
-                            {...(onApprove ? { onApprove } : {})}
-                            approvalPendingDecision={getApprovalPendingDecision(
-                              item,
-                              pendingApprovalResponses,
-                            )}
-                          />
-                        ))}
-                      </div>
+                      {processOpen ? (
+                        <div className="ds-work-process-body">
+                          {processItems.map((item) => (
+                            <ChatBlock
+                              key={item.id}
+                              item={item}
+                              nested
+                              {...(item.turnId === activeTurnId ? { isLive: true } : {})}
+                              {...(onApprove ? { onApprove } : {})}
+                              approvalPendingDecision={getApprovalPendingDecision(
+                                item,
+                                pendingApprovalResponses,
+                              )}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
                     </details>
                   ) : null}
 

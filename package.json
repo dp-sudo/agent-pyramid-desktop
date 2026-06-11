@@ -8,9 +8,34 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "package:win": "npm run build && electron-builder --win --x64",
+    "package:win:signed": "npm run build && electron-builder --win --x64 -c.forceCodeSigning=true",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "preview": "electron-vite preview"
+  },
+  "build": {
+    "appId": "com.agentpyramid.desktop",
+    "productName": "Agent Workbench",
+    "directories": {
+      "buildResources": "resources",
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "portable",
+        "zip"
+      ],
+      "icon": "resources/icons/icon.ico",
+      "signAndEditExecutable": true,
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+    }
   },
   "dependencies": {
     "i18next": "^26.3.1",
@@ -26,7 +51,9 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
+    "@vitest/coverage-v8": "^4.1.8",
     "electron": "^42.3.3",
+    "electron-builder": "^26.15.2",
     "electron-vite": "^5.0.0",
     "vite": "^7.3.5",
     "vitest": "^4.1.8"

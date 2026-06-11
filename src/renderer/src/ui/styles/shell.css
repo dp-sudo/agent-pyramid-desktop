@@ -852,7 +852,7 @@ textarea:focus-visible {
 .ds-composer-attachment-remove:hover,
 .ds-composer-attachment-remove:focus-visible {
   background: var(--ds-danger);
-  color: #ffffff;
+  color: var(--ds-bg-canvas);
   outline: none;
 }
 
@@ -1689,7 +1689,7 @@ textarea:focus-visible {
 
 .ds-approval-allow {
   background: var(--ds-accent);
-  color: white;
+  color: var(--ds-bg-canvas);
   border: 0;
   padding: 6px 12px;
   border-radius: var(--ds-radius-pill);
@@ -2621,7 +2621,7 @@ textarea:focus-visible {
 
 .ds-pill.is-accent {
   background: var(--ds-accent);
-  color: white;
+  color: var(--ds-bg-canvas);
   border-color: transparent;
 }
 
@@ -3024,7 +3024,7 @@ textarea:focus-visible {
   border: 0;
   border-radius: var(--ds-radius-pill);
   background: var(--ds-accent);
-  color: white;
+  color: var(--ds-bg-canvas);
   cursor: pointer;
   font-size: var(--ds-size-label);
   font-weight: 650;
@@ -3263,8 +3263,8 @@ textarea:focus-visible {
   width: 22px;
   height: 22px;
   border-radius: var(--ds-radius-pill);
-  background: white;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.18);
+  background: var(--ds-surface-elevated);
+  box-shadow: var(--ds-shadow-card-soft);
   transition: transform var(--ds-motion-micro) var(--ds-motion-ease);
 }
 

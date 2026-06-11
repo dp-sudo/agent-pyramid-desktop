@@ -1,0 +1,66 @@
+# Windows Signing And Icon
+
+This project uses `electron-builder` for Windows packaging.
+
+## Icon
+
+The Windows icon is stored at:
+
+```text
+resources/icons/icon.ico
+```
+
+`package.json` points `build.win.icon` to that file, so both `package:win` and
+`package:win:signed` use it. Replace this file with a final brand `.ico` when a
+formal visual identity is available.
+
+## Unsigned Test Package
+
+Use this for local smoke testing:
+
+```bash
+npm run package:win
+```
+
+This creates Windows `portable` and `zip` artifacts under `release/`. It may be
+unsigned if no signing certificate is available.
+
+## Signed Release Package
+
+Use this for release candidates:
+
+```bash
+npm run package:win:signed
+```
+
+The signed script passes `-c.forceCodeSigning=true` to `electron-builder`. If a
+valid signing certificate is not available, the build fails instead of silently
+producing an unsigned release.
+
+Provide the certificate through environment variables. Do not commit certificate
+files, passwords, or exported private keys.
+
+PowerShell example:
+
+```powershell
+$env:WIN_CSC_LINK = "C:\secure\certs\agent-workbench-code-signing.pfx"
+$env:WIN_CSC_KEY_PASSWORD = "<pfx-password>"
+npm run package:win:signed
+```
+
+Bash example:
+
+```bash
+export WIN_CSC_LINK="/secure/certs/agent-workbench-code-signing.pfx"
+export WIN_CSC_KEY_PASSWORD="<pfx-password>"
+npm run package:win:signed
+```
+
+`WIN_CSC_LINK` can also be a base64-encoded PFX payload or a `file://` URI, as
+supported by `electron-builder`.
+
+## Certificate Requirements
+
+Use a real OV or EV code-signing certificate for public Windows releases.
+Self-signed certificates are only useful for local packaging tests and do not
+remove SmartScreen or publisher trust warnings for end users.

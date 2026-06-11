@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
 import type { ThreadSummary } from "../../../../../shared/agent-contracts";
@@ -17,6 +17,7 @@ interface SidebarProps {
   workspaceRoot: string;
   showArchivedThreads: boolean;
   onToggleArchivedThreads: () => void;
+  style?: CSSProperties;
 }
 
 export interface ThreadSessionListProps {
@@ -42,11 +43,12 @@ export function Sidebar({
   workspaceRoot,
   showArchivedThreads,
   onToggleArchivedThreads,
+  style,
 }: SidebarProps): ReactElement {
   const { t } = useTranslation();
 
   return (
-    <aside className="ds-sidebar">
+    <aside className="ds-sidebar" style={style}>
       <div className="ds-sidebar-header">
         <button
           type="button"

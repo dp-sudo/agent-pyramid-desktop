@@ -686,28 +686,24 @@ export function Workbench(): ReactElement {
   return (
     <>
       {state.route === "code" ? (
-        <div
-          className="ds-sidebar"
+        <Sidebar
+          threads={codeThreads}
+          activeView="code"
+          onSelectThread={(id) => void onSelectThread(id)}
+          onNewChat={() => void onNewChat()}
+          onPickWorkspace={() => void onPickWorkspace()}
+          onDeleteThread={(id) => void onDeleteThread(id)}
+          onArchiveThread={(id) => void onArchiveThread(id)}
+          onRestoreThread={(id) => void onRestoreThread(id)}
+          onOpenSettings={onOpenSettings}
+          onSwitchWorkbench={onSwitchWorkbench}
+          workspaceRoot={state.workspaceRoot}
+          showArchivedThreads={state.showArchivedThreads}
+          onToggleArchivedThreads={() =>
+            actions.setShowArchivedThreads(!state.showArchivedThreads)
+          }
           style={{ width: state.leftSidebarWidth, flex: `0 0 ${state.leftSidebarWidth}px` }}
-        >
-          <Sidebar
-            threads={codeThreads}
-            activeView="code"
-            onSelectThread={(id) => void onSelectThread(id)}
-            onNewChat={() => void onNewChat()}
-            onPickWorkspace={() => void onPickWorkspace()}
-            onDeleteThread={(id) => void onDeleteThread(id)}
-            onArchiveThread={(id) => void onArchiveThread(id)}
-            onRestoreThread={(id) => void onRestoreThread(id)}
-            onOpenSettings={onOpenSettings}
-            onSwitchWorkbench={onSwitchWorkbench}
-            workspaceRoot={state.workspaceRoot}
-            showArchivedThreads={state.showArchivedThreads}
-            onToggleArchivedThreads={() =>
-              actions.setShowArchivedThreads(!state.showArchivedThreads)
-            }
-          />
-        </div>
+        />
       ) : null}
       {state.route === "code" ? (
         <div
