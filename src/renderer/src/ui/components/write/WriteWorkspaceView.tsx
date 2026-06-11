@@ -28,6 +28,7 @@ import {
   type WriteEditorSelectionState,
   type WriteStatus,
 } from "./WriteEditorPanel";
+import { getTimelineItemTurnId, sortTimelineItems } from "../chat/timeline-model";
 
 const AUTOSAVE_DELAY_MS = 800;
 const COMPLETION_DELAY_MS = 650;
@@ -1549,15 +1550,21 @@ export function getWriteAssistantVisibleItems(
   items: readonly Item[],
   limit = 80,
 ): Item[] {
-  if (items.length <= limit) return [...items];
-  const limitedStartIndex = Math.max(0, items.length - limit);
-  const firstLimitedTurnId = items[limitedStartIndex]?.turnId;
-  if (!firstLimitedTurnId) return items.slice(limitedStartIndex);
+  // Write and Code timelines share chronological turn grouping. Sorting before
+  // windowing prevents replayed or late-updated items from splitting a turn at
+  // the visible history boundary.
+  const sortedItems = sortTimelineItems(items);
+  if (sortedItems.length <= limit) return sortedItems;
+  const limitedStartIndex = Math.max(0, sortedItems.length - limit);
+  const firstLimitedTurnId = getTimelineItemTurnId(sortedItems[limitedStartIndex]);
   let startIndex = limitedStartIndex;
-  while (startIndex > 0 && items[startIndex - 1]?.turnId === firstLimitedTurnId) {
+  while (
+    startIndex > 0 &&
+    getTimelineItemTurnId(sortedItems[startIndex - 1]) === firstLimitedTurnId
+  ) {
     startIndex -= 1;
   }
-  return items.slice(startIndex);
+  return sortedItems.slice(startIndex);
 }
 
 export interface WriteAssistantLocalContext {

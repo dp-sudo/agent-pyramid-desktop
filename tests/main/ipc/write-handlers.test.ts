@@ -113,12 +113,17 @@ describe("write handlers helpers", () => {
   it("lists markdown files while excluding skipped project and build directories", async () => {
     const workspace = await makeTempDir("write-handlers-");
     try {
-      await fs.mkdir(path.join(workspace, "docs"), { recursive: true });
+      await fs.mkdir(path.join(workspace, "docs", "external-references"), { recursive: true });
       await fs.mkdir(path.join(workspace, "DeepSeek"), { recursive: true });
       await fs.mkdir(path.join(workspace, "out"), { recursive: true });
       await fs.mkdir(path.join(workspace, "node_modules", "pkg"), { recursive: true });
       await fs.writeFile(path.join(workspace, "README.md"), "# Root\n", "utf8");
       await fs.writeFile(path.join(workspace, "docs", "guide.mdx"), "# Guide\n", "utf8");
+      await fs.writeFile(
+        path.join(workspace, "docs", "external-references", "reference.md"),
+        "# Reference\n",
+        "utf8",
+      );
       await fs.writeFile(path.join(workspace, "DeepSeek", "reference.md"), "# Reference\n", "utf8");
       await fs.writeFile(path.join(workspace, "out", "build.md"), "# Build\n", "utf8");
       await fs.writeFile(path.join(workspace, "node_modules", "pkg", "readme.md"), "# Package\n", "utf8");
@@ -145,6 +150,9 @@ describe("write handlers helpers", () => {
       );
       expect(() => resolveWritePath(workspace, "DeepSeek/reference.md")).toThrow(
         "Path is skipped by write service policy: DeepSeek/reference.md",
+      );
+      expect(() => resolveWritePath(workspace, "docs/external-references/reference.md")).toThrow(
+        "Path is skipped by write service policy: docs/external-references/reference.md",
       );
       expect(() => resolveWritePath(workspace, "out/build.md")).toThrow(
         "Path is skipped by write service policy: out/build.md",

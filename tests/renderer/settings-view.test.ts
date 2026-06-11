@@ -24,6 +24,7 @@ import {
 } from "../../src/renderer/src/ui/SettingsView";
 import {
   filterSettingsSidebarItems,
+  getSettingsCategorySearchKeywords,
   isSettingsCategoryAdvanced,
 } from "../../src/renderer/src/ui/components/settings/settings-search";
 import {
@@ -31,6 +32,7 @@ import {
   DEFAULT_RUNTIME_PREFERENCES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
+  RUNTIME_TOOL_NAMES,
 } from "../../src/shared/agent-contracts";
 
 describe("SettingsView helpers", () => {
@@ -146,6 +148,16 @@ describe("SettingsView helpers", () => {
       filterSettingsSidebarItems(items, " ", { showAdvanced: false })
         .map((item) => item.id),
     ).toEqual(["appearance"]);
+  });
+
+  it("derives tool access search keywords from the shared runtime tool catalog", () => {
+    const toolKeywords = getSettingsCategorySearchKeywords("toolAccess", (key) => key)
+      .filter((key) => key.startsWith("settings.toolNames."))
+      .sort();
+
+    expect(toolKeywords).toEqual(
+      RUNTIME_TOOL_NAMES.map((toolName) => `settings.toolNames.${toolName}`).sort(),
+    );
   });
 
   it("identifies advanced Settings categories and keeps safe fallbacks visible", () => {

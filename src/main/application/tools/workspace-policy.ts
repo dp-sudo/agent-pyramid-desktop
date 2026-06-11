@@ -12,6 +12,7 @@ const SKIPPED_DIRECTORIES = new Set([
   ".vscode",
   "DeepSeek",
   "dist",
+  "external-references",
   "node_modules",
   "out",
 ]);

@@ -80,6 +80,8 @@
 - Changed command session stdout/stderr buffers to retain the newest bounded output instead of freezing at the first `max_buffer_bytes`, so `read_command_session` can inspect recent watcher/dev-server logs.
 - Kept `read_command_session` tail output on a UTF-8 character boundary so byte-limited stdout/stderr snapshots do not introduce replacement characters.
 - Tightened workspace string validation so path/query parameters reject NUL bytes before path resolution or search execution.
+- Added `external-references` to the shared workspace skipped-directory policy so workspace tools and Write IPC do not list, read, search, or write external reference source kept under a workspace tree.
+- Aligned renderer timeline tool titles with the shared runtime tool catalog, so newly registered tools use localized `settings.toolNames.*` labels and generic path/query/command formats instead of raw underscore fallback names.
 - Tightened workspace optional path validation so `list_files.path` and `search_files.path` reject non-string values instead of silently falling back to the workspace root.
 - Tightened workspace tool numeric limit validation so `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, and `search_files.max_results` reject invalid, fractional, and out-of-range values instead of silently falling back or clamping.
 - Hardened Windows foreground command cancellation so timeout/interrupt falls back to direct child termination when `taskkill /T /F` starts but exits unsuccessfully.
@@ -1042,7 +1044,7 @@
 ## 2026-06-07 - 大模型输出展示与工具闭环
 
 - 扩展 `AgentRuntime` 工具循环：模型返回 tool calls 后，运行时执行工具、把 assistant tool call 和 tool result 追加进后续 `LlmRequest.messages`，按模型档案的 `agent_autonomy` 选择工具预算（conservative 12、balanced 32、deep 64），也可通过 `AGENT_MAX_TOOL_ROUNDS` 在 1 到 128 之间覆盖；运行时接近预算时会向模型注入纠偏提示，耗尽后会记录未执行 tool call 的 failed tool result、发出 `tool_budget_reached` 事件，并把 turn 标记为 `needs_continuation`，方便用户继续线程而不是把体验等同于失败；工具失败会发出 `runtime_error(code: "tool_failed")`，不会静默吞错。
-- 扩展工具上下文：`AgentToolContext` 新增 `workspace`，新增只读工作区工具 `list_files`、`read_file`、`search_files`，并在 `src/main/index.ts` 注册；这些工具只允许访问当前线程 workspace，默认跳过 `.git`、`DeepSeek`、`node_modules`、`out` 等非项目源码或构建目录。
+- 扩展工具上下文：`AgentToolContext` 新增 `workspace`，新增只读工作区工具 `list_files`、`read_file`、`search_files`，并在 `src/main/index.ts` 注册；这些工具只允许访问当前线程 workspace，默认跳过 `.git`、`DeepSeek`、`external-references`、`node_modules`、`out` 等非项目源码或构建目录。
 - 扩展 LLM 消息转换：`AgentMessage` 支持 assistant `toolCalls`，OpenAI-compatible 与 Anthropic-compatible 请求构造都会把历史 tool call / tool result 转成供应商可理解的结构。
 - 优化 renderer 时间线：`MessageTimeline` 先按 `turnId` 分组，再将 reasoning、工具调用、过程性 assistant 文本归入可折叠“工作过程”，最终 assistant 文本作为 Markdown 正文显示；工具项显示本地化标题、状态和可展开详情。
 - 新增渲染端 Markdown 支持：`AssistantMarkdown` 使用 `react-markdown` + `remark-gfm` 渲染段落、列表、代码块和表格；新增中英文 `chat` 文案与 `shell.css` 中的 Markdown / 工作过程样式。
@@ -1051,7 +1053,7 @@
 
 ## 2026-06-08 - 写作文件服务边界与死代码清理
 
-- 修复 `write` IPC 文件服务：`write.list/get/put` 现在统一拒绝 `.git`、`.idea`、`.vscode`、`DeepSeek`、`dist`、`node_modules`、`out` 等非项目源码或构建目录，避免 Write 模式列出或写入第三方参考资料与构建产物。
+- 修复 `write` IPC 文件服务：`write.list/get/put` 现在统一拒绝 `.git`、`.idea`、`.vscode`、`DeepSeek`、`dist`、`external-references`、`node_modules`、`out` 等非项目源码或构建目录，避免 Write 模式列出或写入第三方参考资料与构建产物。
 - 加固 `write.get/put` 路径边界：读写前会校验目标或最近存在父目录的 realpath 仍位于 workspace 内，防止工作区内符号链接指向外部文件后被读取或覆盖。
 - 修复 `write.list` 目录遍历错误处理：无法读取工作区或子目录时不再静默返回空结果，而是通过 `WRITE_LIST_FAILED` envelope 暴露可追踪错误。
 - 加固 `write.get` 文本边界：Markdown 读取改为严格 UTF-8 校验，非法字节通过 `WRITE_GET_FAILED` 暴露，不再以替换字符进入编辑器状态。

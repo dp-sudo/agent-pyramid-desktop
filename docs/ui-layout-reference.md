@@ -469,7 +469,7 @@ Component: `RightInspector`.
 
 Purpose:
 
-- Show derived change/tool summaries.
+- Show derived change/tool summaries using localized labels from the shared runtime tool catalog.
 - Show pending todos.
 - Show latest plan progress.
 

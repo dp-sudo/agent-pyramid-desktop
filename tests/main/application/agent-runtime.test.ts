@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentRuntime,
+  COMMAND_TOOL_NAMES,
   CODE_ONLY_TOOL_NAMES,
   createToolAccessPolicy,
   isCodeOnlyToolName,
@@ -15,7 +16,12 @@ import { createGoalTools } from "../../../src/main/application/tools/goal-tools"
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
 import { RuntimeEventBus } from "../../../src/main/event-bus";
-import type { LlmRequest, LlmResponse, LlmStreamChunk } from "../../../src/main/domain/agent/types";
+import type {
+  AgentTool,
+  LlmRequest,
+  LlmResponse,
+  LlmStreamChunk,
+} from "../../../src/main/domain/agent/types";
 import { AttachmentStore } from "../../../src/main/persistence/attachment-store";
 import { JsonlThreadStore } from "../../../src/main/persistence/index";
 import { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
@@ -26,7 +32,11 @@ import type {
   Item,
   RuntimeEvent,
 } from "../../../src/shared/agent-contracts";
-import { DEFAULT_MODEL_CONFIG } from "../../../src/shared/agent-contracts";
+import {
+  DEFAULT_MODEL_CONFIG,
+  DEFAULT_RUNTIME_PREFERENCES,
+  RUNTIME_TOOL_NAMES,
+} from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
 const IMAGE_BASE64 =
@@ -1733,6 +1743,27 @@ describe("AgentRuntime", () => {
     );
   });
 
+  it("keeps command tool names aligned with command tool metadata", () => {
+    const metadataCommandNames = createCommandTools()
+      .filter((tool) => tool.metadata?.category === "command")
+      .map((tool) => tool.definition.name)
+      .sort();
+
+    expect([...COMMAND_TOOL_NAMES].sort()).toEqual(metadataCommandNames);
+    expect(CODE_ONLY_TOOL_NAMES).toEqual(expect.arrayContaining([...COMMAND_TOOL_NAMES]));
+  });
+
+  it("keeps write-mode default tool availability aligned with Code-only policy", () => {
+    const disabledInWriteByDefault = RUNTIME_TOOL_NAMES
+      .filter((toolName) => !DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write[toolName])
+      .sort();
+
+    expect(disabledInWriteByDefault).toEqual([...CODE_ONLY_TOOL_NAMES].sort());
+    for (const toolName of RUNTIME_TOOL_NAMES) {
+      expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code[toolName]).toBe(true);
+    }
+  });
+
   it("excludes coding and command tools from Write thread tool definitions by default", async () => {
     const thread = await store.createThread({
       title: "Runtime",
@@ -2251,6 +2282,71 @@ describe("AgentRuntime", () => {
     } finally {
       await removeTempDir(workspace);
     }
+  });
+
+  it("labels interrupted command tools consistently beyond run_command", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    let toolStarted = false;
+    const interruptibleGitStatusTool: AgentTool = {
+      metadata: {
+        category: "command",
+        isReadOnly: true,
+        isDestructive: false,
+      },
+      definition: {
+        name: "git_status",
+        description: "Test command tool that waits for interruption.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      async execute(_input, context) {
+        toolStarted = true;
+        return new Promise<string>((resolve) => {
+          context.signal?.addEventListener("abort", () => resolve("{}"), { once: true });
+        });
+      },
+    };
+    const registry = new InMemoryToolRegistry([interruptibleGitStatusTool]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-git-status", name: "git_status", arguments: {} }],
+        raw: {},
+      },
+    ];
+    const runtime = createRuntime(registry);
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Check git status",
+    });
+    await waitFor(() => toolStarted);
+
+    await runtime.interruptTurn(turn.id);
+    await waitFor(() =>
+      events.some(
+        (event) => event.kind === "turn_completed" && event.status === "interrupted",
+      ),
+    );
+
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(
+      finalItems(replayed).find((item) => item.kind === "tool" && item.name === "git_status"),
+    ).toMatchObject({
+      status: "failed",
+      result: {
+        message: "Command was interrupted.",
+      },
+    });
   });
 
   it("uses update_goal when goal mode is enabled and emits goal updates", async () => {
@@ -3050,7 +3146,7 @@ describe("AgentRuntime", () => {
           kind: "tool",
           name: "shell_command",
           status: "failed",
-          result: { message: "Tool was interrupted." },
+          result: { message: "Command was interrupted." },
         }),
       ]),
     );

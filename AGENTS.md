@@ -61,11 +61,14 @@ Verification_Strategy: "如何验证本次改动"
 - 根目录 `package.json`、`package-lock.json`、`electron.vite.config.ts`、`tsconfig.json`、`tsconfig.node.json`、`tsconfig.test.json`、`vitest.config.ts`
 - `openspec/`（OpenSpec 工作流目录，存放变更的 proposal、design、tasks 和 specs）
 
+`docs/external-references/` 及其子目录不是本项目源码或项目文档；其中只允许存放外部参考源码，普通搜索、审计、构建、测试和文档维护均不得把它们纳入工作范围。
+
 严格规则：
 
 - **不得**将仓库外 DeepSeek GUI 参考源码纳入构建、运行、测试、打包、发布流程。
 - **不得**在 `package.json`、`tsconfig.json`、Vite / Electron / eslint / vitest / tailwind 等配置中新增对 DeepSeek GUI 参考源码路径的引用。
 - **不得**在 `docs/agent-development.md` 或其他项目文档中把 DeepSeek GUI 参考源码列为依赖、来源或实现依据。
+- **不得**在 `package.json`、`tsconfig*.json`、Vite / Electron / Vitest 或运行时配置中新增对 `docs/external-references/` 下任何路径的引用。
 - 如需借鉴设计，必须在 `src/` 下独立实现，不得直接 import、link、copy 或 build 参考源码下的任何文件。
 
 本规则对人类协作者与 LLM Agent（包括本仓库内置 Agent 运行框架）一律生效；任何把外部参考源码接入实现链路的行为都视为越界。

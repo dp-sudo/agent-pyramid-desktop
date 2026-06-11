@@ -63,6 +63,9 @@ describe("settings i18n resources", () => {
       "composer.placeholder",
       "composer.writePlaceholder",
       "chat.collapsedCodePreview",
+      "chat.tools.genericCommand",
+      "chat.tools.genericPath",
+      "chat.tools.genericQuery",
     ];
 
     for (const locale of [en, zhCN]) {

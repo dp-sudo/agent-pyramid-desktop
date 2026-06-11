@@ -107,13 +107,11 @@ export function ChatBlock({
         </div>
       );
     default: {
-      const exhaustive: never = item;
-      void exhaustive;
-      return (
-        <div className="ds-message-block system">
-          <div className="ds-system-bubble">unknown</div>
-        </div>
-      );
+      // Exhaustive switch: if a new Item kind is added without handling here,
+      // TypeScript will fail to compile because `item` no longer narrows to
+      // `never`. The runtime fallback still keeps the renderer from crashing
+      // if a malformed item somehow reaches this branch.
+      return renderUnknownItemKind(item);
     }
   }
 }
@@ -531,6 +529,14 @@ export function resolveToolDetailDisplay(
     truncated,
     hiddenCharCount: truncated ? detail.length - text.length : 0,
   };
+}
+
+function renderUnknownItemKind(item: never): ReactElement {
+  return (
+    <div className="ds-message-block system">
+      <div className="ds-system-bubble">unknown</div>
+    </div>
+  );
 }
 
 function normalizeToolDetailLimit(value: number, fallback: number): number {

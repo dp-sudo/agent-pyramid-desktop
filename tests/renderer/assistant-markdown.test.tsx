@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AssistantMarkdown,
   closeDanglingCodeFence,
@@ -185,6 +185,25 @@ describe("AssistantMarkdown", () => {
     expect(normalizeMarkdownHref("./local/path")).toBeNull();
     expect(normalizeMarkdownHref("javascript:alert(1)")).toBeNull();
     expect(normalizeMarkdownHref("file:///etc/passwd")).toBeNull();
+  });
+
+  it("keeps unexpected markdown URL normalization failures observable", () => {
+    const originalUrl = globalThis.URL;
+    vi.stubGlobal("URL", class {
+      constructor() {
+        throw new Error("Unexpected URL parser failure.");
+      }
+    });
+    try {
+      expect(() => normalizeMarkdownHref("https://example.com")).toThrow(
+        "Unexpected URL parser failure.",
+      );
+      expect(() => normalizeMarkdownImageSrc("https://example.com/image.png")).toThrow(
+        "Unexpected URL parser failure.",
+      );
+    } finally {
+      vi.stubGlobal("URL", originalUrl);
+    }
   });
 
   it("renders unsafe links as plain text instead of clickable anchors", () => {

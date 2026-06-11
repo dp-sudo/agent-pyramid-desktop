@@ -130,8 +130,8 @@ function isExternalHttpUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
     return url.protocol === "http:" || url.protocol === "https:";
-  } catch (_error) {
-    void _error;
+  } catch (error) {
+    if (!isInvalidUrlError(error)) throw error;
     return false;
   }
 }
@@ -145,10 +145,16 @@ function isAllowedAppNavigation(rawUrl: string): boolean {
     }
 
     return url.protocol === "file:" && isSamePath(fileURLToPath(url), RENDERER_INDEX_FILE);
-  } catch (_error) {
-    void _error;
+  } catch (error) {
+    if (!isInvalidUrlError(error)) throw error;
     return false;
   }
+}
+
+function isInvalidUrlError(error: unknown): boolean {
+  // Navigation URLs are attacker-controlled input; parse failures are expected,
+  // while non-TypeError failures should stay visible to the main process.
+  return error instanceof TypeError;
 }
 
 // ---------------------------------------------------------------------------

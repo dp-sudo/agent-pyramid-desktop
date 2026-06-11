@@ -4,6 +4,7 @@ import type {
   ToolItem,
   UserItem,
 } from "../../../../../shared/agent-contracts";
+import { isRuntimeToolName } from "../../../../../shared/agent-contracts";
 
 type TimelineProcessItem = Exclude<Item, UserItem>;
 
@@ -178,8 +179,10 @@ export function summarizeToolItemHeader(
   item: ToolItem,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): Omit<ToolDisplay, "detail"> {
-  const path = readStringArg(item.args, "path") ?? readStringArg(item.args, "workspace");
-  const query = readStringArg(item.args, "query");
+  const path = readStringArg(item.args, "path") ??
+    readStringArg(item.args, "workspace") ??
+    readStringArg(item.args, "cwd");
+  const query = readStringArg(item.args, "query") ?? readStringArg(item.args, "pattern");
   const command = readStringArg(item.args, "command");
   const title = titleForTool(item.name, { path, query, command }, t);
   return {
@@ -241,8 +244,33 @@ function titleForTool(
     case "update_goal":
       return t("chat.tools.updateGoal");
     default:
+      if (isRuntimeToolName(name)) {
+        return genericRuntimeToolTitle(name, { path, query, command }, t);
+      }
       return name.replaceAll("_", " ");
   }
+}
+
+function genericRuntimeToolTitle(
+  name: string,
+  args: {
+    path?: string;
+    query?: string;
+    command?: string;
+  },
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  const tool = t(`settings.toolNames.${name}`);
+  if (args.command) {
+    return t("chat.tools.genericCommand", { tool, command: args.command });
+  }
+  if (args.path) {
+    return t("chat.tools.genericPath", { tool, path: args.path });
+  }
+  if (args.query) {
+    return t("chat.tools.genericQuery", { tool, query: args.query });
+  }
+  return tool;
 }
 
 function formatToolDetail(item: ToolItem): string {

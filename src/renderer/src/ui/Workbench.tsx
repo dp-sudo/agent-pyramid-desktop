@@ -659,10 +659,10 @@ export function Workbench(): ReactElement {
         actions.setError(null);
       } else {
         actions.setError(result.message);
-        const { [approvalId]: _removed, ...rest } = pendingApprovalResponsesRef.current;
-        void _removed;
-        pendingApprovalResponsesRef.current = rest;
-        setPendingApprovalResponses(rest);
+        const next = { ...pendingApprovalResponsesRef.current };
+        delete next[approvalId];
+        pendingApprovalResponsesRef.current = next;
+        setPendingApprovalResponses(next);
       }
     },
     [actions],
@@ -829,10 +829,9 @@ export function clearResolvedApprovalResponses(
       continue;
     }
     const source: Record<string, ApprovalPendingDecision> = next ?? current;
-    const { [item.approvalId]: _removed, ...rest }: Record<string, ApprovalPendingDecision> =
-      source;
-    void _removed;
-    next = rest;
+    const remaining: Record<string, ApprovalPendingDecision> = { ...source };
+    delete remaining[item.approvalId];
+    next = remaining;
   }
   return next ?? current;
 }

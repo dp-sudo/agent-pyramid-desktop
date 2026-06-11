@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Item, ToolItem } from "../../src/shared/agent-contracts";
+import { RUNTIME_TOOL_NAMES } from "../../src/shared/agent-contracts";
 import {
   groupTimelineTurns,
   sortTimelineItems,
@@ -393,6 +394,35 @@ describe("timeline model", () => {
     expect(display.statusText).toBe("chat.toolStatus.completed");
   });
 
+  it("uses localized catalog titles for every runtime tool", () => {
+    const rawFallbacks = RUNTIME_TOOL_NAMES.filter((toolName) => {
+      const title = summarizeToolItemHeader(toolItem(toolName), timelineTitleT).title;
+      return title === toolName.replaceAll("_", " ");
+    });
+
+    expect(rawFallbacks).toEqual([]);
+    expect(
+      summarizeToolItemHeader(
+        toolItem("shell_command", { command: "npm run test" }),
+        timelineTitleT,
+      ).title,
+    ).toBe("tool:shell_command|command:npm run test");
+    expect(
+      summarizeToolItemHeader(
+        toolItem("delete_file", { path: "src/old.ts" }),
+        timelineTitleT,
+      ).title,
+    ).toBe("tool:delete_file|path:src/old.ts");
+    expect(
+      summarizeToolItemHeader(
+        toolItem("rg_search", { pattern: "AgentRuntime" }),
+        timelineTitleT,
+      ).title,
+    ).toBe("tool:rg_search|query:AgentRuntime");
+    expect(summarizeToolItemHeader(toolItem("custom_tool"), timelineTitleT).title)
+      .toBe("custom tool");
+  });
+
   it("summarizes tool headers without formatting result detail", () => {
     const item: ToolItem = {
       kind: "tool",
@@ -491,4 +521,34 @@ function reasoningItem(
     text: id,
     createdAt: createdAtValue,
   };
+}
+
+function toolItem(name: string, args: Record<string, unknown> = {}): ToolItem {
+  return {
+    kind: "tool",
+    id: `tool-${name}`,
+    threadId: "thread-1",
+    turnId: "turn-1",
+    toolCallId: `call-${name}`,
+    name,
+    args,
+    status: "completed",
+    createdAt,
+  };
+}
+
+function timelineTitleT(key: string, options?: Record<string, unknown>): string {
+  if (key.startsWith("settings.toolNames.")) {
+    return `tool:${key.slice("settings.toolNames.".length)}`;
+  }
+  if (key === "chat.tools.genericCommand") {
+    return `${String(options?.tool)}|command:${String(options?.command)}`;
+  }
+  if (key === "chat.tools.genericPath") {
+    return `${String(options?.tool)}|path:${String(options?.path)}`;
+  }
+  if (key === "chat.tools.genericQuery") {
+    return `${String(options?.tool)}|query:${String(options?.query)}`;
+  }
+  return key;
 }

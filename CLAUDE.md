@@ -20,7 +20,7 @@ If a task belongs to an OpenSpec change, inspect `openspec/changes/<change-id>/p
 
 ## External Reference Boundary
 
-This repository does not contain DeepSeek GUI or Claude Code source. External directories under `/mnt/f/cc_src/*` are read-only learning references only.
+External directories under `/mnt/f/cc_src/*` and `docs/external-references/*` are read-only learning references only. The `docs/external-references/*` subtree is not project documentation for normal maintenance work.
 
 Never import, link, copy, build, test, package, or document those external reference files as implementation sources. Do not add them to `package.json`, TypeScript config, Vite/Electron config, Vitest config, docs dependency lists, or runtime code. If a pattern is useful, re-implement it inside this repository.
 
@@ -281,7 +281,7 @@ Adding IPC requires updating:
 - `tests/renderer/` - renderer reducer, components and timeline helpers.
 - `tests/helpers/temp-dir.ts` - temporary directory helper.
 
-Vitest config (`vitest.config.ts`) sets `environment: "node"`, scans `tests/**/*.test.ts` and `.test.tsx`, and excludes `DeepSeek/**` (a defensive local-path exclude, not the external `/mnt/f/cc_src/DeepSeek` reference), `node_modules/`, `out/`. Persistence tests construct a `JsonlThreadStore` against the temp dir helper, never against the real Electron `userData` path.
+Vitest config (`vitest.config.ts`) sets `environment: "node"`, scans `tests/**/*.test.ts` and `.test.tsx`, and excludes `node_modules/` and `out/`. Persistence tests construct a `JsonlThreadStore` against the temp dir helper, never against the real Electron `userData` path.
 
 Run targeted tests while iterating, then the full validation gate for code changes.
 

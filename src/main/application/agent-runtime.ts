@@ -22,6 +22,7 @@ import type {
   ApprovalItem,
   ApprovalRespondRequest,
   AssistantItem,
+  AttachmentRecord,
   Item,
   ModelConfig,
   ModelConfigProfile,
@@ -145,12 +146,7 @@ const TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4;
 const MIN_TEXT_COMPACTION_BYTES = 512;
 const MAX_PROGRESSIVE_COMPACTION_PASSES = 24;
 const ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS = 3_000;
-export const CODE_ONLY_TOOL_NAMES = [
-  "edit_file",
-  "write_file",
-  "delete_file",
-  "apply_patch",
-  "rollback_file",
+export const COMMAND_TOOL_NAMES = [
   "run_command",
   "shell_command",
   "git_bash_command",
@@ -176,6 +172,15 @@ export const CODE_ONLY_TOOL_NAMES = [
   "detect_shell_environment",
   "diagnose_workspace",
   "diagnose_file",
+] as const;
+const COMMAND_TOOL_NAME_SET = new Set<string>(COMMAND_TOOL_NAMES);
+export const CODE_ONLY_TOOL_NAMES = [
+  "edit_file",
+  "write_file",
+  "delete_file",
+  "apply_patch",
+  "rollback_file",
+  ...COMMAND_TOOL_NAMES,
 ] as const;
 const CODE_ONLY_TOOL_NAME_SET = new Set<string>(CODE_ONLY_TOOL_NAMES);
 const DEFAULT_TOOL_ACCESS_POLICY = createToolAccessPolicy({
@@ -1353,14 +1358,13 @@ export class AgentRuntime {
     turnId: string,
     decision: "allow" | "deny",
   ): Promise<void> {
-    const pendingForTurn = [...this.pendingApprovals].filter(
-      ([, pending]) => pending.turnId === turnId,
-    );
+    const pendingForTurn: PendingApproval[] = [];
     for (const [approvalId, pending] of this.pendingApprovals) {
       if (pending.turnId !== turnId) continue;
+      pendingForTurn.push(pending);
       this.pendingApprovals.delete(approvalId);
     }
-    await Promise.all(pendingForTurn.map(([, pending]) => pending.resolve(decision)));
+    await Promise.all(pendingForTurn.map((pending) => pending.resolve(decision)));
   }
 
   private async collectHistory(
@@ -1495,9 +1499,9 @@ export class AgentRuntime {
       if (!attachment) {
         throw new Error(`Attachment ${id} not found.`);
       }
-      const { dataBase64: _dataBase64, ...record } = attachment;
-      void _dataBase64;
-      attachments.push(record);
+      // Timeline records only carry attachment metadata; the binary payload is
+      // rehydrated from the store on demand to keep messages.jsonl small.
+      attachments.push(stripAttachmentPayload(attachment));
     }
     return attachments;
   }
@@ -1687,7 +1691,17 @@ function parsePlanStep(value: unknown, index: number): PlanStep {
 }
 
 function interruptedToolMessage(toolName: string): string {
-  return toolName === "run_command" ? "Command was interrupted." : "Tool was interrupted.";
+  if (COMMAND_TOOL_NAME_SET.has(toolName)) {
+    return "Command was interrupted.";
+  }
+  return "Tool was interrupted.";
+}
+
+function stripAttachmentPayload(attachment: AttachmentRecord & { dataBase64: string }): AttachmentRecord {
+  // Timeline records only carry attachment metadata; the binary payload is
+  // rehydrated from the store on demand to keep messages.jsonl small.
+  const { dataBase64: _payload, ...record } = attachment;
+  return record;
 }
 
 function runtimeErrorCodeFromWorkerError(error: unknown): RuntimeErrorEvent["code"] {

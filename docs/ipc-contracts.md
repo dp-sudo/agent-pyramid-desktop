@@ -266,7 +266,7 @@ Notes:
 - Write file paths must target `.md`, `.mdx`, or `.markdown` files.
 - Access uses the shared workspace path policy and realpath checks to prevent
   path escape; Write IPC adds only the Markdown file constraint on top.
-- Skipped directories include dot directories, `DeepSeek`, `dist`, `node_modules`, and `out`.
+- Skipped directories include dot directories, `DeepSeek`, `dist`, `external-references`, `node_modules`, and `out`.
 - Inline complete is currently local Markdown pattern completion, not an LLM request.
 
 ### Model Config

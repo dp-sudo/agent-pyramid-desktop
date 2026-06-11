@@ -512,9 +512,9 @@ function omitRecordKey<T>(
   key: string,
 ): Record<string, T> {
   if (!(key in record)) return record;
-  const { [key]: _removed, ...rest } = record;
-  void _removed;
-  return rest;
+  const next: Record<string, T> = { ...record };
+  delete next[key];
+  return next;
 }
 
 export function getThreadInFlightTurn(

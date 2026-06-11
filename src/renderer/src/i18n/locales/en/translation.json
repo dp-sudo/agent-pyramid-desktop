@@ -64,7 +64,10 @@
       "diagnoseFile": "Diagnose file",
       "diagnoseFilePath": "Diagnose file: {{path}}",
       "createPlan": "Create plan",
-      "updateGoal": "Update goal"
+      "updateGoal": "Update goal",
+      "genericPath": "{{tool}}: {{path}}",
+      "genericQuery": "{{tool}}: {{query}}",
+      "genericCommand": "{{tool}}: {{command}}"
     }
   },
   "write": {

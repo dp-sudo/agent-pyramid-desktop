@@ -437,9 +437,14 @@ describe("application tools", () => {
     const workspace = await makeTempDir("workspace-tools-");
     const outside = await makeTempDir("workspace-tools-outside-");
     try {
-      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.mkdir(path.join(workspace, "src", "external-references"), { recursive: true });
       await fs.mkdir(path.join(workspace, "DeepSeek"), { recursive: true });
       await fs.writeFile(path.join(workspace, "src", "index.ts"), "export const marker = 1;\n", "utf8");
+      await fs.writeFile(
+        path.join(workspace, "src", "external-references", "reference.ts"),
+        "external marker\n",
+        "utf8",
+      );
       await fs.writeFile(path.join(workspace, ".hidden.ts"), "secret\n", "utf8");
       await fs.writeFile(path.join(workspace, "DeepSeek", "reference.ts"), "reference\n", "utf8");
       await fs.writeFile(path.join(workspace, "src", "large.txt"), "abcdef", "utf8");
@@ -638,6 +643,18 @@ describe("application tools", () => {
           { threadId: "thread-1", turnId: "turn-1", workspace },
         ),
       ).rejects.toThrow("Path is skipped by workspace tool policy: DeepSeek/reference.ts");
+      await expect(
+        registry.execute(
+          {
+            id: "call-external-reference",
+            name: "read_file",
+            arguments: { path: "src/external-references/reference.ts" },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ),
+      ).rejects.toThrow(
+        "Path is skipped by workspace tool policy: src/external-references/reference.ts",
+      );
 
       await fs.writeFile(path.join(workspace, "src", "invalid-utf8.txt"), Buffer.from([0xff, 0xfe]));
       await expect(

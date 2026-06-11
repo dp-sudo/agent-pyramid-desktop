@@ -64,7 +64,10 @@
       "diagnoseFile": "诊断文件",
       "diagnoseFilePath": "诊断文件：{{path}}",
       "createPlan": "创建计划",
-      "updateGoal": "更新目标"
+      "updateGoal": "更新目标",
+      "genericPath": "{{tool}}：{{path}}",
+      "genericQuery": "{{tool}}：{{query}}",
+      "genericCommand": "{{tool}}：{{command}}"
     }
   },
   "write": {

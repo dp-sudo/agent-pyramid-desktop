@@ -618,6 +618,38 @@ describe("WriteWorkspaceView helpers", () => {
     expect(visible[visible.length - 1]?.id).toBe("turn-b-74");
   });
 
+  it("sorts write assistant items before preserving the leading visible turn", () => {
+    const turn1User = makeItem(
+      "user",
+      "turn-1-user",
+      "turn-1",
+      "2026-06-08T00:00:01.000Z",
+    );
+    const turn2User = makeItem(
+      "user",
+      "turn-2-user",
+      "turn-2",
+      "2026-06-08T00:00:03.000Z",
+    );
+    const turn1Tool = makeItem(
+      "tool",
+      "turn-1-tool",
+      "turn-1",
+      "2026-06-08T00:00:02.000Z",
+    );
+
+    const visible = getWriteAssistantVisibleItems(
+      [turn1User, turn2User, turn1Tool],
+      2,
+    );
+
+    expect(visible.map((item) => item.id)).toEqual([
+      "turn-1-user",
+      "turn-1-tool",
+      "turn-2-user",
+    ]);
+  });
+
   it("maps write sidebar resize controls to the shared width range", () => {
     expect(clampWriteSidebarWidth(120)).toBe(180);
     expect(clampWriteSidebarWidth(260)).toBe(260);
@@ -670,12 +702,13 @@ function makeItem(
   kind: "system" | "user" | "assistant" | "tool",
   id: string,
   turnId = "turn-1",
+  createdAt = "2026-06-08T00:00:00.000Z",
 ) {
   const base = {
     id,
     threadId: "thread-1",
     turnId,
-    createdAt: "2026-06-08T00:00:00.000Z",
+    createdAt,
   };
   if (kind === "system") {
     return { ...base, kind, level: "info" as const, text: "system" };

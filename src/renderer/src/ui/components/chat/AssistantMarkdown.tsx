@@ -324,8 +324,8 @@ export function normalizeMarkdownHref(href: string | undefined): string | null {
   try {
     const url = new URL(trimmed);
     return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
-  } catch (_error) {
-    void _error;
+  } catch (error) {
+    if (!isInvalidUrlError(error)) throw error;
     return null;
   }
 }
@@ -339,14 +339,20 @@ export function normalizeMarkdownImageSrc(src: string | undefined): string | nul
     if (url.protocol === "http:" || url.protocol === "https:") return trimmed;
     if (url.protocol === "data:" && isSafeImageDataUrl(trimmed)) return trimmed;
     return null;
-  } catch (_error) {
-    void _error;
+  } catch (error) {
+    if (!isInvalidUrlError(error)) throw error;
     return null;
   }
 }
 
 function isSafeImageDataUrl(value: string): boolean {
   return /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(value);
+}
+
+function isInvalidUrlError(error: unknown): boolean {
+  // Markdown URLs are untrusted model/user content. Invalid URL syntax is
+  // expected, but unrelated failures must not be hidden as unsafe links.
+  return error instanceof TypeError;
 }
 
 export function closeDanglingCodeFence(text: string): string {
