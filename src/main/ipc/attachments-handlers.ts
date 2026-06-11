@@ -4,6 +4,7 @@ import {
   ATTACHMENT_DELETE_CHANNEL,
   ATTACHMENT_GET_CHANNEL,
 } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type {
   AttachmentCreateRequest,
   AttachmentDeleteRequest,
@@ -18,7 +19,7 @@ export function registerAttachmentHandlers(store: AttachmentStore): void {
       try {
         return ok(await store.create(parseAttachmentCreateRequest(request)));
       } catch (error) {
-        return err("ATTACHMENT_CREATE_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.ATTACHMENT_CREATE_FAILED, messageOf(error));
       }
     },
   );
@@ -29,9 +30,9 @@ export function registerAttachmentHandlers(store: AttachmentStore): void {
       const attachment = await store.get(id);
       return attachment
         ? ok(attachment)
-        : err("ATTACHMENT_NOT_FOUND", `Attachment ${id} not found.`);
+        : err(IPC_ERROR_CODES.ATTACHMENT_NOT_FOUND, `Attachment ${id} not found.`);
     } catch (error) {
-      return err("ATTACHMENT_GET_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.ATTACHMENT_GET_FAILED, messageOf(error));
     }
   });
 
@@ -43,7 +44,7 @@ export function registerAttachmentHandlers(store: AttachmentStore): void {
         await store.delete(id);
         return ok({ id });
       } catch (error) {
-        return err("ATTACHMENT_DELETE_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.ATTACHMENT_DELETE_FAILED, messageOf(error));
       }
     },
   );

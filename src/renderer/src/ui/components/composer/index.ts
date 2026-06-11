@@ -4,9 +4,9 @@ export {
   type FloatingComposerVariant,
 } from "./FloatingComposer";
 export { canSubmitComposerDraft } from "./ComposerToolbar";
+export { formatBytes } from "../../format";
 export {
   canAddComposerImageFromSource,
-  formatBytes,
   getAttachmentThumbnailSrc,
   getClipboardImageFiles,
   getComposerImageAttachmentName,

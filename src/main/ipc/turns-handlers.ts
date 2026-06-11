@@ -4,6 +4,7 @@ import {
   TURN_INTERRUPT_CHANNEL,
   TURN_GET_CHANNEL,
 } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type {
   TurnStartRequest,
   Item,
@@ -21,7 +22,9 @@ export function registerTurnHandlers(
       return ok(await runtime.startTurn(request));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const code = message === "RUNTIME_TURN_BUSY" ? "RUNTIME_TURN_BUSY" : "TURN_START_FAILED";
+      const code = message === IPC_ERROR_CODES.RUNTIME_TURN_BUSY
+        ? IPC_ERROR_CODES.RUNTIME_TURN_BUSY
+        : IPC_ERROR_CODES.TURN_START_FAILED;
       return err(code, message);
     }
   });
@@ -34,7 +37,7 @@ export function registerTurnHandlers(
         await runtime.interruptTurn(turnId);
         return ok({ turnId });
       } catch (error) {
-        return err("TURN_INTERRUPT_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.TURN_INTERRUPT_FAILED, messageOf(error));
       }
     },
   );
@@ -49,7 +52,7 @@ export function registerTurnHandlers(
       const items = [...byId.values()];
       return ok({ threadId, items });
     } catch (error) {
-      return err("TURN_GET_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.TURN_GET_FAILED, messageOf(error));
     }
   });
 }

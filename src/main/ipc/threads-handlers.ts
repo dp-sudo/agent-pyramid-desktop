@@ -7,6 +7,7 @@ import {
   THREAD_DELETE_CHANNEL,
   THREAD_FORK_CHANNEL,
 } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type {
   ThreadCreateInput,
   ThreadListFilter,
@@ -36,7 +37,7 @@ export function registerThreadHandlers(
     try {
       return ok(await store.listThreads(parseThreadListFilter(filter)));
     } catch (error) {
-      return err("THREAD_LIST_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.THREAD_LIST_FAILED, messageOf(error));
     }
   });
 
@@ -47,7 +48,7 @@ export function registerThreadHandlers(
         await applyThreadCreateDefaults(parsed, runtimePreferencesStore),
       ));
     } catch (error) {
-      return err("THREAD_CREATE_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.THREAD_CREATE_FAILED, messageOf(error));
     }
   });
 
@@ -55,9 +56,9 @@ export function registerThreadHandlers(
     try {
       const id = parseThreadId(request, "Thread get");
       const thread = await store.getThread(id);
-      return thread ? ok(thread) : err("THREAD_NOT_FOUND", `No thread with id ${id}`);
+      return thread ? ok(thread) : err(IPC_ERROR_CODES.THREAD_NOT_FOUND, `No thread with id ${id}`);
     } catch (error) {
-      return err("THREAD_GET_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.THREAD_GET_FAILED, messageOf(error));
     }
   });
 
@@ -69,18 +70,18 @@ export function registerThreadHandlers(
         const patch = parseThreadUpdatePatch(patchInput);
         const thread = await store.getThread(id);
         if (!thread) {
-          return err("THREAD_NOT_FOUND", `No thread with id ${id}`);
+          return err(IPC_ERROR_CODES.THREAD_NOT_FOUND, `No thread with id ${id}`);
         }
         if (patch.status === "archived" && runtime?.isThreadInFlight(id)) {
-          return err("THREAD_ARCHIVE_BUSY", "Cannot archive a thread while a turn is running.");
+          return err(IPC_ERROR_CODES.THREAD_ARCHIVE_BUSY, "Cannot archive a thread while a turn is running.");
         }
         return ok(await store.updateThread(id, patch));
       } catch (error) {
         const message = messageOf(error);
         return err(
           message === "Thread status must be active or archived."
-            ? "THREAD_STATUS_INVALID"
-            : "THREAD_UPDATE_FAILED",
+            ? IPC_ERROR_CODES.THREAD_STATUS_INVALID
+            : IPC_ERROR_CODES.THREAD_UPDATE_FAILED,
           message,
         );
       }
@@ -92,15 +93,15 @@ export function registerThreadHandlers(
       const id = parseThreadId(request, "Thread delete");
       const thread = await store.getThread(id);
       if (!thread) {
-        return err("THREAD_NOT_FOUND", `No thread with id ${id}`);
+        return err(IPC_ERROR_CODES.THREAD_NOT_FOUND, `No thread with id ${id}`);
       }
       if (runtime?.isThreadInFlight(id)) {
-        return err("THREAD_DELETE_BUSY", "Cannot delete a thread while a turn is running.");
+        return err(IPC_ERROR_CODES.THREAD_DELETE_BUSY, "Cannot delete a thread while a turn is running.");
       }
       await store.deleteThread(id);
       return ok({ id });
     } catch (error) {
-      return err("THREAD_DELETE_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.THREAD_DELETE_FAILED, messageOf(error));
     }
   });
 
@@ -109,7 +110,7 @@ export function registerThreadHandlers(
       const parentId = parseThreadId(request, "Thread fork");
       return ok(await store.forkThread(parentId));
     } catch (error) {
-      return err("THREAD_FORK_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.THREAD_FORK_FAILED, messageOf(error));
     }
   });
 }

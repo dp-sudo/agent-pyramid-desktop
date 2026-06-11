@@ -4,6 +4,7 @@ import {
   SSE_UNSUBSCRIBE_CHANNEL,
   SSE_PUSH_CHANNEL,
 } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type {
   SseSubscribeRequest,
   SseUnsubscribeRequest,
@@ -50,7 +51,7 @@ export function registerSseHandlers(bus: RuntimeEventBus): void {
 
         return ok({ subscribed: threadId });
       } catch (error) {
-        return err("SSE_SUBSCRIBE_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.SSE_SUBSCRIBE_FAILED, messageOf(error));
       }
     },
   );
@@ -63,9 +64,9 @@ export function registerSseHandlers(bus: RuntimeEventBus): void {
         if (disposeThreadSubscription(event.sender.id, threadId)) {
           return ok({ unsubscribed: true });
         }
-        return err("SSE_NOT_SUBSCRIBED", "No active subscription for this thread");
+        return err(IPC_ERROR_CODES.SSE_NOT_SUBSCRIBED, "No active subscription for this thread");
       } catch (error) {
-        return err("SSE_UNSUBSCRIBE_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.SSE_UNSUBSCRIBE_FAILED, messageOf(error));
       }
     },
   );

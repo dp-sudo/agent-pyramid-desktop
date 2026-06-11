@@ -13,6 +13,7 @@ import {
   decodeUtf8TextBuffer,
   decodeUtf8TextPrefix,
 } from "./text-file.js";
+import { MAX_SEARCH_FILE_BYTES } from "../constants.js";
 
 const LIST_LIMIT_MIN = 1;
 const LIST_LIMIT_MAX = 500;
@@ -24,7 +25,6 @@ const READ_LIMIT_MIN_BYTES = 1;
 const MAX_READ_LIMIT_BYTES = 240_000;
 const DEFAULT_READ_LIMIT_BYTES = 80_000;
 const DEFAULT_READ_OFFSET_BYTES = 0;
-const MAX_SEARCH_FILE_BYTES = 1_000_000;
 
 const listFilesTool: AgentTool = {
   metadata: {

@@ -303,10 +303,12 @@ describe("JsonlThreadStore", () => {
     ) as Array<Partial<ThreadSummary>>;
     delete legacyRecord.mode;
     delete legacyRecord.status;
+    delete legacyRecord.relation;
     delete legacyRecord.approvalPolicy;
     delete legacyRecord.sandboxMode;
     delete legacyIndex[0].mode;
     delete legacyIndex[0].status;
+    delete legacyIndex[0].relation;
     await fs.writeFile(threadPath, JSON.stringify(legacyRecord, null, 2), "utf8");
     await fs.writeFile(indexPath, JSON.stringify(legacyIndex, null, 2), "utf8");
 
@@ -314,11 +316,17 @@ describe("JsonlThreadStore", () => {
       id: thread.id,
       mode: "code",
       status: "active",
+      relation: "primary",
       approvalPolicy: "on-request",
       sandboxMode: "workspace-write",
     });
     await expect(store.listThreads()).resolves.toEqual([
-      expect.objectContaining({ id: thread.id, mode: "code", status: "active" }),
+      expect.objectContaining({
+        id: thread.id,
+        mode: "code",
+        status: "active",
+        relation: "primary",
+      }),
     ]);
   });
 

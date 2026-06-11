@@ -34,6 +34,11 @@ import {
   WRITE_SEARCH_CLEAR_BUTTON_TEXT,
   WriteWorkspaceView,
 } from "../../src/renderer/src/ui/components/write/WriteWorkspaceView";
+import {
+  WRITE_ASSISTANT_CONTEXT_MAX_CHARS,
+  WRITE_COMPLETION_PREFIX_MAX_CHARS,
+  WRITE_COMPLETION_SUFFIX_MAX_CHARS,
+} from "../../src/renderer/src/ui/components/write/write-constants";
 import { WorkbenchProvider } from "../../src/renderer/src/ui/store/WorkbenchContext";
 
 describe("WriteWorkspaceView helpers", () => {
@@ -456,6 +461,23 @@ describe("WriteWorkspaceView helpers", () => {
     });
   });
 
+  it("uses named write policy limits for default completion context", () => {
+    const content = `${"p".repeat(WRITE_COMPLETION_PREFIX_MAX_CHARS + 3)}${"s".repeat(
+      WRITE_COMPLETION_SUFFIX_MAX_CHARS + 3,
+    )}`;
+    const selectionStart = WRITE_COMPLETION_PREFIX_MAX_CHARS + 3;
+
+    expect(
+      getWriteCompletionRequestContext({
+        content,
+        selection: { selectionStart, selectionEnd: selectionStart },
+      }),
+    ).toEqual({
+      prefix: "p".repeat(WRITE_COMPLETION_PREFIX_MAX_CHARS),
+      suffix: "s".repeat(WRITE_COMPLETION_SUFFIX_MAX_CHARS),
+    });
+  });
+
   it("requests completion only when the current prefix has enough context", () => {
     expect(
       shouldRequestWriteCompletion({
@@ -567,6 +589,20 @@ describe("WriteWorkspaceView helpers", () => {
     expect(payload?.text).toContain("- Selected text:");
     expect(payload?.text).toContain("selected paragraph");
     expect(payload?.text).not.toContain("private before\nselected paragraph\nprivate after");
+  });
+
+  it("uses named write policy limits for assistant selected context", () => {
+    const selected = "x".repeat(WRITE_ASSISTANT_CONTEXT_MAX_CHARS + 20);
+
+    expect(
+      getWriteAssistantLocalContext({
+        content: selected,
+        selection: { selectionStart: 0, selectionEnd: selected.length },
+      }),
+    ).toEqual({
+      label: "Selected text",
+      text: `${"x".repeat(WRITE_ASSISTANT_CONTEXT_MAX_CHARS - 8)}\n[...]`,
+    });
   });
 
   it("uses bounded nearby context only when it does not equal the whole document", () => {

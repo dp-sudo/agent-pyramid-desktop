@@ -16,6 +16,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   normalizeSupportedAttachmentMimeType,
 } from "../../../../../shared/agent-contracts";
+import { formatBytes } from "../../format";
 
 const COMPOSER_THUMBNAIL_MAX_EDGE = 192;
 
@@ -288,12 +289,6 @@ function readFileAsBase64(file: File): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
-}
-
-export function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${Math.round(value / 102.4) / 10} KB`;
-  return `${Math.round(value / 1024 / 102.4) / 10} MB`;
 }
 
 export function normalizeSupportedComposerImageMimeType(

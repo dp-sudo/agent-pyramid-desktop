@@ -501,6 +501,59 @@ describe("ModelConfigStore", () => {
     expect(isIsoTimestampString(profile?.updatedAt)).toBe(true);
   });
 
+  it("deduplicates persisted profile ids before profile mutations run", async () => {
+    const profileState: ModelConfigProfilesState = {
+      activeProfileId: "duplicate-profile",
+      profiles: [
+        {
+          id: "duplicate-profile",
+          name: "First",
+          config: {
+            ...DEFAULT_MODEL_CONFIG,
+            model: "first-model",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "duplicate-profile",
+          name: "Second",
+          config: {
+            ...DEFAULT_MODEL_CONFIG,
+            model: "second-model",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "remaining-profile",
+          name: "Remaining",
+          config: {
+            ...DEFAULT_MODEL_CONFIG,
+            model: "remaining-model",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    await fs.writeFile(path.join(userDataDir, "config"), JSON.stringify(profileState));
+
+    const profiles = await store.listProfiles();
+    expect(profiles.activeProfileId).toBe("duplicate-profile");
+    expect(profiles.profiles.map((profile) => profile.id)).toEqual([
+      "duplicate-profile",
+      "remaining-profile",
+    ]);
+    expect(profiles.profiles[0]?.config.model).toBe("first-model");
+
+    const afterDelete = await store.deleteProfile("duplicate-profile");
+    expect(afterDelete.activeProfileId).toBe("remaining-profile");
+    expect(afterDelete.profiles.map((profile) => profile.id)).toEqual([
+      "remaining-profile",
+    ]);
+  });
+
   it("rejects invalid token limits and keeps failures observable", async () => {
     await expect(
       store.update({

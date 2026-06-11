@@ -1,5 +1,6 @@
 import { ipcMain } from "electron";
 import { GOAL_UPDATE_CHANNEL } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type { GoalUpdateRequest, ThreadGoalStatus } from "../../shared/agent-contracts.js";
 import { err, isThreadGoalStatus, ok } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
@@ -10,7 +11,7 @@ export function registerGoalHandlers(runtime: AgentRuntime): void {
       const parsed = parseGoalUpdateRequest(request);
       return ok(await runtime.updateThreadGoal(parsed.threadId, parsed.update));
     } catch (error) {
-      return err("GOAL_UPDATE_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.GOAL_UPDATE_FAILED, messageOf(error));
     }
   });
 }

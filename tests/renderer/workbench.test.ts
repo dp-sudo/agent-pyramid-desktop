@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "../../src/shared/agent-contracts";
+import { IPC_ERROR_CODES } from "../../src/shared/ipc-errors";
 import {
   applyWorkbenchRuntimeEvent,
   beginPendingApprovalResponse,
@@ -35,8 +36,8 @@ describe("Workbench", () => {
     expect(
       formatInitialLoadErrors([
         ok([]),
-        err("CONFIG_FAILED", "Could not load model config."),
-        err("PROFILES_FAILED", "Could not load model profiles."),
+        err(IPC_ERROR_CODES.MODEL_CONFIG_GET_FAILED, "Could not load model config."),
+        err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_LIST_FAILED, "Could not load model profiles."),
       ]),
     ).toBe("Could not load model config.\nCould not load model profiles.");
   });
@@ -49,14 +50,14 @@ describe("Workbench", () => {
     await expect(
       runWorkbenchIpc(() => Promise.reject(new Error("threads channel unavailable"))),
     ).resolves.toEqual(
-      err("RENDERER_IPC_REJECTED", "threads channel unavailable"),
+      err(IPC_ERROR_CODES.RENDERER_IPC_REJECTED, "threads channel unavailable"),
     );
     await expect(
       runWorkbenchIpc(() => {
         throw "preload bridge unavailable";
       }),
     ).resolves.toEqual(
-      err("RENDERER_IPC_REJECTED", "preload bridge unavailable"),
+      err(IPC_ERROR_CODES.RENDERER_IPC_REJECTED, "preload bridge unavailable"),
     );
     expect(messageOfWorkbenchError(new Error("runtime failed"))).toBe("runtime failed");
   });

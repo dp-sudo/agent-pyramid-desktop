@@ -32,6 +32,7 @@ import {
   type ThreadRecord,
   type ThreadSummary,
 } from "../../../shared/agent-contracts";
+import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
 export {
   copyWorkbenchErrorMessage,
   shouldShowWorkbenchErrorToast,
@@ -366,7 +367,7 @@ export function Workbench(): ReactElement {
       const result = await runWorkbenchIpc(() => window.agentApi.threads.delete(id));
       if (!result.ok) {
         actions.setError(
-          result.code === "THREAD_DELETE_BUSY"
+          result.code === IPC_ERROR_CODES.THREAD_DELETE_BUSY
             ? t("threads.deleteBlockedRunning")
             : result.message,
         );
@@ -397,7 +398,7 @@ export function Workbench(): ReactElement {
       );
       if (!result.ok) {
         actions.setError(
-          result.code === "THREAD_ARCHIVE_BUSY"
+          result.code === IPC_ERROR_CODES.THREAD_ARCHIVE_BUSY
             ? t("threads.archiveBlockedRunning")
             : result.message,
         );
@@ -842,7 +843,7 @@ export async function runWorkbenchIpc<T>(
   try {
     return await invoke();
   } catch (error) {
-    return err("RENDERER_IPC_REJECTED", messageOfWorkbenchError(error));
+    return err(IPC_ERROR_CODES.RENDERER_IPC_REJECTED, messageOfWorkbenchError(error));
   }
 }
 

@@ -243,6 +243,11 @@ describe("RuntimePreferencesStore", () => {
     ).rejects.toThrow("toolAvailability tool value must be a boolean.");
     await expect(
       store.update(malformedRuntimePreferencesUpdate({
+        toolAvailability: { code: {} },
+      })),
+    ).rejects.toThrow("toolAvailability mode must include at least one tool.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
         compaction: { strategy: "full-history" },
       })),
     ).rejects.toThrow("compaction.strategy is invalid.");

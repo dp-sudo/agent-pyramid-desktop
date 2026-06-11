@@ -1,16 +1,18 @@
 import { ipcMain } from "electron";
 import { USAGE_DAILY_CHANNEL } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type {
   RuntimeEvent,
   UsageDailyBucket,
   UsageDailyRequest,
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
+import {
+  DEFAULT_USAGE_DAYS,
+  MAX_USAGE_DAYS,
+  USAGE_CACHE_TTL_MS,
+} from "../application/constants.js";
 import type { JsonlThreadStore } from "../persistence/index.js";
-
-const DEFAULT_USAGE_DAYS = 30;
-const MAX_USAGE_DAYS = 180;
-const USAGE_CACHE_TTL_MS = 10_000;
 
 interface UsageCacheEntry {
   expiresAt: number;
@@ -24,14 +26,14 @@ export function registerUsageHandlers(store: JsonlThreadStore): void {
     try {
       return ok(await collectCachedDailyUsage(store, parseUsageDailyRequest(request).days));
     } catch (error) {
-      return err("USAGE_DAILY_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.USAGE_DAILY_FAILED, messageOf(error));
     }
   });
 }
 
 // Usage aggregation defaults are intentional only for omitted requests. Bad
 // renderer payloads fail at the IPC boundary so malformed state is not reported
-// as a successful default 30-day query.
+// as a successful default-window query.
 export function parseUsageDailyRequest(request: unknown): UsageDailyRequest {
   if (request === undefined) return {};
   if (!request || typeof request !== "object" || Array.isArray(request)) {

@@ -62,6 +62,7 @@ import {
   ok,
   type WritePutRequest,
 } from "../../src/shared/agent-contracts";
+import { IPC_ERROR_CODES } from "../../src/shared/ipc-errors";
 
 describe("shared agent contracts", () => {
   it("validates model reasoning effort values", () => {
@@ -83,7 +84,7 @@ describe("shared agent contracts", () => {
       ok: true,
       value: { id: "thread-1" },
     });
-    expect(err("RUNTIME_TURN_BUSY", "Turn is already running.")).toEqual({
+    expect(err(IPC_ERROR_CODES.RUNTIME_TURN_BUSY, "Turn is already running.")).toEqual({
       ok: false,
       code: "RUNTIME_TURN_BUSY",
       message: "Turn is already running.",

@@ -20,6 +20,7 @@ import {
   LEFT_SIDEBAR_MAX_WIDTH,
   LEFT_SIDEBAR_MIN_WIDTH,
 } from "../../preferences";
+import { formatBytes } from "../../format";
 import type { ApprovalPendingDecision } from "../chat/ChatBlock";
 import { ThreadSessionList } from "../sidebar/Sidebar";
 import { WriteAssistantPanel } from "./WriteAssistantPanel";
@@ -28,21 +29,27 @@ import {
   type WriteEditorSelectionState,
   type WriteStatus,
 } from "./WriteEditorPanel";
+import {
+  COMPLETION_DELAY_MS,
+  COMPLETION_MIN_TRAILING_CHARS,
+  WRITE_ASSISTANT_CONTEXT_MAX_CHARS,
+  WRITE_ASSISTANT_NEARBY_CONTEXT_RADIUS,
+  WRITE_COMPLETION_PREFIX_MAX_CHARS,
+  WRITE_COMPLETION_SUFFIX_MAX_CHARS,
+  WRITE_SEARCH_DEBOUNCE_MS,
+} from "./write-constants";
 import { getTimelineItemTurnId, sortTimelineItems } from "../chat/timeline-model";
 
 const AUTOSAVE_DELAY_MS = 800;
-const COMPLETION_DELAY_MS = 650;
-const WRITE_SEARCH_DEBOUNCE_MS = 250;
-const COMPLETION_MIN_TRAILING_CHARS = 10;
-const WRITE_COMPLETION_PREFIX_MAX_CHARS = 4096;
-const WRITE_COMPLETION_SUFFIX_MAX_CHARS = 1024;
 const WRITE_SIDEBAR_KEYBOARD_STEP = 16;
 const WRITE_CONTEXT_MENU_WIDTH_PX = 176;
 const WRITE_CONTEXT_MENU_HEIGHT_PX = 124;
 const WRITE_CONTEXT_MENU_VIEWPORT_MARGIN_PX = 8;
 const WRITE_MARKDOWN_EXTENSIONS = [".md", ".mdx", ".markdown"] as const;
-export const WRITE_ASSISTANT_CONTEXT_MAX_CHARS = 1200;
-export const WRITE_ASSISTANT_NEARBY_CONTEXT_RADIUS = 520;
+export {
+  WRITE_ASSISTANT_CONTEXT_MAX_CHARS,
+  WRITE_ASSISTANT_NEARBY_CONTEXT_RADIUS,
+} from "./write-constants";
 export const WRITE_SEARCH_CLEAR_BUTTON_TEXT = "x";
 
 export type WriteDocumentPathValidationError =
@@ -1704,10 +1711,4 @@ export function getWriteSidebarDividerClassName(isDragging: boolean): string {
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString();
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${Math.round(value / 102.4) / 10} KB`;
-  return `${Math.round(value / 1024 / 102.4) / 10} MB`;
 }

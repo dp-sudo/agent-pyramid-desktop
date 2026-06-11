@@ -133,6 +133,13 @@ function hasNodeErrorCode(error: unknown, code: string): boolean {
     (error as { code?: unknown }).code === code;
 }
 
+function expectRecord(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(message);
+  }
+  return value as Record<string, unknown>;
+}
+
 describe("AgentRuntime", () => {
   let userDataDir: string;
   let store: JsonlThreadStore;
@@ -2862,6 +2869,96 @@ describe("AgentRuntime", () => {
     );
   });
 
+  it("compacts completed historical tool call arguments in later model requests", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_file",
+          description: "Read file",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isReadOnly: true },
+        async execute() {
+          return "short result";
+        },
+      },
+    ]);
+    const runtime = createRuntime(registry);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-complex",
+            name: "read_file",
+            arguments: {
+              path: "large.txt",
+              nested: {
+                data_base64: "a".repeat(2048),
+                note: null,
+                query: "x".repeat(9000),
+                rows: Array.from({ length: 90 }, (_, index) => ({ index })),
+              },
+            },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Read complete.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+      {
+        text: "Continue complete.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Read with complex arguments",
+    });
+    await waitFor(() => fakePool.requests.length === 2 && !runtime.isThreadInFlight(thread.id));
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Continue",
+    });
+    await waitFor(() => fakePool.requests.length === 3 && !runtime.isThreadInFlight(thread.id));
+
+    const replayedCall = fakePool.requests[2].messages
+      .find((message) =>
+        message.role === "assistant" &&
+        message.toolCalls?.some((call) => call.id === "call-complex")
+      )
+      ?.toolCalls?.find((call) => call.id === "call-complex");
+    if (!replayedCall) throw new Error("Expected replayed complex tool call.");
+
+    const nested = expectRecord(
+      replayedCall.arguments.nested,
+      "Expected nested arguments to remain an object.",
+    );
+    expect(nested.data_base64).toBe("[context budget: omitted base64 argument, 2048 bytes]");
+    expect(nested.query).toContain("[context budget: omitted long argument tail]");
+    expect(nested.note).toBeNull();
+
+    const rows = nested.rows;
+    expect(Array.isArray(rows)).toBe(true);
+    if (!Array.isArray(rows)) throw new Error("Expected compacted rows to remain an array.");
+    expect(rows).toHaveLength(81);
+    expect(rows[60]).toEqual({ context_budget_omitted_items: 10 });
+  });
+
   it("trims historical tool call rounds without leaving orphan tool results", async () => {
     const thread = await store.createThread({
       title: "Runtime",
@@ -3416,6 +3513,81 @@ describe("AgentRuntime", () => {
       kind: "item_updated",
       item: expect.objectContaining({ kind: "approval", decision: "deny" }),
     });
+    appendItem.mockRestore();
+  });
+
+  it("does not execute approved tools after the turn is interrupted while approval resolution is settling", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const executeTool = vi.fn(async () => "executed");
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "shell_command",
+          description: "Run command",
+          inputSchema: { type: "object" },
+        },
+        execute: executeTool,
+      },
+    ]);
+    fakePool.response = {
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call-1", name: "shell_command", arguments: {} }],
+      raw: {},
+    };
+    let releaseApprovalWrite: () => void = () => undefined;
+    let markApprovalWriteStarted: () => void = () => undefined;
+    const approvalWriteStarted = new Promise<void>((resolve) => {
+      markApprovalWriteStarted = resolve;
+    });
+    const approvalWriteGate = new Promise<void>((resolve) => {
+      releaseApprovalWrite = resolve;
+    });
+    const originalAppendItem = store.appendItem.bind(store);
+    const appendItem = vi.spyOn(store, "appendItem");
+    appendItem.mockImplementation(async (threadId, item) => {
+      if (item.kind === "approval" && item.decision === "allow") {
+        markApprovalWriteStarted();
+        await approvalWriteGate;
+      }
+      return originalAppendItem(threadId, item);
+    });
+    const runtime = createRuntime(registry);
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Needs approval",
+    });
+    await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+    const approval = events.find((event) => event.kind === "approval_requested");
+    if (!approval || approval.kind !== "approval_requested") {
+      throw new Error("Expected approval request.");
+    }
+
+    runtime.respondApproval({ approvalId: approval.approvalId, decision: "allow" });
+    await approvalWriteStarted;
+    await runtime.interruptTurn(turn.id);
+    releaseApprovalWrite();
+    await waitFor(() => !runtime.isThreadInFlight(thread.id));
+
+    expect(executeTool).not.toHaveBeenCalled();
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(finalItems(replayed)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "tool",
+          name: "shell_command",
+          status: "failed",
+          result: { message: "Command was interrupted." },
+        }),
+      ]),
+    );
     appendItem.mockRestore();
   });
 

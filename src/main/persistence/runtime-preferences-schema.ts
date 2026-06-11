@@ -191,6 +191,9 @@ function parseRuntimeToolAvailabilityUpdate(
       }
       parsedTools[toolName] = enabled;
     }
+    if (Object.keys(parsedTools).length === 0) {
+      throw new Error("toolAvailability mode must include at least one tool.");
+    }
     parsed[mode] = parsedTools;
   }
   if (Object.keys(parsed).length === 0) {

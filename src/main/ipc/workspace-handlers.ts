@@ -1,5 +1,6 @@
 import { BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "electron";
 import { WORKSPACE_PICK_DIRECTORY_CHANNEL } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import {
   err,
   ok,
@@ -18,7 +19,7 @@ export function registerWorkspaceHandlers(): void {
         : await dialog.showOpenDialog(options);
       return ok(normalizeWorkspacePickResult(result));
     } catch (error) {
-      return err("WORKSPACE_PICK_DIRECTORY_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.WORKSPACE_PICK_DIRECTORY_FAILED, messageOf(error));
     }
   });
 }

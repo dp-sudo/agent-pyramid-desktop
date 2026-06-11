@@ -60,10 +60,11 @@ export class MiniMaxGateway implements LlmGateway {
     const messages = toOpenAiMessages(request);
     const dialect = resolveProviderDialect(request.provider);
     const body = buildOpenAiCompatibleBody(request, messages, false, dialect);
+    const apiKey = resolveRequestApiKey(request);
 
     const response = await postJson<OpenAiChatResponse>(
       resolveOpenAiEndpoint(request.baseUrl, dialect),
-      request.apiKey,
+      apiKey,
       body,
       "openai-compatible"
     );
@@ -87,10 +88,11 @@ export class MiniMaxGateway implements LlmGateway {
   private async completeAnthropicCompatible(request: LlmRequest): Promise<LlmResponse> {
     const anthropicRequest = toAnthropicRequestParts(request);
     const body = buildAnthropicCompatibleBody(request, anthropicRequest, false);
+    const apiKey = resolveRequestApiKey(request);
 
     const response = await postJson<AnthropicMessageResponse>(
       resolveEndpoint(request.baseUrl, ANTHROPIC_MESSAGES_PATH),
-      request.apiKey,
+      apiKey,
       body,
       "anthropic-compatible"
     );
@@ -122,10 +124,11 @@ export class MiniMaxGateway implements LlmGateway {
     const messages = toOpenAiMessages(request);
     const dialect = resolveProviderDialect(request.provider);
     const body = buildOpenAiCompatibleBody(request, messages, true, dialect);
+    const apiKey = resolveRequestApiKey(request);
 
     const response = await postStream(
       resolveOpenAiEndpoint(request.baseUrl, dialect),
-      request.apiKey,
+      apiKey,
       body,
       "openai-compatible",
       options.signal
@@ -171,10 +174,11 @@ export class MiniMaxGateway implements LlmGateway {
   ): AsyncIterable<LlmStreamChunk> {
     const anthropicRequest = toAnthropicRequestParts(request);
     const body = buildAnthropicCompatibleBody(request, anthropicRequest, true);
+    const apiKey = resolveRequestApiKey(request);
 
     const response = await postStream(
       resolveEndpoint(request.baseUrl, ANTHROPIC_MESSAGES_PATH),
-      request.apiKey,
+      apiKey,
       body,
       "anthropic-compatible",
       options.signal
@@ -639,6 +643,20 @@ function resolveProviderDialect(provider: string): ProviderDialect {
   if (normalized === "minimax") return "minimax";
   if (normalized === "deepseek") return "deepseek";
   return "custom";
+}
+
+// The gateway owns provider environment fallback so AgentRuntime can pass the
+// profile key without duplicating provider-name branches across runtime layers.
+function resolveRequestApiKey(request: LlmRequest): string {
+  if (request.apiKey) return request.apiKey;
+  const dialect = resolveProviderDialect(request.provider);
+  if (dialect === "deepseek") {
+    return process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "";
+  }
+  if (dialect === "minimax") {
+    return process.env.MINIMAX_API_KEY || process.env.OPENAI_API_KEY || "";
+  }
+  return process.env.OPENAI_API_KEY || "";
 }
 
 function mapDeepSeekReasoningEffort(effort: LlmRequest["reasoningEffort"]): "high" | "max" {

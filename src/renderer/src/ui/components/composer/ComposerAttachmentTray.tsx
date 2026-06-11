@@ -1,10 +1,8 @@
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { ComposerAttachment } from "../../store/WorkbenchContext";
-import {
-  formatBytes,
-  getAttachmentThumbnailSrc,
-} from "./useComposerAttachments";
+import { formatBytes } from "../../format";
+import { getAttachmentThumbnailSrc } from "./useComposerAttachments";
 
 export function ComposerAttachmentTray({
   attachments,

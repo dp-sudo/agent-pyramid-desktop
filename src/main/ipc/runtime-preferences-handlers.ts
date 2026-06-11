@@ -3,6 +3,7 @@ import {
   RUNTIME_PREFERENCES_GET_CHANNEL,
   RUNTIME_PREFERENCES_UPDATE_CHANNEL,
 } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import { err, ok } from "../../shared/agent-contracts.js";
 import {
   parseRuntimePreferencesUpdate,
@@ -16,7 +17,7 @@ export function registerRuntimePreferencesHandlers(
     try {
       return ok(await store.get());
     } catch (error) {
-      return err("RUNTIME_PREFERENCES_GET_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.RUNTIME_PREFERENCES_GET_FAILED, messageOf(error));
     }
   });
 
@@ -24,7 +25,7 @@ export function registerRuntimePreferencesHandlers(
     try {
       return ok(await store.update(parseRuntimePreferencesUpdate(update)));
     } catch (error) {
-      return err("RUNTIME_PREFERENCES_UPDATE_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.RUNTIME_PREFERENCES_UPDATE_FAILED, messageOf(error));
     }
   });
 }

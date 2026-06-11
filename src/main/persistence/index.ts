@@ -306,7 +306,7 @@ export class JsonlThreadStore {
       ...base
     } = record;
     const goal = normalizeStoredGoal(rawGoal);
-    const relation = assertEnum(record.relation, THREAD_RELATIONS, "relation");
+    const relation = normalizeStoredThreadRelation(record.relation);
     const parentThreadId =
       rawParentThreadId === undefined
         ? undefined
@@ -342,7 +342,7 @@ export class JsonlThreadStore {
       workspace: requiredAbsolutePath(summary.workspace, "workspace"),
       mode: normalizeStoredThreadMode(summary.mode),
       status: normalizeStoredThreadStatus(summary.status),
-      relation: assertEnum(summary.relation, THREAD_RELATIONS, "relation"),
+      relation: normalizeStoredThreadRelation(summary.relation),
       updatedAt: requiredIsoTimestampString(summary.updatedAt, "updatedAt"),
     };
   }
@@ -558,6 +558,11 @@ function normalizeRelationFilter(value: unknown): ThreadRelation[] {
 function normalizeStoredThreadMode(value: unknown): ThreadRecord["mode"] {
   if (value === undefined) return DEFAULT_THREAD_MODE;
   return assertEnum(value, THREAD_MODES, "mode");
+}
+
+function normalizeStoredThreadRelation(value: unknown): ThreadRecord["relation"] {
+  if (value === undefined) return DEFAULT_THREAD_RELATION;
+  return assertEnum(value, THREAD_RELATIONS, "relation");
 }
 
 function normalizeStoredThreadStatus(value: unknown): ThreadRecord["status"] {

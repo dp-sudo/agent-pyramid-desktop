@@ -141,6 +141,50 @@ describe("MiniMaxGateway", () => {
     });
   });
 
+  it("uses provider-specific environment fallback keys when request apiKey is empty", async () => {
+    await withApiKeyEnv(
+      {
+        DEEPSEEK_API_KEY: "deepseek-env-key",
+        MINIMAX_API_KEY: "minimax-env-key",
+        OPENAI_API_KEY: "openai-env-key",
+      },
+      async () => {
+        await expectAuthorizationFor(
+          { provider: "DeepSeek", apiKey: "", baseUrl: "https://api.deepseek.com" },
+          "Bearer deepseek-env-key",
+        );
+        await expectAuthorizationFor(
+          { provider: "MiniMax", apiKey: "", baseUrl: "https://api.minimaxi.com/v1" },
+          "Bearer minimax-env-key",
+        );
+        await expectAuthorizationFor(
+          { provider: "Custom", apiKey: "", baseUrl: "https://provider.example.test/v1" },
+          "Bearer openai-env-key",
+        );
+      },
+    );
+  });
+
+  it("keeps explicit request apiKey ahead of provider environment fallback", async () => {
+    await withApiKeyEnv(
+      {
+        DEEPSEEK_API_KEY: "deepseek-env-key",
+        MINIMAX_API_KEY: "minimax-env-key",
+        OPENAI_API_KEY: "openai-env-key",
+      },
+      async () => {
+        await expectAuthorizationFor(
+          {
+            provider: "DeepSeek",
+            apiKey: "explicit-profile-key",
+            baseUrl: "https://api.deepseek.com",
+          },
+          "Bearer explicit-profile-key",
+        );
+      },
+    );
+  });
+
   it("serializes historical OpenAI tool call arguments with stable key order", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
@@ -733,3 +777,56 @@ describe("MiniMaxGateway", () => {
     );
   });
 });
+
+async function expectAuthorizationFor(
+  request: Partial<LlmRequest>,
+  authorization: string,
+): Promise<void> {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+    new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+      status: 200,
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  await new MiniMaxGateway().complete({
+    ...baseRequest,
+    ...request,
+  });
+
+  const [, init] = fetchMock.mock.calls[0];
+  expect(init?.headers).toMatchObject({ Authorization: authorization });
+}
+
+async function withApiKeyEnv(
+  values: {
+    DEEPSEEK_API_KEY?: string;
+    MINIMAX_API_KEY?: string;
+    OPENAI_API_KEY?: string;
+  },
+  callback: () => Promise<void>,
+): Promise<void> {
+  const previous = {
+    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+    MINIMAX_API_KEY: process.env.MINIMAX_API_KEY,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  };
+  try {
+    setOptionalEnv("DEEPSEEK_API_KEY", values.DEEPSEEK_API_KEY);
+    setOptionalEnv("MINIMAX_API_KEY", values.MINIMAX_API_KEY);
+    setOptionalEnv("OPENAI_API_KEY", values.OPENAI_API_KEY);
+    await callback();
+  } finally {
+    setOptionalEnv("DEEPSEEK_API_KEY", previous.DEEPSEEK_API_KEY);
+    setOptionalEnv("MINIMAX_API_KEY", previous.MINIMAX_API_KEY);
+    setOptionalEnv("OPENAI_API_KEY", previous.OPENAI_API_KEY);
+  }
+}
+
+function setOptionalEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}

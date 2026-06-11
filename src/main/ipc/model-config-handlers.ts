@@ -8,6 +8,7 @@ import {
   MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
   MODEL_CONFIG_UPDATE_CHANNEL,
 } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type {
   ModelConfigProfileActivateRequest,
   ModelConfigProfileCreateRequest,
@@ -29,7 +30,7 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
     try {
       return ok(await store.get());
     } catch (error) {
-      return err("MODEL_CONFIG_GET_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.MODEL_CONFIG_GET_FAILED, messageOf(error));
     }
   });
 
@@ -37,7 +38,7 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
     try {
       return ok(await store.update(parseModelConfigUpdateRequest(update)));
     } catch (error) {
-      return err("MODEL_CONFIG_UPDATE_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.MODEL_CONFIG_UPDATE_FAILED, messageOf(error));
     }
   });
 
@@ -45,7 +46,7 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
     try {
       return ok(await store.listProfiles());
     } catch (error) {
-      return err("MODEL_CONFIG_PROFILES_LIST_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_LIST_FAILED, messageOf(error));
     }
   });
 
@@ -55,7 +56,7 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
       try {
         return ok(await store.createProfile(parseModelConfigProfileCreateRequest(request)));
       } catch (error) {
-        return err("MODEL_CONFIG_PROFILES_CREATE_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_CREATE_FAILED, messageOf(error));
       }
     },
   );
@@ -66,7 +67,7 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
       try {
         return ok(await store.updateProfile(parseModelConfigProfileUpdateRequest(request)));
       } catch (error) {
-        return err("MODEL_CONFIG_PROFILES_UPDATE_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_UPDATE_FAILED, messageOf(error));
       }
     },
   );
@@ -77,7 +78,7 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
       try {
         return ok(await store.deleteProfile(parseModelConfigProfileIdRequest(request).id));
       } catch (error) {
-        return err("MODEL_CONFIG_PROFILES_DELETE_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_DELETE_FAILED, messageOf(error));
       }
     },
   );
@@ -88,7 +89,7 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
       try {
         return ok(await store.setActiveProfile(parseModelConfigProfileIdRequest(request).id));
       } catch (error) {
-        return err("MODEL_CONFIG_PROFILES_ACTIVATE_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_ACTIVATE_FAILED, messageOf(error));
       }
     },
   );

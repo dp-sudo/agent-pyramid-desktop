@@ -531,7 +531,7 @@ export function resolveToolDetailDisplay(
   };
 }
 
-function renderUnknownItemKind(item: never): ReactElement {
+function renderUnknownItemKind(_item: never): ReactElement {
   return (
     <div className="ds-message-block system">
       <div className="ds-system-bubble">unknown</div>

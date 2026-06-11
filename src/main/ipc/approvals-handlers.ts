@@ -1,5 +1,6 @@
 import { ipcMain } from "electron";
 import { APPROVAL_RESPOND_CHANNEL } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type { ApprovalRespondRequest } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
@@ -11,7 +12,7 @@ export function registerApprovalHandlers(runtime: AgentRuntime): void {
       runtime.respondApproval(parsed);
       return ok({ approvalId: parsed.approvalId, decision: parsed.decision });
     } catch (error) {
-      return err("APPROVAL_RESPOND_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.APPROVAL_RESPOND_FAILED, messageOf(error));
     }
   });
 }

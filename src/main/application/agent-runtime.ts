@@ -18,6 +18,31 @@ import { LlmWorkerPool, isLlmWorkerError } from "../infrastructure/llm-worker/wo
 import { RuntimeEventBus } from "../event-bus.js";
 import { FileReadStateStore } from "./tools/file-read-state.js";
 import { FileHistoryStore } from "./tools/file-history-state.js";
+import {
+  ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS,
+  AGENT_AUTONOMY_TOOL_ROUNDS,
+  CONTEXT_BUDGET_SAFETY_RATIO,
+  DEFAULT_AGENT_AUTONOMY,
+  MAX_MAX_TOOL_ROUNDS,
+  MAX_PROGRESSIVE_COMPACTION_PASSES,
+  MIN_MAX_TOOL_ROUNDS,
+  MIN_PROGRESSIVE_COMPACTION_BYTES,
+  MIN_TEXT_COMPACTION_BYTES,
+  TIGHT_ASSISTANT_MESSAGE_MAX_BYTES,
+  TIGHT_SYSTEM_MESSAGE_MAX_BYTES,
+  TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
+  TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES,
+  TIGHT_TOOL_RESULT_MAX_BYTES,
+  TIGHT_TOOL_RESULT_MAX_LINES,
+  TIGHT_USER_MESSAGE_MAX_BYTES,
+  TOKEN_ESTIMATE_BYTES_PER_TOKEN,
+  TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
+  TOOL_ARGUMENT_STRING_MAX_BYTES,
+  TOOL_BUDGET_CONTINUATION_MESSAGE,
+  TOOL_RESULT_MAX_BYTES,
+  TOOL_RESULT_MAX_LINES,
+  TOOL_ROUND_WARNING_THRESHOLD,
+} from "./constants.js";
 import type {
   ApprovalItem,
   ApprovalRespondRequest,
@@ -118,34 +143,6 @@ const GOAL_MODE_INSTRUCTION = [
   "Use update_goal when the goal text, completion state, or blocked state changes.",
 ].join(" ");
 
-const DEFAULT_AGENT_AUTONOMY = "balanced";
-const AGENT_AUTONOMY_TOOL_ROUNDS = {
-  conservative: 12,
-  balanced: 32,
-  deep: 64,
-} as const satisfies Record<ModelConfig["agent_autonomy"], number>;
-const MIN_MAX_TOOL_ROUNDS = 1;
-const MAX_MAX_TOOL_ROUNDS = 128;
-const TOOL_ROUND_WARNING_THRESHOLD = 0.75;
-const TOOL_BUDGET_CONTINUATION_MESSAGE =
-  "Automatic tool budget reached. Continue the thread to let the assistant use the gathered context, or raise AGENT_MAX_TOOL_ROUNDS for longer autonomous runs.";
-const CONTEXT_BUDGET_SAFETY_RATIO = 0.95;
-const TOOL_RESULT_MAX_LINES = 320;
-const TOOL_RESULT_MAX_BYTES = 32 * 1024;
-const TIGHT_TOOL_RESULT_MAX_LINES = 120;
-const TIGHT_TOOL_RESULT_MAX_BYTES = 8 * 1024;
-const TOOL_ARGUMENT_STRING_MAX_BYTES = 8 * 1024;
-const TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES = 2 * 1024;
-const TOOL_ARGUMENT_ARRAY_MAX_ITEMS = 80;
-const TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS = 24;
-const TIGHT_SYSTEM_MESSAGE_MAX_BYTES = 4 * 1024;
-const TIGHT_ASSISTANT_MESSAGE_MAX_BYTES = 8 * 1024;
-const TIGHT_USER_MESSAGE_MAX_BYTES = 16 * 1024;
-const MIN_PROGRESSIVE_COMPACTION_BYTES = 128;
-const TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4;
-const MIN_TEXT_COMPACTION_BYTES = 512;
-const MAX_PROGRESSIVE_COMPACTION_PASSES = 24;
-const ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS = 3_000;
 export const COMMAND_TOOL_NAMES = [
   "run_command",
   "shell_command",
@@ -693,7 +690,7 @@ export class AgentRuntime {
       protocol: modelConfig.protocol,
       provider: modelConfig.model_provide,
       model: turn.model,
-      apiKey: this.resolveApiKey(modelConfig),
+      apiKey: modelConfig.OPENAI_API_KEY,
       baseUrl: modelConfig.base_url,
       systemPrompt,
       messages: prepareMessagesForRequest(messages, {
@@ -999,6 +996,14 @@ export class AgentRuntime {
             content: JSON.stringify(toolItem.result),
           };
         }
+      }
+      if (activeExecution.finalizedByInterrupt || turn.status !== "in-flight") {
+        this.unregisterActiveToolExecution(turn.id, activeExecution);
+        return {
+          toolCallId: call.id,
+          name: call.name,
+          content: JSON.stringify(toolItem.result ?? { message: interruptedToolMessage(call.name) }),
+        };
       }
 
       const controller = new AbortController();
@@ -1563,20 +1568,6 @@ export class AgentRuntime {
       turnId: turn.id,
       item,
     });
-  }
-
-  private resolveApiKey(config: ModelConfig): string {
-    if (config.OPENAI_API_KEY) {
-      return config.OPENAI_API_KEY;
-    }
-    const provider = config.model_provide.trim().toLowerCase();
-    if (provider === "deepseek") {
-      return process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "";
-    }
-    if (provider === "minimax") {
-      return process.env.MINIMAX_API_KEY || process.env.OPENAI_API_KEY || "";
-    }
-    return process.env.OPENAI_API_KEY || "";
   }
 
   private async markTurnStatus(

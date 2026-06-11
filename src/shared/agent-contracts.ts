@@ -1,3 +1,5 @@
+import type { IpcErrorCode } from "./ipc-errors.js";
+
 export const LLM_PROTOCOLS = ["openai-compatible", "anthropic-compatible"] as const;
 export type LlmProtocol = (typeof LLM_PROTOCOLS)[number];
 export const DEFAULT_LLM_PROTOCOL: LlmProtocol = "openai-compatible";
@@ -1003,7 +1005,7 @@ export interface IpcOk<T> {
 
 export interface IpcErr {
   ok: false;
-  code: string;
+  code: IpcErrorCode;
   message: string;
 }
 
@@ -1013,7 +1015,7 @@ export function ok<T>(value: T): IpcOk<T> {
   return { ok: true, value };
 }
 
-export function err(code: string, message: string): IpcErr {
+export function err(code: IpcErrorCode, message: string): IpcErr {
   return { ok: false, code, message };
 }
 

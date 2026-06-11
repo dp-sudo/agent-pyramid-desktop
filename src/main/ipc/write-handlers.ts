@@ -10,7 +10,9 @@ import {
   WRITE_RENAME_CHANNEL,
   WRITE_DELETE_CHANNEL,
 } from "../../shared/ipc.js";
+import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type {
+  IpcResult,
   WriteFileEntry,
   WriteGetRequest,
   WriteListRequest,
@@ -47,7 +49,7 @@ export function registerWriteHandlers(): void {
       const files = await listMarkdownFiles(parsed.workspace, parsed.search ?? "");
       return ok(files);
     } catch (error) {
-      return err("WRITE_LIST_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.WRITE_LIST_FAILED, messageOf(error));
     }
   });
 
@@ -57,7 +59,7 @@ export function registerWriteHandlers(): void {
       const content = await readMarkdownFileContent(parsed.workspace, parsed.path);
       return ok({ path: parsed.path, content });
     } catch (error) {
-      return err("WRITE_GET_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.WRITE_GET_FAILED, messageOf(error));
     }
   });
 
@@ -71,7 +73,7 @@ export function registerWriteHandlers(): void {
       );
       return ok({ path: parsed.path, bytes });
     } catch (error) {
-      return err("WRITE_PUT_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.WRITE_PUT_FAILED, messageOf(error));
     }
   });
 
@@ -85,7 +87,7 @@ export function registerWriteHandlers(): void {
       );
       return ok({ path: parsed.path, content: parsed.content ?? "", bytes });
     } catch (error) {
-      return err("WRITE_CREATE_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.WRITE_CREATE_FAILED, messageOf(error));
     }
   });
 
@@ -95,7 +97,7 @@ export function registerWriteHandlers(): void {
       await renameMarkdownFile(parsed.workspace, parsed.path, parsed.newPath);
       return ok({ path: parsed.path, newPath: parsed.newPath });
     } catch (error) {
-      return err("WRITE_RENAME_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.WRITE_RENAME_FAILED, messageOf(error));
     }
   });
 
@@ -105,19 +107,19 @@ export function registerWriteHandlers(): void {
       await deleteMarkdownFile(parsed.workspace, parsed.path);
       return ok({ path: parsed.path });
     } catch (error) {
-      return err("WRITE_DELETE_FAILED", messageOf(error));
+      return err(IPC_ERROR_CODES.WRITE_DELETE_FAILED, messageOf(error));
     }
   });
 
   ipcMain.handle(
     WRITE_COMPLETE_CHANNEL,
-    async (_event, request: unknown): Promise<{ ok: true; value: WriteCompleteResponse } | { ok: false; code: string; message: string }> => {
+    async (_event, request: unknown): Promise<IpcResult<WriteCompleteResponse>> => {
       try {
         const parsed = parseWriteCompleteRequest(request);
         resolveWritePath(parsed.workspace, parsed.path);
         return ok(completeMarkdownInline(parsed));
       } catch (error) {
-        return err("WRITE_COMPLETE_FAILED", messageOf(error));
+        return err(IPC_ERROR_CODES.WRITE_COMPLETE_FAILED, messageOf(error));
       }
     },
   );

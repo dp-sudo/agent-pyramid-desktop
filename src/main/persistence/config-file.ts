@@ -374,9 +374,7 @@ function normalizeModelProfilesState(value: unknown): ModelConfigProfilesState {
   }
   const raw = value as Partial<ModelConfigProfilesState> & Partial<ModelConfig>;
   if (Array.isArray(raw.profiles)) {
-    const profiles = raw.profiles
-      .map((profile) => normalizeStoredProfile(profile))
-      .filter((profile): profile is ModelConfigProfile => profile !== null);
+    const profiles = normalizeStoredProfiles(raw.profiles);
     if (profiles.length === 0) {
       return createDefaultProfilesState();
     }
@@ -441,6 +439,21 @@ function normalizeRuntimeProfileReferences(
         ? null
         : runtimePreferences.writeDefaultModelProfileId,
   };
+}
+
+function normalizeStoredProfiles(values: unknown[]): ModelConfigProfile[] {
+  const seenIds = new Set<string>();
+  const profiles: ModelConfigProfile[] = [];
+  for (const value of values) {
+    const profile = normalizeStoredProfile(value);
+    // Profile id is the mutation key for update/delete/activate; damaged
+    // config files with duplicates are collapsed at the read boundary so store
+    // operations stay unambiguous.
+    if (!profile || seenIds.has(profile.id)) continue;
+    seenIds.add(profile.id);
+    profiles.push(profile);
+  }
+  return profiles;
 }
 
 function normalizeStoredProfile(value: unknown): ModelConfigProfile | null {

@@ -15,6 +15,21 @@ import {
 import { assertUtf8TextBuffer, decodeUtf8TextBuffer } from "./text-file.js";
 import { isPathInsideOrEqual, isSamePath } from "../path-utils.js";
 import {
+  COMMAND_KILL_GRACE_MS,
+  COMMAND_SESSION_SPAWN_TIMEOUT_MS,
+  COMMAND_SESSION_STOP_TIMEOUT_EXTRA_MS,
+  DEFAULT_COMMAND_SESSION_BUFFER_BYTES,
+  DEFAULT_COMMAND_SESSION_TAIL_BYTES,
+  DEFAULT_GIT_LOG_COUNT,
+  MAX_COMMAND_BYTES,
+  MAX_COMMAND_SESSION_BUFFER_BYTES,
+  MAX_COMMAND_SESSION_COUNT,
+  MAX_GIT_LOG_COUNT,
+  MAX_PACKAGE_SCRIPT_NAME_BYTES,
+  MAX_REGEX_PATTERN_BYTES,
+  MAX_SEARCH_FILE_BYTES,
+} from "../constants.js";
+import {
   DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
   MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
@@ -29,18 +44,6 @@ const MAX_COMMAND_TIMEOUT_MS = MAX_RUNTIME_COMMAND_TIMEOUT_MS;
 const DEFAULT_COMMAND_MAX_OUTPUT_BYTES = DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MIN_COMMAND_MAX_OUTPUT_BYTES = MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MAX_COMMAND_MAX_OUTPUT_BYTES = MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
-const MAX_COMMAND_BYTES = 4_096;
-const MAX_SEARCH_FILE_BYTES = 1_000_000;
-const KILL_GRACE_MS = 1_000;
-const MAX_REGEX_PATTERN_BYTES = 4_096;
-const MAX_GIT_LOG_COUNT = 100;
-const DEFAULT_GIT_LOG_COUNT = 20;
-const MAX_SESSION_COUNT = 8;
-const MAX_SESSION_BUFFER_BYTES = 256 * 1024;
-const DEFAULT_SESSION_BUFFER_BYTES = 64 * 1024;
-const DEFAULT_SESSION_TAIL_BYTES = 32 * 1024;
-const SESSION_SPAWN_TIMEOUT_MS = 5_000;
-const MAX_PACKAGE_SCRIPT_NAME_BYTES = 128;
 const COMMAND_TIMEOUT_DESCRIPTION =
   `Maximum runtime in milliseconds. Defaults to the runtime command preference ` +
   `(${DEFAULT_COMMAND_TIMEOUT_MS}). Overrides must be between ${MIN_COMMAND_TIMEOUT_MS} ` +
@@ -696,7 +699,7 @@ const startCommandSessionTool: AgentTool = {
         },
         max_buffer_bytes: {
           type: "number",
-          description: `Maximum stdout/stderr bytes retained per stream. Defaults to ${DEFAULT_SESSION_BUFFER_BYTES}, maximum ${MAX_SESSION_BUFFER_BYTES}.`,
+          description: `Maximum stdout/stderr bytes retained per stream. Defaults to ${DEFAULT_COMMAND_SESSION_BUFFER_BYTES}, maximum ${MAX_COMMAND_SESSION_BUFFER_BYTES}.`,
         },
       },
       required: ["command"],
@@ -726,7 +729,7 @@ const readCommandSessionTool: AgentTool = {
         },
         tail_bytes: {
           type: "number",
-          description: `Return only the trailing bytes from each stream. Defaults to ${DEFAULT_SESSION_TAIL_BYTES}.`,
+          description: `Return only the trailing bytes from each stream. Defaults to ${DEFAULT_COMMAND_SESSION_TAIL_BYTES}.`,
         },
       },
       required: ["session_id"],
@@ -1694,13 +1697,13 @@ async function spawnWorkspaceProcess(
 
     const onAbort = (): void => {
       killChild("SIGTERM");
-      forceKillTimer = setTimeout(() => killChild("SIGKILL"), KILL_GRACE_MS);
+      forceKillTimer = setTimeout(() => killChild("SIGKILL"), COMMAND_KILL_GRACE_MS);
     };
 
     const timeout = setTimeout(() => {
       timedOut = true;
       killChild("SIGTERM");
-      forceKillTimer = setTimeout(() => killChild("SIGKILL"), KILL_GRACE_MS);
+      forceKillTimer = setTimeout(() => killChild("SIGKILL"), COMMAND_KILL_GRACE_MS);
     }, timeoutMs);
 
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -2338,8 +2341,8 @@ class CommandSessionManager {
     context: AgentToolContext,
   ): Promise<CommandSessionSnapshot> {
     this.pruneExitedSessions();
-    if (this.sessions.size >= MAX_SESSION_COUNT) {
-      throw new Error(`start_command_session allows at most ${MAX_SESSION_COUNT} sessions.`);
+    if (this.sessions.size >= MAX_COMMAND_SESSION_COUNT) {
+      throw new Error(`start_command_session allows at most ${MAX_COMMAND_SESSION_COUNT} sessions.`);
     }
     const workspace = requireWorkspace(context);
     const command = requiredCommandForTool(input.command, "start_command_session");
@@ -2357,8 +2360,8 @@ class CommandSessionManager {
     const maxBufferBytes = numberInRange(
       input.max_buffer_bytes,
       MIN_COMMAND_MAX_OUTPUT_BYTES,
-      MAX_SESSION_BUFFER_BYTES,
-      DEFAULT_SESSION_BUFFER_BYTES,
+      MAX_COMMAND_SESSION_BUFFER_BYTES,
+      DEFAULT_COMMAND_SESSION_BUFFER_BYTES,
       "max_buffer_bytes",
     );
     const invocation = await createSelectedShellInvocation(command, { shell });
@@ -2413,7 +2416,7 @@ class CommandSessionManager {
     });
     await this.waitForSessionSpawn(session);
     this.sessions.set(session.id, session);
-    return this.snapshot(session, DEFAULT_SESSION_TAIL_BYTES);
+    return this.snapshot(session, DEFAULT_COMMAND_SESSION_TAIL_BYTES);
   }
 
   read(input: Record<string, unknown>, context: AgentToolContext): CommandSessionSnapshot {
@@ -2421,8 +2424,8 @@ class CommandSessionManager {
     const tailBytes = numberInRange(
       input.tail_bytes,
       1,
-      MAX_SESSION_BUFFER_BYTES,
-      DEFAULT_SESSION_TAIL_BYTES,
+      MAX_COMMAND_SESSION_BUFFER_BYTES,
+      DEFAULT_COMMAND_SESSION_TAIL_BYTES,
       "tail_bytes",
     );
     return this.snapshot(session, tailBytes);
@@ -2462,13 +2465,16 @@ class CommandSessionManager {
       session.stopForceKillTimer = setTimeout(() => {
         session.stopForceKillTimer = undefined;
         killProcessTree(session.child, "SIGKILL");
-      }, KILL_GRACE_MS);
+      }, COMMAND_KILL_GRACE_MS);
       session.updatedAt = new Date().toISOString();
     }
     if (session.status === "stopping") {
-      await this.waitForTerminalSession(session, KILL_GRACE_MS + 4_000);
+      await this.waitForTerminalSession(
+        session,
+        COMMAND_KILL_GRACE_MS + COMMAND_SESSION_STOP_TIMEOUT_EXTRA_MS,
+      );
     }
-    return this.snapshot(session, DEFAULT_SESSION_TAIL_BYTES);
+    return this.snapshot(session, DEFAULT_COMMAND_SESSION_TAIL_BYTES);
   }
 
   private requireSession(
@@ -2538,7 +2544,7 @@ class CommandSessionManager {
       };
       const timeout = setTimeout(() => {
         settleReject(new Error("timed out waiting for process spawn"));
-      }, SESSION_SPAWN_TIMEOUT_MS);
+      }, COMMAND_SESSION_SPAWN_TIMEOUT_MS);
       session.child.once("spawn", onSpawn);
       session.child.once("error", onError);
       session.child.once("close", onClose);
