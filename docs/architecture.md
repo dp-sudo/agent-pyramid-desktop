@@ -360,10 +360,14 @@ flowchart TB
   ThreadsDir["threads/"]
   AttachDir["attachments/"]
   ConfigFile["config"]
+  CheckpointsDir["checkpoints/"]
+  McpDir["mcp/"]
 
   UserData --> ThreadsDir
   UserData --> AttachDir
   UserData --> ConfigFile
+  UserData --> CheckpointsDir
+  UserData --> McpDir
 
   ThreadsDir --> Index["index.json\nThreadSummary[]"]
   ThreadsDir --> ThreadFolder["<threadId>/"]
@@ -376,6 +380,8 @@ flowchart TB
 
   ConfigFile --> Profiles["ModelConfigProfilesState"]
   ConfigFile --> RuntimePrefs["runtimePreferences\nAgent controls"]
+  CheckpointsDir --> CheckpointJsonl["<threadId>.jsonl\nturn/file snapshots"]
+  McpDir --> McpCache["cache.json\nschema + surface + startup stats"]
 ```
 
 Persistence invariants:
@@ -397,6 +403,10 @@ Persistence invariants:
 - Legacy `runtime-preferences.json` is read only to populate a missing
   `runtimePreferences` section; if the section already exists, it is
   authoritative.
+- Checkpoint JSONL records are keyed by thread and are restore inputs only after
+  workspace path and symlink boundary checks pass again.
+- MCP cache stores public schema/surface descriptors and startup observations;
+  it is never the user-editable server config authority.
 
 ## Renderer State Architecture
 
