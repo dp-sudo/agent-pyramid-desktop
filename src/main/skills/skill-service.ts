@@ -149,11 +149,14 @@ export function skillRootsForWorkspace(
     scope: "project" as const,
     missingIsError: false,
   }));
-  const extraRoots = preferences.extraRoots.map((root) => ({
-    path: path.isAbsolute(root) ? path.resolve(root) : path.resolve(workspace, root),
-    scope: "custom" as const,
-    missingIsError: true,
-  }));
+  const extraRoots = preferences.extraRoots
+    .map((root) => root.trim())
+    .filter(Boolean)
+    .map((root) => ({
+      path: path.isAbsolute(root) ? path.resolve(root) : path.resolve(workspace, root),
+      scope: "custom" as const,
+      missingIsError: true,
+    }));
   return uniqueRoots([...projectRoots, ...extraRoots]);
 }
 

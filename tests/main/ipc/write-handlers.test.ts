@@ -271,6 +271,77 @@ describe("write handlers helpers", () => {
     }
   });
 
+  it("rejects writes when the target is replaced with a symlink before commit", async () => {
+    const workspace = await makeTempDir("write-target-symlink-race-");
+    const outside = await makeTempDir("write-target-symlink-race-outside-");
+    try {
+      const targetPath = path.join(workspace, "notes.md");
+      const outsideTargetPath = path.join(outside, "notes.md");
+      await fs.writeFile(targetPath, "# Original\n", "utf8");
+      await fs.writeFile(outsideTargetPath, "# Outside\n", "utf8");
+      const realOpen = fs.open.bind(fs);
+      let replaced = false;
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
+      ) => {
+        const target = args[0];
+        if (!replaced && typeof target === "string" && path.resolve(target) === targetPath) {
+          replaced = true;
+          await fs.rm(targetPath, { force: true });
+          await fs.symlink(outsideTargetPath, targetPath);
+        }
+        return realOpen(...args);
+      }) as typeof fs.open);
+      try {
+        await expect(
+          writeMarkdownFileContent(workspace, "notes.md", "# New\n"),
+        ).rejects.toThrow("Write put target is a symbolic link: notes.md");
+      } finally {
+        openSpy.mockRestore();
+      }
+
+      await expect(fs.readFile(outsideTargetPath, "utf8")).resolves.toBe("# Outside\n");
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
+    }
+  });
+
+  it("rejects reads when the target is replaced with a symlink before open", async () => {
+    const workspace = await makeTempDir("write-read-symlink-race-");
+    const outside = await makeTempDir("write-read-symlink-race-outside-");
+    try {
+      const targetPath = path.join(workspace, "notes.md");
+      const outsideTargetPath = path.join(outside, "notes.md");
+      await fs.writeFile(targetPath, "# Workspace\n", "utf8");
+      await fs.writeFile(outsideTargetPath, "# Outside\n", "utf8");
+      const realOpen = fs.open.bind(fs);
+      let replaced = false;
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
+      ) => {
+        const target = args[0];
+        if (!replaced && typeof target === "string" && path.resolve(target) === targetPath) {
+          replaced = true;
+          await fs.rm(targetPath, { force: true });
+          await fs.symlink(outsideTargetPath, targetPath);
+        }
+        return realOpen(...args);
+      }) as typeof fs.open);
+      try {
+        await expect(readMarkdownFileContent(workspace, "notes.md"))
+          .rejects.toThrow("Write get target is a symbolic link: notes.md");
+      } finally {
+        openSpy.mockRestore();
+      }
+
+      await expect(fs.readFile(outsideTargetPath, "utf8")).resolves.toBe("# Outside\n");
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
+    }
+  });
+
   it("creates markdown documents without overwriting existing files", async () => {
     const workspace = await makeTempDir("write-create-");
     try {
@@ -311,6 +382,44 @@ describe("write handlers helpers", () => {
         .rejects.toThrow();
     } finally {
       await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects renames when the source is replaced with a symlink before read", async () => {
+    const workspace = await makeTempDir("write-rename-source-symlink-race-");
+    const outside = await makeTempDir("write-rename-source-symlink-race-outside-");
+    try {
+      await fs.mkdir(path.join(workspace, "docs"), { recursive: true });
+      const sourcePath = path.join(workspace, "docs", "source.md");
+      const targetPath = path.join(workspace, "docs", "renamed.md");
+      const outsideSourcePath = path.join(outside, "source.md");
+      await fs.writeFile(sourcePath, "# Source\n", "utf8");
+      await fs.writeFile(outsideSourcePath, "# Outside\n", "utf8");
+      const realOpen = fs.open.bind(fs);
+      let replaced = false;
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
+      ) => {
+        const target = args[0];
+        if (!replaced && typeof target === "string" && path.resolve(target) === sourcePath) {
+          replaced = true;
+          await fs.rm(sourcePath, { force: true });
+          await fs.symlink(outsideSourcePath, sourcePath);
+        }
+        return realOpen(...args);
+      }) as typeof fs.open);
+      try {
+        await expect(renameMarkdownFile(workspace, "docs/source.md", "docs/renamed.md"))
+          .rejects.toThrow("Write rename source target is a symbolic link: docs/source.md");
+      } finally {
+        openSpy.mockRestore();
+      }
+
+      await expect(fs.access(targetPath)).rejects.toThrow();
+      await expect(fs.readFile(outsideSourcePath, "utf8")).resolves.toBe("# Outside\n");
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
     }
   });
 

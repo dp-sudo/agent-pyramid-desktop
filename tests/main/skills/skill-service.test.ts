@@ -375,11 +375,12 @@ describe("SkillService", () => {
   it("builds deduplicated workspace root candidates", () => {
     const roots = skillRootsForWorkspace(workspace, {
       ...DEFAULT_RUNTIME_PREFERENCES.skills,
-      extraRoots: [".agent/skills"],
+      extraRoots: [".agent/skills", " ", ".agent/skills"],
     });
 
     expect(roots.filter((root) => root.path.endsWith(path.join(".agent", "skills"))))
       .toHaveLength(1);
+    expect(roots.some((root) => root.path === path.resolve(workspace))).toBe(false);
     expect(roots[0]).toMatchObject({ scope: "project", missingIsError: false });
   });
 

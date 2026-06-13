@@ -6,6 +6,8 @@ import {
   RUNTIME_PREFERENCES_GET_CHANNEL,
   RUNTIME_PREFERENCES_UPDATE_CHANNEL,
   SKILL_LIST_CHANNEL,
+  SSE_SUBSCRIBE_GLOBAL_CHANNEL,
+  SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
   TURN_START_CHANNEL,
 } from "../../src/shared/ipc";
 import {
@@ -131,6 +133,8 @@ describe("shared agent contracts", () => {
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(RUNTIME_PREFERENCES_GET_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(RUNTIME_PREFERENCES_UPDATE_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(SKILL_LIST_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(SSE_SUBSCRIBE_GLOBAL_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(SSE_UNSUBSCRIBE_GLOBAL_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).not.toContain("agent:run");
   });
 
@@ -262,11 +266,33 @@ describe("shared agent contracts", () => {
     })).toBe(false);
     expect(isRuntimePreferences({
       ...DEFAULT_RUNTIME_PREFERENCES,
+      codeDefaultModelProfileId: "",
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      writeDefaultModelProfileId: " write-profile ",
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
       compaction: { ...DEFAULT_RUNTIME_PREFERENCES.compaction, strategy: "full-history" },
     })).toBe(false);
     expect(isRuntimePreferences({
       ...DEFAULT_RUNTIME_PREFERENCES,
       skills: { ...DEFAULT_RUNTIME_PREFERENCES.skills, activeLimit: -1 },
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      skills: {
+        ...DEFAULT_RUNTIME_PREFERENCES.skills,
+        extraRoots: ["custom-skills", " custom-skills "],
+      },
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      skills: {
+        ...DEFAULT_RUNTIME_PREFERENCES.skills,
+        extraRoots: ["custom-skills", ""],
+      },
     })).toBe(false);
     expect(isRuntimePreferences({
       ...DEFAULT_RUNTIME_PREFERENCES,
@@ -282,6 +308,19 @@ describe("shared agent contracts", () => {
       ...DEFAULT_RUNTIME_PREFERENCES,
       permissionRules: [
         { id: "bad", tool: "command", pattern: "npm *", effect: "sometimes" },
+      ],
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      permissionRules: [
+        { id: "duplicate", tool: "command", pattern: "npm *", effect: "allow" },
+        { id: " duplicate ", tool: "write", pattern: "src/*", effect: "ask" },
+      ],
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      permissionRules: [
+        { id: "bad\0id", tool: "command", pattern: "npm *", effect: "deny" },
       ],
     })).toBe(false);
     expect(MCP_SERVER_TRANSPORTS).toEqual(["stdio", "streamable-http"]);
@@ -327,6 +366,56 @@ describe("shared agent contracts", () => {
       mcpServers: [
         {
           id: "server-1",
+          name: "docs mcp",
+          transport: "stdio",
+          command: "node",
+          args: [],
+          env: {},
+          headers: {},
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z",
+        },
+        {
+          id: "server-2",
+          name: "docs_mcp",
+          transport: "stdio",
+          command: "node",
+          args: [],
+          env: {},
+          headers: {},
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z",
+        },
+      ],
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      mcpServers: [
+        {
+          id: "server-1",
+          name: "local-mcp",
+          transport: "stdio",
+          command: "node",
+          args: [],
+          env: {},
+          url: "not-a-url",
+          headers: {},
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z",
+        },
+      ],
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      mcpServers: [
+        {
+          id: "server-1",
           name: "remote-mcp",
           transport: "streamable-http",
           args: [],
@@ -334,6 +423,45 @@ describe("shared agent contracts", () => {
           headers: {},
           enabled: true,
           readOnlyTools: [],
+          createdAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z",
+        },
+      ],
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      mcpServers: [
+        {
+          id: "server-1",
+          name: "remote-mcp",
+          transport: "streamable-http",
+          args: [],
+          env: {},
+          url: "https://mcp.example.test/mcp",
+          headers: {
+            Authorization: "Bearer one",
+            " Authorization ": "Bearer two",
+          },
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z",
+        },
+      ],
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      mcpServers: [
+        {
+          id: "server-1",
+          name: "local-mcp",
+          transport: "stdio",
+          command: "node",
+          args: [],
+          env: {},
+          headers: {},
+          enabled: true,
+          readOnlyTools: ["tools/list", "   "],
           createdAt: "2026-06-08T00:00:00.000Z",
           updatedAt: "2026-06-08T00:00:00.000Z",
         },
@@ -378,6 +506,20 @@ describe("shared agent contracts", () => {
       mimeType: "image/png",
       size: 128,
       createdAt: "2026-06-08",
+    })).toBe(false);
+    expect(isAttachmentRecord({
+      id: "00000000-0000-4000-8000-000000000004",
+      name: "",
+      mimeType: "image/png",
+      size: 128,
+      createdAt: "2026-06-08T00:00:00.000Z",
+    })).toBe(false);
+    expect(isAttachmentRecord({
+      id: "00000000-0000-4000-8000-000000000005",
+      name: "..",
+      mimeType: "image/png",
+      size: 128,
+      createdAt: "2026-06-08T00:00:00.000Z",
     })).toBe(false);
   });
 
@@ -501,6 +643,32 @@ describe("shared agent contracts", () => {
       mode: "code",
       status: "active",
       relation: "primary",
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: primaryThreadId,
+      title: "Thread",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      parentThreadId: forkThreadId,
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    })).toBe(false);
+    expect(isThreadRecord({
+      id: primaryThreadId,
+      title: "Thread",
+      workspace: "/workspace",
+      mode: "code",
+      status: "active",
+      relation: "primary",
+      forkedAt: "2026-06-08T00:00:00.000Z",
       createdAt: "2026-06-08T00:00:00.000Z",
       updatedAt: "2026-06-08T00:00:00.000Z",
       approvalPolicy: "on-request",

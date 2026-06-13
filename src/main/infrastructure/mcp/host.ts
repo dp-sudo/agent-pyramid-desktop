@@ -33,6 +33,7 @@ interface ManagedMcpServer {
   lastError?: string;
   startupStats?: McpStartupStatsRecord;
   inFlight?: Promise<McpServerStatusRecord>;
+  generation: number;
 }
 
 /**
@@ -50,11 +51,16 @@ export class McpHost {
     private readonly cacheStore?: McpCacheStore,
   ) {}
 
-  configure(configs: readonly McpServerConfig[]): void {
+  /**
+   * Runtime preferences are the MCP config authority. Reconfiguration waits for
+   * stale clients to disconnect before callers reconnect enabled servers, so an
+   * old close cannot overwrite the new server status or registered tools.
+   */
+  async configure(configs: readonly McpServerConfig[]): Promise<void> {
     const nextIds = new Set(configs.map((config) => config.id));
     for (const id of this.servers.keys()) {
       if (!nextIds.has(id)) {
-        void this.disconnect(id);
+        await this.disconnect(id);
         this.servers.delete(id);
       }
     }
@@ -72,6 +78,7 @@ export class McpHost {
           resources: cached?.resources ?? [],
           registeredToolNames: [],
           registeredToolMode: "none",
+          generation: 0,
           ...(startupStats ? { startupStats } : {}),
         });
         const created = this.servers.get(config.id);
@@ -83,7 +90,7 @@ export class McpHost {
       const requiresReconnect = !isSameServerRuntimeConfig(existing.config, config);
       existing.config = config;
       if (!config.enabled || requiresReconnect) {
-        void this.disconnect(config.id);
+        await this.disconnect(config.id);
       }
     }
   }
@@ -109,14 +116,21 @@ export class McpHost {
   async connect(serverId: string): Promise<McpServerStatusRecord> {
     const server = this.requireServer(serverId);
     if (server.inFlight) return server.inFlight;
-    server.inFlight = this.connectServer(server).finally(() => {
-      server.inFlight = undefined;
+    const generation = server.generation;
+    let inFlight: Promise<McpServerStatusRecord>;
+    inFlight = this.connectServer(server, generation).finally(() => {
+      if (server.inFlight === inFlight) {
+        server.inFlight = undefined;
+      }
     });
+    server.inFlight = inFlight;
     return server.inFlight;
   }
 
   async disconnect(serverId: string): Promise<McpServerStatusRecord> {
     const server = this.requireServer(serverId);
+    server.generation += 1;
+    server.inFlight = undefined;
     this.unregisterServerTools(server);
     if (server.client) {
       await server.client.close();
@@ -133,7 +147,7 @@ export class McpHost {
 
   async refreshTools(serverId: string): Promise<McpServerStatusRecord> {
     const server = this.requireServer(serverId);
-    if (!server.client) {
+    if (!isServerConnected(server)) {
       return this.connect(serverId);
     }
     try {
@@ -156,7 +170,7 @@ export class McpHost {
 
   async refreshSurface(serverId: string): Promise<McpServerStatusRecord> {
     const server = this.requireServer(serverId);
-    if (!server.client) {
+    if (!isServerConnected(server)) {
       return this.connect(serverId);
     }
     try {
@@ -244,23 +258,36 @@ export class McpHost {
     })));
   }
 
-  private async connectServer(server: ManagedMcpServer): Promise<McpServerStatusRecord> {
+  private async connectServer(
+    server: ManagedMcpServer,
+    generation: number,
+  ): Promise<McpServerStatusRecord> {
     if (!server.config.enabled) {
       server.status = "disconnected";
       return this.toStatus(server);
     }
     await this.disconnectIfConnected(server);
+    if (server.generation !== generation) {
+      return this.toStatus(server);
+    }
     server.status = "connecting";
     server.lastError = undefined;
     this.emitConnection(server);
     const startedAt = Date.now();
+    let client: McpClient | null = null;
     try {
-      const client = new McpClient(server.config);
+      client = new McpClient(server.config);
+      // The client becomes server-owned before handshake completion so
+      // disconnect/reconfigure can close a partially connected transport.
+      server.client = client;
       const tools = await client.connect();
+      if (server.generation !== generation || server.client !== client) {
+        await this.closeClientAfterFailure(client, "stale");
+        return this.toStatus(server);
+      }
       client.onToolsChanged(() => {
         void this.refreshTools(server.config.id);
       });
-      server.client = client;
       server.status = "connected";
       server.lastConnectedAt = new Date().toISOString();
       server.lastError = undefined;
@@ -281,6 +308,12 @@ export class McpHost {
       this.emitToolListChanged(server);
       this.emitSurfaceChanged(server);
     } catch (error) {
+      if (server.generation !== generation || (client && server.client !== client)) {
+        if (client) {
+          await this.closeClientAfterFailure(client, "stale failed");
+        }
+        return this.toStatus(server);
+      }
       await this.recordStartup(server, {
         ok: false,
         durationMs: Date.now() - startedAt,
@@ -405,9 +438,7 @@ export class McpHost {
 
   private async markFailed(server: ManagedMcpServer, error: unknown): Promise<void> {
     if (server.client) {
-      void server.client.close().catch((closeError) => {
-        console.warn("[mcp-host] failed to close failed MCP client:", closeError);
-      });
+      await this.closeClientAfterFailure(server.client, "failed");
       server.client = null;
     }
     server.lastError = messageOf(error);
@@ -421,6 +452,14 @@ export class McpHost {
       server.resources = [];
     }
     this.emitConnection(server);
+  }
+
+  private async closeClientAfterFailure(client: McpClient, reason: string): Promise<void> {
+    try {
+      await client.close();
+    } catch (error) {
+      console.warn(`[mcp-host] failed to close ${reason} MCP client:`, error);
+    }
   }
 
   private installCachedSurface(server: ManagedMcpServer): boolean {
@@ -526,7 +565,7 @@ export class McpHost {
     serverId: string,
   ): Promise<ManagedMcpServer & { client: McpClient }> {
     const server = this.requireServer(serverId);
-    if (!server.client) {
+    if (!isServerConnected(server)) {
       await this.connect(serverId);
     }
     return this.requireConnectedServer(serverId);
@@ -534,7 +573,7 @@ export class McpHost {
 
   private requireConnectedServer(serverId: string): ManagedMcpServer & { client: McpClient } {
     const server = this.requireServer(serverId);
-    if (!server.client) {
+    if (!isServerConnected(server)) {
       throw new Error(
         server.lastError
           ? `MCP server is not connected: ${server.config.name}. ${server.lastError}`
@@ -562,6 +601,12 @@ function toPromptInfo(prompt: McpPromptInfo): McpPromptInfo {
   };
 }
 
+function isServerConnected(
+  server: ManagedMcpServer,
+): server is ManagedMcpServer & { client: McpClient } {
+  return server.status === "connected" && server.client !== null;
+}
+
 function isSameServerRuntimeConfig(a: McpServerConfig, b: McpServerConfig): boolean {
   return a.name === b.name &&
     a.transport === b.transport &&
@@ -570,9 +615,26 @@ function isSameServerRuntimeConfig(a: McpServerConfig, b: McpServerConfig): bool
     a.url === b.url &&
     a.enabled === b.enabled &&
     JSON.stringify(a.args) === JSON.stringify(b.args) &&
-    JSON.stringify(a.env) === JSON.stringify(b.env) &&
-    JSON.stringify(a.headers) === JSON.stringify(b.headers) &&
-    JSON.stringify(a.readOnlyTools) === JSON.stringify(b.readOnlyTools);
+    isSameStringRecord(a.env, b.env) &&
+    isSameStringRecord(a.headers, b.headers) &&
+    isSameStringSet(a.readOnlyTools, b.readOnlyTools);
+}
+
+function isSameStringRecord(a: Record<string, string>, b: Record<string, string>): boolean {
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key, index) => key === bKeys[index] && a[key] === b[key]);
+}
+
+function isSameStringSet(a: readonly string[], b: readonly string[]): boolean {
+  const aSet = new Set(a);
+  const bSet = new Set(b);
+  if (aSet.size !== bSet.size) return false;
+  for (const entry of aSet) {
+    if (!bSet.has(entry)) return false;
+  }
+  return true;
 }
 
 function messageOf(error: unknown): string {

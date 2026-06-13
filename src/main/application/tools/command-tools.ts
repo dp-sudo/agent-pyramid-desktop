@@ -317,8 +317,9 @@ const powershellCommandTool: AgentTool = {
   },
   async execute(input, context) {
     const executable = optionalEnum(input.executable, ["pwsh", "powershell"], "executable");
+    const shell = executable ?? await resolveDefaultPowerShellShell();
     const result = await executeShellCommand(
-      { ...input, shell: executable ?? "pwsh" },
+      { ...input, shell },
       context,
       "powershell_command",
     );
@@ -1876,6 +1877,23 @@ function createPowerShellInvocation(
     file: executable,
     args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
   };
+}
+
+/**
+ * `powershell_command` promises a PowerShell 7 preference while preserving
+ * Windows hosts that only ship Windows PowerShell, so the default executable
+ * is resolved from PATH before falling back to the previous `pwsh` behavior.
+ */
+export async function resolveDefaultPowerShellShell(): Promise<"pwsh" | "powershell"> {
+  if (process.platform !== "win32") {
+    return "pwsh";
+  }
+  const pwsh = await findExecutableOnPath(["pwsh.exe", "pwsh"]);
+  if (pwsh.found) {
+    return "pwsh";
+  }
+  const powershell = await findExecutableOnPath(["powershell.exe", "powershell"]);
+  return powershell.found ? "powershell" : "pwsh";
 }
 
 function createWslInvocation(

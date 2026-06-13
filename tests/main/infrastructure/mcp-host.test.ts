@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
 import { RuntimeEventBus } from "../../../src/main/event-bus";
@@ -34,7 +36,7 @@ describe("McpHost", () => {
     const registry = new InMemoryToolRegistry([builtInTool]);
     const bus = new RuntimeEventBus();
     const host = new McpHost(registry, bus);
-    host.configure([
+    await host.configure([
       config({ id: "bad", name: "bad-server", command: "definitely-missing-mcp-command" }),
     ]);
 
@@ -45,10 +47,10 @@ describe("McpHost", () => {
     expect(registry.getTool("read_file")).toBe(builtInTool);
   });
 
-  it("keeps status records shaped with tools, prompts, and resources", () => {
+  it("keeps status records shaped with tools, prompts, and resources", async () => {
     const registry = new InMemoryToolRegistry([builtInTool]);
     const host = new McpHost(registry, new RuntimeEventBus());
-    host.configure([config({ id: "server-1", name: "local-mcp" })]);
+    await host.configure([config({ id: "server-1", name: "local-mcp" })]);
 
     expect(host.listServers()).toEqual([
       {
@@ -71,7 +73,7 @@ describe("McpHost", () => {
     const registry = new InMemoryToolRegistry([builtInTool]);
     const host = new McpHost(registry, new RuntimeEventBus());
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    host.configure([
+    await host.configure([
       config({
         id: "server-1",
         name: "local-mcp",
@@ -117,7 +119,7 @@ describe("McpHost", () => {
     });
     const host = new McpHost(registry, new RuntimeEventBus(), cacheStore);
 
-    host.configure([serverConfig]);
+    await host.configure([serverConfig]);
     expect(host.listServers()[0]).toMatchObject({
       status: "cached",
       toolCount: 1,
@@ -144,6 +146,151 @@ describe("McpHost", () => {
       startupSuccessCount: 1,
       startupFailureCount: 0,
     });
+    await host.close();
+  });
+
+  it("waits for reconnect disconnects before connecting the updated server config", async () => {
+    const registry = new InMemoryToolRegistry([builtInTool]);
+    const host = new McpHost(registry, new RuntimeEventBus());
+    const oldConfig = config({
+      id: "server-1",
+      name: "local-mcp",
+      args: ["-e", mcpServerScriptWithSlowShutdown(200)],
+    });
+    const newConfig = config({
+      id: "server-1",
+      name: "local-mcp",
+      args: ["-e", mcpServerScriptWithEchoTool()],
+    });
+
+    await host.configure([oldConfig]);
+    await expect(host.connect("server-1")).resolves.toMatchObject({
+      status: "connected",
+      toolCount: 1,
+    });
+
+    await host.configure([newConfig]);
+    await expect(host.connect("server-1")).resolves.toMatchObject({
+      status: "connected",
+      toolCount: 1,
+    });
+    await delay(250);
+
+    expect(host.listServers()[0]).toMatchObject({
+      status: "connected",
+      toolCount: 1,
+    });
+    expect(registry.getTool("mcp__local-mcp__echo")).toBeDefined();
+    await host.close();
+  });
+
+  it("keeps connected servers when record key order changes without runtime changes", async () => {
+    const registry = new InMemoryToolRegistry([builtInTool]);
+    const host = new McpHost(registry, new RuntimeEventBus());
+    const baseConfig = config({
+      id: "server-1",
+      name: "local-mcp",
+      args: ["-e", mcpServerScriptWithEchoTool()],
+      env: { BETA: "2", ALPHA: "1" },
+      headers: { "X-Beta": "2", "X-Alpha": "1" },
+      readOnlyTools: ["echo", "list"],
+    });
+    const reorderedConfig = config({
+      ...baseConfig,
+      env: { ALPHA: "1", BETA: "2" },
+      headers: { "X-Alpha": "1", "X-Beta": "2" },
+      readOnlyTools: ["list", "echo"],
+    });
+
+    await host.configure([baseConfig]);
+    await expect(host.connect("server-1")).resolves.toMatchObject({
+      status: "connected",
+      toolCount: 1,
+    });
+
+    await host.configure([reorderedConfig]);
+
+    expect(host.listServers()[0]).toMatchObject({
+      status: "connected",
+      toolCount: 1,
+    });
+    expect(registry.getTool("mcp__local-mcp__echo")).toBeDefined();
+    await host.close();
+  });
+
+  it("ignores stale in-flight connects after server config changes", async () => {
+    const registry = new InMemoryToolRegistry([builtInTool]);
+    const host = new McpHost(registry, new RuntimeEventBus());
+    const oldConfig = config({
+      id: "server-1",
+      name: "local-mcp",
+      args: ["-e", mcpServerScriptWithDelayedTool("old", 200)],
+    });
+    const newConfig = config({
+      id: "server-1",
+      name: "local-mcp",
+      args: ["-e", mcpServerScriptWithEchoTool()],
+    });
+
+    await host.configure([oldConfig]);
+    const staleConnect = host.connect("server-1");
+    await delay(30);
+    await host.configure([newConfig]);
+    const connected = await host.connect("server-1");
+    await staleConnect.catch(() => undefined);
+    await delay(250);
+
+    expect(connected.status).toBe("connected");
+    expect(connected.tools.map((tool) => tool.name)).toEqual(["mcp__local-mcp__echo"]);
+    expect(host.listServers()[0]?.tools.map((tool) => tool.name)).toEqual([
+      "mcp__local-mcp__echo",
+    ]);
+    expect(registry.getTool("mcp__local-mcp__echo")).toBeDefined();
+    expect(registry.getTool("mcp__local-mcp__old")).toBeUndefined();
+    await host.close();
+  });
+
+  it("closes partially connected clients when tools/list fails", async () => {
+    const registry = new InMemoryToolRegistry([builtInTool]);
+    const host = new McpHost(registry, new RuntimeEventBus());
+    const pidFile = path.join(userDataDir, "failing-mcp.pid");
+    await host.configure([
+      config({
+        id: "server-1",
+        name: "local-mcp",
+        args: ["-e", mcpServerScriptWithFailingToolsList()],
+        env: { MCP_TEST_PID_FILE: pidFile },
+      }),
+    ]);
+
+    const status = await host.connect("server-1");
+    const pid = Number(await fs.readFile(pidFile, "utf8"));
+
+    expect(status.status).toBe("failed");
+    expect(Number.isInteger(pid)).toBe(true);
+    await expectProcessExit(pid);
+    await host.close();
+  });
+
+  it("waits for in-flight initialization before refreshing tools", async () => {
+    const registry = new InMemoryToolRegistry([builtInTool]);
+    const host = new McpHost(registry, new RuntimeEventBus());
+    await host.configure([
+      config({
+        id: "server-1",
+        name: "local-mcp",
+        args: ["-e", mcpServerScriptWithDelayedInitialize(100)],
+      }),
+    ]);
+
+    const connecting = host.connect("server-1");
+    await delay(20);
+    const refreshed = await host.refreshTools("server-1");
+    await expect(connecting).resolves.toMatchObject({ status: "connected" });
+
+    expect(refreshed.status).toBe("connected");
+    expect(refreshed.tools.map((tool) => tool.name)).toEqual(["mcp__local-mcp__echo"]);
+    expect(registry.getTool("mcp__local-mcp__echo")).toBeDefined();
     await host.close();
   });
 
@@ -184,7 +331,7 @@ describe("McpHost", () => {
       ],
     });
     const host = new McpHost(registry, new RuntimeEventBus(), cacheStore);
-    host.configure([serverConfig]);
+    await host.configure([serverConfig]);
 
     await expect(host.getPrompt("server-1", "review", { path: "README.md" }))
       .resolves.toEqual({
@@ -231,7 +378,7 @@ describe("McpHost", () => {
     });
     const host = new McpHost(registry, new RuntimeEventBus(), cacheStore);
 
-    host.configure([serverConfig]);
+    await host.configure([serverConfig]);
 
     expect(host.listServers()[0]).toMatchObject({
       status: "cached",
@@ -268,7 +415,7 @@ describe("McpHost", () => {
       resources: [],
     });
     const host = new McpHost(registry, new RuntimeEventBus(), cacheStore);
-    host.configure([serverConfig]);
+    await host.configure([serverConfig]);
 
     const status = await host.connect("server-1");
 
@@ -397,6 +544,166 @@ rl.on("line", (line) => {
   send({ jsonrpc: "2.0", id: request.id, result: {} });
 });
 `;
+}
+
+function mcpServerScriptWithDelayedTool(toolName: string, delayMs: number): string {
+  return `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  if (request.method === "initialize") {
+    send({ jsonrpc: "2.0", id: request.id, result: { capabilities: { tools: {} } } });
+    return;
+  }
+  if (request.method === "tools/list") {
+    setTimeout(() => {
+      send({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          tools: [
+            {
+              name: ${JSON.stringify(toolName)},
+              description: "Delayed",
+              inputSchema: { type: "object", properties: {} },
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        },
+      });
+    }, ${delayMs});
+    return;
+  }
+  send({ jsonrpc: "2.0", id: request.id, result: {} });
+});
+`;
+}
+
+function mcpServerScriptWithFailingToolsList(): string {
+  return `
+const fs = require("node:fs");
+const readline = require("node:readline");
+if (process.env.MCP_TEST_PID_FILE) {
+  fs.writeFileSync(process.env.MCP_TEST_PID_FILE, String(process.pid));
+}
+setInterval(() => {}, 1000);
+const rl = readline.createInterface({ input: process.stdin });
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  if (request.method === "initialize") {
+    send({ jsonrpc: "2.0", id: request.id, result: { capabilities: { tools: {} } } });
+    return;
+  }
+  if (request.method === "tools/list") {
+    send({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: { code: -32000, message: "tools unavailable" },
+    });
+    return;
+  }
+  send({ jsonrpc: "2.0", id: request.id, result: {} });
+});
+`;
+}
+
+function mcpServerScriptWithDelayedInitialize(delayMs: number): string {
+  return `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+let initialized = false;
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  if (request.method === "initialize") {
+    setTimeout(() => {
+      initialized = true;
+      send({ jsonrpc: "2.0", id: request.id, result: { capabilities: { tools: {} } } });
+    }, ${delayMs});
+    return;
+  }
+  if (request.method === "tools/list") {
+    if (!initialized) {
+      send({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: -32000, message: "tools/list before initialize" },
+      });
+      return;
+    }
+    send({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        tools: [
+          {
+            name: "echo",
+            description: "Echo",
+            inputSchema: { type: "object", properties: {} },
+            annotations: { readOnlyHint: true },
+          },
+        ],
+      },
+    });
+    return;
+  }
+  send({ jsonrpc: "2.0", id: request.id, result: {} });
+});
+`;
+}
+
+function mcpServerScriptWithSlowShutdown(delayMs: number): string {
+  return `
+process.on("SIGTERM", () => {
+  setTimeout(() => process.exit(0), ${delayMs});
+});
+${mcpServerScriptWithEchoTool()}
+`;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function expectProcessExit(pid: number): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) {
+      return;
+    }
+    await delay(25);
+  }
+  throw new Error(`Expected process ${pid} to exit.`);
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ESRCH") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function mcpServerScriptWithPromptAndResource(): string {

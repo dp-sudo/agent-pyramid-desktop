@@ -14,6 +14,8 @@ export const TURN_GET_CHANNEL = "turn:get";
 // Streaming subscription
 export const SSE_SUBSCRIBE_CHANNEL = "sse:subscribe";
 export const SSE_UNSUBSCRIBE_CHANNEL = "sse:unsubscribe";
+export const SSE_SUBSCRIBE_GLOBAL_CHANNEL = "sse:subscribe-global";
+export const SSE_UNSUBSCRIBE_GLOBAL_CHANNEL = "sse:unsubscribe-global";
 /** Main process pushes RuntimeEvent to renderer via this single channel. */
 export const SSE_PUSH_CHANNEL = "sse:push";
 
@@ -88,6 +90,8 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   TURN_GET_CHANNEL,
   SSE_SUBSCRIBE_CHANNEL,
   SSE_UNSUBSCRIBE_CHANNEL,
+  SSE_SUBSCRIBE_GLOBAL_CHANNEL,
+  SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
   APPROVAL_RESPOND_CHANNEL,
   GOAL_UPDATE_CHANNEL,
   ATTACHMENT_CREATE_CHANNEL,

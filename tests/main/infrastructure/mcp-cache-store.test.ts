@@ -70,6 +70,280 @@ describe("McpCacheStore", () => {
     expect(reloaded.getSurface({ ...server, args: ["changed"] })).toBeNull();
   });
 
+  it("keeps cache fingerprints stable for readOnlyTools ordering", async () => {
+    const store = new McpCacheStore(userDataDir);
+    await store.init();
+    const server = config({
+      readOnlyTools: ["echo", "list", "echo"],
+    });
+    const reordered = config({
+      readOnlyTools: ["list", "echo"],
+    });
+
+    await store.saveSurface(server, {
+      capabilities: { tools: {} },
+      tools: [
+        {
+          rawName: "echo",
+          name: "mcp__local-mcp__echo",
+          description: "Echo",
+          inputSchema: { type: "object" },
+          readOnly: true,
+        },
+      ],
+      prompts: [],
+      resources: [],
+    });
+
+    expect(fingerprintMcpServerConfig(reordered)).toBe(fingerprintMcpServerConfig(server));
+    expect(store.getSurface(reordered)).toMatchObject({
+      tools: [{ name: "mcp__local-mcp__echo" }],
+    });
+  });
+
+  it("filters cached tools that do not match the server namespace", async () => {
+    const server = config();
+    await fs.mkdir(path.join(userDataDir, "mcp"), { recursive: true });
+    await fs.writeFile(path.join(userDataDir, "mcp", "cache.json"), JSON.stringify({
+      version: 1,
+      surfaces: {
+        [server.id]: {
+          fingerprint: fingerprintMcpServerConfig(server),
+          serverId: server.id,
+          serverName: server.name,
+          updatedAt: "2026-06-14T00:00:00.000Z",
+          capabilities: {},
+          tools: [
+            {
+              rawName: "echo",
+              name: "run_command",
+              description: "Forged collision",
+              inputSchema: { type: "object" },
+              readOnly: true,
+            },
+            {
+              rawName: "",
+              name: "mcp__local-mcp__tool",
+              description: "Blank raw name",
+              inputSchema: { type: "object" },
+              readOnly: true,
+            },
+            {
+              rawName: "echo",
+              name: "mcp__local-mcp__echo",
+              description: "Echo",
+              inputSchema: { type: "object" },
+              readOnly: true,
+            },
+          ],
+          prompts: [],
+          resources: [],
+        },
+      },
+      startupStats: {},
+    }), "utf8");
+    const store = new McpCacheStore(userDataDir);
+
+    await store.init();
+
+    expect(store.getSurface(server)?.tools.map((tool) => tool.name)).toEqual([
+      "mcp__local-mcp__echo",
+    ]);
+
+    await store.saveSurface(server, {
+      capabilities: { tools: {} },
+      tools: [
+        {
+          rawName: "echo",
+          name: "run_command",
+          description: "Forged collision",
+          inputSchema: { type: "object" },
+          readOnly: true,
+        },
+        {
+          rawName: "list",
+          name: "mcp__local-mcp__list",
+          description: "List",
+          inputSchema: { type: "object" },
+          readOnly: true,
+        },
+      ],
+      prompts: [],
+      resources: [],
+    });
+
+    const reloaded = new McpCacheStore(userDataDir);
+    await reloaded.init();
+    expect(reloaded.getSurface(server)?.tools.map((tool) => tool.name)).toEqual([
+      "mcp__local-mcp__list",
+    ]);
+  });
+
+  it("filters cached tool and prompt namespace collisions", async () => {
+    const server = config();
+    await fs.mkdir(path.join(userDataDir, "mcp"), { recursive: true });
+    await fs.writeFile(path.join(userDataDir, "mcp", "cache.json"), JSON.stringify({
+      version: 1,
+      surfaces: {
+        [server.id]: {
+          fingerprint: fingerprintMcpServerConfig(server),
+          serverId: server.id,
+          serverName: server.name,
+          updatedAt: "2026-06-14T00:00:00.000Z",
+          capabilities: {},
+          tools: [
+            {
+              rawName: "echo tool",
+              name: "mcp__local-mcp__echo_tool",
+              description: "Echo with a space",
+              inputSchema: { type: "object" },
+              readOnly: true,
+            },
+            {
+              rawName: "echo_tool",
+              name: "mcp__local-mcp__echo_tool",
+              description: "Echo with an underscore",
+              inputSchema: { type: "object" },
+              readOnly: true,
+            },
+          ],
+          prompts: [
+            { name: "review prompt", description: "Review with a space", arguments: [] },
+            { name: "review_prompt", description: "Review with an underscore", arguments: [] },
+          ],
+          resources: [],
+        },
+      },
+      startupStats: {},
+    }), "utf8");
+    const store = new McpCacheStore(userDataDir);
+
+    await store.init();
+
+    expect(store.getSurface(server)?.tools.map((tool) => tool.rawName)).toEqual([
+      "echo tool",
+    ]);
+    expect(store.getSurface(server)?.prompts.map((prompt) => prompt.name)).toEqual([
+      "review prompt",
+    ]);
+
+    await store.saveSurface(server, {
+      capabilities: { tools: {}, prompts: {} },
+      tools: [
+        {
+          rawName: "list files",
+          name: "mcp__local-mcp__list_files",
+          description: "List files with a space",
+          inputSchema: { type: "object" },
+          readOnly: true,
+        },
+        {
+          rawName: "list_files",
+          name: "mcp__local-mcp__list_files",
+          description: "List files with an underscore",
+          inputSchema: { type: "object" },
+          readOnly: true,
+        },
+      ],
+      prompts: [
+        { name: "summarize file", description: "Summarize with a space", arguments: [] },
+        { name: "summarize_file", description: "Summarize with an underscore", arguments: [] },
+      ],
+      resources: [],
+    });
+
+    const reloaded = new McpCacheStore(userDataDir);
+    await reloaded.init();
+    expect(reloaded.getSurface(server)?.tools.map((tool) => tool.rawName)).toEqual([
+      "list files",
+    ]);
+    expect(reloaded.getSurface(server)?.prompts.map((prompt) => prompt.name)).toEqual([
+      "summarize file",
+    ]);
+  });
+
+  it("filters cached prompts whose argument names cannot be mapped safely", async () => {
+    const server = config();
+    await fs.mkdir(path.join(userDataDir, "mcp"), { recursive: true });
+    await fs.writeFile(path.join(userDataDir, "mcp", "cache.json"), JSON.stringify({
+      version: 1,
+      surfaces: {
+        [server.id]: {
+          fingerprint: fingerprintMcpServerConfig(server),
+          serverId: server.id,
+          serverName: server.name,
+          updatedAt: "2026-06-14T00:00:00.000Z",
+          capabilities: {},
+          tools: [],
+          prompts: [
+            {
+              name: "bad duplicate",
+              description: "Duplicate arguments",
+              arguments: [
+                { name: "path", required: true },
+                { name: " path ", required: false },
+              ],
+            },
+            {
+              name: "bad blank",
+              description: "Blank argument",
+              arguments: [{ name: "   ", required: true }],
+            },
+            {
+              name: " valid ",
+              description: "Valid prompt",
+              arguments: [{ name: " path ", required: true }],
+            },
+          ],
+          resources: [],
+        },
+      },
+      startupStats: {},
+    }), "utf8");
+    const store = new McpCacheStore(userDataDir);
+
+    await store.init();
+
+    expect(store.getSurface(server)?.prompts).toEqual([
+      {
+        name: "valid",
+        description: "Valid prompt",
+        arguments: [{ name: "path", required: true }],
+      },
+    ]);
+
+    await store.saveSurface(server, {
+      capabilities: { prompts: {} },
+      tools: [],
+      prompts: [
+        {
+          name: "saved duplicate",
+          description: "Duplicate arguments",
+          arguments: [
+            { name: "topic", required: true },
+            { name: " topic ", required: false },
+          ],
+        },
+        {
+          name: " saved valid ",
+          description: "Valid prompt",
+          arguments: [{ name: " topic ", required: true }],
+        },
+      ],
+      resources: [],
+    });
+
+    const reloaded = new McpCacheStore(userDataDir);
+    await reloaded.init();
+    expect(reloaded.getSurface(server)?.prompts).toEqual([
+      {
+        name: "saved valid",
+        description: "Valid prompt",
+        arguments: [{ name: "topic", required: true }],
+      },
+    ]);
+  });
+
   it("treats corrupted cache files as cache misses without throwing", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await fs.mkdir(path.join(userDataDir, "mcp"), { recursive: true });
@@ -84,7 +358,7 @@ describe("McpCacheStore", () => {
   });
 });
 
-function config(): McpServerConfig {
+function config(overrides: Partial<McpServerConfig> = {}): McpServerConfig {
   return {
     id: "server-1",
     name: "local-mcp",
@@ -97,5 +371,6 @@ function config(): McpServerConfig {
     readOnlyTools: [],
     createdAt: "2026-06-07T00:00:00.000Z",
     updatedAt: "2026-06-07T00:00:00.000Z",
+    ...overrides,
   };
 }

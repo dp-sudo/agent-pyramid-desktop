@@ -99,8 +99,9 @@ Notes:
   booleans before store/runtime access; malformed payloads return the existing
   `THREAD_*_FAILED` envelope, with invalid update status preserving
   `THREAD_STATUS_INVALID`.
-- `thread:create` rejects `relation: "fork"` without `parentThreadId`; normal
-  fork creation should use the dedicated `thread:fork` channel.
+- `thread:create` rejects `relation: "fork"` without `parentThreadId` and
+  rejects `parentThreadId` unless the relation is `fork`; normal fork creation
+  should use the dedicated `thread:fork` channel.
 - `thread:create` applies `RuntimePreferences.defaultApprovalPolicy` and
   `RuntimePreferences.defaultSandboxMode` when those fields are omitted from
   the request. Explicit request values still win.
@@ -146,6 +147,8 @@ Notes:
 | --- | --- | --- | --- | --- |
 | `sse:subscribe` | `sse.subscribe(request)` | `SseSubscribeRequest` | `{ subscribed: string }` | `SSE_SUBSCRIBE_FAILED` |
 | `sse:unsubscribe` | `sse.unsubscribe(request)` | `SseUnsubscribeRequest` | `{ unsubscribed: boolean }` | `SSE_NOT_SUBSCRIBED`, `SSE_UNSUBSCRIBE_FAILED` |
+| `sse:subscribe-global` | `sse.subscribeGlobal()` | none | `{ subscribed: true }` | `SSE_SUBSCRIBE_FAILED` |
+| `sse:unsubscribe-global` | `sse.unsubscribeGlobal()` | none | `{ unsubscribed: boolean }` | `SSE_NOT_SUBSCRIBED`, `SSE_UNSUBSCRIBE_FAILED` |
 | `sse:push` | `sse.onEvent(listener)` | main push only | `RuntimeEvent` payload | not invoke-based |
 
 Notes:
@@ -153,8 +156,10 @@ Notes:
 - One `webContents` can keep multiple thread subscriptions at the same time.
   Re-subscribing the same thread replaces that thread's existing subscription
   without dropping other subscribed threads.
+- One `webContents` can also keep a global subscription for process-level events
+  that do not have a `threadId`; this is how Settings receives MCP status and
+  surface updates even when no thread is subscribed.
 - Subscribe and unsubscribe trim `threadId` before using it as the subscription key.
-- New subscribe drops the previous subscription for the same `webContents`.
 - Subscriptions are live-only; the current handler does not replay historical events.
 
 ### Approvals
@@ -257,15 +262,18 @@ Notes:
 - Write IPC handlers validate request objects and string field types before
   entering filesystem access, then return the existing `WRITE_*_FAILED`
   envelope for malformed payloads.
-- `write.get` reads Markdown as strict UTF-8 and fails instead of returning replacement characters for invalid bytes.
+- `write.get` reads Markdown as strict UTF-8 through the shared no-follow
+  final-component open boundary and fails instead of returning replacement
+  characters for invalid bytes or following a symlink swapped in after path
+  validation.
 - `write.put` performs a plain UTF-8 file write after workspace path validation,
   then revalidates the path after parent directory creation so a newly created
   parent cannot be swapped to a symlink outside the workspace before commit.
 - `write.create` creates Markdown files with exclusive create semantics and
   never overwrites an existing document.
-- `write.rename` rejects identical source/target paths and copies with an
-  exclusive target before removing the source, so an existing target is not
-  overwritten.
+- `write.rename` rejects identical source/target paths, reads the source through
+  the same no-follow Markdown text boundary, writes an exclusive no-follow
+  target, and removes the source only after the target write succeeds.
 - `write.delete` removes a single Markdown file after the same workspace and
   extension policy checks.
 
@@ -315,9 +323,10 @@ Notes:
 - `protocol` accepts only `openai-compatible` or `anthropic-compatible`.
   Unsupported values return the existing model-config error envelope and are
   not persisted.
-- Store-level active config and profile updates also reject empty or unknown-only
-  payloads so direct persistence calls cannot report a save that only changes
-  `updatedAt`.
+- Store-level active config and profile updates run the same primitive field
+  validation and also reject empty or unknown-only payloads, so direct
+  persistence calls cannot silently default malformed values or report a save
+  that only changes `updatedAt`.
 
 ### Runtime Preferences
 
@@ -335,8 +344,8 @@ Notes:
   both are present.
 - Update payloads must be objects and include at least one recognized field.
 - `defaultApprovalPolicy` / `defaultSandboxMode` reuse shared thread enum
-  guards; model profile ids are non-empty strings or `null`, and non-null
-  Code/Write defaults must reference existing profiles.
+  guards; model profile ids are trimmed non-empty strings or `null`, and
+  non-null Code/Write defaults must reference existing profiles.
 - `toolAvailability` validates mode names, tool names and boolean values before
   persistence. AgentRuntime uses it to filter tool definitions sent to the model
   and to reject forced calls to disabled tools.
@@ -344,6 +353,9 @@ Notes:
   integer bounds from `src/shared/agent-contracts.ts`; command-backed shell,
   Git, package/task, session-start, and workspace diagnostics tools consume
   those defaults.
+- `skills.extraRoots` update entries are trimmed, empty entries are dropped,
+  NUL bytes are rejected, and duplicates collapse by first occurrence before
+  persistence.
 - `approvalExperience` and `compaction` are persisted runtime preference
   contracts. `approvalExperience` controls renderer presentation only, while
   `compaction` is consumed by runtime message preparation before model
@@ -351,8 +363,14 @@ Notes:
   malformed update payloads fail before store access.
 - `mcpServers` stores external MCP server configs. `stdio` servers require a
   command; `streamable-http` servers require an HTTP(S) URL and may carry
-  request headers. Settings writes the config through this same preferences
-  channel, then the main composition root reconfigures `McpHost`.
+  request headers. Server `id` / `name` values must be unique, and `name` values
+  must also produce unique MCP namespace segments after `toMcpNameSegment()`, so
+  `/mcp__<server>__...` and `@<server>:...` aliases cannot point at multiple
+  servers. Any present `url` field must be HTTP(S), even when the selected
+  transport is `stdio`. Env/header records reject NUL bytes and duplicate keys
+  after trimming, so malformed config cannot silently overwrite a value.
+  Settings writes the config through this same preferences channel, then the
+  main composition root reconfigures `McpHost`.
 
 ### Skills
 
@@ -395,7 +413,9 @@ Notes:
   responses.
 - MCP tools are registered into the existing `ToolRegistry` as
   `mcp__<server>__<tool>`, then flow through runtime tool availability,
-  sandbox, approval and `permissionRules` like other tools.
+  sandbox, approval and `permissionRules` like other tools. A live tools/list
+  response must not contain two raw tool names that normalize to the same
+  namespaced tool id.
 - `McpServerStatusRecord.status` includes `cached` and `lazy` in addition to
   disconnected/connecting/connected/failed. `cached` means matching schema was
   loaded from `McpCacheStore`; `lazy` means a live reconnect failed but cached
@@ -407,6 +427,13 @@ Notes:
   The Code composer resolves `/mcp__<server>__<prompt>` and
   `@<server>:<uri>` before `turn:start`, preserving the visible input in
   `displayText` while sending resolved prompt/resource context as `text`.
+  A live prompt surface must not contain two prompt names that normalize to the
+  same slash-command segment, and each prompt descriptor must expose non-empty
+  argument names that stay unique after trimming. `mcp:prompts:get` prompt
+  arguments must be a string record whose trimmed keys are unique and contain no
+  NUL bytes.
+  Resource URI parsing preserves punctuation inside the non-whitespace URI token
+  and trims only surrounding prose punctuation before `mcp:resources:read`.
 - Prompt/resource list results may come from cached surface descriptors.
   `mcp:prompts:get` and `mcp:resources:read` force a live lazy connect before
   returning content.
@@ -439,8 +466,9 @@ flowchart LR
 ```
 
 `sse-handlers.ts` keeps thread-scoped events on per-thread subscriptions. A
-`runtime_error` without `threadId` is treated as a global process-level error
-and is forwarded once per subscribed `webContents`, even if that window has
+`runtime_error` without `threadId` is treated as a global process-level error.
+Global process-level events are forwarded once per window with either an active
+thread subscription or an explicit global subscription, even if that window has
 multiple active thread subscriptions.
 
 Current `RuntimeEvent.kind` values:
@@ -473,8 +501,9 @@ the nested `item.threadId` and `item.turnId`.
 
 MCP runtime events are process-level events without `threadId`. `sse-handlers.ts`
 forwards `mcp_server_connection`, `mcp_tool_list_changed`, and
-`mcp_surface_changed` once per subscribed window; `Workbench` ignores them for
-chat timelines, while Settings refreshes MCP server status from the MCP IPC
+`mcp_surface_changed` once per window with either a thread subscription or a
+global subscription; `Workbench` ignores them for chat timelines, while Settings
+uses `sse.subscribeGlobal()` and refreshes MCP server status from the MCP IPC
 surface.
 
 When adding a runtime event, update:

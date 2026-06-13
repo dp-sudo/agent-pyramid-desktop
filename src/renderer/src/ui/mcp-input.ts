@@ -9,9 +9,22 @@ import type {
   McpServerResourcesRequest,
   McpServerResourcesResponse,
 } from "../../../shared/agent-contracts";
+import {
+  MCP_NAME_SEGMENT_PATTERN,
+  toMcpNameSegment,
+} from "../../../shared/mcp-names";
 
-const MCP_PROMPT_COMMAND_PATTERN = /^\/mcp__([A-Za-z0-9_-]+)__([A-Za-z0-9_-]+)(?:\s+(.*))?$/s;
-const MCP_RESOURCE_REFERENCE_PATTERN = /(^|[\s([{])@([A-Za-z0-9_-]+):([^\s)\]},;]+)/g;
+const MCP_NAME_SEGMENT_SOURCE = MCP_NAME_SEGMENT_PATTERN.source
+  .replace(/^\^/u, "")
+  .replace(/\$$/u, "");
+const MCP_PROMPT_COMMAND_PATTERN = new RegExp(
+  `^/mcp__(${MCP_NAME_SEGMENT_SOURCE})__(${MCP_NAME_SEGMENT_SOURCE})(?:\\s+(.*))?$`,
+  "s",
+);
+const MCP_RESOURCE_REFERENCE_PATTERN = new RegExp(
+  `(^|[\\s([{])@(${MCP_NAME_SEGMENT_SOURCE}):(\\S+)`,
+  "g",
+);
 const MAX_MCP_RESOURCE_TEXT_CHARS = 24_000;
 
 export interface McpInputApi {
@@ -317,16 +330,34 @@ function splitMcpPositionalArguments(text: string): string[] {
 }
 
 function trimTrailingResourcePunctuation(value: string): string {
-  return value.replace(/[.,:!?]+$/g, "");
-}
-
-function toMcpNameSegment(value: string): string {
-  const normalized = value.trim().replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
-  return normalized || "tool";
+  let trimmed = value.replace(/[.,:!?;]+$/g, "");
+  while (hasUnbalancedTrailingCloser(trimmed, "(", ")")) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  while (hasUnbalancedTrailingCloser(trimmed, "[", "]")) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  while (hasUnbalancedTrailingCloser(trimmed, "{", "}")) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  return trimmed.replace(/[.,:!?;]+$/g, "");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasUnbalancedTrailingCloser(value: string, opener: string, closer: string): boolean {
+  if (!value.endsWith(closer)) return false;
+  return countCharacter(value, closer) > countCharacter(value, opener);
+}
+
+function countCharacter(value: string, character: string): number {
+  let count = 0;
+  for (const current of value) {
+    if (current === character) count += 1;
+  }
+  return count;
 }
 
 function defaultMcpInputTranslator(key: string, options?: Record<string, unknown>): string {

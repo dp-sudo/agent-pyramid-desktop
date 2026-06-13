@@ -68,7 +68,8 @@ function hasUrlAuthMaterial(rawUrl: string): boolean {
         return true;
       }
     }
-  } catch {
+  } catch (error) {
+    void error;
     return false;
   }
   return false;

@@ -11,11 +11,12 @@ import {
 import {
   AppConfigFile,
   type AppConfigFileOptions,
-  assertModelConfigUpdateHasFields,
+  assertProfileCreateRequest,
   assertNonEmptyString,
   assertProfileUpdateHasFields,
   getActiveProfile,
   normalizeModelConfig,
+  parseModelConfigUpdateFields,
   normalizeProfileActivate,
   toModelConfigProfilesState,
   type AppConfigState,
@@ -38,27 +39,24 @@ export class ModelConfigStore {
   }
 
   async update(update: ModelConfigUpdate): Promise<ModelConfig> {
-    assertModelConfigUpdateHasFields(
-      update,
-      "Model config update must include at least one field.",
-    );
+    const parsed = parseModelConfigUpdateFields(update);
     return this.configFile.update((state) => {
       const active = getActiveProfile(state);
       const contextWindow =
-        update.model_context_window ?? active.config.model_context_window;
+        parsed.model_context_window ?? active.config.model_context_window;
       const next = normalizeModelConfig({
         ...active.config,
-        ...update,
-        protocol: update.protocol ?? active.config.protocol,
+        ...parsed,
+        protocol: parsed.protocol ?? active.config.protocol,
         model_context_window: contextWindow,
         model_auto_compact_token_limit:
-          update.model_auto_compact_token_limit ??
+          parsed.model_auto_compact_token_limit ??
           active.config.model_auto_compact_token_limit,
-        max_tokens: update.max_tokens ?? active.config.max_tokens,
-        thinking: update.thinking ?? active.config.thinking,
+        max_tokens: parsed.max_tokens ?? active.config.max_tokens,
+        thinking: parsed.thinking ?? active.config.thinking,
         model_reasoning_effort:
-          update.model_reasoning_effort ?? active.config.model_reasoning_effort,
-        agent_autonomy: update.agent_autonomy ?? active.config.agent_autonomy,
+          parsed.model_reasoning_effort ?? active.config.model_reasoning_effort,
+        agent_autonomy: parsed.agent_autonomy ?? active.config.agent_autonomy,
       });
       const updatedAt = new Date().toISOString();
       const nextState: AppConfigState = {
@@ -78,16 +76,18 @@ export class ModelConfigStore {
   async createProfile(
     request: ModelConfigProfileCreateRequest,
   ): Promise<ModelConfigProfilesState> {
+    assertProfileCreateRequest(request);
     return this.configFile.update((state) => {
       const name = assertNonEmptyString(request.name, "name");
       const activate = normalizeProfileActivate(request.activate);
+      const configUpdate = parseModelConfigUpdateFields(request.config, { allowEmpty: true });
       const now = new Date().toISOString();
       const profile: ModelConfigProfile = {
         id: randomUUID(),
         name,
         config: normalizeModelConfig({
           ...DEFAULT_MODEL_CONFIG,
-          ...request.config,
+          ...configUpdate,
         }),
         createdAt: now,
         updatedAt: now,
@@ -112,16 +112,19 @@ export class ModelConfigStore {
       }
 
       const updatedAt = new Date().toISOString();
+      const configUpdate = request.config !== undefined
+        ? parseModelConfigUpdateFields(request.config)
+        : undefined;
       const nextProfile: ModelConfigProfile = {
         ...existing,
         ...(request.name !== undefined
           ? { name: assertNonEmptyString(request.name, "name") }
           : {}),
-        ...(request.config
+        ...(configUpdate
           ? {
               config: normalizeModelConfig({
                 ...existing.config,
-                ...request.config,
+                ...configUpdate,
               }),
             }
           : {}),

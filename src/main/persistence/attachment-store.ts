@@ -163,7 +163,11 @@ function assertSafeName(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error("Attachment name is required.");
   }
-  return path.basename(value.trim()).slice(0, 180);
+  const name = path.basename(value.trim()).slice(0, 180);
+  if (!name || name === "." || name === "..") {
+    throw new Error("Attachment name is required.");
+  }
+  return name;
 }
 
 function assertImageMimeType(value: unknown): string {

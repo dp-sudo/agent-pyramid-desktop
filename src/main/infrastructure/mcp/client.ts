@@ -25,6 +25,10 @@ import {
 } from "./protocol.js";
 import { HttpMcpTransport } from "./http-transport.js";
 import { StdioMcpTransport } from "./stdio-transport.js";
+import {
+  namespaceMcpToolName,
+  toMcpNameSegment,
+} from "../../../shared/mcp-names.js";
 import type { McpTransport } from "./transport.js";
 
 export interface McpClientOptions {
@@ -106,11 +110,13 @@ export class McpClient {
       this.handshakeTimeoutMs,
       `MCP server ${this.config.name} tools/list timed out.`,
     );
-    this.tools = normalizeMcpToolsListResult(result).map((tool) => ({
+    const tools = normalizeMcpToolsListResult(result).map((tool) => ({
       ...tool,
       name: namespaceMcpToolName(this.config.name, tool.rawName),
       readOnly: tool.readOnly || this.readOnlyTools.has(tool.rawName),
     }));
+    assertUniqueToolNames(this.config.name, tools);
+    this.tools = tools;
     return this.listTools();
   }
 
@@ -177,7 +183,9 @@ export class McpClient {
       this.handshakeTimeoutMs,
       `MCP server ${this.config.name} prompts/list timed out.`,
     );
-    this.prompts = normalizeMcpPromptsListResult(result);
+    const prompts = normalizeMcpPromptsListResult(result);
+    assertUniquePromptSegments(this.config.name, prompts);
+    this.prompts = prompts;
     return this.listPrompts();
   }
 
@@ -284,21 +292,6 @@ function createTransport(config: McpServerConfig): McpTransport {
   return StdioMcpTransport.start(config);
 }
 
-export function namespaceMcpToolName(serverName: string, rawToolName: string): string {
-  return `mcp__${toToolNameSegment(serverName)}__${toToolNameSegment(rawToolName)}`;
-}
-
-export function mcpPermissionValueFromToolName(toolName: string): string | null {
-  const match = /^mcp__([^_][A-Za-z0-9_-]*)__([^_][A-Za-z0-9_-]*)$/.exec(toolName);
-  if (!match) return null;
-  return `${match[1]}/${match[2]}`;
-}
-
-function toToolNameSegment(value: string): string {
-  const normalized = value.trim().replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
-  return normalized || "tool";
-}
-
 async function withTimeout<T>(
   run: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
@@ -347,6 +340,29 @@ function normalizeCapabilities(value: unknown): Record<string, unknown> {
 
 function hasCapability(capabilities: Record<string, unknown>, name: string): boolean {
   return capabilities[name] !== undefined;
+}
+
+function assertUniqueToolNames(serverName: string, tools: readonly McpToolDescriptor[]): void {
+  const names = new Set<string>();
+  for (const tool of tools) {
+    if (names.has(tool.name)) {
+      throw new Error(`MCP server ${serverName} exposes duplicate tool namespace: ${tool.name}`);
+    }
+    names.add(tool.name);
+  }
+}
+
+function assertUniquePromptSegments(serverName: string, prompts: readonly McpPromptDescriptor[]): void {
+  const segments = new Set<string>();
+  for (const prompt of prompts) {
+    const segment = toMcpNameSegment(prompt.name);
+    if (segments.has(segment)) {
+      throw new Error(
+        `MCP server ${serverName} exposes duplicate prompt namespace segment: ${segment}`,
+      );
+    }
+    segments.add(segment);
+  }
 }
 
 function toPromptInfo(prompt: McpPromptDescriptor): McpPromptInfo {

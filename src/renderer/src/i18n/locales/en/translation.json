@@ -273,8 +273,10 @@
       "skillsExtraRootNul": "Skill root line {{index}} cannot contain NUL bytes.",
       "mcpEnvObject": "Environment JSON must be an object with string keys and values.",
       "mcpEnvJson": "Environment must be valid JSON.",
+      "mcpEnvDuplicateKey": "Environment keys must be unique after trimming whitespace.",
       "mcpHeadersObject": "Headers JSON must be an object with string keys and values.",
-      "mcpHeadersJson": "Headers must be valid JSON."
+      "mcpHeadersJson": "Headers must be valid JSON.",
+      "mcpHeadersDuplicateKey": "Header keys must be unique after trimming whitespace."
     },
     "status": {
       "idle": "Ready",

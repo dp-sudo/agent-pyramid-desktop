@@ -114,6 +114,8 @@ describe("settings i18n resources", () => {
       "settings.toolNames.run_command",
       "settings.toolNames.run_skill",
       "settings.errors.integerRange",
+      "settings.errors.mcpEnvDuplicateKey",
+      "settings.errors.mcpHeadersDuplicateKey",
       "composer.placeholder",
       "composer.writePlaceholder",
       "composer.mcpPromptCommandInvalid",

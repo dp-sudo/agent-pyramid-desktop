@@ -176,13 +176,31 @@ function normalizeMcpPromptDescriptor(value: unknown): McpPromptDescriptor {
   if (!isRecord(value) || typeof value.name !== "string" || !value.name.trim()) {
     throw new Error("MCP prompt descriptor requires a non-empty name.");
   }
-  const args = Array.isArray(value.arguments) ? value.arguments : [];
+  const args = Array.isArray(value.arguments)
+    ? normalizeMcpPromptArguments(value.arguments)
+    : [];
   return {
     rawName: value.name.trim(),
     name: value.name.trim(),
     description: typeof value.description === "string" ? value.description : "",
-    arguments: args.map(normalizeMcpPromptArgument),
+    arguments: args,
   };
+}
+
+function normalizeMcpPromptArguments(
+  values: readonly unknown[],
+): McpPromptDescriptor["arguments"] {
+  const names = new Set<string>();
+  const args: McpPromptDescriptor["arguments"] = [];
+  for (const value of values) {
+    const arg = normalizeMcpPromptArgument(value);
+    if (names.has(arg.name)) {
+      throw new Error(`MCP prompt argument name is duplicated: ${arg.name}`);
+    }
+    names.add(arg.name);
+    args.push(arg);
+  }
+  return args;
 }
 
 function normalizeMcpPromptArgument(value: unknown): McpPromptDescriptor["arguments"][number] {

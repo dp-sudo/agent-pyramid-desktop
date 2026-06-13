@@ -4,7 +4,6 @@ import { normalizeSkillId, parseSkillMarkdown } from "./manifest.js";
 import {
   SkillError,
   type Skill,
-  type SkillActivation,
   type SkillLoadResult,
   type SkillMatch,
   type SkillMatchInput,

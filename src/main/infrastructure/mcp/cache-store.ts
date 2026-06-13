@@ -7,6 +7,10 @@ import type {
   McpResourceInfo,
   McpServerConfig,
 } from "../../../shared/agent-contracts.js";
+import {
+  namespaceMcpToolName,
+  toMcpNameSegment,
+} from "../../../shared/mcp-names.js";
 import type { McpToolDescriptor } from "./protocol.js";
 
 const MCP_CACHE_DIRNAME = "mcp";
@@ -108,8 +112,10 @@ export class McpCacheStore {
         serverName: config.name,
         updatedAt: new Date().toISOString(),
         capabilities: cloneRecord(surface.capabilities),
-        tools: surface.tools.map(cloneTool),
-        prompts: surface.prompts.map(clonePrompt),
+        tools: uniqueToolsByName(surface.tools
+          .filter((tool) => isToolDescriptorForServer(config.name, tool))
+          .map(cloneTool)),
+        prompts: uniquePromptsBySegment(surface.prompts.map(normalizePrompt).filter(isPresent)),
         resources: surface.resources.map((resource) => ({ ...resource })),
       };
       await this.writeState();
@@ -187,7 +193,7 @@ export function fingerprintMcpServerConfig(config: McpServerConfig): string {
     cwd: config.cwd ?? "",
     url: config.url ?? "",
     headers: config.headers,
-    readOnlyTools: config.readOnlyTools,
+    readOnlyTools: sortedUniqueStrings(config.readOnlyTools),
   });
   return createHash("sha256").update(payload).digest("hex");
 }
@@ -234,14 +240,17 @@ function normalizeSurface(value: unknown): McpCachedSurface | null {
     !Array.isArray(value.resources)) {
     return null;
   }
+  const serverName = value.serverName;
   return {
     fingerprint: value.fingerprint,
     serverId: value.serverId,
-    serverName: value.serverName,
+    serverName,
     updatedAt: value.updatedAt,
     capabilities: isRecord(value.capabilities) ? cloneRecord(value.capabilities) : {},
-    tools: value.tools.map(normalizeTool).filter(isPresent),
-    prompts: value.prompts.map(normalizePrompt).filter(isPresent),
+    tools: uniqueToolsByName(value.tools
+      .map((tool) => normalizeTool(tool, serverName))
+      .filter(isPresent)),
+    prompts: uniquePromptsBySegment(value.prompts.map(normalizePrompt).filter(isPresent)),
     resources: value.resources.map(normalizeResource).filter(isPresent),
   };
 }
@@ -281,12 +290,15 @@ function normalizeStartupStats(value: unknown): McpStartupStatsRecord | null {
   };
 }
 
-function normalizeTool(value: unknown): McpToolDescriptor | null {
+function normalizeTool(value: unknown, serverName: string): McpToolDescriptor | null {
   if (!isRecord(value) ||
     typeof value.rawName !== "string" ||
     typeof value.name !== "string" ||
     typeof value.description !== "string" ||
     typeof value.readOnly !== "boolean") {
+    return null;
+  }
+  if (!isNamespacedToolNameForServer(serverName, value.rawName, value.name)) {
     return null;
   }
   return {
@@ -301,25 +313,43 @@ function normalizeTool(value: unknown): McpToolDescriptor | null {
 function normalizePrompt(value: unknown): McpPromptInfo | null {
   if (!isRecord(value) ||
     typeof value.name !== "string" ||
+    !value.name.trim() ||
     typeof value.description !== "string" ||
     !Array.isArray(value.arguments)) {
     return null;
   }
+  const args = normalizePromptArguments(value.arguments);
+  if (!args) return null;
   return {
-    name: value.name,
+    name: value.name.trim(),
     description: value.description,
-    arguments: value.arguments.map(normalizePromptArgument).filter(isPresent),
+    arguments: args,
   };
+}
+
+function normalizePromptArguments(
+  values: readonly unknown[],
+): McpPromptInfo["arguments"] | null {
+  const names = new Set<string>();
+  const args: McpPromptInfo["arguments"] = [];
+  for (const value of values) {
+    const arg = normalizePromptArgument(value);
+    if (!arg || names.has(arg.name)) return null;
+    names.add(arg.name);
+    args.push(arg);
+  }
+  return args;
 }
 
 function normalizePromptArgument(value: unknown): McpPromptInfo["arguments"][number] | null {
   if (!isRecord(value) ||
     typeof value.name !== "string" ||
+    !value.name.trim() ||
     typeof value.required !== "boolean") {
     return null;
   }
   return {
-    name: value.name,
+    name: value.name.trim(),
     ...(typeof value.description === "string" ? { description: value.description } : {}),
     required: value.required,
   };
@@ -364,6 +394,41 @@ function clonePrompt(prompt: McpPromptInfo): McpPromptInfo {
   };
 }
 
+function isToolDescriptorForServer(serverName: string, tool: McpToolDescriptor): boolean {
+  return isNamespacedToolNameForServer(serverName, tool.rawName, tool.name);
+}
+
+function isNamespacedToolNameForServer(
+  serverName: string,
+  rawName: string,
+  toolName: string,
+): boolean {
+  return rawName.trim().length > 0 && toolName === namespaceMcpToolName(serverName, rawName);
+}
+
+function uniqueToolsByName(tools: McpToolDescriptor[]): McpToolDescriptor[] {
+  const seen = new Set<string>();
+  const unique: McpToolDescriptor[] = [];
+  for (const tool of tools) {
+    if (seen.has(tool.name)) continue;
+    seen.add(tool.name);
+    unique.push(tool);
+  }
+  return unique;
+}
+
+function uniquePromptsBySegment(prompts: McpPromptInfo[]): McpPromptInfo[] {
+  const seen = new Set<string>();
+  const unique: McpPromptInfo[] = [];
+  for (const prompt of prompts) {
+    const segment = toMcpNameSegment(prompt.name);
+    if (seen.has(segment)) continue;
+    seen.add(segment);
+    unique.push(prompt);
+  }
+  return unique;
+}
+
 function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
   return { ...value };
 }
@@ -378,6 +443,10 @@ function stableStringify(value: unknown): string {
     ).join(",")}}`;
   }
   return JSON.stringify(value) ?? "undefined";
+}
+
+function sortedUniqueStrings(value: readonly string[]): string[] {
+  return [...new Set(value)].sort();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

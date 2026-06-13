@@ -7,7 +7,11 @@ import {
   resolveWorkspacePathForAccess,
   toWorkspaceRelative,
 } from "./workspace-policy.js";
-import { decodeUtf8TextBuffer } from "./text-file.js";
+import {
+  decodeUtf8TextBuffer,
+  openTextFileNoFollow,
+  writeUtf8TextFileNoFollow,
+} from "./text-file.js";
 import { isSamePath } from "../path-utils.js";
 
 const MAX_EDIT_FILE_BYTES = 1_000_000;
@@ -475,7 +479,11 @@ async function commitPreparedChange(change: PreparedFileChange): Promise<void> {
   await fs.mkdir(path.dirname(change.filePath), { recursive: true });
   await assertPreparedChangePathStillAllowed(change, "write");
   await assertPreparedChangeStillFresh(change);
-  await fs.writeFile(change.filePath, change.nextContent, "utf8");
+  await writeUtf8TextFileNoFollow(change.filePath, change.nextContent, {
+    exclusive: change.operation === "create",
+    label: "Coding tool write",
+    relativePath: change.path,
+  });
 }
 
 async function assertPreparedChangePathStillAllowed(
@@ -567,7 +575,10 @@ async function restoreCommittedChanges(committed: PreparedFileChange[]): Promise
         await fs.rm(change.filePath, { force: true });
       } else {
         await fs.mkdir(path.dirname(change.filePath), { recursive: true });
-        await fs.writeFile(change.filePath, change.originalContent, "utf8");
+        await writeUtf8TextFileNoFollow(change.filePath, change.originalContent, {
+          label: "Coding tool rollback",
+          relativePath: change.path,
+        });
       }
     } catch (error) {
       failures.push(`${change.path}: ${error instanceof Error ? error.message : String(error)}`);
@@ -641,18 +652,26 @@ async function readEditableTextFile(
   filePath: string,
   relativePath: string,
 ): Promise<{ content: string; stat: Stats }> {
-  const stat = await fs.stat(filePath);
-  if (!stat.isFile()) {
-    throw new Error(`Path is not a file: ${relativePath}`);
+  const handle = await openTextFileNoFollow(filePath, {
+    label: "Coding tool read",
+    relativePath,
+  });
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) {
+      throw new Error(`Path is not a file: ${relativePath}`);
+    }
+    if (stat.size > MAX_EDIT_FILE_BYTES) {
+      throw new Error(`File is too large to edit: ${relativePath}`);
+    }
+    const buffer = await handle.readFile();
+    return {
+      content: decodeUtf8TextBuffer(buffer, relativePath, "File"),
+      stat,
+    };
+  } finally {
+    await handle.close();
   }
-  if (stat.size > MAX_EDIT_FILE_BYTES) {
-    throw new Error(`File is too large to edit: ${relativePath}`);
-  }
-  const buffer = await fs.readFile(filePath);
-  return {
-    content: decodeUtf8TextBuffer(buffer, relativePath, "File"),
-    stat,
-  };
 }
 
 async function readCurrentTextOrMissing(

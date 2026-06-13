@@ -65,6 +65,11 @@ describe("mcp handlers", () => {
       name: "review",
       arguments: { bad: 1 },
     })).toThrow("MCP prompt arguments must contain only string values without NUL bytes.");
+    expect(() => parsePromptGetRequest({
+      serverId: "server-1",
+      name: "review",
+      arguments: { path: "README.md", " path ": "CHANGELOG.md" },
+    })).toThrow("MCP prompt arguments.path key is duplicated.");
   });
 
   it("registers prompt/resource/surface handlers with envelopes", async () => {

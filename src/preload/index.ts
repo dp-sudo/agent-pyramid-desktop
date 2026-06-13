@@ -31,7 +31,9 @@ import type {
   RuntimePreferencesUpdate,
   SkillListRequest,
   SkillListResponse,
+  SseSubscribeGlobalResponse,
   SseSubscribeRequest,
+  SseUnsubscribeGlobalResponse,
   SseUnsubscribeRequest,
   ThreadCreateInput,
   ThreadListFilter,
@@ -111,6 +113,8 @@ import {
   RUNTIME_PREFERENCES_GET_CHANNEL,
   RUNTIME_PREFERENCES_UPDATE_CHANNEL,
   SKILL_LIST_CHANNEL,
+  SSE_SUBSCRIBE_GLOBAL_CHANNEL,
+  SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
 } from "../shared/ipc";
 
 const threads = {
@@ -186,6 +190,16 @@ const sse = {
   ): Promise<IpcResult<{ unsubscribed: boolean }>> {
     return ipcRenderer.invoke(SSE_UNSUBSCRIBE_CHANNEL, request) as Promise<
       IpcResult<{ unsubscribed: boolean }>
+    >;
+  },
+  subscribeGlobal(): Promise<IpcResult<SseSubscribeGlobalResponse>> {
+    return ipcRenderer.invoke(SSE_SUBSCRIBE_GLOBAL_CHANNEL) as Promise<
+      IpcResult<SseSubscribeGlobalResponse>
+    >;
+  },
+  unsubscribeGlobal(): Promise<IpcResult<SseUnsubscribeGlobalResponse>> {
+    return ipcRenderer.invoke(SSE_UNSUBSCRIBE_GLOBAL_CHANNEL) as Promise<
+      IpcResult<SseUnsubscribeGlobalResponse>
     >;
   },
   onEvent(listener: SseListener): () => void {

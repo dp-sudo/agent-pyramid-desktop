@@ -92,6 +92,9 @@ export class JsonlThreadStore {
     if (relation === "fork" && !parentThreadId) {
       throw new Error("parentThreadId is required for fork threads.");
     }
+    if (parentThreadId && relation !== "fork") {
+      throw new Error("parentThreadId is only valid for fork threads.");
+    }
     const approvalPolicy =
       input.approvalPolicy === undefined
         ? DEFAULT_THREAD_APPROVAL_POLICY
@@ -371,6 +374,12 @@ export class JsonlThreadStore {
         : assertSafeId(rawParentThreadId, "parentThreadId");
     if (relation === "fork" && !parentThreadId) {
       throw new Error("parentThreadId is required for fork threads.");
+    }
+    if (parentThreadId !== undefined && relation !== "fork") {
+      throw new Error("parentThreadId is only valid for fork threads.");
+    }
+    if (rawForkedAt !== undefined && relation !== "fork") {
+      throw new Error("forkedAt is only valid for fork threads.");
     }
     return {
       ...base,

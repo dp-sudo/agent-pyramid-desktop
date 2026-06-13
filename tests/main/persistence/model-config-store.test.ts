@@ -132,6 +132,21 @@ describe("ModelConfigStore", () => {
     expect(profiles.profiles).toHaveLength(1);
   });
 
+  it("rejects malformed profile create payloads at the store boundary", async () => {
+    const before = await store.listProfiles();
+
+    await expect(
+      store.createProfile(null as unknown as Parameters<ModelConfigStore["createProfile"]>[0]),
+    ).rejects.toThrow("Model config profile create request must be an object.");
+    await expect(
+      store.createProfile({
+        name: "DeepSeek",
+      } as unknown as Parameters<ModelConfigStore["createProfile"]>[0]),
+    ).rejects.toThrow("Model config profile config must be an object.");
+
+    await expect(store.listProfiles()).resolves.toEqual(before);
+  });
+
   it("rejects empty active config updates at the store boundary", async () => {
     const before = await store.listProfiles();
 
@@ -383,6 +398,31 @@ describe("ModelConfigStore", () => {
         protocol: "custom",
       } as unknown as Parameters<ModelConfigStore["update"]>[0]),
     ).rejects.toThrow("protocol must be one of openai-compatible, anthropic-compatible.");
+  });
+
+  it("rejects malformed primitive config fields at the store boundary", async () => {
+    await expect(
+      store.update({
+        thinking: "false",
+      } as unknown as Parameters<ModelConfigStore["update"]>[0]),
+    ).rejects.toThrow("thinking must be a boolean.");
+    await expect(
+      store.update({
+        OPENAI_API_KEY: false,
+      } as unknown as Parameters<ModelConfigStore["update"]>[0]),
+    ).rejects.toThrow("OPENAI_API_KEY must be a string.");
+    await expect(
+      store.createProfile({
+        name: "Bad profile",
+        config: { thinking: "true" },
+      } as unknown as Parameters<ModelConfigStore["createProfile"]>[0]),
+    ).rejects.toThrow("thinking must be a boolean.");
+    await expect(
+      store.updateProfile({
+        id: "default",
+        config: { OPENAI_API_KEY: false },
+      } as unknown as Parameters<ModelConfigStore["updateProfile"]>[0]),
+    ).rejects.toThrow("OPENAI_API_KEY must be a string.");
   });
 
   it("clamps legacy single-config max tokens below the context window", async () => {

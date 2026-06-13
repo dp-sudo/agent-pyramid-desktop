@@ -9,6 +9,7 @@ import {
   isModelReasoningEffort,
   type ModelConfig,
   type ModelConfigProfile,
+  type ModelConfigProfileCreateRequest,
   type ModelConfigProfilesState,
   type ModelConfigUpdate,
   type RuntimePreferences,
@@ -263,6 +264,23 @@ export function toModelConfigProfilesState(
 // Store methods can be called directly by runtime/tests, so they mirror the IPC
 // no-op guard and require at least one recognized config/profile field before
 // mutating `updatedAt`.
+export function assertProfileCreateRequest(
+  request: unknown,
+): asserts request is ModelConfigProfileCreateRequest {
+  if (!isRecord(request)) {
+    throw new Error("Model config profile create request must be an object.");
+  }
+  if (typeof request.name !== "string" || !request.name.trim()) {
+    throw new Error("Model config profile name is required.");
+  }
+  if (!isRecord(request.config)) {
+    throw new Error("Model config profile config must be an object.");
+  }
+  if (request.activate !== undefined) {
+    normalizeProfileActivate(request.activate);
+  }
+}
+
 export function assertProfileUpdateHasFields(
   request: { id?: unknown; name?: unknown; config?: ModelConfigUpdate },
 ): void {
@@ -287,13 +305,76 @@ export function assertModelConfigUpdateHasFields(
   update: ModelConfigUpdate,
   message: string,
 ): void {
-  if (!update || typeof update !== "object" || Array.isArray(update)) {
-    throw new Error(message);
+  parseModelConfigUpdateFields(update, { emptyMessage: message });
+}
+
+export function parseModelConfigUpdateFields(
+  update: unknown,
+  options: { allowEmpty?: boolean; emptyMessage?: string } = {},
+): ModelConfigUpdate {
+  const emptyMessage = options.emptyMessage ?? "Model config update must include at least one field.";
+  if (!isRecord(update)) {
+    throw new Error(emptyMessage);
   }
-  const candidate = update as Record<keyof ModelConfigUpdate, unknown>;
-  if (!MODEL_CONFIG_UPDATE_FIELDS.some((field) => candidate[field] !== undefined)) {
-    throw new Error(message);
+  const parsed: ModelConfigUpdate = {};
+  if (update.model_provide !== undefined) {
+    parsed.model_provide = assertNonEmptyString(update.model_provide, "model_provide");
   }
+  if (update.model !== undefined) {
+    parsed.model = assertNonEmptyString(update.model, "model");
+  }
+  if (update.protocol !== undefined) {
+    if (!isLlmProtocol(update.protocol)) {
+      throw new Error("protocol must be one of openai-compatible, anthropic-compatible.");
+    }
+    parsed.protocol = update.protocol;
+  }
+  if (update.base_url !== undefined) {
+    parsed.base_url = assertNonEmptyString(update.base_url, "base_url");
+  }
+  if (update.OPENAI_API_KEY !== undefined) {
+    if (typeof update.OPENAI_API_KEY !== "string") {
+      throw new Error("OPENAI_API_KEY must be a string.");
+    }
+    parsed.OPENAI_API_KEY = update.OPENAI_API_KEY;
+  }
+  if (update.model_context_window !== undefined) {
+    parsed.model_context_window = assertPositiveInteger(
+      update.model_context_window,
+      "model_context_window",
+    );
+  }
+  if (update.model_auto_compact_token_limit !== undefined) {
+    parsed.model_auto_compact_token_limit = assertPositiveInteger(
+      update.model_auto_compact_token_limit,
+      "model_auto_compact_token_limit",
+    );
+  }
+  if (update.max_tokens !== undefined) {
+    parsed.max_tokens = assertPositiveInteger(update.max_tokens, "max_tokens");
+  }
+  if (update.thinking !== undefined) {
+    if (typeof update.thinking !== "boolean") {
+      throw new Error("thinking must be a boolean.");
+    }
+    parsed.thinking = update.thinking;
+  }
+  if (update.model_reasoning_effort !== undefined) {
+    if (!isModelReasoningEffort(update.model_reasoning_effort)) {
+      throw new Error("model_reasoning_effort must be one of low, medium, high, xhigh.");
+    }
+    parsed.model_reasoning_effort = update.model_reasoning_effort;
+  }
+  if (update.agent_autonomy !== undefined) {
+    if (!isAgentAutonomyLevel(update.agent_autonomy)) {
+      throw new Error("agent_autonomy must be one of conservative, balanced, deep.");
+    }
+    parsed.agent_autonomy = update.agent_autonomy;
+  }
+  if (!options.allowEmpty && Object.keys(parsed).length === 0) {
+    throw new Error(emptyMessage);
+  }
+  return parsed;
 }
 
 export function normalizeModelConfig(value: Partial<ModelConfig>): ModelConfig {

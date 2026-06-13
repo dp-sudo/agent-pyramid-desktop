@@ -272,8 +272,10 @@
       "skillsExtraRootNul": "技能根目录第 {{index}} 行不能包含 NUL 字节。",
       "mcpEnvObject": "环境变量 JSON 必须是字符串键值对象。",
       "mcpEnvJson": "环境变量必须是合法 JSON。",
+      "mcpEnvDuplicateKey": "环境变量键去除首尾空白后不能重复。",
       "mcpHeadersObject": "Headers JSON 必须是字符串键值对象。",
-      "mcpHeadersJson": "Headers 必须是合法 JSON。"
+      "mcpHeadersJson": "Headers 必须是合法 JSON。",
+      "mcpHeadersDuplicateKey": "Header 键去除首尾空白后不能重复。"
     },
     "status": {
       "idle": "已就绪",

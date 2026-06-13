@@ -194,6 +194,95 @@ describe("McpClient", () => {
     );
     warn.mockRestore();
   });
+
+  it("rejects tools whose raw names share the same namespaced MCP tool name", async () => {
+    const transport = new FakeTransport({
+      initialize: { capabilities: { tools: {} } },
+      "tools/list": {
+        tools: [
+          { name: "echo tool", inputSchema: { type: "object" } },
+          { name: "echo_tool", inputSchema: { type: "object" } },
+        ],
+      },
+    });
+    const client = new McpClient(config(), { transport });
+
+    await expect(client.connect()).rejects.toThrow(
+      "MCP server local-mcp exposes duplicate tool namespace: mcp__local-mcp__echo_tool",
+    );
+    expect(client.listTools()).toEqual([]);
+  });
+
+  it("drops prompt surfaces whose names share the same slash-command segment", async () => {
+    const transport = new FakeTransport({
+      initialize: {
+        capabilities: {
+          tools: {},
+          prompts: {},
+        },
+      },
+      "tools/list": {
+        tools: [{ name: "echo", inputSchema: { type: "object" } }],
+      },
+      "prompts/list": {
+        prompts: [
+          { name: "review prompt", arguments: [] },
+          { name: "review_prompt", arguments: [] },
+        ],
+      },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = new McpClient(config(), { transport });
+
+    await expect(client.connect()).resolves.toMatchObject([
+      { name: "mcp__local-mcp__echo" },
+    ]);
+
+    expect(client.listPrompts()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[mcp-client] failed to refresh auxiliary MCP surface:",
+      "MCP server local-mcp exposes duplicate prompt namespace segment: review_prompt",
+    );
+    warn.mockRestore();
+  });
+
+  it("drops prompt surfaces whose arguments cannot be mapped to unique request keys", async () => {
+    const transport = new FakeTransport({
+      initialize: {
+        capabilities: {
+          tools: {},
+          prompts: {},
+        },
+      },
+      "tools/list": {
+        tools: [{ name: "echo", inputSchema: { type: "object" } }],
+      },
+      "prompts/list": {
+        prompts: [
+          {
+            name: "review",
+            arguments: [
+              { name: "path", required: true },
+              { name: " path ", required: true },
+            ],
+          },
+        ],
+      },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = new McpClient(config(), { transport });
+
+    await expect(client.connect()).resolves.toMatchObject([
+      { name: "mcp__local-mcp__echo" },
+    ]);
+
+    expect(client.listPrompts()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[mcp-client] failed to refresh auxiliary MCP surface:",
+      "MCP prompt argument name is duplicated: path",
+    );
+    warn.mockRestore();
+  });
 });
 
 function config(): McpServerConfig {

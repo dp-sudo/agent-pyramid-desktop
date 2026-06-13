@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RuntimeEventBus } from "../../../src/main/event-bus";
 import {
   SSE_PUSH_CHANNEL,
+  SSE_SUBSCRIBE_GLOBAL_CHANNEL,
   SSE_SUBSCRIBE_CHANNEL,
+  SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
   SSE_UNSUBSCRIBE_CHANNEL,
 } from "../../../src/shared/ipc";
 import {
@@ -81,6 +83,46 @@ function runtimeErrorEvent(overrides: Partial<RuntimeErrorEvent> = {}): RuntimeE
     code: "internal",
     message: "Global failure",
     ...overrides,
+  };
+}
+
+function mcpConnectionEvent(): RuntimeEvent {
+  return {
+    kind: "mcp_server_connection",
+    serverId: "server-1",
+    serverName: "local-mcp",
+    status: "connected",
+    toolCount: 1,
+    occurredAt: "2026-06-08T00:00:00.000Z",
+  };
+}
+
+function mcpToolListChangedEvent(): RuntimeEvent {
+  return {
+    kind: "mcp_tool_list_changed",
+    serverId: "server-1",
+    serverName: "local-mcp",
+    toolCount: 1,
+    tools: [
+      {
+        name: "mcp__local-mcp__echo",
+        description: "Echo",
+        inputSchema: { type: "object" },
+        readOnly: true,
+      },
+    ],
+    occurredAt: "2026-06-08T00:00:00.000Z",
+  };
+}
+
+function mcpSurfaceChangedEvent(): RuntimeEvent {
+  return {
+    kind: "mcp_surface_changed",
+    serverId: "server-1",
+    serverName: "local-mcp",
+    promptCount: 1,
+    resourceCount: 1,
+    occurredAt: "2026-06-08T00:00:00.000Z",
   };
 }
 
@@ -177,6 +219,73 @@ describe("sse handlers", () => {
     bus.emit("runtime_error", runtimeErrorEvent());
 
     expect(sender.send).not.toHaveBeenCalled();
+  });
+
+  it("forwards process-level MCP events through an explicit global subscription", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const subscribeGlobal = electronMock.handlers.get(SSE_SUBSCRIBE_GLOBAL_CHANNEL);
+    const unsubscribeGlobal = electronMock.handlers.get(SSE_UNSUBSCRIBE_GLOBAL_CHANNEL);
+    if (!subscribeGlobal || !unsubscribeGlobal) throw new Error("Expected global SSE handlers.");
+
+    const sender = new FakeWebContents();
+    const subscribed = await subscribeGlobal({ sender }, undefined);
+
+    const connection = mcpConnectionEvent();
+    const tools = mcpToolListChangedEvent();
+    const surface = mcpSurfaceChangedEvent();
+    bus.emit(connection.kind, connection);
+    bus.emit(tools.kind, tools);
+    bus.emit(surface.kind, surface);
+
+    expect(subscribed).toEqual({ ok: true, value: { subscribed: true } });
+    expect(sender.send).toHaveBeenCalledTimes(3);
+    expect(sender.send).toHaveBeenNthCalledWith(1, SSE_PUSH_CHANNEL, connection);
+    expect(sender.send).toHaveBeenNthCalledWith(2, SSE_PUSH_CHANNEL, tools);
+    expect(sender.send).toHaveBeenNthCalledWith(3, SSE_PUSH_CHANNEL, surface);
+
+    const unsubscribed = await unsubscribeGlobal({ sender }, undefined);
+    bus.emit("mcp_surface_changed", surface);
+
+    expect(unsubscribed).toEqual({ ok: true, value: { unsubscribed: true } });
+    expect(sender.send).toHaveBeenCalledTimes(3);
+    expect(sender.listenerCount("destroyed")).toBe(0);
+  });
+
+  it("keeps global subscriptions alive after thread unsubscribe", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const subscribe = electronMock.handlers.get(SSE_SUBSCRIBE_CHANNEL);
+    const unsubscribe = electronMock.handlers.get(SSE_UNSUBSCRIBE_CHANNEL);
+    const subscribeGlobal = electronMock.handlers.get(SSE_SUBSCRIBE_GLOBAL_CHANNEL);
+    if (!subscribe || !unsubscribe || !subscribeGlobal) throw new Error("Expected SSE handlers.");
+
+    const sender = new FakeWebContents();
+    await subscribeGlobal({ sender }, undefined);
+    await subscribe({ sender }, { threadId: "thread-1" });
+    await unsubscribe({ sender }, { threadId: "thread-1" });
+
+    const event = mcpSurfaceChangedEvent();
+    bus.emit("mcp_surface_changed", event);
+
+    expect(sender.listenerCount("destroyed")).toBe(1);
+    expect(sender.send).toHaveBeenCalledOnce();
+    expect(sender.send).toHaveBeenCalledWith(SSE_PUSH_CHANNEL, event);
+  });
+
+  it("returns an error envelope when no global subscription is active", async () => {
+    const bus = new RuntimeEventBus();
+    registerSseHandlers(bus);
+    const unsubscribeGlobal = electronMock.handlers.get(SSE_UNSUBSCRIBE_GLOBAL_CHANNEL);
+    if (!unsubscribeGlobal) throw new Error("Expected global unsubscribe handler.");
+
+    const sender = new FakeWebContents();
+
+    await expect(unsubscribeGlobal({ sender }, undefined)).resolves.toEqual({
+      ok: false,
+      code: "SSE_NOT_SUBSCRIBED",
+      message: "No active global subscription for this window",
+    });
   });
 
   it("stops forwarding global runtime errors after webContents destruction", async () => {

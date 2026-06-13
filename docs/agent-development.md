@@ -28,7 +28,7 @@
 - 建立持久化 checkpoint / rewind：`src/main/persistence/checkpoint-store.ts` 在 Electron `userData/checkpoints/` 下按 thread JSONL 保存 turn checkpoint，记录每个 turn/file 的 pre-edit 与 post-write 快照；`src/main/index.ts` 在 main 进程组合根创建并注入 `CheckpointStore`，`AgentRuntime.startTurn()` 调用 `CheckpointStore.beginTurn()` 创建 checkpoint 元数据并把 checkpoint recorder 注入工具上下文，`coding-tools.ts` 在 `edit_file` / `write_file` / `delete_file` / `apply_patch` / `rollback_file` 写入边界调用 `recordFileSnapshot`；`src/main/ipc/checkpoints-handlers.ts` 暴露 checkpoint list 与 code/session rewind，复用 shared checkpoint 类型、`checkpoint:list` / `checkpoint:rewind` IPC channel 和 `CHECKPOINT_LIST_FAILED` / `CHECKPOINT_REWIND_BUSY` / `CHECKPOINT_REWIND_FAILED` 错误码；`src/preload/index.ts` 暴露 `agentApi.checkpoints.*`；`RightInspector` 增加 `CheckpointsPanel`，配套 `shell.css` 样式和中英文 i18n；相关测试覆盖 checkpoint store、IPC handler、runtime 注入、coding tools 快照和 renderer 展示逻辑。
 - 建立首批诊断工具：`diagnose_workspace` 在 active workspace 内运行 TypeScript/typecheck 并解析结构化错误；`diagnose_file` 使用 TypeScript Language Service 对单文件做语法/语义/建议诊断，用于编辑后的 workspace 级与文件级验证闭环。
 - 建立 Code/Write tool access 边界：`AgentRuntime` 默认在 Write threads 中隐藏并拒绝 Code-only 编码/命令工具，同时保留可注入的 per-mode tool access policy 以便单独允许或禁用指定工具。
-- 建立 per-call 权限规则：`RuntimePreferences.permissionRules` 可按命令文本或写入路径持久化配置 `allow | ask | deny`，由 `permission-policy.ts` 在 runtime approval/sandbox 决策中评估，硬性 read-only / never 拒绝仍优先。
+- 建立 per-call 权限规则：`RuntimePreferences.permissionRules` 可按命令文本、写入路径或 MCP tool 持久化配置 `allow | ask | deny`，由 `permission-policy.ts` 在 runtime approval/sandbox 决策中评估，硬性 read-only / never 拒绝仍优先。
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
@@ -1313,3 +1313,140 @@
 - `McpHost` now installs matching cached schema as `cached` / `lazy` status placeholders. Cached tools are registered as lazy `mcp__<server>__<tool>` adapters, first execution forces a live reconnect, and failed reconnect keeps cached schema visible with `lastError` for retry.
 - Cached prompt/resource descriptors can be listed before the server is live; `getPrompt()` and `readResource()` force the same lazy reconnect before returning content.
 - Streamable HTTP MCP 401/403 errors now report non-sensitive auth diagnostics, indicating whether auth material is configured in headers, env or URL without echoing credential values or response bodies.
+
+### 2026-06-14 - SSE global process-event subscription
+- Added explicit `sse:subscribe-global` / `sse:unsubscribe-global` IPC channels and preload methods so windows can receive process-level runtime events without depending on an existing thread subscription.
+- Settings now opens a global SSE subscription while mounted, allowing MCP connection/tool/surface events to refresh server status even before any thread has been subscribed in the window.
+- `sse-handlers.ts` keeps existing thread subscription behavior while reference-counting global subscriptions per `webContents`; global listeners are released only after both thread and global subscriptions are gone.
+- Settings global SSE cleanup now waits for a pending subscribe to settle before issuing the matching unsubscribe, preventing route changes during IPC setup from leaking a process-event listener.
+- Verification: `npm run typecheck`, `npm test -- tests/renderer/settings-view.test.ts tests/main/ipc/sse-handlers.test.ts tests/preload/index.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP reconfigure lifecycle hardening
+- `McpHost.configure()` is now async and awaited by main-process startup/runtime-preferences update paths before `connectEnabled()`, so server config changes complete their old disconnect before a new connect mutates the same managed server record.
+- Added MCP host regression coverage with a slow-closing stdio server to ensure a stale disconnect cannot overwrite the new connected status or unregister the new tool surface.
+
+### 2026-06-14 - Runtime preferences MCP config normalization
+- Runtime preference loading now treats persisted `mcpServers` as a recovery-oriented group: malformed MCP server records are skipped with a warning while valid records continue loading.
+- `runtimePreferences.update()` and the shared update parser remain strict for MCP server configs, so Settings/IPC writes still reject malformed payloads before persistence.
+- Focused verification: `npm test -- tests/main/persistence/runtime-preferences-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP in-flight connect invalidation
+- `McpHost` now versions managed servers so disconnect/reconfigure invalidates stale in-flight connects; old handshakes cannot reuse the next `connect()` call, overwrite new tool registrations, or record startup stats against the new config.
+- Partially connected `McpClient` instances become server-owned before handshake completion and are closed on failure, preventing stdio MCP child processes from surviving a failed `tools/list`.
+- Focused verification: `npm test -- tests/main/infrastructure/mcp-host.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Checkpoint rewind restore boundary hardening
+- `CheckpointStore.restoreCode()` now re-resolves the workspace path and rejects symbolic-link components immediately before each restore delete/write commit, including after parent directory creation.
+- Added checkpoint regression coverage for a parent directory replaced with a symlink after `mkdir`, ensuring rewind cannot write restored content outside the workspace.
+- Focused verification: `npm test -- tests/main/persistence/checkpoint-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - No-follow UTF-8 write commits
+- Coding text writes, Write IPC saves/creates, and checkpoint code restore now commit UTF-8 content through a no-follow open helper, rejecting target symlink swaps that occur after workspace path validation.
+- Focused verification: `npm test -- tests/main/ipc/write-handlers.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - PowerShell command default fallback
+- `powershell_command` now resolves its default shell from PATH on Windows, preferring `pwsh` and falling back to Windows PowerShell when PowerShell 7 is unavailable, matching the public tool schema.
+- Added command-tool regression coverage for the default fallback order.
+- Focused verification: `npm test -- tests/main/application/tools.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Attachment name normalization guard
+- `AttachmentStore.create()` now rejects names whose `path.basename()` result is empty, `.` or `..`, so attachment metadata cannot persist an unusable display name.
+- Shared `isAttachmentRecord()` applies the same normalized-name contract when filtering persisted index records and replayed user attachment metadata.
+- Focused verification: `npm test -- tests/main/persistence/attachment-store.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP resource reference URI punctuation
+- Code composer `@<server>:<uri>` parsing now treats the URI as a non-whitespace token and trims only surrounding prose punctuation, preserving valid punctuation inside resource URIs before calling `mcp:resources:read`.
+- Focused verification: `npm test -- tests/renderer/mcp-input.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP server string-record key boundary
+- RuntimePreferences MCP server `env` and `headers` records now reject duplicate keys after trimming at both the shared contract guard and main-process parser, avoiding silent overwrite of external server environment variables or HTTP headers.
+- Focused verification: `npm test -- tests/main/persistence/runtime-preferences-store.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP reconfigure semantic equality
+- `McpHost.configure()` now compares `env` and `headers` as key/value records and `readOnlyTools` as a set, preventing semantically identical config reorderings from disconnecting an already connected MCP server.
+- Focused verification: `npm test -- tests/main/infrastructure/mcp-host.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP cache readOnlyTools fingerprint
+- `McpCacheStore` fingerprints now de-duplicate and sort `readOnlyTools`, matching the runtime set semantics used by `McpHost.configure()` and avoiding cache misses for semantically identical reorderings.
+- Focused verification: `npm test -- tests/main/infrastructure/mcp-cache-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Settings MCP env/header duplicate key validation
+- Settings MCP server env/header JSON drafts now reject duplicate keys after trimming before updating local runtime preference state, matching the main/shared RuntimePreferences contract.
+- Focused verification: `npm test -- tests/renderer/settings-view.test.ts tests/renderer/settings-i18n.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Runtime permission rule id contract
+- Shared `RuntimePreferences` validation now rejects permission rule ids with NUL bytes and duplicate ids after trimming, matching the main-process runtime preferences parser.
+- Focused verification: `npm test -- tests/shared/agent-contracts.test.ts tests/main/persistence/runtime-preferences-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP readOnlyTools non-empty boundary
+- RuntimePreferences MCP server parsing now rejects `readOnlyTools` entries that become empty after trimming, keeping main-process updates aligned with the shared `McpServerConfig` contract while preserving duplicate tool-name set semantics.
+- Focused verification: `npm test -- tests/main/persistence/runtime-preferences-store.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Skills extra root normalization
+- Stored `RuntimePreferences.skills.extraRoots` now uses the same trim, empty-line filter and de-duplication semantics as Settings/runtime updates, and `SkillService` defensively filters blank extra roots before building discovery roots.
+- Focused verification: `npm test -- tests/main/persistence/runtime-preferences-store.test.ts tests/main/skills/skill-service.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP cached tool namespace guard
+- MCP cache read/write paths now filter cached tool descriptors whose `name` does not match the current `mcp__<server>__<tool>` namespace for their `rawName`, preventing stale or forged cache records from entering lazy ToolRegistry registration.
+- Focused verification: `npm test -- tests/main/infrastructure/mcp-cache-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP permission tool-name helper
+- Permission-rule MCP candidate parsing now reuses the shared MCP tool-name helper instead of maintaining a separate `mcp__<server>__<tool>` regex, keeping tool registration, cache validation and permission matching on one namespace contract.
+- Focused verification: `npm test -- tests/main/application/permission-policy.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP tool-name parser boundary
+- `mcpPermissionValueFromToolName()` now accepts only namespace segments that `namespaceMcpToolName()` can generate, rejecting names with illegal first characters or leading/trailing underscores before they become permission-rule candidates.
+- Focused verification: `npm test -- tests/main/application/permission-policy.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Shared MCP namespace segments
+- MCP namespace segment generation and parsing now live in `src/shared/mcp-names.ts`; main-process tool registration/cache/permission code and renderer `/mcp__server__prompt` / `@server:uri` parsing use the same segment boundary.
+- Focused verification: `npm test -- tests/renderer/mcp-input.test.ts tests/main/application/permission-policy.test.ts tests/main/infrastructure/mcp-cache-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP server namespace collision guard
+- RuntimePreferences MCP server parsing now rejects duplicate server namespace segments after `toMcpNameSegment(name)`, and stored preference recovery skips conflicting legacy records with a warning. This keeps `/mcp__server__prompt`, `@server:uri`, MCP tool registration and permission-rule matching from sharing an ambiguous server alias.
+- Focused verification: `npm test -- tests/main/persistence/runtime-preferences-store.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP tool and prompt namespace collision guard
+- `McpClient` now rejects live tools whose raw names normalize to the same `mcp__server__tool` id and drops live prompt surfaces whose names normalize to the same slash-command segment, preventing ToolRegistry registration failures and renderer prompt lookup ambiguity.
+- `McpCacheStore` filters duplicate cached tool namespaces and duplicate cached prompt command segments before exposing lazy/cached surfaces.
+- Focused verification: `npm test -- tests/main/infrastructure/mcp-client.test.ts tests/main/infrastructure/mcp-cache-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP prompt argument key boundary
+- `mcp:prompts:get` IPC parsing now rejects duplicate prompt argument keys after trimming instead of silently overwriting earlier values in the string record.
+- Focused verification: `npm test -- tests/main/ipc/mcp-handlers.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Thread fork relation boundary
+- `ThreadCreateInput` parsing, `JsonlThreadStore` creation/read normalization, and the shared `ThreadRecord` guard now reject `parentThreadId` / `forkedAt` outside `relation: "fork"`, keeping thread lineage fields fork-only instead of allowing primary/side thread records to carry stale ancestry.
+- Focused verification: `npm test -- tests/main/ipc/threads-handlers.test.ts tests/main/persistence/jsonl-thread-store.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - No-follow text read boundary
+- Added a shared `openTextFileNoFollow()` helper and routed Write IPC Markdown reads/rename sources plus destructive coding-tool editable reads through it, closing the gap where the final file component could be swapped to a symlink after workspace validation but before source text was read.
+- Focused verification: `npm test -- tests/main/ipc/write-handlers.test.ts tests/main/application/tools.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP prompt descriptor argument boundary
+- Live MCP prompt descriptors now reject duplicate argument names after trimming, and cached prompt descriptors with blank or duplicate argument names are filtered before renderer exposure. This keeps `/mcp__server__prompt` positional arguments from being silently overwritten when converted to the `mcp:prompts:get` string-record payload.
+- Focused verification: `npm test -- tests/main/infrastructure/mcp-client.test.ts tests/main/infrastructure/mcp-cache-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP default server name collision guard
+- Settings now generates collision-free default MCP server names with the shared `toMcpNameSegment()` namespace rule before sending `runtimePreferences.update`, so adding a second unrenamed default server does not hit the main-process duplicate name/alias parser error.
+- Focused verification: `npm test -- tests/renderer/settings-view.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Shared MCP optional URL guard
+- Shared `isRuntimePreferences()` now requires any present MCP server `url` field to be HTTP(S), matching the main-process runtime preferences parser for both `stdio` and `streamable-http` configs.
+- Focused verification: `npm test -- tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Skills extra root update normalization
+- `runtimePreferences.update` now trims, drops empty entries and de-duplicates `skills.extraRoots` before persistence, matching Settings drafts and stored preference recovery.
+- Shared `isRuntimePreferences()` now rejects unnormalized `skills.extraRoots` arrays with blank, whitespace-padded or duplicate entries.
+- Focused verification: `npm test -- tests/main/persistence/runtime-preferences-store.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Runtime default profile id shape guard
+- Shared `isRuntimePreferences()` now accepts Code/Write default model profile ids only as `null` or already-trimmed non-empty strings, matching runtime preferences update parsing and stored normalization.
+- Runtime preference store coverage now verifies update payload profile ids are trimmed before existing-profile validation and blank ids remain rejected.
+- Focused verification: `npm test -- tests/main/persistence/runtime-preferences-store.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Model config store primitive validation
+- `ModelConfigStore` now parses active/profile config mutation payloads with the same strict primitive field checks as the IPC parser before merging with stored config, so direct store calls cannot silently default malformed `thinking`, `OPENAI_API_KEY`, enum or token fields.
+- `ModelConfigStore.createProfile()` now validates the outer create payload shape before reading fields, matching the IPC boundary and keeping malformed direct calls traceable.
+- Stored config recovery remains normalization-oriented; the stricter path applies to new mutation payloads only.
+- Focused verification: `npm test -- tests/main/persistence/model-config-store.test.ts tests/main/ipc/model-config-handlers.test.ts`; full `typecheck/test/build` verification is run before handoff.

@@ -201,7 +201,11 @@ function optionalStringRecord(value: unknown, name: string): Record<string, stri
     if (typeof entry !== "string" || !key.trim() || key.includes("\0") || entry.includes("\0")) {
       throw new Error(`${name} must contain only string values without NUL bytes.`);
     }
-    parsed[key.trim()] = entry;
+    const parsedKey = key.trim();
+    if (parsed[parsedKey] !== undefined) {
+      throw new Error(`${name}.${parsedKey} key is duplicated.`);
+    }
+    parsed[parsedKey] = entry;
   }
   return parsed;
 }

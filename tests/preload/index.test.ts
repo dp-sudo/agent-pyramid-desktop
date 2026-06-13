@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SSE_PUSH_CHANNEL,
+  SSE_SUBSCRIBE_GLOBAL_CHANNEL,
+  SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
   SKILL_LIST_CHANNEL,
   WRITE_CREATE_CHANNEL,
   WRITE_DELETE_CHANNEL,
@@ -118,10 +120,29 @@ describe("preload bridge", () => {
       { workspace: "/workspace" },
     );
   });
+
+  it("exposes global SSE subscription IPC methods", async () => {
+    const api = getAgentApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true, value: { subscribed: true } });
+
+    await api.sse.subscribeGlobal();
+    await api.sse.unsubscribeGlobal();
+
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      1,
+      SSE_SUBSCRIBE_GLOBAL_CHANNEL,
+    );
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenNthCalledWith(
+      2,
+      SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
+    );
+  });
 });
 
 function getAgentApi(): {
   sse: {
+    subscribeGlobal(): Promise<IpcResult<{ subscribed: true }>>;
+    unsubscribeGlobal(): Promise<IpcResult<{ unsubscribed: boolean }>>;
     onEvent(listener: (event: RuntimeEvent) => void): () => void;
   };
   write: {
@@ -141,6 +162,8 @@ function getAgentApi(): {
   }
   return api as {
     sse: {
+      subscribeGlobal(): Promise<IpcResult<{ subscribed: true }>>;
+      unsubscribeGlobal(): Promise<IpcResult<{ unsubscribed: boolean }>>;
       onEvent(listener: (event: RuntimeEvent) => void): () => void;
     };
     write: {

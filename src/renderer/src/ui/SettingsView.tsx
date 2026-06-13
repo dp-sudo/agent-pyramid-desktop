@@ -21,6 +21,7 @@ import {
   DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
   DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+  type IpcResult,
   LLM_PROTOCOLS,
   MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
@@ -55,12 +56,17 @@ import {
   type RuntimePermissionRuleTool,
   type RuntimePreferences,
   type RuntimePreferencesUpdate,
+  type RuntimeEvent,
   type RuntimeToolName,
   type RuntimeSkillCatalogEntry,
   type SkillListResponse,
+  type SseSubscribeGlobalResponse,
+  type SseUnsubscribeGlobalResponse,
   type ThreadApprovalPolicy,
   type ThreadSandboxMode,
 } from "../../../shared/agent-contracts";
+import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
+import { toMcpNameSegment } from "../../../shared/mcp-names";
 import { useWorkbench } from "./store/WorkbenchContext";
 import {
   SecretInput,
@@ -107,6 +113,11 @@ export type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "err
 type RuntimeSaveState = Exclude<SaveState, "dirty">;
 type RuntimeCommandDraftField = "timeoutMs" | "maxOutputBytes";
 type RuntimeSkillsDraftField = "activeLimit" | "instructionBudgetBytes";
+type SettingsSseApi = {
+  subscribeGlobal(): Promise<IpcResult<SseSubscribeGlobalResponse>>;
+  unsubscribeGlobal(): Promise<IpcResult<SseUnsubscribeGlobalResponse>>;
+  onEvent(listener: (event: RuntimeEvent) => void): () => void;
+};
 interface RuntimeCommandDraft {
   timeoutMs: string;
   maxOutputBytes: string;
@@ -333,15 +344,22 @@ export function SettingsView(): ReactElement {
 
   useEffect(() => {
     if (!window.agentApi) return undefined;
-    return window.agentApi.sse.onEvent((event) => {
-      if (
-        event.kind === "mcp_server_connection" ||
-        event.kind === "mcp_tool_list_changed" ||
-        event.kind === "mcp_surface_changed"
-      ) {
-        void refreshMcpServerStatuses(false);
-      }
-    });
+    return subscribeSettingsGlobalRuntimeEvents(
+      window.agentApi.sse,
+      (event) => {
+        if (
+          event.kind === "mcp_server_connection" ||
+          event.kind === "mcp_tool_list_changed" ||
+          event.kind === "mcp_surface_changed"
+        ) {
+          void refreshMcpServerStatuses(false);
+        }
+      },
+      (message) => {
+        setRuntimeSaveState("error");
+        setRuntimeError(message);
+      },
+    );
   }, []);
 
   useEffect(() => {
@@ -657,7 +675,10 @@ export function SettingsView(): ReactElement {
     void updateRuntimePreferences({
       mcpServers: [
         ...runtimePreferences.mcpServers,
-        createDefaultMcpServer(t("settings.mcpServers.defaultName")),
+        createDefaultMcpServer(createUniqueMcpServerName(
+          t("settings.mcpServers.defaultName"),
+          runtimePreferences.mcpServers,
+        )),
       ],
     });
   }
@@ -3070,6 +3091,37 @@ export function createDefaultMcpServer(name: string): McpServerConfig {
   };
 }
 
+export function createUniqueMcpServerName(
+  baseName: string,
+  servers: readonly Pick<McpServerConfig, "name">[],
+): string {
+  const trimmedBaseName = baseName.trim() || "local-mcp";
+  const usedNames = new Set<string>();
+  const usedNameSegments = new Set<string>();
+  for (const server of servers) {
+    const trimmedName = server.name.trim();
+    if (trimmedName) {
+      usedNames.add(trimmedName);
+      usedNameSegments.add(toMcpNameSegment(trimmedName));
+    }
+  }
+  if (
+    !usedNames.has(trimmedBaseName) &&
+    !usedNameSegments.has(toMcpNameSegment(trimmedBaseName))
+  ) {
+    return trimmedBaseName;
+  }
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${trimmedBaseName}-${suffix}`;
+    if (
+      !usedNames.has(candidate) &&
+      !usedNameSegments.has(toMcpNameSegment(candidate))
+    ) {
+      return candidate;
+    }
+  }
+}
+
 export function updateMcpServerConfigs(
   servers: readonly McpServerConfig[],
   id: string,
@@ -3117,20 +3169,30 @@ export function parseMcpServerStringRecordDraft(
   const jsonError = kind === "headers"
     ? t("settings.errors.mcpHeadersJson")
     : t("settings.errors.mcpEnvJson");
+  const duplicateKeyError = kind === "headers"
+    ? t("settings.errors.mcpHeadersDuplicateKey")
+    : t("settings.errors.mcpEnvDuplicateKey");
   try {
     const parsed = JSON.parse(trimmed) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return { ok: false, message: objectError };
     }
     const env: Record<string, string> = {};
+    const keys = new Set<string>();
     for (const [key, value] of Object.entries(parsed)) {
       if (!key.trim() || key.includes("\0") || typeof value !== "string" || value.includes("\0")) {
         return { ok: false, message: objectError };
       }
-      env[key.trim()] = value;
+      const parsedKey = key.trim();
+      if (keys.has(parsedKey)) {
+        return { ok: false, message: duplicateKeyError };
+      }
+      keys.add(parsedKey);
+      env[parsedKey] = value;
     }
     return { ok: true, value: env };
-  } catch {
+  } catch (error) {
+    void error;
     return { ok: false, message: jsonError };
   }
 }
@@ -3256,6 +3318,52 @@ function clonePermissionRules(
 
 export function messageOfUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Settings consumes process-level SSE events even when no thread is active.
+ * Cleanup is intentionally ordered behind a successful subscribe so route
+ * changes during IPC setup cannot leave a main-process global listener alive.
+ */
+export function subscribeSettingsGlobalRuntimeEvents(
+  sse: SettingsSseApi,
+  listener: (event: RuntimeEvent) => void,
+  onSubscribeError: (message: string) => void,
+): () => void {
+  let disposed = false;
+  let subscribed = false;
+  let unsubscribeStarted = false;
+  const unsubscribeEvent = sse.onEvent(listener);
+
+  const releaseGlobalSubscription = (): void => {
+    if (unsubscribeStarted) return;
+    unsubscribeStarted = true;
+    void sse.unsubscribeGlobal().then((result) => {
+      if (!result.ok && result.code !== IPC_ERROR_CODES.SSE_NOT_SUBSCRIBED) {
+        console.warn("[settings] failed to unsubscribe global SSE:", result.message);
+      }
+    }).catch((error: unknown) => {
+      console.warn("[settings] failed to unsubscribe global SSE:", error);
+    });
+  };
+
+  void sse.subscribeGlobal().then((result) => {
+    if (!result.ok) {
+      if (!disposed) onSubscribeError(result.message);
+      return;
+    }
+    subscribed = true;
+    if (disposed) releaseGlobalSubscription();
+  }).catch((error: unknown) => {
+    if (!disposed) onSubscribeError(messageOfUnknownError(error));
+  });
+
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    unsubscribeEvent();
+    if (subscribed) releaseGlobalSubscription();
+  };
 }
 
 function parseOptionalPositiveIntegerForValidation(

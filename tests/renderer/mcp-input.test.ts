@@ -23,6 +23,18 @@ describe("MCP composer input", () => {
       ok: false,
       message: "MCP prompt commands must use /mcp__server__prompt followed by positional arguments.",
     });
+    expect(parseMcpPromptCommand("/mcp__/bad__review")).toEqual({
+      ok: false,
+      message: "MCP prompt commands must use /mcp__server__prompt followed by positional arguments.",
+    });
+    expect(parseMcpPromptCommand("/mcp___docs__review")).toEqual({
+      ok: false,
+      message: "MCP prompt commands must use /mcp__server__prompt followed by positional arguments.",
+    });
+    expect(parseMcpPromptCommand("/mcp__docs__review_")).toEqual({
+      ok: false,
+      message: "MCP prompt commands must use /mcp__server__prompt followed by positional arguments.",
+    });
   });
 
   it("finds unique MCP resource references without consuming ordinary text", () => {
@@ -35,6 +47,51 @@ describe("MCP composer input", () => {
           uri: "file:///README.md",
         },
       ]);
+    expect(findMcpResourceReferences(
+      "Compare @docs:file:///reports/Q1,final;v2(B).md, then continue.",
+    )).toEqual([
+      {
+        token: "@docs:file:///reports/Q1,final;v2(B).md",
+        serverSegment: "docs",
+        uri: "file:///reports/Q1,final;v2(B).md",
+      },
+    ]);
+    expect(findMcpResourceReferences("Ignore @/docs:file:///README.md")).toEqual([]);
+  });
+
+  it("matches MCP prompt commands with shared namespace segment normalization", async () => {
+    const api = createApi({
+      listPrompts: vi.fn(async () => ok({
+        servers: [
+          {
+            serverId: "server-1",
+            serverName: "docs mcp",
+            prompts: [
+              {
+                name: "review prompt",
+                description: "Review",
+                arguments: [],
+              },
+            ],
+          },
+        ],
+      })),
+    });
+
+    await expect(resolveMcpInputReferences({
+      text: "/mcp__docs_mcp__review_prompt",
+      threadTitle: "/mcp__docs_mcp__review_prompt",
+    }, api)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        text: "Review README.md",
+      },
+    });
+    expect(api.getPrompt).toHaveBeenCalledWith({
+      serverId: "server-1",
+      name: "review prompt",
+      arguments: {},
+    });
   });
 
   it("resolves slash prompt output into turn text while preserving visible input", async () => {
@@ -80,6 +137,32 @@ describe("MCP composer input", () => {
         displayText: "Summarize @docs:file:///README.md",
         threadTitle: "Summarize @docs:file:///README.md",
       },
+    });
+  });
+
+  it("passes full MCP resource URIs with internal punctuation to readResource", async () => {
+    const uri = "file:///reports/Q1,final;v2(B).md";
+    const api = createApi({
+      readResource: vi.fn(async () => ok({
+        contents: [
+          {
+            uri,
+            mimeType: "text/markdown",
+            text: "# Report",
+          },
+        ],
+      })),
+    });
+
+    await expect(resolveMcpInputReferences({
+      text: `Summarize (@docs:${uri}).`,
+      threadTitle: `Summarize (@docs:${uri}).`,
+    }, api)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(api.readResource).toHaveBeenCalledWith({
+      serverId: "server-1",
+      uri,
     });
   });
 

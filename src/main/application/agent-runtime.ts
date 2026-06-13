@@ -1475,8 +1475,9 @@ export class AgentRuntime {
     if (thread.approvalPolicy === "never") {
       return "deny";
     }
-    // Configurable per-call rules may only refine non-read-only command/write
-    // calls after hard sandbox and approval denials have already been applied.
+    // Configurable per-call rules may only refine non-read-only command,
+    // write, or MCP calls after hard sandbox and approval denials have already
+    // been applied.
     const permissionDecision = evaluatePermission({
       toolName: name,
       args: call.arguments,

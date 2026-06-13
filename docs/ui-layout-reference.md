@@ -465,8 +465,10 @@ Send behavior:
 - Code sends resolve MCP inputs before `turn:start`: a leading
   `/mcp__<server>__<prompt>` is expanded through `agentApi.mcp.getPrompt()`,
   and `@<server>:<uri>` references append resource text through
-  `agentApi.mcp.readResource()`. The original draft stays in `displayText`, so
-  the user bubble shows the command/reference instead of injected context.
+  `agentApi.mcp.readResource()`. Resource URIs are parsed as non-whitespace
+  tokens with only surrounding prose punctuation trimmed. The original draft
+  stays in `displayText`, so the user bubble shows the command/reference
+  instead of injected context.
 
 ### Right Inspector
 
@@ -942,6 +944,9 @@ MCP Servers category:
 
 - Configures `RuntimePreferences.mcpServers` through the same runtime
   preferences save queue as other tool settings.
+- Add creates a collision-free default server name using the same
+  `toMcpNameSegment()` namespace rule as the main-process preferences parser,
+  so an unsaved duplicate default draft does not fail the strict save path.
 - Supports `stdio` command/args/cwd/env fields and `streamable-http` URL/header
   fields. Header/env textareas parse JSON objects and surface validation errors
   through the settings status area.

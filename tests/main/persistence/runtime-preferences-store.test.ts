@@ -1,6 +1,6 @@
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENCRYPTED_SECRET_PREFIX } from "../../../src/main/persistence/config-file";
 import {
   DEFAULT_MODEL_CONFIG,
@@ -78,8 +78,8 @@ describe("RuntimePreferencesStore", () => {
     const updated = await store.update({
       defaultApprovalPolicy: "never",
       defaultSandboxMode: "read-only",
-      codeDefaultModelProfileId: "code-profile",
-      writeDefaultModelProfileId: "write-profile",
+      codeDefaultModelProfileId: " code-profile ",
+      writeDefaultModelProfileId: " write-profile ",
       toolAvailability: {
         code: { run_command: false },
         write: { diagnose_file: true },
@@ -98,7 +98,7 @@ describe("RuntimePreferencesStore", () => {
         enabled: false,
         activeLimit: 5,
         instructionBudgetBytes: 32_000,
-        extraRoots: ["custom-skills"],
+        extraRoots: [" custom-skills ", "", "custom-skills", "shared-skills"],
       },
       permissionRules: [
         {
@@ -134,7 +134,7 @@ describe("RuntimePreferencesStore", () => {
       enabled: false,
       activeLimit: 5,
       instructionBudgetBytes: 32_000,
-      extraRoots: ["custom-skills"],
+      extraRoots: ["custom-skills", "shared-skills"],
     });
     expect(updated.permissionRules).toEqual([
       {
@@ -159,6 +159,9 @@ describe("RuntimePreferencesStore", () => {
     await expect(
       store.update({ writeDefaultModelProfileId: "missing-profile" }),
     ).rejects.toThrow("writeDefaultModelProfileId must reference an existing model profile.");
+    await expect(
+      store.update({ codeDefaultModelProfileId: " " }),
+    ).rejects.toThrow("codeDefaultModelProfileId cannot be blank.");
   });
 
   it("preserves model profiles when runtime preferences are updated", async () => {
@@ -320,13 +323,136 @@ describe("RuntimePreferencesStore", () => {
     await expect(
       store.update(malformedRuntimePreferencesUpdate({
         permissionRules: [
+          { id: "duplicate", tool: "command", pattern: "npm *", effect: "allow" },
+          { id: " duplicate ", tool: "write", pattern: "src/*", effect: "ask" },
+        ],
+      })),
+    ).rejects.toThrow("permissionRules[1].id is duplicated.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        permissionRules: [
+          { id: "bad\0id", tool: "command", pattern: "npm *", effect: "allow" },
+        ],
+      })),
+    ).rejects.toThrow("permissionRules[0].id cannot contain NUL bytes.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        permissionRules: [
           { id: "nul", tool: "command", pattern: "npm\0*", effect: "allow" },
         ],
       })),
     ).rejects.toThrow("permissionRules[0].pattern cannot contain NUL bytes.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({ mcpServers: "not-an-array" })),
+    ).rejects.toThrow("mcpServers must be an array.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        mcpServers: [
+          {
+            id: "bad-mcp",
+            name: "bad MCP",
+            transport: "stdio",
+            args: [],
+            env: {},
+            headers: {},
+            enabled: true,
+            readOnlyTools: [],
+            createdAt: "2026-06-14T00:00:00.000Z",
+            updatedAt: "2026-06-14T00:00:00.000Z",
+          },
+        ],
+      })),
+    ).rejects.toThrow("mcpServers[0].command must be a non-empty string.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        mcpServers: [
+          {
+            id: "bad-mcp",
+            name: "bad MCP",
+            transport: "streamable-http",
+            args: [],
+            env: {},
+            url: "https://mcp.example.test/mcp",
+            headers: {
+              Authorization: "Bearer one",
+              " Authorization ": "Bearer two",
+            },
+            enabled: true,
+            readOnlyTools: [],
+            createdAt: "2026-06-14T00:00:00.000Z",
+            updatedAt: "2026-06-14T00:00:00.000Z",
+          },
+        ],
+      })),
+    ).rejects.toThrow("mcpServers[0].headers.Authorization key is duplicated.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        mcpServers: [
+          {
+            id: "bad-mcp",
+            name: "bad MCP",
+            transport: "stdio",
+            command: "node",
+            args: [],
+            env: {},
+            headers: {},
+            enabled: true,
+            readOnlyTools: ["tools/list", "   "],
+            createdAt: "2026-06-14T00:00:00.000Z",
+            updatedAt: "2026-06-14T00:00:00.000Z",
+          },
+        ],
+      })),
+    ).rejects.toThrow("mcpServers[0].readOnlyTools[1] must be a non-empty string.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        mcpServers: [
+          {
+            id: "docs-mcp",
+            name: "docs mcp",
+            transport: "stdio",
+            command: "node",
+            args: [],
+            env: {},
+            headers: {},
+            enabled: true,
+            readOnlyTools: [],
+            createdAt: "2026-06-14T00:00:00.000Z",
+            updatedAt: "2026-06-14T00:00:00.000Z",
+          },
+          {
+            id: "docs-mcp-segment-collision",
+            name: "docs_mcp",
+            transport: "stdio",
+            command: "node",
+            args: [],
+            env: {},
+            headers: {},
+            enabled: true,
+            readOnlyTools: [],
+            createdAt: "2026-06-14T00:00:00.000Z",
+            updatedAt: "2026-06-14T00:00:00.000Z",
+          },
+        ],
+      })),
+    ).rejects.toThrow("mcpServers[1].name conflicts with another MCP server namespace segment.");
   });
 
   it("normalizes malformed persisted runtime preferences", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const validMcpServer = {
+      id: "valid-mcp",
+      name: "valid MCP",
+      transport: "stdio",
+      command: "node",
+      args: ["server.js"],
+      env: {},
+      headers: {},
+      enabled: true,
+      readOnlyTools: ["list"],
+      createdAt: "2026-06-14T00:00:00.000Z",
+      updatedAt: "2026-06-14T00:00:00.000Z",
+    } satisfies RuntimePreferences["mcpServers"][number];
     await fs.writeFile(path.join(userDataDir, "runtime-preferences.json"), JSON.stringify({
       defaultApprovalPolicy: "sometimes",
       defaultSandboxMode: "read-only",
@@ -352,58 +478,136 @@ describe("RuntimePreferencesStore", () => {
         enabled: false,
         activeLimit: 99,
         instructionBudgetBytes: 512,
-        extraRoots: ["valid-root", "bad\0root"],
+        extraRoots: [" valid-root ", "", "valid-root", "bad\0root", "shared-root"],
       },
       permissionRules: [
         { id: "allow-tests", tool: "command", pattern: "npm test*", effect: "allow" },
       ],
+      mcpServers: [
+        validMcpServer,
+        {
+          id: "broken-mcp",
+          name: "broken MCP",
+          transport: "stdio",
+          args: [],
+          env: {},
+          headers: {},
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-14T00:00:00.000Z",
+          updatedAt: "2026-06-14T00:00:00.000Z",
+        },
+        {
+          id: "valid-mcp",
+          name: "duplicate MCP",
+          transport: "stdio",
+          command: "node",
+          args: [],
+          env: {},
+          headers: {},
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-14T00:00:00.000Z",
+          updatedAt: "2026-06-14T00:00:00.000Z",
+        },
+        {
+          id: "duplicate-header",
+          name: "duplicate header",
+          transport: "streamable-http",
+          args: [],
+          env: {},
+          url: "https://mcp.example.test/mcp",
+          headers: {
+            Authorization: "Bearer one",
+            " Authorization ": "Bearer two",
+          },
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-14T00:00:00.000Z",
+          updatedAt: "2026-06-14T00:00:00.000Z",
+        },
+        {
+          id: "segment-duplicate-mcp",
+          name: "valid_MCP",
+          transport: "stdio",
+          command: "node",
+          args: [],
+          env: {},
+          headers: {},
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-14T00:00:00.000Z",
+          updatedAt: "2026-06-14T00:00:00.000Z",
+        },
+      ],
     }));
 
-    const preferences = await store.get();
-    const raw = JSON.parse(
-      await fs.readFile(path.join(userDataDir, "config"), "utf8"),
-    ) as { runtimePreferences?: RuntimePreferences };
+    try {
+      const preferences = await store.get();
+      const raw = JSON.parse(
+        await fs.readFile(path.join(userDataDir, "config"), "utf8"),
+      ) as { runtimePreferences?: RuntimePreferences };
 
-    expect(preferences.defaultApprovalPolicy).toBe(
-      DEFAULT_RUNTIME_PREFERENCES.defaultApprovalPolicy,
-    );
-    expect(preferences.defaultSandboxMode).toBe("read-only");
-    expect(preferences.toolAvailability.code.run_command).toBe(false);
-    expect(preferences.toolAvailability.write.apply_patch).toBe(true);
-    expect(preferences.toolAvailability.write.diagnose_workspace).toBe(
-      DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.diagnose_workspace,
-    );
-    expect(preferences.codeDefaultModelProfileId).toBeNull();
-    expect(preferences.writeDefaultModelProfileId).toBeNull();
-    expect(preferences.approvalExperience.showDiffByDefault).toBe(false);
-    expect(preferences.approvalExperience.autoScrollOnRequest).toBe(
-      DEFAULT_RUNTIME_PREFERENCES.approvalExperience.autoScrollOnRequest,
-    );
-    expect(preferences.command.timeoutMs).toBe(DEFAULT_RUNTIME_PREFERENCES.command.timeoutMs);
-    expect(preferences.command.maxOutputBytes).toBe(65_536);
-    expect(preferences.compaction.enabled).toBe(false);
-    expect(preferences.compaction.strategy).toBe(DEFAULT_RUNTIME_PREFERENCES.compaction.strategy);
-    expect(preferences.skills).toEqual({
-      ...DEFAULT_RUNTIME_PREFERENCES.skills,
-      enabled: false,
-      extraRoots: ["valid-root"],
-    });
-    expect(preferences.permissionRules).toEqual([
-      { id: "allow-tests", tool: "command", pattern: "npm test*", effect: "allow" },
-    ]);
-    expect(raw.runtimePreferences).toEqual(preferences);
+      expect(preferences.defaultApprovalPolicy).toBe(
+        DEFAULT_RUNTIME_PREFERENCES.defaultApprovalPolicy,
+      );
+      expect(preferences.defaultSandboxMode).toBe("read-only");
+      expect(preferences.toolAvailability.code.run_command).toBe(false);
+      expect(preferences.toolAvailability.write.apply_patch).toBe(true);
+      expect(preferences.toolAvailability.write.diagnose_workspace).toBe(
+        DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.diagnose_workspace,
+      );
+      expect(preferences.codeDefaultModelProfileId).toBeNull();
+      expect(preferences.writeDefaultModelProfileId).toBeNull();
+      expect(preferences.approvalExperience.showDiffByDefault).toBe(false);
+      expect(preferences.approvalExperience.autoScrollOnRequest).toBe(
+        DEFAULT_RUNTIME_PREFERENCES.approvalExperience.autoScrollOnRequest,
+      );
+      expect(preferences.command.timeoutMs).toBe(DEFAULT_RUNTIME_PREFERENCES.command.timeoutMs);
+      expect(preferences.command.maxOutputBytes).toBe(65_536);
+      expect(preferences.compaction.enabled).toBe(false);
+      expect(preferences.compaction.strategy).toBe(DEFAULT_RUNTIME_PREFERENCES.compaction.strategy);
+      expect(preferences.skills).toEqual({
+        ...DEFAULT_RUNTIME_PREFERENCES.skills,
+        enabled: false,
+        extraRoots: ["valid-root", "shared-root"],
+      });
+      expect(preferences.permissionRules).toEqual([
+        { id: "allow-tests", tool: "command", pattern: "npm test*", effect: "allow" },
+      ]);
+      expect(preferences.mcpServers).toEqual([validMcpServer]);
+      expect(warn).toHaveBeenCalledWith(
+        "[runtime-preferences] skipped malformed mcpServers[1] entry:",
+        "mcpServers[1].command must be a non-empty string.",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[runtime-preferences] skipped malformed mcpServers[2] entry:",
+        "mcpServers[2].id is duplicated.",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[runtime-preferences] skipped malformed mcpServers[3] entry:",
+        "mcpServers[3].headers.Authorization key is duplicated.",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[runtime-preferences] skipped malformed mcpServers[4] entry:",
+        "mcpServers[4].name conflicts with another MCP server namespace segment.",
+      );
+      expect(raw.runtimePreferences).toEqual(preferences);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("parses runtime preferences updates independently for IPC reuse", () => {
     expect(parseRuntimePreferencesUpdate({
       command: { maxOutputBytes: 4096 },
-      skills: { activeLimit: 2 },
+      skills: { activeLimit: 2, extraRoots: [" custom-skills ", "", "custom-skills"] },
       permissionRules: [
         { id: "deny-rm", tool: "command", pattern: "rm *", effect: "deny" },
       ],
     })).toEqual({
       command: { maxOutputBytes: 4096 },
-      skills: { activeLimit: 2 },
+      skills: { activeLimit: 2, extraRoots: ["custom-skills"] },
       permissionRules: [
         { id: "deny-rm", tool: "command", pattern: "rm *", effect: "deny" },
       ],

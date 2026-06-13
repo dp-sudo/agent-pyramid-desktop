@@ -9,6 +9,7 @@ import type {
 } from "../../shared/agent-contracts.js";
 import { isIsoTimestampString } from "../../shared/agent-contracts.js";
 import { isSamePath } from "../application/path-utils.js";
+import { writeUtf8TextFileNoFollow } from "../application/tools/text-file.js";
 import {
   resolveWorkspacePathForAccess,
   resolveWorkspaceRoot,
@@ -168,12 +169,17 @@ export class CheckpointStore {
     const deletedPaths: string[] = [];
     for (const entry of restorePlan) {
       if (entry.file.beforeContent === null) {
-        await fs.rm(entry.target, { force: true });
+        const target = await resolveRestoreTarget(thread.workspace, entry.file.path, "write");
+        await fs.rm(target, { force: true });
         deletedPaths.push(entry.file.path);
         continue;
       }
       await fs.mkdir(path.dirname(entry.target), { recursive: true });
-      await fs.writeFile(entry.target, entry.file.beforeContent, "utf8");
+      const target = await resolveRestoreTarget(thread.workspace, entry.file.path, "write");
+      await writeUtf8TextFileNoFollow(target, entry.file.beforeContent, {
+        label: "Checkpoint restore",
+        relativePath: entry.file.path,
+      });
       restoredPaths.push(entry.file.path);
     }
     return { restoredPaths, deletedPaths };
@@ -339,6 +345,16 @@ async function assertNoSymlinkPath(
       throw error;
     }
   }
+}
+
+async function resolveRestoreTarget(
+  workspace: string,
+  relativePath: string,
+  access: "read" | "write",
+): Promise<string> {
+  const target = await resolveWorkspacePathForAccess(workspace, relativePath, access);
+  await assertNoSymlinkPath(workspace, relativePath, access);
+  return target;
 }
 
 function normalizeRelativePath(value: string): string {

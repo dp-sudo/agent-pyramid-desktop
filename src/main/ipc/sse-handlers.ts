@@ -1,6 +1,8 @@
 import { ipcMain } from "electron";
 import {
+  SSE_SUBSCRIBE_GLOBAL_CHANNEL,
   SSE_SUBSCRIBE_CHANNEL,
+  SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
   SSE_UNSUBSCRIBE_CHANNEL,
   SSE_PUSH_CHANNEL,
 } from "../../shared/ipc.js";
@@ -9,6 +11,8 @@ import type {
   SseSubscribeRequest,
   SseUnsubscribeRequest,
   RuntimeEvent,
+  SseSubscribeGlobalResponse,
+  SseUnsubscribeGlobalResponse,
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
 import { RuntimeEventBus } from "../event-bus.js";
@@ -20,6 +24,7 @@ interface Subscription {
 
 interface WebContentsSubscriptions {
   cleanup: () => void;
+  globalSubscriberCount: number;
   threads: Map<string, Subscription>;
   unsubscribeGlobalEvents: () => void;
 }
@@ -71,6 +76,35 @@ export function registerSseHandlers(bus: RuntimeEventBus): void {
     },
   );
 
+  ipcMain.handle(
+    SSE_SUBSCRIBE_GLOBAL_CHANNEL,
+    async (event) => {
+      try {
+        const bucket = ensureWebContentsSubscriptions(event.sender, bus);
+        bucket.globalSubscriberCount += 1;
+        return ok<SseSubscribeGlobalResponse>({ subscribed: true });
+      } catch (error) {
+        return err(IPC_ERROR_CODES.SSE_SUBSCRIBE_FAILED, messageOf(error));
+      }
+    },
+  );
+
+  ipcMain.handle(
+    SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
+    async (event) => {
+      try {
+        if (disposeGlobalSubscription(event.sender.id)) {
+          return ok<SseUnsubscribeGlobalResponse>({ unsubscribed: true });
+        }
+        return err(
+          IPC_ERROR_CODES.SSE_NOT_SUBSCRIBED,
+          "No active global subscription for this window",
+        );
+      } catch (error) {
+        return err(IPC_ERROR_CODES.SSE_UNSUBSCRIBE_FAILED, messageOf(error));
+      }
+    },
+  );
 }
 
 interface DestroyableWebContents {
@@ -97,10 +131,10 @@ function ensureWebContentsSubscriptions(
   const existing = subscriptions.get(webContents.id);
   if (existing) return existing;
 
-  // Thread subscriptions intentionally filter by threadId. A global
-  // runtime_error has no threadId, so each renderer gets one bucket-level
-  // listener that forwards those process-level failures without duplicating
-  // them for every subscribed thread.
+  // Thread subscriptions intentionally filter by threadId. Process-level
+  // runtime/MCP events have no threadId, so each renderer gets one bucket-level
+  // listener that forwards them without duplicating delivery for every
+  // subscribed thread.
   const globalUnsubscribers = [
     bus.onKind("runtime_error", (evt: RuntimeEvent) => {
       if (evt.kind !== "runtime_error" || evt.threadId) return;
@@ -124,6 +158,7 @@ function ensureWebContentsSubscriptions(
     cleanup: onWebContentsDestroyed(webContents, () => {
       disposeWebContentsSubscriptions(webContents.id);
     }),
+    globalSubscriberCount: 0,
     threads: new Map<string, Subscription>(),
     unsubscribeGlobalEvents: () => {
       for (const unsubscribe of globalUnsubscribers) {
@@ -141,7 +176,17 @@ function disposeThreadSubscription(webContentsId: number, threadId: string): boo
   if (!bucket || !sub) return false;
   sub.unsubscribe();
   bucket.threads.delete(threadId);
-  if (bucket.threads.size === 0) {
+  if (bucket.threads.size === 0 && bucket.globalSubscriberCount === 0) {
+    disposeWebContentsSubscriptions(webContentsId);
+  }
+  return true;
+}
+
+function disposeGlobalSubscription(webContentsId: number): boolean {
+  const bucket = subscriptions.get(webContentsId);
+  if (!bucket || bucket.globalSubscriberCount <= 0) return false;
+  bucket.globalSubscriberCount -= 1;
+  if (bucket.threads.size === 0 && bucket.globalSubscriberCount === 0) {
     disposeWebContentsSubscriptions(webContentsId);
   }
   return true;

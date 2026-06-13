@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CheckpointStore } from "../../../src/main/persistence/checkpoint-store";
 import type { ThreadRecord } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
@@ -192,6 +192,120 @@ describe("CheckpointStore", () => {
       expect(await fs.readFile(outside, "utf8")).toBe("keep\n");
     } finally {
       await removeTempDir(path.dirname(outside));
+    }
+  });
+
+  it("rechecks restore targets after creating parent directories", async () => {
+    const outside = await makeTempDir("agent-checkpoint-race-outside-");
+    try {
+      const store = new CheckpointStore(userDataDir);
+      await store.init();
+      const checkpointPath = path.join(userDataDir, "checkpoints", `${THREAD_ID}.jsonl`);
+      await fs.writeFile(
+        checkpointPath,
+        `${JSON.stringify({
+          threadId: THREAD_ID,
+          turnId: "turn-0",
+          workspace,
+          prompt: "restore race",
+          createdAt: "2026-06-12T01:00:00.000Z",
+          files: [{
+            path: "drafts/note.md",
+            operation: "update",
+            toolName: "edit_file",
+            beforeContent: "safe\n",
+            afterContent: "changed\n",
+            beforeSha256: sha256("safe\n"),
+            afterSha256: sha256("changed\n"),
+            createdAt: "2026-06-12T01:00:01.000Z",
+          }],
+        })}\n`,
+        "utf8",
+      );
+      const parentPath = path.join(workspace, "drafts");
+      const outsideTarget = path.join(outside, "note.md");
+      const originalMkdir = fs.mkdir.bind(fs);
+      const mkdirSpy = vi.spyOn(fs, "mkdir").mockImplementation((async (
+        ...args: Parameters<typeof fs.mkdir>
+      ) => {
+        const result = await originalMkdir(...args);
+        const target = args[0];
+        if (typeof target === "string" && path.resolve(target) === parentPath) {
+          await fs.rm(parentPath, { recursive: true, force: true });
+          await fs.symlink(outside, parentPath);
+        }
+        return result;
+      }) as typeof fs.mkdir);
+
+      try {
+        await expect(store.restoreCode(makeThread(), "turn-0")).rejects.toThrow(
+          "Path escapes workspace: drafts/note.md",
+        );
+      } finally {
+        mkdirSpy.mockRestore();
+      }
+      await expect(fs.access(outsideTarget)).rejects.toThrow();
+    } finally {
+      await removeTempDir(outside);
+    }
+  });
+
+  it("rejects restore writes when the target becomes a symlink before commit", async () => {
+    const outside = await makeTempDir("agent-checkpoint-target-race-outside-");
+    try {
+      const store = new CheckpointStore(userDataDir);
+      await store.init();
+      const targetPath = path.join(workspace, "a.txt");
+      const outsideTarget = path.join(outside, "a.txt");
+      await fs.writeFile(targetPath, "changed\n", "utf8");
+      await fs.writeFile(outsideTarget, "outside\n", "utf8");
+      const checkpointPath = path.join(userDataDir, "checkpoints", `${THREAD_ID}.jsonl`);
+      await fs.writeFile(
+        checkpointPath,
+        `${JSON.stringify({
+          threadId: THREAD_ID,
+          turnId: "turn-0",
+          workspace,
+          prompt: "restore target race",
+          createdAt: "2026-06-12T01:00:00.000Z",
+          files: [{
+            path: "a.txt",
+            operation: "update",
+            toolName: "edit_file",
+            beforeContent: "safe\n",
+            afterContent: "changed\n",
+            beforeSha256: sha256("safe\n"),
+            afterSha256: sha256("changed\n"),
+            createdAt: "2026-06-12T01:00:01.000Z",
+          }],
+        })}\n`,
+        "utf8",
+      );
+
+      const realOpen = fs.open.bind(fs);
+      let replaced = false;
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
+      ) => {
+        const target = args[0];
+        if (!replaced && typeof target === "string" && path.resolve(target) === targetPath) {
+          replaced = true;
+          await fs.rm(targetPath, { force: true });
+          await fs.symlink(outsideTarget, targetPath);
+        }
+        return realOpen(...args);
+      }) as typeof fs.open);
+
+      try {
+        await expect(store.restoreCode(makeThread(), "turn-0")).rejects.toThrow(
+          "Checkpoint restore target is a symbolic link: a.txt",
+        );
+      } finally {
+        openSpy.mockRestore();
+      }
+      expect(await fs.readFile(outsideTarget, "utf8")).toBe("outside\n");
+    } finally {
+      await removeTempDir(outside);
     }
   });
 

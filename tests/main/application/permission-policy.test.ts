@@ -95,6 +95,19 @@ describe("permission-policy", () => {
       tool: "write",
       value: "src/main/index.ts",
     });
+    expect(buildPermissionCandidate("mcp__local-mcp__echo", {})).toEqual({
+      tool: "mcp",
+      value: "local-mcp/echo",
+    });
+    expect(buildPermissionCandidate("mcp__local_mcp__echo_tool", {})).toEqual({
+      tool: "mcp",
+      value: "local_mcp/echo_tool",
+    });
+    expect(buildPermissionCandidate("mcp__bad", {})).toBeNull();
+    expect(buildPermissionCandidate("mcp__/bad__echo", {})).toBeNull();
+    expect(buildPermissionCandidate("mcp___bad__echo", {})).toBeNull();
+    expect(buildPermissionCandidate("mcp__bad___echo", {})).toBeNull();
+    expect(buildPermissionCandidate("mcp__bad__echo_", {})).toBeNull();
     expect(buildPermissionCandidate("write_command_session", { input: "q" })).toBeNull();
   });
 

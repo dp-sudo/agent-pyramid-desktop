@@ -168,6 +168,14 @@ describe("thread handlers", () => {
       parseThreadCreateInput({
         workspace: "/workspace",
         mode: "code",
+        relation: "primary",
+        parentThreadId: "00000000-0000-4000-8000-000000000101",
+      })
+    ).toThrow("Thread create parentThreadId requires relation fork.");
+    expect(() =>
+      parseThreadCreateInput({
+        workspace: "/workspace",
+        mode: "code",
         approvalPolicy: "sometimes",
       })
     ).toThrow("Thread create approvalPolicy is invalid.");

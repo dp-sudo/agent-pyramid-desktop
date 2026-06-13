@@ -1,4 +1,4 @@
-import { constants as fsConstants, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { ipcMain } from "electron";
 import {
@@ -24,7 +24,11 @@ import type {
   WriteDeleteRequest,
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
-import { decodeUtf8TextBuffer } from "../application/tools/text-file.js";
+import {
+  decodeUtf8TextBuffer,
+  openTextFileNoFollow,
+  writeUtf8TextFileNoFollow,
+} from "../application/tools/text-file.js";
 import {
   resolveWorkspacePathForAccess as resolveSharedWorkspacePathForAccess,
   resolveWorkspacePathLexically,
@@ -231,11 +235,23 @@ export async function readMarkdownFileContent(
   relativePath: string,
 ): Promise<string> {
   const fullPath = await resolveWritePathForAccess(workspace, relativePath, "read");
-  return decodeUtf8TextBuffer(
-    await fs.readFile(fullPath),
+  const handle = await openTextFileNoFollow(fullPath, {
+    label: "Write get",
     relativePath,
-    "write.get path",
-  );
+  });
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) {
+      throw new Error(`Write get path is not a file: ${relativePath}`);
+    }
+    return decodeUtf8TextBuffer(
+      await handle.readFile(),
+      relativePath,
+      "write.get path",
+    );
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function writeMarkdownFileContent(
@@ -249,7 +265,10 @@ export async function writeMarkdownFileContent(
   if (path.resolve(checkedFullPath) !== path.resolve(fullPath)) {
     throw new Error(`Path changed before write: ${relativePath}`);
   }
-  await fs.writeFile(fullPath, content, "utf8");
+  await writeUtf8TextFileNoFollow(fullPath, content, {
+    label: "Write put",
+    relativePath,
+  });
   return Buffer.byteLength(content, "utf8");
 }
 
@@ -264,12 +283,11 @@ export async function createMarkdownFileContent(
   if (path.resolve(checkedFullPath) !== path.resolve(fullPath)) {
     throw new Error(`Path changed before create: ${relativePath}`);
   }
-  const handle = await fs.open(fullPath, "wx");
-  try {
-    await handle.writeFile(content, "utf8");
-  } finally {
-    await handle.close();
-  }
+  await writeUtf8TextFileNoFollow(fullPath, content, {
+    exclusive: true,
+    label: "Write create",
+    relativePath,
+  });
   return Buffer.byteLength(content, "utf8");
 }
 
@@ -296,7 +314,29 @@ export async function renameMarkdownFile(
   if (path.resolve(checkedNextFullPath) !== path.resolve(nextFullPath)) {
     throw new Error(`Path changed before rename: ${nextRelativePath}`);
   }
-  await fs.copyFile(currentFullPath, nextFullPath, fsConstants.COPYFILE_EXCL);
+  const source = await openTextFileNoFollow(currentFullPath, {
+    label: "Write rename source",
+    relativePath: currentRelativePath,
+  });
+  let content: string;
+  try {
+    const stat = await source.stat();
+    if (!stat.isFile()) {
+      throw new Error(`Write rename source is not a file: ${currentRelativePath}`);
+    }
+    content = decodeUtf8TextBuffer(
+      await source.readFile(),
+      currentRelativePath,
+      "write.rename source",
+    );
+  } finally {
+    await source.close();
+  }
+  await writeUtf8TextFileNoFollow(nextFullPath, content, {
+    exclusive: true,
+    label: "Write rename",
+    relativePath: nextRelativePath,
+  });
   await fs.rm(currentFullPath, { force: false });
 }
 

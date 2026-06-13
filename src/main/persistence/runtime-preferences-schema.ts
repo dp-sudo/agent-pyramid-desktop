@@ -29,6 +29,7 @@ import {
   type RuntimeSkillsPreferences,
   type RuntimeToolAvailabilityPreferences,
 } from "../../shared/agent-contracts.js";
+import { toMcpNameSegment } from "../../shared/mcp-names.js";
 
 // Runtime preferences are persisted inside the shared app config file, but IPC
 // and tests also call this parser directly. Keep parsing and stored-shape
@@ -365,9 +366,7 @@ function normalizeSkillsPreferences(value: unknown): RuntimeSkillsPreferences {
       defaults.instructionBudgetBytes,
     ),
     extraRoots: Array.isArray(value.extraRoots)
-      ? value.extraRoots.filter((entry): entry is string =>
-        typeof entry === "string" && !entry.includes("\0")
-      )
+      ? normalizeStoredStringList(value.extraRoots)
       : [...defaults.extraRoots],
   };
 }
@@ -402,9 +401,10 @@ function parseSkillsPreferencesUpdate(
     );
   }
   if (value.extraRoots !== undefined) {
-    parsed.extraRoots = parseStringArray(value.extraRoots, "skills.extraRoots")
+    const roots = parseStringArray(value.extraRoots, "skills.extraRoots")
       .map((entry) => entry.trim())
       .filter(Boolean);
+    parsed.extraRoots = Array.from(new Set(roots));
   }
   if (Object.keys(parsed).length === 0) {
     throw new Error("skills must include at least one field.");
@@ -484,7 +484,37 @@ function normalizeMcpServerConfigs(value: unknown): McpServerConfig[] {
   if (value === undefined) {
     return [];
   }
-  return parseMcpServerConfigs(value);
+  if (!Array.isArray(value)) {
+    console.warn(
+      "[runtime-preferences] ignored malformed mcpServers field:",
+      "mcpServers must be an array.",
+    );
+    return [];
+  }
+  const parsed: McpServerConfig[] = [];
+  let ids = new Set<string>();
+  let names = new Set<string>();
+  let nameSegments = new Set<string>();
+  for (const [index, entry] of value.entries()) {
+    try {
+      // Stored preferences are recovery-oriented: one damaged MCP server record
+      // must not prevent the rest of the runtime preferences from loading.
+      const nextIds = new Set(ids);
+      const nextNames = new Set(names);
+      const nextNameSegments = new Set(nameSegments);
+      const config = parseMcpServerConfig(entry, index, nextIds, nextNames, nextNameSegments);
+      parsed.push(config);
+      ids = nextIds;
+      names = nextNames;
+      nameSegments = nextNameSegments;
+    } catch (error) {
+      console.warn(
+        `[runtime-preferences] skipped malformed mcpServers[${index}] entry:`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+  return parsed;
 }
 
 function parseMcpServerConfigs(value: unknown): McpServerConfig[] {
@@ -493,7 +523,10 @@ function parseMcpServerConfigs(value: unknown): McpServerConfig[] {
   }
   const ids = new Set<string>();
   const names = new Set<string>();
-  return value.map((entry, index) => parseMcpServerConfig(entry, index, ids, names));
+  const nameSegments = new Set<string>();
+  return value.map((entry, index) =>
+    parseMcpServerConfig(entry, index, ids, names, nameSegments)
+  );
 }
 
 function parseMcpServerConfig(
@@ -501,12 +534,18 @@ function parseMcpServerConfig(
   index: number,
   ids: Set<string>,
   names: Set<string>,
+  nameSegments: Set<string>,
 ): McpServerConfig {
   if (!isRecord(value)) {
     throw new Error(`mcpServers[${index}] must be an object.`);
   }
   const id = parseUniqueNonBlankString(value.id, `mcpServers[${index}].id`, ids);
-  const name = parseUniqueNonBlankString(value.name, `mcpServers[${index}].name`, names);
+  const name = parseUniqueMcpServerName(
+    value.name,
+    `mcpServers[${index}].name`,
+    names,
+    nameSegments,
+  );
   if (value.transport !== undefined && !MCP_SERVER_TRANSPORTS.includes(value.transport as never)) {
     throw new Error(`mcpServers[${index}].transport is invalid.`);
   }
@@ -540,10 +579,10 @@ function parseMcpServerConfig(
       ? {}
       : parseStringRecord(value.headers, `mcpServers[${index}].headers`),
     enabled: parseBoolean(value.enabled, `mcpServers[${index}].enabled`),
-    readOnlyTools: parseStringArray(
+    readOnlyTools: parseTrimmedNonBlankStringArray(
       value.readOnlyTools,
       `mcpServers[${index}].readOnlyTools`,
-    ).map((entry) => entry.trim()),
+    ),
     createdAt,
     updatedAt,
   };
@@ -603,6 +642,21 @@ function parseUniqueNonBlankString(value: unknown, field: string, seen: Set<stri
   return parsed;
 }
 
+function parseUniqueMcpServerName(
+  value: unknown,
+  field: string,
+  seenNames: Set<string>,
+  seenSegments: Set<string>,
+): string {
+  const parsed = parseUniqueNonBlankString(value, field, seenNames);
+  const segment = toMcpNameSegment(parsed);
+  if (seenSegments.has(segment)) {
+    throw new Error(`${field} conflicts with another MCP server namespace segment.`);
+  }
+  seenSegments.add(segment);
+  return parsed;
+}
+
 function parseNonBlankString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${field} must be a non-empty string.`);
@@ -621,7 +675,8 @@ function parseHttpUrl(value: unknown, field: string): string {
     if (url.protocol === "http:" || url.protocol === "https:") {
       return parsed;
     }
-  } catch {
+  } catch (error) {
+    void error;
     // Fall through to the shared error below.
   }
   throw new Error(`${field} must be an http or https URL.`);
@@ -642,13 +697,41 @@ function parseStringArray(value: unknown, field: string): string[] {
   });
 }
 
+function parseTrimmedNonBlankStringArray(value: unknown, field: string): string[] {
+  return parseStringArray(value, field).map((entry, index) => {
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      throw new Error(`${field}[${index}] must be a non-empty string.`);
+    }
+    return trimmed;
+  });
+}
+
+function normalizeStoredStringList(value: readonly unknown[]): string[] {
+  const parsed: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string" || entry.includes("\0")) continue;
+    const trimmed = entry.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    parsed.push(trimmed);
+  }
+  return parsed;
+}
+
 function parseStringRecord(value: unknown, field: string): Record<string, string> {
   if (!isRecord(value)) {
     throw new Error(`${field} must be an object.`);
   }
   const parsed: Record<string, string> = {};
+  const keys = new Set<string>();
   for (const [key, entry] of Object.entries(value)) {
     const parsedKey = parseNonBlankString(key, `${field} key`);
+    if (keys.has(parsedKey)) {
+      throw new Error(`${field}.${parsedKey} key is duplicated.`);
+    }
+    keys.add(parsedKey);
     if (typeof entry !== "string") {
       throw new Error(`${field}.${parsedKey} must be a string.`);
     }

@@ -175,6 +175,9 @@ export function parseThreadCreateInput(input: unknown): ThreadCreateInput {
   if (parsed.relation === "fork" && !parsed.parentThreadId) {
     throw new Error("Thread create fork requires parentThreadId.");
   }
+  if (parsed.parentThreadId && parsed.relation !== "fork") {
+    throw new Error("Thread create parentThreadId requires relation fork.");
+  }
   return parsed;
 }
 

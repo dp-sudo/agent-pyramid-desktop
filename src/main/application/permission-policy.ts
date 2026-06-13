@@ -2,6 +2,7 @@ import type {
   RuntimePermissionRule,
   RuntimePermissionRuleEffect,
 } from "../../shared/agent-contracts.js";
+import { mcpPermissionValueFromToolName } from "../../shared/mcp-names.js";
 
 export type PermissionPolicyDecision = RuntimePermissionRuleEffect | "none";
 
@@ -90,9 +91,8 @@ export function buildPermissionCandidate(
 function buildMcpPermissionCandidate(
   toolName: string,
 ): { tool: RuntimePermissionRule["tool"]; value: string } | null {
-  const match = /^mcp__([A-Za-z0-9_-]+)__([A-Za-z0-9_-]+)$/.exec(toolName);
-  if (!match) return null;
-  return { tool: "mcp", value: `${match[1]}/${match[2]}` };
+  const value = mcpPermissionValueFromToolName(toolName);
+  return value ? { tool: "mcp", value } : null;
 }
 
 export function matchesPermissionPattern(pattern: string, value: string): boolean {

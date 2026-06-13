@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   canSubmitModelSettingsSection,
   clearDeletedDefaultProfileReferences,
+  createUniqueMcpServerName,
   formatSkillTriggerSummary,
   formatMcpStartupStats,
   getDefaultCategoryForSection,
@@ -18,6 +19,7 @@ import {
   shouldBlockSettingsNavigation,
   shouldDisableModelProfileControls,
   shouldDisableRuntimePreferenceControls,
+  subscribeSettingsGlobalRuntimeEvents,
   toDefaultInspectorMode,
   toDefaultInspectorModeValue,
   toUpdatePayload,
@@ -41,6 +43,7 @@ import {
   MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
   RUNTIME_TOOL_NAMES,
   type McpServerConfig,
+  type RuntimeEvent,
   type RuntimeSkillCatalogEntry,
 } from "../../src/shared/agent-contracts";
 
@@ -416,6 +419,27 @@ describe("SettingsView helpers", () => {
       .toEqual({ ok: false, message: "Headers JSON must be an object." });
     expect(parseMcpServerStringRecordDraft("{bad", testT, "env"))
       .toEqual({ ok: false, message: "Environment must be valid JSON." });
+    expect(parseMcpServerStringRecordDraft(
+      "{\"Authorization\":\"Bearer one\",\" Authorization \":\"Bearer two\"}",
+      testT,
+      "headers",
+    )).toEqual({ ok: false, message: "Header keys must be unique." });
+    expect(parseMcpServerStringRecordDraft(
+      "{\"TOKEN\":\"one\",\" TOKEN \":\"two\"}",
+      testT,
+      "env",
+    )).toEqual({ ok: false, message: "Environment keys must be unique." });
+  });
+
+  it("generates MCP server default names that satisfy main-process namespace uniqueness", () => {
+    expect(createUniqueMcpServerName("local-mcp", [])).toBe("local-mcp");
+    expect(createUniqueMcpServerName(" local-mcp ", [
+      { name: "local-mcp" },
+      { name: "local-mcp-2" },
+    ])).toBe("local-mcp-3");
+    expect(createUniqueMcpServerName("local mcp", [
+      { name: "local_mcp" },
+    ])).toBe("local mcp-2");
   });
 
   it("formats MCP startup stats only when runtime observations exist", () => {
@@ -476,6 +500,67 @@ describe("SettingsView helpers", () => {
     expect(messageOfUnknownError("renderer bridge unavailable")).toBe(
       "renderer bridge unavailable",
     );
+  });
+
+  it("releases global SSE after a late successful subscribe", async () => {
+    let resolveSubscribe!: (result: { ok: true; value: { subscribed: true } }) => void;
+    const subscribeGlobal = vi.fn(
+      () =>
+        new Promise<{ ok: true; value: { subscribed: true } }>((resolve) => {
+          resolveSubscribe = resolve;
+        }),
+    );
+    const unsubscribeGlobal = vi.fn(async () => ({
+      ok: true as const,
+      value: { unsubscribed: true },
+    }));
+    const unsubscribeEvent = vi.fn();
+    const onEvent = vi.fn((_listener: (event: RuntimeEvent) => void) => unsubscribeEvent);
+    const onSubscribeError = vi.fn();
+
+    const dispose = subscribeSettingsGlobalRuntimeEvents(
+      { subscribeGlobal, unsubscribeGlobal, onEvent },
+      () => undefined,
+      onSubscribeError,
+    );
+    dispose();
+    dispose();
+
+    expect(unsubscribeEvent).toHaveBeenCalledOnce();
+    expect(unsubscribeGlobal).not.toHaveBeenCalled();
+
+    resolveSubscribe({ ok: true, value: { subscribed: true } });
+    await Promise.resolve();
+
+    expect(unsubscribeGlobal).toHaveBeenCalledOnce();
+    expect(onSubscribeError).not.toHaveBeenCalled();
+  });
+
+  it("reports global SSE subscribe failures while mounted", async () => {
+    const subscribeGlobal = vi.fn(async () => ({
+      ok: false as const,
+      code: "SSE_SUBSCRIBE_FAILED" as const,
+      message: "SSE unavailable",
+    }));
+    const unsubscribeGlobal = vi.fn(async () => ({
+      ok: true as const,
+      value: { unsubscribed: true },
+    }));
+    const unsubscribeEvent = vi.fn();
+    const onEvent = vi.fn((_listener: (event: RuntimeEvent) => void) => unsubscribeEvent);
+    const onSubscribeError = vi.fn();
+
+    const dispose = subscribeSettingsGlobalRuntimeEvents(
+      { subscribeGlobal, unsubscribeGlobal, onEvent },
+      () => undefined,
+      onSubscribeError,
+    );
+    await Promise.resolve();
+    dispose();
+
+    expect(onSubscribeError).toHaveBeenCalledWith("SSE unavailable");
+    expect(unsubscribeGlobal).not.toHaveBeenCalled();
+    expect(unsubscribeEvent).toHaveBeenCalledOnce();
   });
 
   it("clears local default profile references after deleting a model profile", () => {
@@ -572,6 +657,12 @@ function testT(key: string, options?: Record<string, unknown>): string {
   }
   if (key === "settings.errors.mcpEnvJson") {
     return "Environment must be valid JSON.";
+  }
+  if (key === "settings.errors.mcpHeadersDuplicateKey") {
+    return "Header keys must be unique.";
+  }
+  if (key === "settings.errors.mcpEnvDuplicateKey") {
+    return "Environment keys must be unique.";
   }
   if (key === "settings.mcpServers.startupStats") {
     return `Last startup ${String(options?.duration)} ms, ${String(options?.successes)} ok, ${String(options?.failures)} failed`;

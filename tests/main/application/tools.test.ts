@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import * as path from "node:path";
@@ -7,6 +7,7 @@ import {
   createPackageManagerInvocation,
   createCommandTools,
   createShellInvocation,
+  resolveDefaultPowerShellShell,
   toWslPath,
 } from "../../../src/main/application/tools/command-tools";
 import { createCodingTools } from "../../../src/main/application/tools/coding-tools";
@@ -1636,6 +1637,130 @@ describe("application tools", () => {
     }
   });
 
+  it("rejects writes when the target becomes a symlink before commit", async () => {
+    const workspace = await makeTempDir("coding-tools-target-symlink-race-");
+    const outside = await makeTempDir("coding-tools-target-symlink-race-outside-");
+    try {
+      const targetPath = path.join(workspace, "file.ts");
+      const outsideTargetPath = path.join(outside, "file.ts");
+      await fs.writeFile(targetPath, "one\n", "utf8");
+      await fs.writeFile(outsideTargetPath, "outside\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "file.ts" } },
+        context,
+      );
+
+      const realOpen = fs.open.bind(fs);
+      let replaced = false;
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
+      ) => {
+        const target = args[0];
+        const flags = args[1];
+        const isWriteOpen = typeof flags === "number" &&
+          (flags & fsConstants.O_WRONLY) === fsConstants.O_WRONLY;
+        if (
+          !replaced &&
+          isWriteOpen &&
+          typeof target === "string" &&
+          path.resolve(target) === targetPath
+        ) {
+          replaced = true;
+          await fs.rm(targetPath, { force: true });
+          await fs.symlink(outsideTargetPath, targetPath);
+        }
+        return realOpen(...args);
+      }) as typeof fs.open);
+      try {
+        await expect(
+          registry.execute(
+            {
+              id: "call-edit-target-symlink-race",
+              name: "edit_file",
+              arguments: {
+                path: "file.ts",
+                old_string: "one",
+                new_string: "two",
+              },
+            },
+            context,
+          ),
+        ).rejects.toThrow("Coding tool write target is a symbolic link: file.ts");
+      } finally {
+        openSpy.mockRestore();
+      }
+
+      expect(await fs.readFile(outsideTargetPath, "utf8")).toBe("outside\n");
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
+    }
+  });
+
+  it("rejects editable reads when the target becomes a symlink before open", async () => {
+    const workspace = await makeTempDir("coding-tools-read-symlink-race-");
+    const outside = await makeTempDir("coding-tools-read-symlink-race-outside-");
+    try {
+      const targetPath = path.join(workspace, "file.ts");
+      const outsideTargetPath = path.join(outside, "file.ts");
+      await fs.writeFile(targetPath, "one\n", "utf8");
+      await fs.writeFile(outsideTargetPath, "outside\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read", name: "read_file", arguments: { path: "file.ts" } },
+        context,
+      );
+
+      const realOpen = fs.open.bind(fs);
+      let replaced = false;
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
+      ) => {
+        const target = args[0];
+        if (!replaced && typeof target === "string" && path.resolve(target) === targetPath) {
+          replaced = true;
+          await fs.rm(targetPath, { force: true });
+          await fs.symlink(outsideTargetPath, targetPath);
+        }
+        return realOpen(...args);
+      }) as typeof fs.open);
+      try {
+        await expect(
+          registry.execute(
+            {
+              id: "call-edit-read-symlink-race",
+              name: "edit_file",
+              arguments: {
+                path: "file.ts",
+                old_string: "one",
+                new_string: "two",
+              },
+            },
+            context,
+          ),
+        ).rejects.toThrow("Coding tool read target is a symbolic link: file.ts");
+      } finally {
+        openSpy.mockRestore();
+      }
+
+      expect(await fs.readFile(outsideTargetPath, "utf8")).toBe("outside\n");
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
+    }
+  });
+
   it("rejects destructive coding tool paths that include symbolic links", async () => {
     const workspace = await makeTempDir("coding-tools-symlink-path-");
     try {
@@ -1854,16 +1979,16 @@ describe("application tools", () => {
         { id: "call-read-index", name: "read_file", arguments: { path: "src/index.ts" } },
         context,
       );
-      const originalWriteFile = fs.writeFile.bind(fs);
-      const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation((async (
-        ...args: Parameters<typeof fs.writeFile>
+      const realOpen = fs.open.bind(fs);
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
       ) => {
         const targetPath = args[0];
         if (typeof targetPath === "string" && path.resolve(targetPath) === failingPath) {
           throw new Error("simulated write failure");
         }
-        return originalWriteFile(...args);
-      }) as typeof fs.writeFile);
+        return realOpen(...args);
+      }) as typeof fs.open);
 
       try {
         await expect(
@@ -1889,7 +2014,7 @@ describe("application tools", () => {
           ),
         ).rejects.toThrow("simulated write failure");
       } finally {
-        writeFileSpy.mockRestore();
+        openSpy.mockRestore();
       }
 
       expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
@@ -1920,18 +2045,17 @@ describe("application tools", () => {
       );
 
       let failCreatedStat = false;
-      const originalWriteFile = fs.writeFile.bind(fs);
+      const realOpen = fs.open.bind(fs);
       const originalStat = fs.stat.bind(fs);
-      const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation((async (
-        ...args: Parameters<typeof fs.writeFile>
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
       ) => {
-        const result = await originalWriteFile(...args);
         const targetPath = args[0];
         if (typeof targetPath === "string" && path.resolve(targetPath) === createdPath) {
           failCreatedStat = true;
         }
-        return result;
-      }) as typeof fs.writeFile);
+        return realOpen(...args);
+      }) as typeof fs.open);
       const statSpy = vi.spyOn(fs, "stat").mockImplementation((async (
         ...args: Parameters<typeof fs.stat>
       ) => {
@@ -1971,7 +2095,7 @@ describe("application tools", () => {
         ).rejects.toThrow("simulated post-write stat failure");
       } finally {
         statSpy.mockRestore();
-        writeFileSpy.mockRestore();
+        openSpy.mockRestore();
       }
 
       expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
@@ -2003,18 +2127,17 @@ describe("application tools", () => {
       );
 
       let failTargetStat = false;
-      const originalWriteFile = fs.writeFile.bind(fs);
+      const realOpen = fs.open.bind(fs);
       const originalStat = fs.stat.bind(fs);
-      const writeFileSpy = vi.spyOn(fs, "writeFile").mockImplementation((async (
-        ...args: Parameters<typeof fs.writeFile>
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
       ) => {
-        const result = await originalWriteFile(...args);
         const target = args[0];
         if (typeof target === "string" && path.resolve(target) === targetPath) {
           failTargetStat = true;
         }
-        return result;
-      }) as typeof fs.writeFile);
+        return realOpen(...args);
+      }) as typeof fs.open);
       const statSpy = vi.spyOn(fs, "stat").mockImplementation((async (
         ...args: Parameters<typeof fs.stat>
       ) => {
@@ -2046,7 +2169,7 @@ describe("application tools", () => {
         ).rejects.toThrow("simulated single-file post-write stat failure");
       } finally {
         statSpy.mockRestore();
-        writeFileSpy.mockRestore();
+        openSpy.mockRestore();
       }
 
       expect(await fs.readFile(targetPath, "utf8")).toBe("const value = 1;\n");
@@ -2377,6 +2500,38 @@ describe("application tools", () => {
       expect(parsed.shellFile).toBe(process.execPath);
     } finally {
       await removeTempDir(workspace);
+    }
+  });
+
+  it("resolves the default PowerShell command shell through the Windows fallback order", async () => {
+    const fakeBin = await makeTempDir("powershell-command-fallback-bin-");
+    const originalPath = process.env.PATH;
+    const originalPathCapitalized = process.env.Path;
+    try {
+      process.env.PATH = fakeBin;
+      process.env.Path = fakeBin;
+
+      await fs.writeFile(path.join(fakeBin, "powershell.exe"), "", "utf8");
+      await expect(
+        withPlatformAsync("win32", () => resolveDefaultPowerShellShell()),
+      ).resolves.toBe("powershell");
+
+      await fs.writeFile(path.join(fakeBin, "pwsh.exe"), "", "utf8");
+      await expect(
+        withPlatformAsync("win32", () => resolveDefaultPowerShellShell()),
+      ).resolves.toBe("pwsh");
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      if (originalPathCapitalized === undefined) {
+        delete process.env.Path;
+      } else {
+        process.env.Path = originalPathCapitalized;
+      }
+      await removeTempDir(fakeBin);
     }
   });
 

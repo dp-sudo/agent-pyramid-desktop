@@ -1,3 +1,7 @@
+import {
+  constants as fsConstants,
+  promises as fs,
+} from "node:fs";
 import { TextDecoder } from "node:util";
 
 const STRICT_UTF8_DECODER_OPTIONS = {
@@ -7,6 +11,8 @@ const STRICT_UTF8_DECODER_OPTIONS = {
 
 const UTF8_DECODER = new TextDecoder("utf-8", STRICT_UTF8_DECODER_OPTIONS);
 
+type TextFileHandle = Awaited<ReturnType<typeof fs.open>>;
+
 export interface Utf8TextStreamValidator {
   push(chunk: Uint8Array): void;
   finish(): void;
@@ -15,6 +21,17 @@ export interface Utf8TextStreamValidator {
 export interface Utf8TextPrefix {
   content: string;
   bytesDecoded: number;
+}
+
+export interface WriteUtf8TextFileNoFollowOptions {
+  exclusive?: boolean;
+  label: string;
+  relativePath: string;
+}
+
+export interface OpenTextFileNoFollowOptions {
+  label: string;
+  relativePath: string;
 }
 
 /**
@@ -45,6 +62,54 @@ export function assertUtf8TextBuffer(
   label: string,
 ): void {
   void decodeUtf8TextBuffer(buffer, relativePath, label);
+}
+
+/**
+ * Read-side endpoints need the same final-component symlink protection as
+ * writes: the workspace realpath policy verifies the path before access, and
+ * O_NOFOLLOW binds the last component to the actual open operation.
+ */
+export async function openTextFileNoFollow(
+  filePath: string,
+  options: OpenTextFileNoFollowOptions,
+): Promise<TextFileHandle> {
+  try {
+    return await fs.open(filePath, fsConstants.O_RDONLY | noFollowFlag());
+  } catch (error) {
+    if (getNodeErrorCode(error) === "ELOOP") {
+      throw new Error(`${options.label} target is a symbolic link: ${options.relativePath}`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Final write commits must not follow a target symlink that appears after the
+ * workspace realpath/lstat checks. O_NOFOLLOW binds the last path component to
+ * the open operation on supporting platforms; existing path-policy checks still
+ * protect parent components and platforms with weaker flag support.
+ */
+export async function writeUtf8TextFileNoFollow(
+  filePath: string,
+  content: string,
+  options: WriteUtf8TextFileNoFollowOptions,
+): Promise<void> {
+  const flags = fsConstants.O_WRONLY |
+    fsConstants.O_CREAT |
+    noFollowFlag() |
+    (options.exclusive ? fsConstants.O_EXCL : fsConstants.O_TRUNC);
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+  try {
+    handle = await fs.open(filePath, flags, 0o666);
+    await handle.writeFile(content, "utf8");
+  } catch (error) {
+    if (getNodeErrorCode(error) === "ELOOP") {
+      throw new Error(`${options.label} target is a symbolic link: ${options.relativePath}`);
+    }
+    throw error;
+  } finally {
+    await handle?.close();
+  }
 }
 
 export function decodeUtf8TextPrefix(
@@ -154,4 +219,14 @@ function hasValidUtf8PrefixBytes(
 
 function isUtf8ContinuationByte(byte: number | undefined): boolean {
   return byte !== undefined && byte >= 0x80 && byte <= 0xbf;
+}
+
+function noFollowFlag(): number {
+  return typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+}
+
+function getNodeErrorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
 }

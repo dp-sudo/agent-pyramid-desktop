@@ -202,7 +202,7 @@ app.whenReady().then(async () => {
   }
   try {
     const preferences = await runtimePreferencesStore.get();
-    mcpHost.configure(preferences.mcpServers);
+    await mcpHost.configure(preferences.mcpServers);
     void mcpHost.connectEnabled();
   } catch (error) {
     console.error("[main] MCP host startup failed:", error);
@@ -223,7 +223,7 @@ app.whenReady().then(async () => {
   registerModelConfigHandlers(modelConfigStore);
   registerRuntimePreferencesHandlers(runtimePreferencesStore, {
     afterUpdate: async (preferences) => {
-      mcpHost.configure(preferences.mcpServers);
+      await mcpHost.configure(preferences.mcpServers);
       await mcpHost.connectEnabled();
     },
   });

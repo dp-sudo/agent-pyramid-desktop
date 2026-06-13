@@ -52,6 +52,20 @@ describe("AttachmentStore", () => {
     expect(record.mimeType).toBe("image/png");
   });
 
+  it("rejects attachment names that collapse to empty or directory markers", async () => {
+    for (const name of ["/", "///", ".", "./", "../"]) {
+      await expect(
+        store.create({
+          name,
+          mimeType: "image/png",
+          dataBase64: ONE_PIXEL_PNG_BASE64,
+        }),
+      ).rejects.toThrow("Attachment name is required.");
+    }
+
+    expect(await store.list()).toEqual([]);
+  });
+
   it("serializes concurrent creates so the attachment index keeps every record", async () => {
     const created = await Promise.all(
       Array.from({ length: 8 }, (_, index) =>

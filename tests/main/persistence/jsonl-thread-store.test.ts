@@ -432,6 +432,29 @@ describe("JsonlThreadStore", () => {
     await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
     await fs.writeFile(
       threadPath,
+      JSON.stringify({
+        ...record,
+        parentThreadId: "00000000-0000-4000-8000-000000000101",
+      }, null, 2),
+      "utf8",
+    );
+    await expect(store.getThread(thread.id)).rejects.toThrow(
+      "parentThreadId is only valid for fork threads.",
+    );
+
+    await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
+    await fs.writeFile(
+      threadPath,
+      JSON.stringify({ ...record, forkedAt: "2026-06-08T00:00:00.000Z" }, null, 2),
+      "utf8",
+    );
+    await expect(store.getThread(thread.id)).rejects.toThrow(
+      "forkedAt is only valid for fork threads.",
+    );
+
+    await fs.writeFile(threadPath, JSON.stringify(record, null, 2), "utf8");
+    await fs.writeFile(
+      threadPath,
       JSON.stringify({ ...record, goal: null }, null, 2),
       "utf8",
     );
@@ -645,6 +668,15 @@ describe("JsonlThreadStore", () => {
         relation: "fork",
       }),
     ).rejects.toThrow("parentThreadId is required for fork threads.");
+
+    await expect(
+      store.createThread({
+        workspace: "/workspace",
+        mode: "code",
+        relation: "primary",
+        parentThreadId: "00000000-0000-4000-8000-000000000101",
+      }),
+    ).rejects.toThrow("parentThreadId is only valid for fork threads.");
 
     await expect(store.listThreads({ include: ["primary", "invalid" as "side"] }))
       .rejects.toThrow("include is invalid.");

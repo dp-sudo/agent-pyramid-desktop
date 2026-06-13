@@ -1,4 +1,5 @@
 import type { IpcErrorCode } from "./ipc-errors.js";
+import { toMcpNameSegment } from "./mcp-names.js";
 
 export const LLM_PROTOCOLS = ["openai-compatible", "anthropic-compatible"] as const;
 export type LlmProtocol = (typeof LLM_PROTOCOLS)[number];
@@ -723,8 +724,8 @@ export function isRuntimePreferences(value: unknown): value is RuntimePreference
   return isThreadApprovalPolicy(value.defaultApprovalPolicy) &&
     isThreadSandboxMode(value.defaultSandboxMode) &&
     isRuntimeToolAvailabilityPreferences(value.toolAvailability) &&
-    isNullableString(value.codeDefaultModelProfileId) &&
-    isNullableString(value.writeDefaultModelProfileId) &&
+    isNullableProfileId(value.codeDefaultModelProfileId) &&
+    isNullableProfileId(value.writeDefaultModelProfileId) &&
     isRuntimeApprovalExperiencePreferences(value.approvalExperience) &&
     isRuntimeCommandPreferences(value.command) &&
     isRuntimeCompactionPreferences(value.compaction) &&
@@ -819,7 +820,7 @@ export function isAttachmentRecord(value: unknown): value is AttachmentRecord {
   if (!isRecord(value)) return false;
   const size = value.size;
   return isUuidString(value.id) &&
-    hasString(value, "name") &&
+    isAttachmentRecordName(value.name) &&
     typeof value.mimeType === "string" &&
     normalizeSupportedAttachmentMimeType(value.mimeType) !== null &&
     typeof size === "number" &&
@@ -827,6 +828,12 @@ export function isAttachmentRecord(value: unknown): value is AttachmentRecord {
     size >= 0 &&
     size <= MAX_ATTACHMENT_BYTES &&
     isIsoTimestampString(value.createdAt);
+}
+
+function isAttachmentRecordName(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed !== "." && trimmed !== "..";
 }
 
 export interface AttachmentDeleteRequest {
@@ -1187,6 +1194,14 @@ export interface SseSubscribeRequest {
 
 export interface SseUnsubscribeRequest {
   threadId: string;
+}
+
+export interface SseSubscribeGlobalResponse {
+  subscribed: true;
+}
+
+export interface SseUnsubscribeGlobalResponse {
+  unsubscribed: boolean;
 }
 
 // ============================================================================
@@ -1625,7 +1640,10 @@ function isThreadParentRelationValid(value: Record<string, unknown>): boolean {
   if (value.parentThreadId !== undefined && !isUuidString(value.parentThreadId)) {
     return false;
   }
-  return value.relation !== "fork" || isUuidString(value.parentThreadId);
+  if (value.relation === "fork") {
+    return isUuidString(value.parentThreadId);
+  }
+  return value.parentThreadId === undefined && value.forkedAt === undefined;
 }
 
 function isAbsolutePathString(value: unknown): value is string {
@@ -1678,19 +1696,30 @@ function isRuntimeCompactionPreferences(
 
 function isRuntimeSkillsPreferences(value: unknown): value is RuntimeSkillsPreferences {
   if (!isRecord(value)) return false;
-  return typeof value.enabled === "boolean" &&
-    isIntegerInRange(
+  if (
+    typeof value.enabled !== "boolean" ||
+    !isIntegerInRange(
       value.activeLimit,
       MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
       MAX_RUNTIME_SKILLS_ACTIVE_LIMIT,
-    ) &&
-    isIntegerInRange(
+    ) ||
+    !isIntegerInRange(
       value.instructionBudgetBytes,
       MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
       MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
-    ) &&
-    Array.isArray(value.extraRoots) &&
-    value.extraRoots.every((entry) => typeof entry === "string" && !entry.includes("\0"));
+    ) ||
+    !Array.isArray(value.extraRoots)
+  ) {
+    return false;
+  }
+  const roots = new Set<string>();
+  for (const entry of value.extraRoots) {
+    if (typeof entry !== "string" || entry.includes("\0")) return false;
+    const trimmed = entry.trim();
+    if (!trimmed || trimmed !== entry || roots.has(trimmed)) return false;
+    roots.add(trimmed);
+  }
+  return true;
 }
 
 function isRuntimeSkillScope(value: unknown): value is RuntimeSkillScope {
@@ -1756,10 +1785,14 @@ function isRuntimePermissionRules(value: unknown): value is RuntimePermissionRul
     if (!isRecord(rule)) return false;
     const id = rule.id;
     const pattern = rule.pattern;
-    if (typeof id !== "string" || !id.trim() || ids.has(id)) {
+    if (typeof id !== "string") {
       return false;
     }
+    const normalizedId = id.trim();
     if (
+      !normalizedId ||
+      normalizedId.includes("\0") ||
+      ids.has(normalizedId) ||
       !isRuntimePermissionRuleTool(rule.tool) ||
       typeof pattern !== "string" ||
       !pattern.trim() ||
@@ -1768,7 +1801,7 @@ function isRuntimePermissionRules(value: unknown): value is RuntimePermissionRul
     ) {
       return false;
     }
-    ids.add(id);
+    ids.add(normalizedId);
   }
   return true;
 }
@@ -1777,13 +1810,16 @@ function isMcpServerConfigs(value: unknown): value is McpServerConfig[] {
   if (!Array.isArray(value)) return false;
   const ids = new Set<string>();
   const names = new Set<string>();
+  const nameSegments = new Set<string>();
   for (const server of value) {
     if (!isMcpServerConfig(server)) return false;
     const idKey = server.id.trim();
     const nameKey = server.name.trim();
-    if (ids.has(idKey) || names.has(nameKey)) return false;
+    const nameSegmentKey = toMcpNameSegment(nameKey);
+    if (ids.has(idKey) || names.has(nameKey) || nameSegments.has(nameSegmentKey)) return false;
     ids.add(idKey);
     names.add(nameKey);
+    nameSegments.add(nameSegmentKey);
   }
   return true;
 }
@@ -1798,7 +1834,7 @@ function isMcpServerConfig(value: unknown): value is McpServerConfig {
     value.args.every(isStringWithoutNul) &&
     isStringRecordWithoutNul(value.env) &&
     (value.cwd === undefined || isNonBlankStringWithoutNul(value.cwd)) &&
-    (value.url === undefined || isNonBlankStringWithoutNul(value.url)) &&
+    (value.url === undefined || isHttpUrl(value.url)) &&
     isStringRecordWithoutNul(value.headers) &&
     typeof value.enabled === "boolean" &&
     Array.isArray(value.readOnlyTools) &&
@@ -1825,13 +1861,15 @@ function isHttpUrl(value: unknown): value is string {
   try {
     const parsed = new URL(value);
     return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
+  } catch (error) {
+    void error;
     return false;
   }
 }
 
-function isNullableString(value: unknown): value is string | null {
-  return value === null || typeof value === "string";
+function isNullableProfileId(value: unknown): value is string | null {
+  if (value === null) return true;
+  return typeof value === "string" && value.trim().length > 0 && value === value.trim();
 }
 
 function hasBaseItemFields(value: Record<string, unknown>): boolean {
@@ -1914,9 +1952,14 @@ function isNonBlankStringWithoutNul(value: unknown): value is string {
 
 function isStringRecordWithoutNul(value: unknown): value is Record<string, string> {
   if (!isRecord(value)) return false;
-  return Object.entries(value).every(([key, entry]) =>
-    isNonBlankStringWithoutNul(key) && isStringWithoutNul(entry)
-  );
+  const keys = new Set<string>();
+  for (const [key, entry] of Object.entries(value)) {
+    if (!isNonBlankStringWithoutNul(key) || !isStringWithoutNul(entry)) return false;
+    const normalizedKey = key.trim();
+    if (keys.has(normalizedKey)) return false;
+    keys.add(normalizedKey);
+  }
+  return true;
 }
 
 function isOptionalIsoTimestampString(value: unknown): value is string | undefined {
