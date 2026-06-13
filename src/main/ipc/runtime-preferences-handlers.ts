@@ -9,9 +9,15 @@ import {
   parseRuntimePreferencesUpdate,
   type RuntimePreferencesStore,
 } from "../persistence/runtime-preferences-store.js";
+import type { RuntimePreferences } from "../../shared/agent-contracts.js";
+
+export interface RuntimePreferencesHandlerOptions {
+  afterUpdate?(preferences: RuntimePreferences): void | Promise<void>;
+}
 
 export function registerRuntimePreferencesHandlers(
   store: RuntimePreferencesStore,
+  options: RuntimePreferencesHandlerOptions = {},
 ): void {
   ipcMain.handle(RUNTIME_PREFERENCES_GET_CHANNEL, async () => {
     try {
@@ -23,7 +29,9 @@ export function registerRuntimePreferencesHandlers(
 
   ipcMain.handle(RUNTIME_PREFERENCES_UPDATE_CHANNEL, async (_event, update: unknown) => {
     try {
-      return ok(await store.update(parseRuntimePreferencesUpdate(update)));
+      const preferences = await store.update(parseRuntimePreferencesUpdate(update));
+      await options.afterUpdate?.(preferences);
+      return ok(preferences);
     } catch (error) {
       return err(IPC_ERROR_CODES.RUNTIME_PREFERENCES_UPDATE_FAILED, messageOf(error));
     }

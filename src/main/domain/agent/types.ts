@@ -2,6 +2,7 @@ import type {
   LlmProtocol,
   ModelReasoningEffort,
   RuntimeCommandPreferences,
+  ToolProgressStream,
   TokenUsage,
 } from "../../../shared/agent-contracts";
 
@@ -41,6 +42,7 @@ export interface AgentToolContext {
   workspace?: string;
   signal?: AbortSignal;
   commandDefaults?: RuntimeCommandPreferences;
+  reportProgress?: (chunk: string, stream: ToolProgressStream) => void;
   readState?: {
     get(filePath: string): {
       content: string;
@@ -111,6 +113,20 @@ export interface AgentToolContext {
       afterSha256: string | null;
       createdAt: string;
     } | undefined;
+  };
+  checkpoint?: {
+    recordFileSnapshot(entry: {
+      threadId: string;
+      turnId: string;
+      workspace: string;
+      toolName: string;
+      relativePath: string;
+      operation: "create" | "update" | "delete" | "rollback";
+      beforeContent: string | null;
+      afterContent: string | null;
+      beforeSha256: string | null;
+      afterSha256: string | null;
+    }): Promise<void>;
   };
 }
 

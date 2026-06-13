@@ -183,6 +183,7 @@ describe("shared agent contracts", () => {
     expect(DEFAULT_RUNTIME_PREFERENCES.command.maxOutputBytes).toBe(
       DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
     );
+    expect(DEFAULT_RUNTIME_PREFERENCES.permissionRules).toEqual([]);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.apply_patch).toBe(true);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.apply_patch).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_command).toBe(false);
@@ -204,6 +205,12 @@ describe("shared agent contracts", () => {
           run_command: "false",
         },
       },
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      permissionRules: [
+        { id: "bad", tool: "command", pattern: "npm *", effect: "sometimes" },
+      ],
     })).toBe(false);
   });
 
@@ -497,13 +504,14 @@ describe("shared agent contracts", () => {
       "item_appended",
       "item_updated",
       "approval_requested",
+      "tool_progress",
       "tool_budget_reached",
       "goal_updated",
       "runtime_error",
     ]);
     expect(isItemKind("plan")).toBe(true);
     expect(isItemKind("unknown")).toBe(false);
-    expect(isRuntimeEventKind("tool_budget_reached")).toBe(true);
+    expect(isRuntimeEventKind("tool_progress")).toBe(true);
     expect(isRuntimeEventKind("tool_started")).toBe(false);
   });
 
@@ -535,6 +543,22 @@ describe("shared agent contracts", () => {
     expect(isRuntimeEvent({ ...event, maxToolRounds: 0 })).toBe(false);
     expect(isRuntimeEvent({ ...event, attemptedToolCalls: -1 })).toBe(false);
     expect(isRuntimeEvent({ ...event, attemptedToolCalls: 1.5 })).toBe(false);
+  });
+
+  it("recognizes tool progress runtime events", () => {
+    const event = {
+      kind: "tool_progress",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      chunk: "running\n",
+      stream: "stdout",
+      seq: 1,
+    };
+    expect(isRuntimeEvent(event)).toBe(true);
+    expect(isRuntimeEvent({ ...event, stream: "stdin" })).toBe(false);
+    expect(isRuntimeEvent({ ...event, seq: 0 })).toBe(false);
+    expect(isRuntimeEvent({ ...event, chunk: 1 })).toBe(false);
   });
 
   it("validates approval preview shapes on items and events", () => {

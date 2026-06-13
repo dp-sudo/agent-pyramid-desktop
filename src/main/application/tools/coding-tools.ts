@@ -365,6 +365,7 @@ async function writePreparedChange(
   context: AgentToolContext,
   toolName: string,
 ): Promise<PreparedFileChange> {
+  await recordFileCheckpoint(context, change, toolName);
   await commitPreparedChange(change);
   const contentHash = sha256(change.nextContent);
   let stat: Stats | undefined;
@@ -406,6 +407,9 @@ async function writePreparedChanges(
   context: AgentToolContext,
   toolName: string,
 ): Promise<PreparedFileChange[]> {
+  for (const change of changes) {
+    await recordFileCheckpoint(context, change, toolName);
+  }
   const committed: PreparedFileChange[] = [];
   try {
     for (const change of changes) {
@@ -992,6 +996,26 @@ function recordFileHistory(
     toolName,
     workspace,
     filePath: change.filePath,
+    relativePath: change.path,
+    operation: toolName === "rollback_file" ? "rollback" : change.operation,
+    beforeContent: change.operation === "create" ? null : change.originalContent,
+    afterContent: change.operation === "delete" ? null : change.nextContent,
+    beforeSha256: change.operation === "create" ? null : sha256(change.originalContent),
+    afterSha256: change.operation === "delete" ? null : sha256(change.nextContent),
+  });
+}
+
+async function recordFileCheckpoint(
+  context: AgentToolContext,
+  change: PreparedFileChange,
+  toolName: string,
+): Promise<void> {
+  const workspace = requireWorkspace(context);
+  await context.checkpoint?.recordFileSnapshot({
+    threadId: context.threadId,
+    turnId: context.turnId,
+    toolName,
+    workspace,
     relativePath: change.path,
     operation: toolName === "rollback_file" ? "rollback" : change.operation,
     beforeContent: change.operation === "create" ? null : change.originalContent,

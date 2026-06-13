@@ -21,7 +21,7 @@ interface Subscription {
 interface WebContentsSubscriptions {
   cleanup: () => void;
   threads: Map<string, Subscription>;
-  unsubscribeGlobalRuntimeErrors: () => void;
+  unsubscribeGlobalEvents: () => void;
 }
 
 const subscriptions = new Map<number, WebContentsSubscriptions>(); // webContentsId -> thread subscriptions
@@ -101,17 +101,31 @@ function ensureWebContentsSubscriptions(
   // runtime_error has no threadId, so each renderer gets one bucket-level
   // listener that forwards those process-level failures without duplicating
   // them for every subscribed thread.
-  const unsubscribeGlobalRuntimeErrors = bus.onKind("runtime_error", (evt: RuntimeEvent) => {
-    if (evt.kind !== "runtime_error" || evt.threadId) return;
-    if (webContents.isDestroyed()) return;
-    webContents.send(SSE_PUSH_CHANNEL, evt);
-  });
+  const globalUnsubscribers = [
+    bus.onKind("runtime_error", (evt: RuntimeEvent) => {
+      if (evt.kind !== "runtime_error" || evt.threadId) return;
+      if (webContents.isDestroyed()) return;
+      webContents.send(SSE_PUSH_CHANNEL, evt);
+    }),
+    bus.onKind("mcp_server_connection", (evt: RuntimeEvent) => {
+      if (webContents.isDestroyed()) return;
+      webContents.send(SSE_PUSH_CHANNEL, evt);
+    }),
+    bus.onKind("mcp_tool_list_changed", (evt: RuntimeEvent) => {
+      if (webContents.isDestroyed()) return;
+      webContents.send(SSE_PUSH_CHANNEL, evt);
+    }),
+  ];
   const bucket: WebContentsSubscriptions = {
     cleanup: onWebContentsDestroyed(webContents, () => {
       disposeWebContentsSubscriptions(webContents.id);
     }),
     threads: new Map<string, Subscription>(),
-    unsubscribeGlobalRuntimeErrors,
+    unsubscribeGlobalEvents: () => {
+      for (const unsubscribe of globalUnsubscribers) {
+        unsubscribe();
+      }
+    },
   };
   subscriptions.set(webContents.id, bucket);
   return bucket;
@@ -135,7 +149,7 @@ function disposeWebContentsSubscriptions(webContentsId: number): void {
   for (const sub of bucket.threads.values()) {
     sub.unsubscribe();
   }
-  bucket.unsubscribeGlobalRuntimeErrors();
+  bucket.unsubscribeGlobalEvents();
   bucket.cleanup();
   subscriptions.delete(webContentsId);
 }

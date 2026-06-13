@@ -139,6 +139,7 @@
   },
   "inspector": {
     "changes": "Changes",
+    "checkpoints": "Checkpoints",
     "todo": "Todo",
     "plan": "Plan",
     "open": "Open",
@@ -154,6 +155,18 @@
     "planStatusPending": "Pending",
     "planStatusInProgress": "In progress",
     "planStatusCompleted": "Completed"
+  },
+  "checkpoints": {
+    "loading": "Loading checkpoints…",
+    "empty": "No checkpoints yet.",
+    "codeOnly": "Checkpoints are available in Code sessions only.",
+    "untitled": "Untitled turn",
+    "fileCount": "{{count}} file snapshot(s)",
+    "noFiles": "This turn did not touch files.",
+    "moreFiles": "{{count}} more file(s)",
+    "rewindCode": "Rewind code",
+    "rewindBoth": "Code + session",
+    "rewindSuccess": "Restored {{restored}} file(s), deleted {{deleted}} newly-created file(s)."
   },
   "approvals": {
     "allow": "Allow",
@@ -247,7 +260,8 @@
       "positiveInteger": "{{field}} must be a positive whole number.",
       "integerRange": "{{field}} must be between {{min}} and {{max}}.",
       "compactLimitTooLarge": "Auto compact limit must be less than or equal to the context window.",
-      "maxTokensTooLarge": "Max output tokens must be less than the context window."
+      "maxTokensTooLarge": "Max output tokens must be less than the context window.",
+      "permissionRulePatternRequired": "Pattern cannot be blank."
     },
     "status": {
       "idle": "Ready",
@@ -363,6 +377,7 @@
       "allowComposerImagePaste": "Allow clipboard image files to become composer attachments without blocking regular text paste.",
       "defaultApprovalPolicy": "Default approval policy assigned to newly created threads.",
       "defaultSandboxMode": "Default sandbox mode assigned to newly created threads.",
+      "permissionRules": "Apply per-call rules to command text or write paths. Matches resolve by deny, ask, then allow priority; unmatched calls fall back to existing approval and sandbox logic.",
       "commandTimeout": "Default timeout and maximum tool-call timeout in milliseconds for run_command and diagnose_workspace.",
       "commandMaxOutput": "Maximum stdout and stderr bytes kept for command-backed tools.",
       "compactionEnabled": "Allow the runtime to compact or trim history before model requests.",
@@ -402,6 +417,10 @@
       "allowComposerImagePaste": "Allow image paste",
       "defaultApprovalPolicy": "Default approval policy",
       "defaultSandboxMode": "Default sandbox mode",
+      "permissionRules": "Per-call rules",
+      "permissionRuleTool": "Tool type",
+      "permissionRulePattern": "Pattern",
+      "permissionRuleEffect": "Effect",
       "codeToolAccess": "Code",
       "writeToolAccess": "Write",
       "commandTimeout": "Command timeout",
@@ -491,7 +510,24 @@
     },
     "placeholders": {
       "compactLimit": "90% of context window",
-      "apiKey": "sk-..."
+      "apiKey": "sk-...",
+      "permissionRulePattern": "npm test* or src/*"
+    },
+    "permissionRules": {
+      "empty": "No per-call rules yet. Unmatched commands and writes still use the default approval and sandbox policies."
+    },
+    "permissionRuleTools": {
+      "command": "Command",
+      "write": "Write"
+    },
+    "permissionRuleEffects": {
+      "allow": "Allow",
+      "ask": "Ask",
+      "deny": "Deny"
+    },
+    "actions": {
+      "addRule": "Add rule",
+      "deleteRule": "Delete"
     },
     "efforts": {
       "low": "Low",

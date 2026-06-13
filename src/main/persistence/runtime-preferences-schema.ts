@@ -4,13 +4,19 @@ import {
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
   MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
+  MCP_SERVER_TRANSPORTS,
   RUNTIME_TOOL_NAMES,
   THREAD_MODES,
+  isIsoTimestampString,
   isRuntimeCompactionStrategy,
+  isRuntimePermissionRuleEffect,
+  isRuntimePermissionRuleTool,
   isRuntimeToolName,
   isThreadApprovalPolicy,
   isThreadMode,
   isThreadSandboxMode,
+  type RuntimePermissionRule,
+  type McpServerConfig,
   type RuntimeApprovalExperiencePreferences,
   type RuntimeCommandPreferences,
   type RuntimeCompactionPreferences,
@@ -66,6 +72,12 @@ export function parseRuntimePreferencesUpdate(
   if (update.compaction !== undefined) {
     parsed.compaction = parseCompactionPreferencesUpdate(update.compaction);
   }
+  if (update.permissionRules !== undefined) {
+    parsed.permissionRules = parseRuntimePermissionRules(update.permissionRules);
+  }
+  if (update.mcpServers !== undefined) {
+    parsed.mcpServers = parseMcpServerConfigs(update.mcpServers);
+  }
   if (Object.keys(parsed).length === 0) {
     throw new Error("Runtime preferences update must include at least one field.");
   }
@@ -89,6 +101,8 @@ export function normalizeRuntimePreferences(value: unknown): RuntimePreferences 
     approvalExperience: normalizeApprovalExperience(value.approvalExperience),
     command: normalizeCommandPreferences(value.command),
     compaction: normalizeCompactionPreferences(value.compaction),
+    permissionRules: normalizeRuntimePermissionRules(value.permissionRules),
+    mcpServers: normalizeMcpServerConfigs(value.mcpServers),
   };
 }
 
@@ -120,6 +134,12 @@ export function mergeRuntimePreferences(
     compaction: update.compaction
       ? { ...current.compaction, ...update.compaction }
       : current.compaction,
+    ...(update.permissionRules !== undefined
+      ? { permissionRules: cloneRuntimePermissionRules(update.permissionRules) }
+      : {}),
+    ...(update.mcpServers !== undefined
+      ? { mcpServers: cloneMcpServerConfigs(update.mcpServers) }
+      : {}),
   };
 }
 
@@ -130,6 +150,8 @@ export function cloneRuntimePreferences(value: RuntimePreferences): RuntimePrefe
     approvalExperience: { ...value.approvalExperience },
     command: { ...value.command },
     compaction: { ...value.compaction },
+    permissionRules: cloneRuntimePermissionRules(value.permissionRules),
+    mcpServers: cloneMcpServerConfigs(value.mcpServers),
   };
 }
 
@@ -312,6 +334,136 @@ function parseCompactionPreferencesUpdate(
   return parsed;
 }
 
+function normalizeRuntimePermissionRules(value: unknown): RuntimePermissionRule[] {
+  if (value === undefined) {
+    return [];
+  }
+  return parseRuntimePermissionRules(value);
+}
+
+function parseRuntimePermissionRules(value: unknown): RuntimePermissionRule[] {
+  if (!Array.isArray(value)) {
+    throw new Error("permissionRules must be an array.");
+  }
+  const ids = new Set<string>();
+  return value.map((entry, index) => parseRuntimePermissionRule(entry, index, ids));
+}
+
+function parseRuntimePermissionRule(
+  value: unknown,
+  index: number,
+  ids: Set<string>,
+): RuntimePermissionRule {
+  if (!isRecord(value)) {
+    throw new Error(`permissionRules[${index}] must be an object.`);
+  }
+  const id = parsePermissionRuleId(value.id, index, ids);
+  const tool = value.tool;
+  if (!isRuntimePermissionRuleTool(tool)) {
+    throw new Error(`permissionRules[${index}].tool is invalid.`);
+  }
+  const pattern = parsePermissionRulePattern(value.pattern, index);
+  const effect = value.effect;
+  if (!isRuntimePermissionRuleEffect(effect)) {
+    throw new Error(`permissionRules[${index}].effect is invalid.`);
+  }
+  return { id, tool, pattern, effect };
+}
+
+function parsePermissionRuleId(value: unknown, index: number, ids: Set<string>): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`permissionRules[${index}].id must be a non-empty string.`);
+  }
+  const id = value.trim();
+  if (id.includes("\0")) {
+    throw new Error(`permissionRules[${index}].id cannot contain NUL bytes.`);
+  }
+  if (ids.has(id)) {
+    throw new Error(`permissionRules[${index}].id is duplicated.`);
+  }
+  ids.add(id);
+  return id;
+}
+
+function parsePermissionRulePattern(value: unknown, index: number): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`permissionRules[${index}].pattern must be a non-empty string.`);
+  }
+  const pattern = value.trim();
+  if (pattern.includes("\0")) {
+    throw new Error(`permissionRules[${index}].pattern cannot contain NUL bytes.`);
+  }
+  return pattern;
+}
+
+function cloneRuntimePermissionRules(
+  value: readonly RuntimePermissionRule[],
+): RuntimePermissionRule[] {
+  return value.map((rule) => ({ ...rule }));
+}
+
+function normalizeMcpServerConfigs(value: unknown): McpServerConfig[] {
+  if (value === undefined) {
+    return [];
+  }
+  return parseMcpServerConfigs(value);
+}
+
+function parseMcpServerConfigs(value: unknown): McpServerConfig[] {
+  if (!Array.isArray(value)) {
+    throw new Error("mcpServers must be an array.");
+  }
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  return value.map((entry, index) => parseMcpServerConfig(entry, index, ids, names));
+}
+
+function parseMcpServerConfig(
+  value: unknown,
+  index: number,
+  ids: Set<string>,
+  names: Set<string>,
+): McpServerConfig {
+  if (!isRecord(value)) {
+    throw new Error(`mcpServers[${index}] must be an object.`);
+  }
+  const id = parseUniqueNonBlankString(value.id, `mcpServers[${index}].id`, ids);
+  const name = parseUniqueNonBlankString(value.name, `mcpServers[${index}].name`, names);
+  if (value.transport !== undefined && !MCP_SERVER_TRANSPORTS.includes(value.transport as never)) {
+    throw new Error(`mcpServers[${index}].transport is invalid.`);
+  }
+  const command = parseNonBlankString(value.command, `mcpServers[${index}].command`);
+  const createdAt = parseIsoTimestamp(value.createdAt, `mcpServers[${index}].createdAt`);
+  const updatedAt = parseIsoTimestamp(value.updatedAt, `mcpServers[${index}].updatedAt`);
+  return {
+    id,
+    name,
+    transport: "stdio",
+    command,
+    args: parseStringArray(value.args, `mcpServers[${index}].args`),
+    env: parseStringRecord(value.env, `mcpServers[${index}].env`),
+    ...(value.cwd !== undefined
+      ? { cwd: parseNonBlankString(value.cwd, `mcpServers[${index}].cwd`) }
+      : {}),
+    enabled: parseBoolean(value.enabled, `mcpServers[${index}].enabled`),
+    readOnlyTools: parseStringArray(
+      value.readOnlyTools,
+      `mcpServers[${index}].readOnlyTools`,
+    ).map((entry) => entry.trim()),
+    createdAt,
+    updatedAt,
+  };
+}
+
+function cloneMcpServerConfigs(value: readonly McpServerConfig[]): McpServerConfig[] {
+  return value.map((server) => ({
+    ...server,
+    args: [...server.args],
+    env: { ...server.env },
+    readOnlyTools: [...server.readOnlyTools],
+  }));
+}
+
 function parseNullableProfileId(value: unknown, field: string): string | null {
   if (value === null) return null;
   if (typeof value !== "string") {
@@ -345,6 +497,73 @@ function parseBooleanObject<T extends string>(
     throw new Error(`${label} must include at least one field.`);
   }
   return parsed;
+}
+
+function parseUniqueNonBlankString(value: unknown, field: string, seen: Set<string>): string {
+  const parsed = parseNonBlankString(value, field);
+  if (seen.has(parsed)) {
+    throw new Error(`${field} is duplicated.`);
+  }
+  seen.add(parsed);
+  return parsed;
+}
+
+function parseNonBlankString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+  const parsed = value.trim();
+  if (parsed.includes("\0")) {
+    throw new Error(`${field} cannot contain NUL bytes.`);
+  }
+  return parsed;
+}
+
+function parseStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array.`);
+  }
+  return value.map((entry, index) => {
+    if (typeof entry !== "string") {
+      throw new Error(`${field}[${index}] must be a string.`);
+    }
+    if (entry.includes("\0")) {
+      throw new Error(`${field}[${index}] cannot contain NUL bytes.`);
+    }
+    return entry;
+  });
+}
+
+function parseStringRecord(value: unknown, field: string): Record<string, string> {
+  if (!isRecord(value)) {
+    throw new Error(`${field} must be an object.`);
+  }
+  const parsed: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const parsedKey = parseNonBlankString(key, `${field} key`);
+    if (typeof entry !== "string") {
+      throw new Error(`${field}.${parsedKey} must be a string.`);
+    }
+    if (entry.includes("\0")) {
+      throw new Error(`${field}.${parsedKey} cannot contain NUL bytes.`);
+    }
+    parsed[parsedKey] = entry;
+  }
+  return parsed;
+}
+
+function parseBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${field} must be a boolean.`);
+  }
+  return value;
+}
+
+function parseIsoTimestamp(value: unknown, field: string): string {
+  if (!isIsoTimestampString(value)) {
+    throw new Error(`${field} must be an ISO timestamp.`);
+  }
+  return value;
 }
 
 function cloneToolAvailability(

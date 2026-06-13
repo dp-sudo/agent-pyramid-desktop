@@ -44,6 +44,9 @@ const MAX_COMMAND_TIMEOUT_MS = MAX_RUNTIME_COMMAND_TIMEOUT_MS;
 const DEFAULT_COMMAND_MAX_OUTPUT_BYTES = DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MIN_COMMAND_MAX_OUTPUT_BYTES = MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MAX_COMMAND_MAX_OUTPUT_BYTES = MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
+const TOOL_PROGRESS_FLUSH_INTERVAL_MS = 100;
+const TOOL_PROGRESS_FLUSH_THRESHOLD_BYTES = 8 * 1024;
+const TOOL_PROGRESS_MAX_CHUNK_CHARS = 16 * 1024;
 const COMMAND_TIMEOUT_DESCRIPTION =
   `Maximum runtime in milliseconds. Defaults to the runtime command preference ` +
   `(${DEFAULT_COMMAND_TIMEOUT_MS}). Overrides must be between ${MIN_COMMAND_TIMEOUT_MS} ` +
@@ -59,6 +62,13 @@ type ShellKind =
   | "pwsh";
 
 type PackageManagerName = "npm" | "pnpm" | "yarn" | "bun";
+type ToolProgressCallback = NonNullable<AgentToolContext["reportProgress"]>;
+type CommandProgressStream = Parameters<ToolProgressCallback>[1];
+
+interface CommandProgressReporter {
+  collect(data: Buffer | string, stream: CommandProgressStream): void;
+  flush(): void;
+}
 
 interface PackageJsonShape {
   packageManager?: unknown;
@@ -942,6 +952,7 @@ async function executeRunCommand(
     timeoutMs,
     maxOutputBytes,
     context.signal,
+    context.reportProgress,
   );
   return {
     command,
@@ -997,6 +1008,7 @@ async function executeShellCommand(
     timeoutMs,
     maxOutputBytes,
     context.signal,
+    context.reportProgress,
   );
   return {
     command,
@@ -1047,6 +1059,7 @@ async function executeWslCommand(
     timeoutMs,
     maxOutputBytes,
     context.signal,
+    context.reportProgress,
   );
   return {
     command,
@@ -1507,6 +1520,7 @@ async function executePackageCommand(
     timeoutMs,
     maxOutputBytes,
     context.signal,
+    context.reportProgress,
   );
   return commandOutputToRunResult(
     [manager, ...args].join(" "),
@@ -1574,6 +1588,7 @@ async function executeDiagnoseWorkspace(
     timeoutMs,
     maxOutputBytes,
     context.signal,
+    context.reportProgress,
   );
   const rawOutput = joinCommandOutput(output.stdout.text, output.stderr.text);
   const cwd = toWorkspaceRelative(workspace, cwdPath) || ".";
@@ -1636,6 +1651,7 @@ async function spawnWorkspaceCommand(
   timeoutMs: number,
   maxOutputBytes: number,
   signal: AbortSignal | undefined,
+  reportProgress?: ToolProgressCallback,
 ): Promise<CommandOutput> {
   return spawnWorkspaceProcess(
     createShellInvocation(command),
@@ -1643,6 +1659,7 @@ async function spawnWorkspaceCommand(
     timeoutMs,
     maxOutputBytes,
     signal,
+    reportProgress,
   );
 }
 
@@ -1652,6 +1669,7 @@ async function spawnWorkspaceProcess(
   timeoutMs: number,
   maxOutputBytes: number,
   signal: AbortSignal | undefined,
+  reportProgress?: ToolProgressCallback,
 ): Promise<CommandOutput> {
   if (signal?.aborted) {
     throw new Error("Command was interrupted.");
@@ -1660,6 +1678,7 @@ async function spawnWorkspaceProcess(
   return new Promise<CommandOutput>((resolve, reject) => {
     const stdout = createOutputCollector(maxOutputBytes);
     const stderr = createOutputCollector(maxOutputBytes);
+    const progress = createCommandProgressReporter(reportProgress);
     let timedOut = false;
     let settled = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
@@ -1691,6 +1710,7 @@ async function spawnWorkspaceProcess(
     const settleReject = (error: Error): void => {
       if (settled) return;
       settled = true;
+      progress?.flush();
       cleanup();
       reject(error);
     };
@@ -1710,14 +1730,21 @@ async function spawnWorkspaceProcess(
     if (signal?.aborted) {
       onAbort();
     }
-    child.stdout.on("data", stdout.collect);
-    child.stderr.on("data", stderr.collect);
+    child.stdout.on("data", (data: Buffer | string) => {
+      stdout.collect(data);
+      progress?.collect(data, "stdout");
+    });
+    child.stderr.on("data", (data: Buffer | string) => {
+      stderr.collect(data);
+      progress?.collect(data, "stderr");
+    });
     child.on("error", (error) => {
       settleReject(error);
     });
     child.on("close", (exitCode, childSignal) => {
       if (settled) return;
       settled = true;
+      progress?.flush();
       cleanup();
       if (signal?.aborted && !timedOut) {
         reject(new Error("Command was interrupted."));
@@ -1937,6 +1964,87 @@ function createOutputCollector(maxOutputBytes: number): {
   };
 }
 
+function createCommandProgressReporter(
+  reportProgress: ToolProgressCallback | undefined,
+): CommandProgressReporter | undefined {
+  if (!reportProgress) return undefined;
+  const pending: Record<CommandProgressStream, string> = {
+    stdout: "",
+    stderr: "",
+  };
+  const pendingBytes: Record<CommandProgressStream, number> = {
+    stdout: 0,
+    stderr: 0,
+  };
+  const decoders: Record<CommandProgressStream, StringDecoder> = {
+    stdout: new StringDecoder("utf8"),
+    stderr: new StringDecoder("utf8"),
+  };
+  let flushTimer: NodeJS.Timeout | undefined;
+  let warned = false;
+
+  const clearFlushTimer = (): void => {
+    if (!flushTimer) return;
+    clearTimeout(flushTimer);
+    flushTimer = undefined;
+  };
+
+  const reportChunk = (chunk: string, stream: CommandProgressStream): void => {
+    for (let index = 0; index < chunk.length; index += TOOL_PROGRESS_MAX_CHUNK_CHARS) {
+      const slice = chunk.slice(index, index + TOOL_PROGRESS_MAX_CHUNK_CHARS);
+      if (!slice) continue;
+      try {
+        reportProgress(slice, stream);
+      } catch (error) {
+        if (!warned) {
+          warned = true;
+          console.warn("[command-tools] failed to report command progress:", error);
+        }
+      }
+    }
+  };
+
+  const flushStream = (stream: CommandProgressStream, final: boolean): void => {
+    const text = pending[stream] + (final ? decoders[stream].end() : "");
+    pending[stream] = "";
+    pendingBytes[stream] = 0;
+    if (text) {
+      reportChunk(text, stream);
+    }
+  };
+
+  const flushPending = (final = false): void => {
+    clearFlushTimer();
+    flushStream("stdout", final);
+    flushStream("stderr", final);
+  };
+
+  const scheduleFlush = (): void => {
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushPending();
+    }, TOOL_PROGRESS_FLUSH_INTERVAL_MS);
+  };
+
+  return {
+    collect(data, stream) {
+      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      const text = decoders[stream].write(buffer);
+      if (!text) return;
+      pending[stream] += text;
+      pendingBytes[stream] += buffer.length;
+      if (pendingBytes[stream] >= TOOL_PROGRESS_FLUSH_THRESHOLD_BYTES) {
+        flushPending();
+        return;
+      }
+      scheduleFlush();
+    },
+    flush() {
+      flushPending(true);
+    },
+  };
+}
+
 function commandMaxOutputBytes(context: AgentToolContext): number {
   const value = context.commandDefaults?.maxOutputBytes ?? DEFAULT_COMMAND_MAX_OUTPUT_BYTES;
   if (!Number.isFinite(value)) {
@@ -2036,6 +2144,7 @@ async function executeGitCommand(
     commandTimeoutMs(context),
     commandMaxOutputBytes(context),
     context.signal,
+    context.reportProgress,
   );
 }
 

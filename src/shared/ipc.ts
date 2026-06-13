@@ -31,6 +31,10 @@ export const ATTACHMENT_DELETE_CHANNEL = "attachment:delete";
 // Usage
 export const USAGE_DAILY_CHANNEL = "usage:daily";
 
+// Checkpoints / rewind
+export const CHECKPOINT_LIST_CHANNEL = "checkpoint:list";
+export const CHECKPOINT_REWIND_CHANNEL = "checkpoint:rewind";
+
 // Workspace services
 export const WORKSPACE_PICK_DIRECTORY_CHANNEL = "workspace:pick-directory";
 
@@ -56,6 +60,13 @@ export const MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL = "config:model:profiles:act
 export const RUNTIME_PREFERENCES_GET_CHANNEL = "runtime-preferences:get";
 export const RUNTIME_PREFERENCES_UPDATE_CHANNEL = "runtime-preferences:update";
 
+// MCP external tool host
+export const MCP_SERVERS_LIST_CHANNEL = "mcp:servers:list";
+export const MCP_SERVERS_CONNECT_CHANNEL = "mcp:servers:connect";
+export const MCP_SERVERS_DISCONNECT_CHANNEL = "mcp:servers:disconnect";
+export const MCP_TOOLS_LIST_CHANNEL = "mcp:tools:list";
+export const MCP_TOOLS_REFRESH_CHANNEL = "mcp:tools:refresh";
+
 /** All channels a renderer may invoke on the main process. */
 export const RENDERER_TO_MAIN_CHANNELS = [
   THREAD_LIST_CHANNEL,
@@ -75,6 +86,8 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   ATTACHMENT_GET_CHANNEL,
   ATTACHMENT_DELETE_CHANNEL,
   USAGE_DAILY_CHANNEL,
+  CHECKPOINT_LIST_CHANNEL,
+  CHECKPOINT_REWIND_CHANNEL,
   WORKSPACE_PICK_DIRECTORY_CHANNEL,
   WRITE_LIST_CHANNEL,
   WRITE_GET_CHANNEL,
@@ -92,6 +105,11 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
   RUNTIME_PREFERENCES_GET_CHANNEL,
   RUNTIME_PREFERENCES_UPDATE_CHANNEL,
+  MCP_SERVERS_LIST_CHANNEL,
+  MCP_SERVERS_CONNECT_CHANNEL,
+  MCP_SERVERS_DISCONNECT_CHANNEL,
+  MCP_TOOLS_LIST_CHANNEL,
+  MCP_TOOLS_REFRESH_CHANNEL,
 ] as const;
 
 export type RendererToMainChannel = (typeof RENDERER_TO_MAIN_CHANNELS)[number];

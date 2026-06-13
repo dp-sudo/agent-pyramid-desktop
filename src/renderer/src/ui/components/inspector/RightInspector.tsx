@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../store/WorkbenchContext";
 import {
@@ -8,6 +8,7 @@ import {
 } from "../../preferences";
 import { summarizeToolItemHeader, summarizeToolItemPreview } from "../chat/timeline-model";
 import type {
+  CheckpointMeta,
   Item,
   PlanItem,
   PlanStepStatus,
@@ -26,6 +27,13 @@ export function RightInspector(): ReactElement | null {
   const { state, actions } = useWorkbench();
   const [resizerDragging, setResizerDragging] = useState(false);
   if (!state.rightPanelMode) return null;
+  const titleKey = state.rightPanelMode === "changes"
+    ? "inspector.changes"
+    : state.rightPanelMode === "checkpoints"
+      ? "inspector.checkpoints"
+      : state.rightPanelMode === "todo"
+        ? "inspector.todo"
+        : "inspector.plan";
 
   return (
     <aside
@@ -75,11 +83,7 @@ export function RightInspector(): ReactElement | null {
       />
       <div className="ds-right-inspector-header">
         <strong id={RIGHT_INSPECTOR_TITLE_ID} className="ds-right-inspector-title">
-          {state.rightPanelMode === "changes"
-            ? t("inspector.changes")
-            : state.rightPanelMode === "todo"
-              ? t("inspector.todo")
-              : t("inspector.plan")}
+          {t(titleKey)}
         </strong>
         <button
           type="button"
@@ -93,10 +97,147 @@ export function RightInspector(): ReactElement | null {
       </div>
       <div className="ds-right-inspector-body">
         {state.rightPanelMode === "changes" ? <ChangesPanel /> : null}
+        {state.rightPanelMode === "checkpoints" ? <CheckpointsPanel /> : null}
         {state.rightPanelMode === "todo" ? <TodoPanel /> : null}
         {state.rightPanelMode === "plan" ? <PlanPanel /> : null}
       </div>
     </aside>
+  );
+}
+
+function CheckpointsPanel(): ReactElement {
+  const { t } = useTranslation();
+  const { state, actions } = useWorkbench();
+  const activeThread = state.activeThread?.mode === "code" ? state.activeThread : null;
+  const [checkpoints, setCheckpoints] = useState<CheckpointMeta[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [pendingTurnId, setPendingTurnId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const loadCheckpoints = useCallback(async (): Promise<void> => {
+    if (!activeThread) {
+      setCheckpoints([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await window.agentApi.checkpoints.list({ threadId: activeThread.id });
+      if (result.ok) {
+        setCheckpoints(result.value.checkpoints);
+      } else {
+        actions.setError(result.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [actions, activeThread]);
+
+  useEffect(() => {
+    void loadCheckpoints();
+  }, [loadCheckpoints, state.items]);
+
+  const rewind = useCallback(
+    async (checkpoint: CheckpointMeta, rewindSession: boolean): Promise<void> => {
+      if (!activeThread) return;
+      setPendingTurnId(checkpoint.turnId);
+      setStatusMessage(null);
+      try {
+        const result = await window.agentApi.checkpoints.rewind({
+          threadId: activeThread.id,
+          turnId: checkpoint.turnId,
+          rewindSession,
+        });
+        if (!result.ok) {
+          actions.setError(result.message);
+          return;
+        }
+        actions.setError(null);
+        setStatusMessage(t("checkpoints.rewindSuccess", {
+          restored: result.value.restoredPaths.length,
+          deleted: result.value.deletedPaths.length,
+        }));
+        if (rewindSession) {
+          const itemsResult = await window.agentApi.turns.get(activeThread.id);
+          if (itemsResult.ok) {
+            actions.selectThread(activeThread, itemsResult.value.items);
+          } else {
+            actions.setError(itemsResult.message);
+          }
+        }
+        await loadCheckpoints();
+      } finally {
+        setPendingTurnId(null);
+      }
+    },
+    [actions, activeThread, loadCheckpoints, t],
+  );
+
+  if (!activeThread) {
+    return <div className="ds-inspector-empty">{t("checkpoints.codeOnly")}</div>;
+  }
+  if (loading && checkpoints.length === 0) {
+    return <div className="ds-inspector-empty">{t("checkpoints.loading")}</div>;
+  }
+  if (checkpoints.length === 0) {
+    return <div className="ds-inspector-empty">{t("checkpoints.empty")}</div>;
+  }
+
+  return (
+    <div className="ds-checkpoint-panel">
+      {statusMessage ? <p className="ds-checkpoint-status">{statusMessage}</p> : null}
+      <ul className="ds-checkpoint-list">
+        {checkpoints.map((checkpoint) => (
+          <li key={checkpoint.turnId} className="ds-checkpoint-item">
+            <div className="ds-checkpoint-header">
+              <strong>{formatCheckpointPrompt(checkpoint.prompt, t)}</strong>
+              <span>{formatCheckpointTimestamp(checkpoint.createdAt)}</span>
+            </div>
+            <p className="ds-checkpoint-files">
+              {checkpoint.files.length > 0
+                ? t("checkpoints.fileCount", { count: checkpoint.files.length })
+                : t("checkpoints.noFiles")}
+            </p>
+            {checkpoint.files.length > 0 ? (
+              <ul className="ds-checkpoint-file-list">
+                {checkpoint.files.slice(0, 4).map((file) => (
+                  <li key={`${checkpoint.turnId}:${file.path}`}>
+                    <span>{file.operation}</span>
+                    <strong>{file.path}</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {checkpoint.files.length > 4 ? (
+              <p className="ds-checkpoint-files">
+                {t("checkpoints.moreFiles", { count: checkpoint.files.length - 4 })}
+              </p>
+            ) : null}
+            <div className="ds-checkpoint-actions">
+              <button
+                type="button"
+                className="ds-pill"
+                disabled={!checkpoint.canRewindCode || pendingTurnId !== null}
+                onClick={() => {
+                  void rewind(checkpoint, false);
+                }}
+              >
+                {t("checkpoints.rewindCode")}
+              </button>
+              <button
+                type="button"
+                className="ds-pill"
+                disabled={!checkpoint.canRewindSession || pendingTurnId !== null}
+                onClick={() => {
+                  void rewind(checkpoint, true);
+                }}
+              >
+                {t("checkpoints.rewindBoth")}
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -144,6 +285,28 @@ function TodoPanel(): ReactElement {
       ))}
     </ul>
   );
+}
+
+export function formatCheckpointPrompt(
+  prompt: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+  maxChars = 80,
+): string {
+  const normalized = prompt.replace(/\s+/g, " ").trim();
+  if (!normalized) return t("checkpoints.untitled");
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, Math.max(1, maxChars - 1))}...`;
+}
+
+export function formatCheckpointTimestamp(value: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
 }
 
 function PlanPanel(): ReactElement {

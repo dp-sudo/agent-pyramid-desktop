@@ -258,6 +258,9 @@ describe("SettingsView helpers", () => {
       approvalExperience: { showDiffByDefault: false },
       command: { timeoutMs: 45_000 },
       compaction: { enabled: false },
+      permissionRules: [
+        { id: "ask-tests", tool: "command", pattern: "npm test*", effect: "ask" },
+      ],
     });
 
     expect(mergeRuntimePreferencesUpdates(first, {
@@ -269,6 +272,9 @@ describe("SettingsView helpers", () => {
       approvalExperience: { autoScrollOnRequest: false },
       command: { maxOutputBytes: 65_536 },
       compaction: { strategy: "aggressive" },
+      permissionRules: [
+        { id: "deny-src", tool: "write", pattern: "src/*", effect: "deny" },
+      ],
     })).toEqual({
       defaultApprovalPolicy: "never",
       toolAvailability: {
@@ -287,6 +293,9 @@ describe("SettingsView helpers", () => {
         enabled: false,
         strategy: "aggressive",
       },
+      permissionRules: [
+        { id: "deny-src", tool: "write", pattern: "src/*", effect: "deny" },
+      ],
     });
   });
 

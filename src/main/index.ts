@@ -5,6 +5,7 @@ import { JsonlThreadStore } from "./persistence/index.js";
 import { AttachmentStore } from "./persistence/attachment-store.js";
 import { ModelConfigStore } from "./persistence/model-config-store.js";
 import { RuntimePreferencesStore } from "./persistence/runtime-preferences-store.js";
+import { CheckpointStore } from "./persistence/checkpoint-store.js";
 import { SafeStorageSecretCodec } from "./persistence/secret-codec.js";
 import { RuntimeEventBus } from "./event-bus.js";
 import { LlmWorkerPool } from "./infrastructure/llm-worker/worker-pool.js";
@@ -15,6 +16,7 @@ import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
 import { createCodingTools } from "./application/tools/coding-tools.js";
 import { createCommandTools } from "./application/tools/command-tools.js";
 import { InMemoryToolRegistry } from "./application/tools/in-memory-tool-registry.js";
+import { McpHost } from "./infrastructure/mcp/host.js";
 import { configureWindowsAppIdentity } from "./application/app-identity.js";
 import { registerThreadHandlers } from "./ipc/threads-handlers.js";
 import { registerTurnHandlers } from "./ipc/turns-handlers.js";
@@ -23,6 +25,8 @@ import { registerApprovalHandlers } from "./ipc/approvals-handlers.js";
 import { registerAttachmentHandlers } from "./ipc/attachments-handlers.js";
 import { registerGoalHandlers } from "./ipc/goals-handlers.js";
 import { registerUsageHandlers } from "./ipc/usage-handlers.js";
+import { registerCheckpointHandlers } from "./ipc/checkpoints-handlers.js";
+import { registerMcpHandlers } from "./ipc/mcp-handlers.js";
 import { registerWorkspaceHandlers } from "./ipc/workspace-handlers.js";
 import { registerWriteHandlers } from "./ipc/write-handlers.js";
 import { registerModelConfigHandlers } from "./ipc/model-config-handlers.js";
@@ -40,15 +44,18 @@ const store = new JsonlThreadStore(userDataDir);
 const attachmentStore = new AttachmentStore(userDataDir);
 const modelConfigStore = new ModelConfigStore(userDataDir, { secretCodec });
 const runtimePreferencesStore = new RuntimePreferencesStore(userDataDir, { secretCodec });
+const checkpointStore = new CheckpointStore(userDataDir);
 const bus = new RuntimeEventBus();
 bus.setMaxListeners(50);
 const pool = new LlmWorkerPool(1);
 const registry = new InMemoryToolRegistry([]);
+const mcpHost = new McpHost(registry, bus);
 const runtime = new AgentRuntime({
   store,
   attachmentStore,
   modelConfigStore,
   runtimePreferencesStore,
+  checkpointStore,
   pool,
   bus,
   registry,
@@ -171,6 +178,7 @@ app.whenReady().then(async () => {
     await attachmentStore.init();
     await modelConfigStore.init();
     await runtimePreferencesStore.init();
+    await checkpointStore.init();
   } catch (error) {
     console.error("[main] persistence init failed:", error);
     throw error;
@@ -181,6 +189,13 @@ app.whenReady().then(async () => {
     console.error("[main] worker pool start failed:", error);
     throw error;
   }
+  try {
+    const preferences = await runtimePreferencesStore.get();
+    mcpHost.configure(preferences.mcpServers);
+    void mcpHost.connectEnabled();
+  } catch (error) {
+    console.error("[main] MCP host startup failed:", error);
+  }
 
   registerThreadHandlers(store, runtime, runtimePreferencesStore);
   registerTurnHandlers(runtime, store);
@@ -189,16 +204,27 @@ app.whenReady().then(async () => {
   registerAttachmentHandlers(attachmentStore);
   registerGoalHandlers(runtime);
   registerUsageHandlers(store);
+  registerCheckpointHandlers(checkpointStore, store, runtime);
+  registerMcpHandlers(mcpHost);
   registerWorkspaceHandlers();
   registerWriteHandlers();
   registerModelConfigHandlers(modelConfigStore);
-  registerRuntimePreferencesHandlers(runtimePreferencesStore);
+  registerRuntimePreferencesHandlers(runtimePreferencesStore, {
+    afterUpdate: async (preferences) => {
+      mcpHost.configure(preferences.mcpServers);
+      await mcpHost.connectEnabled();
+    },
+  });
 
   createWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on("before-quit", () => {
+  void mcpHost.close();
 });
 
 function installContentSecurityPolicy(): void {

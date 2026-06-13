@@ -345,6 +345,69 @@ export interface RuntimeCompactionPreferences {
   strategy: RuntimeCompactionStrategy;
 }
 
+export const MCP_SERVER_TRANSPORTS = ["stdio"] as const;
+export type McpServerTransport = (typeof MCP_SERVER_TRANSPORTS)[number];
+export const MCP_SERVER_STATUSES = [
+  "disconnected",
+  "connecting",
+  "connected",
+  "failed",
+] as const;
+export type McpServerStatus = (typeof MCP_SERVER_STATUSES)[number];
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  transport: McpServerTransport;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd?: string;
+  enabled: boolean;
+  readOnlyTools: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type McpServerConfigUpdate = Partial<
+  Pick<
+    McpServerConfig,
+    "name" | "command" | "args" | "env" | "cwd" | "enabled" | "readOnlyTools"
+  >
+>;
+
+export interface McpToolInfo {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  readOnly: boolean;
+}
+
+export interface McpServerStatusRecord {
+  id: string;
+  name: string;
+  transport: McpServerTransport;
+  enabled: boolean;
+  status: McpServerStatus;
+  toolCount: number;
+  tools: McpToolInfo[];
+  lastConnectedAt?: string;
+  lastError?: string;
+}
+
+export const RUNTIME_PERMISSION_RULE_TOOLS = ["command", "write", "mcp"] as const;
+export type RuntimePermissionRuleTool = (typeof RUNTIME_PERMISSION_RULE_TOOLS)[number];
+
+export const RUNTIME_PERMISSION_RULE_EFFECTS = ["allow", "ask", "deny"] as const;
+export type RuntimePermissionRuleEffect = (typeof RUNTIME_PERMISSION_RULE_EFFECTS)[number];
+
+export interface RuntimePermissionRule {
+  id: string;
+  tool: RuntimePermissionRuleTool;
+  pattern: string;
+  effect: RuntimePermissionRuleEffect;
+}
+
 export interface RuntimePreferences {
   defaultApprovalPolicy: ThreadApprovalPolicy;
   defaultSandboxMode: ThreadSandboxMode;
@@ -354,6 +417,8 @@ export interface RuntimePreferences {
   approvalExperience: RuntimeApprovalExperiencePreferences;
   command: RuntimeCommandPreferences;
   compaction: RuntimeCompactionPreferences;
+  permissionRules: RuntimePermissionRule[];
+  mcpServers: McpServerConfig[];
 }
 
 export interface RuntimePreferencesUpdate {
@@ -365,6 +430,8 @@ export interface RuntimePreferencesUpdate {
   approvalExperience?: Partial<RuntimeApprovalExperiencePreferences>;
   command?: Partial<RuntimeCommandPreferences>;
   compaction?: Partial<RuntimeCompactionPreferences>;
+  permissionRules?: RuntimePermissionRule[];
+  mcpServers?: McpServerConfig[];
 }
 
 export const DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS = 30_000;
@@ -473,6 +540,8 @@ export const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
     enabled: true,
     strategy: "balanced",
   },
+  permissionRules: [],
+  mcpServers: [],
 };
 
 export function isRuntimeToolName(value: unknown): value is RuntimeToolName {
@@ -486,6 +555,30 @@ export function isRuntimeCompactionStrategy(
     RUNTIME_COMPACTION_STRATEGIES.includes(value as RuntimeCompactionStrategy);
 }
 
+export function isRuntimePermissionRuleTool(
+  value: unknown,
+): value is RuntimePermissionRuleTool {
+  return typeof value === "string" &&
+    RUNTIME_PERMISSION_RULE_TOOLS.includes(value as RuntimePermissionRuleTool);
+}
+
+export function isRuntimePermissionRuleEffect(
+  value: unknown,
+): value is RuntimePermissionRuleEffect {
+  return typeof value === "string" &&
+    RUNTIME_PERMISSION_RULE_EFFECTS.includes(value as RuntimePermissionRuleEffect);
+}
+
+export function isMcpServerTransport(value: unknown): value is McpServerTransport {
+  return typeof value === "string" &&
+    MCP_SERVER_TRANSPORTS.includes(value as McpServerTransport);
+}
+
+export function isMcpServerStatus(value: unknown): value is McpServerStatus {
+  return typeof value === "string" &&
+    MCP_SERVER_STATUSES.includes(value as McpServerStatus);
+}
+
 export function isRuntimePreferences(value: unknown): value is RuntimePreferences {
   if (!isRecord(value)) return false;
   return isThreadApprovalPolicy(value.defaultApprovalPolicy) &&
@@ -495,7 +588,9 @@ export function isRuntimePreferences(value: unknown): value is RuntimePreference
     isNullableString(value.writeDefaultModelProfileId) &&
     isRuntimeApprovalExperiencePreferences(value.approvalExperience) &&
     isRuntimeCommandPreferences(value.command) &&
-    isRuntimeCompactionPreferences(value.compaction);
+    isRuntimeCompactionPreferences(value.compaction) &&
+    isRuntimePermissionRules(value.permissionRules) &&
+    isMcpServerConfigs(value.mcpServers);
 }
 
 // ----------------------------------------------------------------------------
@@ -798,6 +893,38 @@ export interface ApprovalRequestedEvent {
   preview?: ApprovalPreview;
 }
 
+export const TOOL_PROGRESS_STREAMS = ["stdout", "stderr"] as const;
+export type ToolProgressStream = (typeof TOOL_PROGRESS_STREAMS)[number];
+
+export interface ToolProgressEvent {
+  kind: "tool_progress";
+  threadId: string;
+  turnId: string;
+  toolCallId: string;
+  chunk: string;
+  stream: ToolProgressStream;
+  seq: number;
+}
+
+export interface McpServerConnectionEvent {
+  kind: "mcp_server_connection";
+  serverId: string;
+  serverName: string;
+  status: McpServerStatus;
+  toolCount: number;
+  occurredAt: string;
+  message?: string;
+}
+
+export interface McpToolListChangedEvent {
+  kind: "mcp_tool_list_changed";
+  serverId: string;
+  serverName: string;
+  toolCount: number;
+  tools: McpToolInfo[];
+  occurredAt: string;
+}
+
 export interface RuntimeErrorEvent {
   kind: "runtime_error";
   threadId?: string;
@@ -839,6 +966,9 @@ export type RuntimeEvent =
   | ItemAppendedEvent
   | ItemUpdatedEvent
   | ApprovalRequestedEvent
+  | ToolProgressEvent
+  | McpServerConnectionEvent
+  | McpToolListChangedEvent
   | ToolBudgetReachedEvent
   | GoalUpdatedEvent
   | RuntimeErrorEvent;
@@ -850,6 +980,9 @@ export const RUNTIME_EVENT_KINDS = [
   "item_appended",
   "item_updated",
   "approval_requested",
+  "tool_progress",
+  "mcp_server_connection",
+  "mcp_tool_list_changed",
   "tool_budget_reached",
   "goal_updated",
   "runtime_error",
@@ -995,6 +1128,90 @@ export interface WriteCompleteResponse {
 }
 
 // ============================================================================
+// Checkpoints / rewind
+// ============================================================================
+
+export type CheckpointFileOperation = "create" | "update" | "delete" | "rollback";
+
+export interface CheckpointFileSummary {
+  path: string;
+  operation: CheckpointFileOperation;
+  toolName: string;
+  beforeSha256: string | null;
+  afterSha256: string | null;
+  createdAt: string;
+}
+
+export interface CheckpointMeta {
+  threadId: string;
+  turnId: string;
+  workspace: string;
+  prompt: string;
+  createdAt: string;
+  files: CheckpointFileSummary[];
+  canRewindCode: boolean;
+  canRewindSession: boolean;
+}
+
+export interface CheckpointListRequest {
+  threadId: string;
+}
+
+export interface CheckpointListResponse {
+  threadId: string;
+  checkpoints: CheckpointMeta[];
+}
+
+export interface CheckpointRewindRequest {
+  threadId: string;
+  turnId: string;
+  rewindSession?: boolean;
+}
+
+export interface CheckpointRewindResponse {
+  threadId: string;
+  turnId: string;
+  rewindSession: boolean;
+  restoredPaths: string[];
+  deletedPaths: string[];
+  itemsRemoved: number;
+  eventsRemoved: number;
+  checkpointsRemoved: number;
+}
+
+// ============================================================================
+// MCP external tool host
+// ============================================================================
+
+export interface McpServerListResponse {
+  servers: McpServerStatusRecord[];
+}
+
+export interface McpServerConnectRequest {
+  serverId: string;
+}
+
+export interface McpServerDisconnectRequest {
+  serverId: string;
+}
+
+export interface McpServerToolsRequest {
+  serverId?: string;
+}
+
+export interface McpServerToolsResponse {
+  servers: Array<{
+    serverId: string;
+    serverName: string;
+    tools: McpToolInfo[];
+  }>;
+}
+
+export interface McpServerRefreshToolsRequest {
+  serverId: string;
+}
+
+// ============================================================================
 // Generic IPC envelope
 // ============================================================================
 
@@ -1041,6 +1258,11 @@ export function isItemKind(value: unknown): value is ItemKind {
 export function isRuntimeEventKind(value: unknown): value is RuntimeEventKind {
   return typeof value === "string" &&
     RUNTIME_EVENT_KINDS.includes(value as RuntimeEventKind);
+}
+
+export function isToolProgressStream(value: unknown): value is ToolProgressStream {
+  return typeof value === "string" &&
+    TOOL_PROGRESS_STREAMS.includes(value as ToolProgressStream);
 }
 
 export function isItem(value: unknown): value is Item {
@@ -1132,6 +1354,28 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
         hasString(v, "toolName") &&
         isRecord(v.args) &&
         isOptionalApprovalPreview(v.preview);
+    case "tool_progress":
+      return hasString(v, "threadId") &&
+        hasString(v, "turnId") &&
+        hasString(v, "toolCallId") &&
+        hasString(v, "chunk") &&
+        isToolProgressStream(v.stream) &&
+        isPositiveInteger(v.seq);
+    case "mcp_server_connection":
+      return hasString(v, "serverId") &&
+        hasString(v, "serverName") &&
+        isMcpServerStatus(v.status) &&
+        isNonNegativeInteger(v.toolCount) &&
+        isIsoTimestampString(v.occurredAt) &&
+        isOptionalString(v.message);
+    case "mcp_tool_list_changed":
+      return hasString(v, "serverId") &&
+        hasString(v, "serverName") &&
+        isNonNegativeInteger(v.toolCount) &&
+        Array.isArray(v.tools) &&
+        v.tools.every(isMcpToolInfo) &&
+        v.tools.length === v.toolCount &&
+        isIsoTimestampString(v.occurredAt);
     case "tool_budget_reached":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
@@ -1228,6 +1472,70 @@ function isRuntimeCompactionPreferences(
     isRuntimeCompactionStrategy(value.strategy);
 }
 
+function isRuntimePermissionRules(value: unknown): value is RuntimePermissionRule[] {
+  if (!Array.isArray(value)) return false;
+  const ids = new Set<string>();
+  for (const rule of value) {
+    if (!isRecord(rule)) return false;
+    const id = rule.id;
+    const pattern = rule.pattern;
+    if (typeof id !== "string" || !id.trim() || ids.has(id)) {
+      return false;
+    }
+    if (
+      !isRuntimePermissionRuleTool(rule.tool) ||
+      typeof pattern !== "string" ||
+      !pattern.trim() ||
+      pattern.includes("\0") ||
+      !isRuntimePermissionRuleEffect(rule.effect)
+    ) {
+      return false;
+    }
+    ids.add(id);
+  }
+  return true;
+}
+
+function isMcpServerConfigs(value: unknown): value is McpServerConfig[] {
+  if (!Array.isArray(value)) return false;
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  for (const server of value) {
+    if (!isMcpServerConfig(server)) return false;
+    const idKey = server.id.trim();
+    const nameKey = server.name.trim();
+    if (ids.has(idKey) || names.has(nameKey)) return false;
+    ids.add(idKey);
+    names.add(nameKey);
+  }
+  return true;
+}
+
+function isMcpServerConfig(value: unknown): value is McpServerConfig {
+  if (!isRecord(value)) return false;
+  return isNonBlankStringWithoutNul(value.id) &&
+    isNonBlankStringWithoutNul(value.name) &&
+    isMcpServerTransport(value.transport) &&
+    isNonBlankStringWithoutNul(value.command) &&
+    Array.isArray(value.args) &&
+    value.args.every(isStringWithoutNul) &&
+    isStringRecordWithoutNul(value.env) &&
+    (value.cwd === undefined || isNonBlankStringWithoutNul(value.cwd)) &&
+    typeof value.enabled === "boolean" &&
+    Array.isArray(value.readOnlyTools) &&
+    value.readOnlyTools.every(isNonBlankStringWithoutNul) &&
+    isIsoTimestampString(value.createdAt) &&
+    isIsoTimestampString(value.updatedAt);
+}
+
+function isMcpToolInfo(value: unknown): value is McpToolInfo {
+  if (!isRecord(value)) return false;
+  return hasNonBlankString(value, "name") &&
+    hasString(value, "description") &&
+    isRecord(value.inputSchema) &&
+    typeof value.readOnly === "boolean";
+}
+
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
@@ -1300,6 +1608,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
+}
+
+function isStringWithoutNul(value: unknown): value is string {
+  return typeof value === "string" && !value.includes("\0");
+}
+
+function isNonBlankStringWithoutNul(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && !value.includes("\0");
+}
+
+function isStringRecordWithoutNul(value: unknown): value is Record<string, string> {
+  if (!isRecord(value)) return false;
+  return Object.entries(value).every(([key, entry]) =>
+    isNonBlankStringWithoutNul(key) && isStringWithoutNul(entry)
+  );
 }
 
 function isOptionalIsoTimestampString(value: unknown): value is string | undefined {

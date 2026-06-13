@@ -408,9 +408,15 @@ Current event kinds:
 - `item_appended`
 - `item_updated`
 - `approval_requested`
+- `tool_progress`
 - `tool_budget_reached`
 - `goal_updated`
 - `runtime_error`
+
+`tool_progress` carries `{ threadId, turnId, toolCallId, chunk, stream, seq }`
+for live stdout/stderr chunks from a still-running tool. It is a live UI event
+only: command stdout/stderr remain persisted through the final `ToolItem.result`
+in `messages.jsonl`, and progress chunks are not appended to `events.jsonl`.
 
 `runtime_error.code` is one of `worker_crashed`, `worker_timeout`,
 `provider_http`, `provider_error`, `schema_invalid`, `tool_not_found`,
@@ -517,6 +523,7 @@ Contracts:
 - `RuntimeApprovalExperiencePreferences`
 - `RuntimeCommandPreferences`
 - `RuntimeCompactionPreferences`
+- `RuntimePermissionRule`
 
 Storage file:
 
@@ -545,6 +552,17 @@ Key semantics:
 - `toolAvailability` is currently consumed by `AgentRuntime` as a catalog-level
   tool switch. Disabled tools are omitted from LLM tool definitions and forced
   calls to disabled tools produce failed tool items.
+- `permissionRules` is an ordered array of `{ id, tool, pattern, effect }`
+  records where `tool` is `command | write` and `effect` is
+  `allow | ask | deny`. Updates replace the full rule array and must contain
+  unique non-empty ids, non-empty patterns without NUL bytes, and valid enum
+  values. If the persisted field exists but is malformed, config loading fails
+  instead of silently dropping a security rule.
+- Runtime evaluates `permissionRules` after hard `read-only` sandbox and
+  `approvalPolicy: never` denials. Command rules match raw `command` arguments
+  for shell-like command tools; write rules match `path` arguments or
+  `apply_patch` target paths. Matching effects resolve by
+  `deny > ask > allow`; no match falls back to normal approval logic.
 - Mode default profile ids are consumed by `AgentRuntime` when a turn request
   does not specify `modelProfileId`.
 - `defaultApprovalPolicy` and `defaultSandboxMode` are consumed by thread

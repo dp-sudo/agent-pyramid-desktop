@@ -22,6 +22,10 @@ export class InMemoryToolRegistry implements ToolRegistry {
     this.tools.set(tool.definition.name, tool);
   }
 
+  unregister(name: string): boolean {
+    return this.tools.delete(name);
+  }
+
   listDefinitions(): AgentTool["definition"][] {
     return [...this.tools.values()].map((tool) => tool.definition);
   }

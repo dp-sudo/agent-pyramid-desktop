@@ -169,6 +169,7 @@ describe("AgentRuntime", () => {
       "item_appended",
       "item_updated",
       "approval_requested",
+      "tool_progress",
       "tool_budget_reached",
       "goal_updated",
       "runtime_error",
@@ -1479,6 +1480,71 @@ describe("AgentRuntime", () => {
     });
   });
 
+  it("does not let permission allow rules bypass read-only sandbox mode", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    await store.updateThread(thread.id, { sandboxMode: "read-only" });
+    await runtimePreferencesStore.update({
+      permissionRules: [
+        { id: "allow-src", tool: "write", pattern: "src/*", effect: "allow" },
+      ],
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "write_file",
+          description: "Write file",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isDestructive: true },
+        async execute() {
+          throw new Error("write_file should not execute in read-only sandbox.");
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-write",
+            name: "write_file",
+            arguments: { path: "src/index.ts", content: "next" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Denied.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Try writing",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(
+      finalItems(replayed).find((item) => item.kind === "tool" && item.name === "write_file"),
+    ).toMatchObject({
+      status: "failed",
+      result: { denied: true },
+    });
+  });
+
   it("requests approval for run_command even in auto mode and returns output after approval", async () => {
     const workspace = await makeTempDir("runtime-command-tools-");
     try {
@@ -1498,7 +1564,9 @@ describe("AgentRuntime", () => {
               id: "call-command",
               name: "run_command",
               arguments: {
-                command: nodeCommand("process.stdout.write('hello runtime');"),
+                command: nodeCommand(
+                  "process.stdout.write('hello runtime'); process.stderr.write('warn runtime');",
+                ),
               },
             },
           ],
@@ -1523,7 +1591,9 @@ describe("AgentRuntime", () => {
         kind: "approval_requested",
         toolName: "run_command",
         args: {
-          command: nodeCommand("process.stdout.write('hello runtime');"),
+          command: nodeCommand(
+            "process.stdout.write('hello runtime'); process.stderr.write('warn runtime');",
+          ),
         },
       });
       if (!approval || approval.kind !== "approval_requested") {
@@ -1537,6 +1607,23 @@ describe("AgentRuntime", () => {
         (message) => message.role === "tool" && message.toolCallId === "call-command",
       );
       expect(toolMessage?.content).toContain("hello runtime");
+      expect(toolMessage?.content).toContain("warn runtime");
+      const progressEvents = events.filter(
+        (event): event is Extract<RuntimeEvent, { kind: "tool_progress" }> =>
+          event.kind === "tool_progress",
+      );
+      expect(progressEvents.some(
+        (event) =>
+          event.toolCallId === "call-command" &&
+          event.stream === "stdout" &&
+          event.chunk.includes("hello runtime"),
+      )).toBe(true);
+      expect(progressEvents.some(
+        (event) =>
+          event.toolCallId === "call-command" &&
+          event.stream === "stderr" &&
+          event.chunk.includes("warn runtime"),
+      )).toBe(true);
       const replayed = [];
       for await (const item of store.replayItems(thread.id)) {
         replayed.push(item);
@@ -1549,9 +1636,62 @@ describe("AgentRuntime", () => {
           cwd: ".",
           exitCode: 0,
           stdout: "hello runtime",
+          stderr: "warn runtime",
           timedOut: false,
         },
       });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("allows matching command calls without approval when permission rules allow them", async () => {
+    const workspace = await makeTempDir("runtime-command-permission-rules-");
+    try {
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      const command = nodeCommand("process.stdout.write('allowed command');");
+      await runtimePreferencesStore.update({
+        permissionRules: [
+          { id: "allow-node", tool: "command", pattern: command, effect: "allow" },
+        ],
+      });
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-command",
+              name: "run_command",
+              arguments: { command },
+            },
+          ],
+          raw: {},
+        },
+        {
+          text: "Command finished.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+
+      await createRuntime(registry).startTurn({
+        threadId: thread.id,
+        text: "Run command",
+      });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+      expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+      const toolMessage = fakePool.requests[1]?.messages.find(
+        (message) => message.role === "tool" && message.toolCallId === "call-command",
+      );
+      expect(toolMessage?.content).toContain("allowed command");
     } finally {
       await removeTempDir(workspace);
     }
@@ -1923,6 +2063,75 @@ describe("AgentRuntime", () => {
     await waitFor(() => events.some((event) => event.kind === "turn_completed"));
 
     expect(executed).toBe(true);
+  });
+
+  it("denies matching write calls without approval when permission rules deny them", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "write",
+    });
+    await runtimePreferencesStore.update({
+      toolAvailability: { write: { write_file: true } },
+      permissionRules: [
+        { id: "deny-drafts", tool: "write", pattern: "drafts/*", effect: "deny" },
+      ],
+    });
+    let executed = false;
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "write_file",
+          description: "Write file",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isDestructive: true },
+        async execute() {
+          executed = true;
+          return "written";
+        },
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-write",
+            name: "write_file",
+            arguments: { path: "drafts/blocked.md", content: "draft" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Write denied.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Write draft",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual(["write_file"]);
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    expect(executed).toBe(false);
+    const replayed = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(
+      finalItems(replayed).find((item) => item.kind === "tool" && item.name === "write_file"),
+    ).toMatchObject({
+      status: "failed",
+      result: { denied: true },
+    });
   });
 
   it("rejects forced Code-only tool calls in Write threads before approval or execution", async () => {

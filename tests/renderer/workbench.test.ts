@@ -333,6 +333,52 @@ describe("Workbench", () => {
     expect(actions.appendItem).not.toHaveBeenCalled();
   });
 
+  it("routes active tool progress events into the active timeline only", () => {
+    const actions = makeRuntimeEventActions();
+
+    applyWorkbenchRuntimeEvent(
+      {
+        kind: "tool_progress",
+        threadId: "active-thread",
+        turnId: "turn-1",
+        toolCallId: "call-1",
+        chunk: "running\n",
+        stream: "stdout",
+        seq: 1,
+      },
+      {
+        activeThread: makeThreadRecord({ id: "active-thread" }),
+        activeThreadId: "active-thread",
+      },
+      actions,
+    );
+    applyWorkbenchRuntimeEvent(
+      {
+        kind: "tool_progress",
+        threadId: "background-thread",
+        turnId: "turn-1",
+        toolCallId: "call-2",
+        chunk: "background\n",
+        stream: "stderr",
+        seq: 1,
+      },
+      {
+        activeThread: makeThreadRecord({ id: "active-thread" }),
+        activeThreadId: "active-thread",
+      },
+      actions,
+    );
+
+    expect(actions.appendToolProgress).toHaveBeenCalledOnce();
+    expect(actions.appendToolProgress).toHaveBeenCalledWith({
+      threadId: "active-thread",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      seq: 1,
+      stdout: "running\n",
+    });
+  });
+
   it("keeps Code sidebar thread lists limited to Code threads", () => {
     const threads = [
       makeThreadSummary("code-1", "/workspace", "code", "2026-06-08T08:00:00.000Z"),
@@ -348,6 +394,7 @@ describe("Workbench", () => {
 
 function makeRuntimeEventActions() {
   return {
+    appendToolProgress: vi.fn(),
     appendItem: vi.fn(),
     setError: vi.fn(),
     turnEnded: vi.fn(),

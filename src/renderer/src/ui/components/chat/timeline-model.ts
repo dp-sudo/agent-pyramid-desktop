@@ -324,6 +324,9 @@ function formatToolDetailPreview(
 function extractToolResultText(result: unknown): string {
   if (result === undefined) return "";
   if (typeof result === "string") return result;
+  if (isToolProgressDisplayResult(result)) {
+    return formatToolProgressDisplayResult(result);
+  }
   if (result && typeof result === "object" && "content" in result) {
     const content = (result as { content: unknown }).content;
     return typeof content === "string" ? content : JSON.stringify(content, null, 2);
@@ -338,6 +341,9 @@ function extractToolResultPreview(
   const normalizedMaxChars = normalizePreviewLimit(maxChars);
   if (result === undefined) return { text: "", truncated: false, hiddenCharCount: 0 };
   if (typeof result === "string") return previewPlainText(result, normalizedMaxChars);
+  if (isToolProgressDisplayResult(result)) {
+    return previewPlainText(formatToolProgressDisplayResult(result), normalizedMaxChars);
+  }
   if (result && typeof result === "object" && "content" in result) {
     const content = (result as { content: unknown }).content;
     return typeof content === "string"
@@ -345,6 +351,34 @@ function extractToolResultPreview(
       : stringifyJsonPreview(content, normalizedMaxChars);
   }
   return stringifyJsonPreview(result, normalizedMaxChars);
+}
+
+function isToolProgressDisplayResult(result: unknown): result is {
+  kind: "tool_progress";
+  stdout?: string;
+  stderr?: string;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+} {
+  return Boolean(result) &&
+    typeof result === "object" &&
+    (result as { kind?: unknown }).kind === "tool_progress";
+}
+
+function formatToolProgressDisplayResult(result: {
+  stdout?: string;
+  stderr?: string;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+}): string {
+  const parts: string[] = [];
+  if (result.stdout) {
+    parts.push(`${result.stdoutTruncated ? "[stdout: latest output]" : "[stdout]"}\n${result.stdout}`);
+  }
+  if (result.stderr) {
+    parts.push(`${result.stderrTruncated ? "[stderr: latest output]" : "[stderr]"}\n${result.stderr}`);
+  }
+  return parts.join("\n\n");
 }
 
 function previewPlainText(

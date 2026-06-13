@@ -337,8 +337,20 @@ Approval policy currently implemented in runtime:
   downgraded.
 - `sandboxMode: "read-only"` denies non-read-only tools before execution.
 - `approvalPolicy: "never"` denies non-read-only tools before execution.
+- `RuntimePreferences.permissionRules` then evaluates per-call command text or
+  write paths for command/write tool families. Matching rules resolve by
+  `deny > ask > allow`; unmatched calls fall back to the normal metadata-based
+  policy. Hard `read-only` and `never` denials run first, so an allow rule
+  cannot bypass them.
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
 - All remaining non-read-only tools require approval.
+
+When a tool call is approved for execution, `AgentRuntime.executeToolCall()`
+injects `AgentToolContext.reportProgress`. Tools may call it with live
+stdout/stderr chunks; runtime converts those calls into live-only
+`tool_progress` events on `RuntimeEventBus`. Progress emit failures are logged
+and do not fail the tool call. Final tool success/failure still arrives as the
+normal `item_updated` event with the completed `ToolItem.result`.
 
 Workspace tools require an absolute thread workspace path before resolving file paths. `list_files.path` and `search_files.path` reject non-string values instead of treating them as omitted root-path requests, and workspace string parameters reject NUL bytes before path resolution or search execution. `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, and `search_files.max_results` are strict integer ranges; invalid or out-of-range values fail instead of being silently clamped to defaults. `read_file`, `search_files`, `rg_search`, `edit_file`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. Single-file coding tools restore the original file content if post-write metadata collection fails before file history and read state are updated. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write or post-write metadata step fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the history entry belongs to another thread or the file no longer matches the latest agent-written content. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
 
@@ -346,7 +358,7 @@ Workspace tools require an absolute thread workspace path before resolving file 
 
 File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; rollback is limited to the thread that produced the latest file history entry, and history is not replayed from JSONL after restart.
 
-`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. `shell_command`, `git_bash_command`, `powershell_command`, and `wsl_command` use the same foreground execution boundary while selecting an explicit shell. `shell_command` can use a custom `shell_path` and `shell_args`; `wsl_command` converts Windows drive paths to `/mnt/<drive>/...` before entering the WSL shell. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start or exits unsuccessfully.
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. `shell_command`, `git_bash_command`, `powershell_command`, and `wsl_command` use the same foreground execution boundary while selecting an explicit shell. `shell_command` can use a custom `shell_path` and `shell_args`; `wsl_command` converts Windows drive paths to `/mnt/<drive>/...` before entering the WSL shell. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Foreground command-backed tools report live stdout/stderr through `tool_progress`, throttled in the command process wrapper by time and byte thresholds before renderer updates. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start or exits unsuccessfully.
 
 Structured developer command tools are registered independently from
 `run_command`. `rg_search` performs ripgrep-style regular expression search
@@ -544,6 +556,9 @@ Renderer event handling:
   the current window also advances the matching thread summary activity time
 - `item_appended`: append only when the event belongs to the active thread
 - `item_updated`: update only when the event belongs to the active thread
+- `tool_progress`: batch live stdout/stderr by `toolCallId`, merge into the
+  matching running tool card, and let the final `item_updated` result replace
+  the temporary progress display
 - `turn_completed`: `actions.turnEnded(event.threadId, event.status)`
 - `turn_failed`: `actions.turnEnded(event.threadId, "failed")`; visible error only for the active thread
 - `runtime_error`: visible error only for global errors or the active thread

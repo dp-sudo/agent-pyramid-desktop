@@ -182,6 +182,9 @@ flowchart TD
 - `turns.start()` returns quickly with an in-flight `TurnRecord`.
 - Completion, failure, streamed text and tool updates arrive through `RuntimeEvent`.
 - `RuntimeEvent` values are emitted by `RuntimeEventBus` and forwarded through `SSE_PUSH_CHANNEL`.
+- Live command stdout/stderr progress uses `RuntimeEvent.kind === "tool_progress"`;
+  it is merged into the active running tool card in renderer state and is not
+  persisted separately from the final `ToolItem.result`.
 - Tools are exposed to the model through `ToolRegistry.listDefinitions()`.
 - Tool execution goes through `ToolRegistry.execute()`; direct tool bypass is not part of the architecture.
 - Read-only workspace tools skip approval.
@@ -200,6 +203,11 @@ flowchart TD
   `RuntimePreferences.toolAvailability` to hide and reject Code-only
   coding/command tools by default; policy overrides can allow or deny
   individual tool names per thread mode before approval/sandbox checks run.
+- Per-call command/write permission rules live in
+  `RuntimePreferences.permissionRules` and are evaluated by
+  `src/main/application/permission-policy.ts` inside `AgentRuntime.resolveToolPolicy()`;
+  hard read-only sandbox and `approvalPolicy: never` denials still run before
+  rule-based allow/ask/deny decisions.
 - `create_plan` is only available in plan mode.
 - `update_goal` is only available in goal mode or when a thread has an active goal.
 - Model configuration profiles are persisted by `ModelConfigStore`; runtime

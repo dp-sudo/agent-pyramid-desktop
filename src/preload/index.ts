@@ -5,8 +5,19 @@ import type {
   AttachmentDeleteResponse,
   AttachmentRecord,
   ApprovalRespondRequest,
+  CheckpointListRequest,
+  CheckpointListResponse,
+  CheckpointRewindRequest,
+  CheckpointRewindResponse,
   GoalUpdateRequest,
   IpcResult,
+  McpServerConnectRequest,
+  McpServerDisconnectRequest,
+  McpServerListResponse,
+  McpServerRefreshToolsRequest,
+  McpServerStatusRecord,
+  McpServerToolsRequest,
+  McpServerToolsResponse,
   RuntimeEvent,
   RuntimePreferences,
   RuntimePreferencesUpdate,
@@ -46,6 +57,8 @@ import {
   ATTACHMENT_DELETE_CHANNEL,
   ATTACHMENT_GET_CHANNEL,
   APPROVAL_RESPOND_CHANNEL,
+  CHECKPOINT_LIST_CHANNEL,
+  CHECKPOINT_REWIND_CHANNEL,
   GOAL_UPDATE_CHANNEL,
   SSE_PUSH_CHANNEL,
   SSE_SUBSCRIBE_CHANNEL,
@@ -75,6 +88,11 @@ import {
   MODEL_CONFIG_PROFILES_LIST_CHANNEL,
   MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
   MODEL_CONFIG_UPDATE_CHANNEL,
+  MCP_SERVERS_CONNECT_CHANNEL,
+  MCP_SERVERS_DISCONNECT_CHANNEL,
+  MCP_SERVERS_LIST_CHANNEL,
+  MCP_TOOLS_LIST_CHANNEL,
+  MCP_TOOLS_REFRESH_CHANNEL,
   RUNTIME_PREFERENCES_GET_CHANNEL,
   RUNTIME_PREFERENCES_UPDATE_CHANNEL,
 } from "../shared/ipc";
@@ -208,6 +226,53 @@ const usage = {
   },
 };
 
+const checkpoints = {
+  list(request: CheckpointListRequest): Promise<IpcResult<CheckpointListResponse>> {
+    return ipcRenderer.invoke(CHECKPOINT_LIST_CHANNEL, request) as Promise<
+      IpcResult<CheckpointListResponse>
+    >;
+  },
+  rewind(
+    request: CheckpointRewindRequest,
+  ): Promise<IpcResult<CheckpointRewindResponse>> {
+    return ipcRenderer.invoke(CHECKPOINT_REWIND_CHANNEL, request) as Promise<
+      IpcResult<CheckpointRewindResponse>
+    >;
+  },
+};
+
+const mcp = {
+  listServers(): Promise<IpcResult<McpServerListResponse>> {
+    return ipcRenderer.invoke(MCP_SERVERS_LIST_CHANNEL) as Promise<
+      IpcResult<McpServerListResponse>
+    >;
+  },
+  connect(request: McpServerConnectRequest): Promise<IpcResult<McpServerStatusRecord>> {
+    return ipcRenderer.invoke(MCP_SERVERS_CONNECT_CHANNEL, request) as Promise<
+      IpcResult<McpServerStatusRecord>
+    >;
+  },
+  disconnect(
+    request: McpServerDisconnectRequest,
+  ): Promise<IpcResult<McpServerStatusRecord>> {
+    return ipcRenderer.invoke(MCP_SERVERS_DISCONNECT_CHANNEL, request) as Promise<
+      IpcResult<McpServerStatusRecord>
+    >;
+  },
+  listTools(request?: McpServerToolsRequest): Promise<IpcResult<McpServerToolsResponse>> {
+    return ipcRenderer.invoke(MCP_TOOLS_LIST_CHANNEL, request) as Promise<
+      IpcResult<McpServerToolsResponse>
+    >;
+  },
+  refreshTools(
+    request: McpServerRefreshToolsRequest,
+  ): Promise<IpcResult<McpServerStatusRecord>> {
+    return ipcRenderer.invoke(MCP_TOOLS_REFRESH_CHANNEL, request) as Promise<
+      IpcResult<McpServerStatusRecord>
+    >;
+  },
+};
+
 const workspace = {
   pickDirectory(): Promise<IpcResult<WorkspacePickDirectoryResponse>> {
     return ipcRenderer.invoke(WORKSPACE_PICK_DIRECTORY_CHANNEL) as Promise<
@@ -333,6 +398,8 @@ export const agentApi = {
   goals,
   attachments,
   usage,
+  checkpoints,
+  mcp,
   workspace,
   write,
   modelConfig,

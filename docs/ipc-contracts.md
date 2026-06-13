@@ -380,9 +380,15 @@ Current `RuntimeEvent.kind` values:
 - `item_appended`
 - `item_updated`
 - `approval_requested`
+- `tool_progress`
 - `tool_budget_reached`
 - `goal_updated`
 - `runtime_error`
+
+`tool_progress` is pushed through the existing `sse:push` channel, not a new
+renderer-invoked IPC channel. Its payload identifies the running tool by
+`toolCallId`, separates `stdout` and `stderr`, and carries a monotonically
+increasing `seq` scoped to that tool call.
 
 `turn_started` carries `turn: TurnRecord` in addition to `threadId`, `turnId`,
 and `startedAt`; renderer consumers should use `event.turn` as the authoritative

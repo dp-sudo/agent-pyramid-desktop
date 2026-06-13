@@ -16,7 +16,7 @@ import { FileReadStateStore } from "../../../src/main/application/tools/file-rea
 import { createGoalTools } from "../../../src/main/application/tools/goal-tools";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
-import type { AgentTool } from "../../../src/main/domain/agent/types";
+import type { AgentTool, AgentToolContext } from "../../../src/main/domain/agent/types";
 import {
   RUNTIME_READ_ONLY_TOOL_NAMES,
   RUNTIME_TOOL_NAMES,
@@ -843,6 +843,136 @@ describe("application tools", () => {
           removed: 0,
         },
       });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("records checkpoint snapshots before coding tools write files", async () => {
+    const workspace = await makeTempDir("coding-tools-checkpoint-");
+    type CheckpointRecorder = NonNullable<AgentToolContext["checkpoint"]>["recordFileSnapshot"];
+    type CheckpointEntry = Parameters<CheckpointRecorder>[0];
+    const captured: Array<{ entry: CheckpointEntry; contentAtCapture: string | null }> = [];
+    const recordFileSnapshot = vi.fn<CheckpointRecorder>(async (entry) => {
+      let contentAtCapture: string | null = null;
+      try {
+        contentAtCapture = await fs.readFile(path.join(workspace, entry.relativePath), "utf8");
+      } catch (error) {
+        if (getErrorCode(error) !== "ENOENT") throw error;
+      }
+      captured.push({ entry, contentAtCapture });
+    });
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value = 1;\n", "utf8");
+      await fs.writeFile(path.join(workspace, "delete.ts"), "remove me\n", "utf8");
+      await fs.writeFile(path.join(workspace, "patch.ts"), "old\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context: AgentToolContext = {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        workspace,
+        readState,
+        checkpoint: { recordFileSnapshot },
+      };
+
+      await registry.execute(
+        { id: "call-read-edit", name: "read_file", arguments: { path: "src/index.ts" } },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "call-edit-checkpoint",
+          name: "edit_file",
+          arguments: {
+            path: "src/index.ts",
+            old_string: "const value = 1;",
+            new_string: "const value = 2;",
+          },
+        },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "call-write-checkpoint",
+          name: "write_file",
+          arguments: { path: "src/new.ts", content: "created\n" },
+        },
+        context,
+      );
+      await registry.execute(
+        { id: "call-read-delete", name: "read_file", arguments: { path: "delete.ts" } },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "call-delete-checkpoint",
+          name: "delete_file",
+          arguments: { path: "delete.ts" },
+        },
+        context,
+      );
+      await registry.execute(
+        { id: "call-read-patch", name: "read_file", arguments: { path: "patch.ts" } },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "call-patch-checkpoint",
+          name: "apply_patch",
+          arguments: {
+            patch: [
+              "--- a/patch.ts",
+              "+++ b/patch.ts",
+              "@@ -1 +1 @@",
+              "-old",
+              "+new",
+            ].join("\n"),
+          },
+        },
+        context,
+      );
+
+      expect(captured.map(({ entry, contentAtCapture }) => ({
+        path: entry.relativePath,
+        operation: entry.operation,
+        beforeContent: entry.beforeContent,
+        afterContent: entry.afterContent,
+        contentAtCapture,
+      }))).toEqual([
+        {
+          path: "src/index.ts",
+          operation: "update",
+          beforeContent: "const value = 1;\n",
+          afterContent: "const value = 2;\n",
+          contentAtCapture: "const value = 1;\n",
+        },
+        {
+          path: "src/new.ts",
+          operation: "create",
+          beforeContent: null,
+          afterContent: "created\n",
+          contentAtCapture: null,
+        },
+        {
+          path: "delete.ts",
+          operation: "delete",
+          beforeContent: "remove me\n",
+          afterContent: null,
+          contentAtCapture: "remove me\n",
+        },
+        {
+          path: "patch.ts",
+          operation: "update",
+          beforeContent: "old\n",
+          afterContent: "new\n",
+          contentAtCapture: "old\n",
+        },
+      ]);
     } finally {
       await removeTempDir(workspace);
     }
@@ -2131,6 +2261,47 @@ describe("application tools", () => {
         stderr: "warn",
       });
       expect(result.displayResult).toMatchObject(parsed);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("reports foreground command stdout and stderr progress without changing the final result", async () => {
+    const workspace = await makeTempDir("command-tools-progress-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const progress: Array<{ chunk: string; stream: "stdout" | "stderr" }> = [];
+
+      const result = await registry.execute(
+        {
+          id: "call-command-progress",
+          name: "run_command",
+          arguments: {
+            command: nodeCommand(
+              "process.stdout.write('out-1\\n'); process.stderr.write('err-1\\n');",
+            ),
+          },
+        },
+        {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          workspace,
+          reportProgress: (chunk, stream) => {
+            progress.push({ chunk, stream });
+          },
+        },
+      );
+      const parsed = JSON.parse(result.content) as {
+        stdout: string;
+        stderr: string;
+      };
+
+      expect(parsed.stdout).toBe("out-1\n");
+      expect(parsed.stderr).toBe("err-1\n");
+      expect(progress.some((entry) => entry.stream === "stdout" && entry.chunk.includes("out-1")))
+        .toBe(true);
+      expect(progress.some((entry) => entry.stream === "stderr" && entry.chunk.includes("err-1")))
+        .toBe(true);
     } finally {
       await removeTempDir(workspace);
     }
@@ -3871,3 +4042,9 @@ describe("application tools", () => {
     }
   });
 });
+
+function getErrorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+}

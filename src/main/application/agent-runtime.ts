@@ -14,6 +14,7 @@ import { JsonlThreadStore } from "../persistence/index.js";
 import { AttachmentStore } from "../persistence/attachment-store.js";
 import { ModelConfigStore } from "../persistence/model-config-store.js";
 import { RuntimePreferencesStore } from "../persistence/runtime-preferences-store.js";
+import { CheckpointStore } from "../persistence/checkpoint-store.js";
 import { LlmWorkerPool, isLlmWorkerError } from "../infrastructure/llm-worker/worker-pool.js";
 import { RuntimeEventBus } from "../event-bus.js";
 import { FileReadStateStore } from "./tools/file-read-state.js";
@@ -65,6 +66,7 @@ import type {
   RuntimePreferences,
   RuntimeErrorEvent,
   TerminalTurnStatus,
+  ToolProgressStream,
   UserItem,
 } from "../../shared/agent-contracts.js";
 import {
@@ -75,12 +77,14 @@ import {
   isModelReasoningEffort,
   isThreadGoalStatus,
 } from "../../shared/agent-contracts.js";
+import { evaluatePermission } from "./permission-policy.js";
 
 interface RuntimeDeps {
   store: JsonlThreadStore;
   attachmentStore: AttachmentStore;
   modelConfigStore: ModelConfigStore;
   runtimePreferencesStore?: RuntimePreferencesStore;
+  checkpointStore?: CheckpointStore;
   pool: LlmWorkerPool;
   bus: RuntimeEventBus;
   registry: ToolRegistry;
@@ -185,6 +189,8 @@ const DEFAULT_TOOL_ACCESS_POLICY = createToolAccessPolicy({
     write: CODE_ONLY_TOOL_NAMES,
   },
 });
+
+const MCP_TOOL_NAME_PREFIX = "mcp__";
 
 export function isCodeOnlyToolName(name: string): boolean {
   return CODE_ONLY_TOOL_NAME_SET.has(name);
@@ -297,6 +303,13 @@ export class AgentRuntime {
     };
     try {
       await this.deps.store.appendItem(turn.threadId, userItem);
+      await this.deps.checkpointStore?.beginTurn({
+        threadId: turn.threadId,
+        turnId: turn.id,
+        workspace: thread.workspace,
+        prompt: normalizedRequest.displayText ?? normalizedRequest.text,
+        createdAt: turn.startedAt,
+      });
       this.deps.bus.emit("item_appended", {
         kind: "item_appended",
         threadId: turn.threadId,
@@ -952,7 +965,7 @@ export class AgentRuntime {
     }
 
     const policyDecision = this.resolveToolPolicy(
-      call.name,
+      call,
       turn,
       thread,
       runtimePreferences,
@@ -1008,14 +1021,36 @@ export class AgentRuntime {
 
       const controller = new AbortController();
       activeExecution.controller = controller;
+      let progressSeq = 0;
+      const reportProgress = (chunk: string, stream: ToolProgressStream): void => {
+        if (!chunk) return;
+        try {
+          this.deps.bus.emit("tool_progress", {
+            kind: "tool_progress",
+            threadId: turn.threadId,
+            turnId: turn.id,
+            toolCallId: call.id,
+            chunk,
+            stream,
+            seq: ++progressSeq,
+          });
+        } catch (error) {
+          console.warn(
+            `[agent-runtime] failed to emit tool progress for ${call.name}:`,
+            error,
+          );
+        }
+      };
       const executionPromise = this.deps.registry.execute(call, {
         threadId: turn.threadId,
         turnId: turn.id,
         workspace: thread.workspace,
         signal: controller.signal,
         commandDefaults: runtimePreferences.command,
+        reportProgress,
         readState: this.readState,
         fileHistory: this.fileHistory,
+        checkpoint: this.deps.checkpointStore,
       });
       activeExecution.settled = executionPromise.then(
         () => undefined,
@@ -1160,15 +1195,19 @@ export class AgentRuntime {
     if (isRuntimeToolName(name)) {
       return runtimePreferences.toolAvailability[thread.mode][name];
     }
+    if (name.startsWith(MCP_TOOL_NAME_PREFIX)) {
+      return thread.mode === "code";
+    }
     return DEFAULT_TOOL_ACCESS_POLICY(input) !== "deny";
   }
 
   private resolveToolPolicy(
-    name: string,
+    call: AgentToolCall,
     turn: TurnRecord,
     thread: ThreadRecord,
     runtimePreferences: RuntimePreferences,
   ): "allow" | "ask" | "deny" {
+    const name = call.name;
     const tool = this.deps.registry.getTool(name);
     if (!tool) {
       return "deny";
@@ -1187,6 +1226,16 @@ export class AgentRuntime {
     }
     if (thread.approvalPolicy === "never") {
       return "deny";
+    }
+    // Configurable per-call rules may only refine non-read-only command/write
+    // calls after hard sandbox and approval denials have already been applied.
+    const permissionDecision = evaluatePermission({
+      toolName: name,
+      args: call.arguments,
+      rules: runtimePreferences.permissionRules,
+    });
+    if (permissionDecision !== "none") {
+      return permissionDecision;
     }
     if (thread.approvalPolicy === "auto" && tool.metadata?.isDestructive === false) {
       return "allow";

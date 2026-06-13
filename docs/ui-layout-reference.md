@@ -286,7 +286,7 @@ Item rendering:
 | `user` | Right-side user bubble with optional attachment names. |
 | `assistant` | Markdown assistant bubble. Live output gets shiny styling. |
 | `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning follows `basicPreferences.openReasoningByDefault` until the user explicitly toggles it. Closed completed reasoning shows a light text preview and does not mount the markdown body. |
-| `tool` | Collapsible process entry with status/tone summary. Long details render as a bounded preview with an explicit full-detail toggle. |
+| `tool` | Collapsible process entry with status/tone summary. Long details render as a bounded preview with an explicit full-detail toggle. Running command-backed tools may show temporary `[stdout]` / `[stderr]` progress details; the final tool result replaces that temporary progress when `item_updated` arrives. |
 | `approval` | Approval block with args JSON and allow/deny buttons. |
 | `user_input` | System-style user input prompt. |
 | `plan` | Plan block with ordered steps and per-step status class. |
@@ -1113,6 +1113,10 @@ Permissions:
 
 - Default approval policy for newly created threads.
 - Default sandbox mode for newly created threads.
+- Per-call permission rules table with tool type, pattern, effect and delete
+  controls. The add button creates a command rule draft; pattern edits commit
+  on blur or Enter and schema errors surface in the shared runtime settings
+  error notice.
 
 Tool access:
 

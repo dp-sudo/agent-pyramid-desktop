@@ -224,6 +224,63 @@ export class JsonlThreadStore {
     );
   }
 
+  /**
+   * Rewind trims the persisted transcript to the point before a turn began.
+   * Both JSONL files are rewritten under the same per-thread mutex so renderer
+   * reloads never observe messages from after the selected boundary.
+   */
+  async truncateThreadFromTurn(
+    threadId: string,
+    turnId: string,
+  ): Promise<{ itemsRemoved: number; eventsRemoved: number }> {
+    assertSafeId(threadId, "Thread id");
+    if (!turnId.trim()) {
+      throw new Error("Turn id is required.");
+    }
+    return this.serialized(threadId, async () => {
+      const items = await this.readJsonlRecords<Item>(
+        this.messagesPath(threadId),
+        "messages",
+        isItem,
+        (item) => item.threadId === threadId,
+      );
+      const boundary = items.findIndex((item) => "turnId" in item && item.turnId === turnId);
+      if (boundary < 0) {
+        throw new Error(`Turn ${turnId} was not found in thread ${threadId}.`);
+      }
+      const removedTurnIds = new Set(
+        items
+          .slice(boundary)
+          .filter((item): item is Item & { turnId: string } => "turnId" in item)
+          .map((item) => item.turnId),
+      );
+      const nextItems = items.slice(0, boundary);
+
+      const events = await this.readJsonlRecords<RuntimeEvent>(
+        this.eventsPath(threadId),
+        "events",
+        isRuntimeEvent,
+        (event) => event.threadId === threadId && ownsNestedEventRecords(event, threadId),
+      );
+      const eventBoundary = events.findIndex((event) => {
+        const eventTurnId = runtimeEventTurnId(event);
+        return eventTurnId !== undefined && removedTurnIds.has(eventTurnId);
+      });
+      const nextEvents = eventBoundary < 0 ? events : events.slice(0, eventBoundary);
+
+      await this.writeJsonl(this.messagesPath(threadId), nextItems);
+      await this.writeJsonl(this.eventsPath(threadId), nextEvents);
+      const latestItem = nextItems.at(-1);
+      if (latestItem) {
+        await this.touchThreadActivity(threadId, latestItem.createdAt);
+      }
+      return {
+        itemsRemoved: items.length - nextItems.length,
+        eventsRemoved: events.length - nextEvents.length,
+      };
+    });
+  }
+
   /** 2.7 updateThread: atomic write + index update. */
   async updateThread(id: string, patch: ThreadUpdatePatch): Promise<ThreadRecord> {
     assertSafeId(id, "Thread id");
@@ -401,6 +458,19 @@ export class JsonlThreadStore {
     }
   }
 
+  private async writeJsonl(target: string, values: readonly unknown[]): Promise<void> {
+    const tmp = target + TMP_SUFFIX;
+    const data = values.map((value) => JSON.stringify(value)).join("\n");
+    const handle = await fs.open(tmp, "w");
+    try {
+      await handle.writeFile(data ? `${data}\n` : "", "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.rename(tmp, target);
+  }
+
   private async appendToIndex(summary: ThreadSummary): Promise<void> {
     await this.serializedIndex(async () => {
       const raw = await fs.readFile(this.indexPath, "utf8");
@@ -455,6 +525,19 @@ export class JsonlThreadStore {
       rl.close();
       stream.close();
     }
+  }
+
+  private async readJsonlRecords<T>(
+    target: string,
+    label: "messages" | "events",
+    validate: (value: unknown) => value is T,
+    ownsRecord: (value: T) => boolean,
+  ): Promise<T[]> {
+    const records: T[] = [];
+    for await (const record of this.replayJsonl(target, label, validate, ownsRecord)) {
+      records.push(record);
+    }
+    return records;
   }
 
   /** 2.10 Per-thread serial mutex. */
@@ -542,6 +625,27 @@ function ownsNestedEventRecords(event: RuntimeEvent, threadId: string): boolean 
       return event.item.threadId === threadId;
     default:
       return true;
+  }
+}
+
+function runtimeEventTurnId(event: RuntimeEvent): string | undefined {
+  switch (event.kind) {
+    case "turn_started":
+    case "turn_completed":
+    case "turn_failed":
+    case "item_appended":
+    case "item_updated":
+    case "approval_requested":
+    case "tool_progress":
+    case "tool_budget_reached":
+      return event.turnId;
+    case "goal_updated":
+    case "runtime_error":
+      return event.turnId;
+    default: {
+      const exhaustive: never = event;
+      return exhaustive;
+    }
   }
 }
 

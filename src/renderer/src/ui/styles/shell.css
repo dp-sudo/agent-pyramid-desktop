@@ -1854,6 +1854,112 @@ textarea:focus-visible {
   font-size: var(--ds-size-caption);
 }
 
+.ds-checkpoint-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ds-checkpoint-status {
+  margin: 0;
+  border: 1px solid var(--ds-success-soft);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-success-soft);
+  color: var(--ds-text);
+  font-size: var(--ds-size-caption);
+  padding: 8px 10px;
+}
+
+.ds-checkpoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ds-checkpoint-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-card);
+  padding: 10px;
+}
+
+.ds-checkpoint-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ds-checkpoint-header strong {
+  overflow: hidden;
+  color: var(--ds-text);
+  font-size: var(--ds-size-label);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-checkpoint-header span,
+.ds-checkpoint-files {
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-checkpoint-files {
+  margin: 0;
+}
+
+.ds-checkpoint-file-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ds-checkpoint-file-list li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.ds-checkpoint-file-list span {
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  padding: 2px 6px;
+}
+
+.ds-checkpoint-file-list strong {
+  overflow: hidden;
+  color: var(--ds-text-muted);
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-size-caption);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-checkpoint-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .ds-inspector-todo-list,
 .ds-inspector-plan-steps {
   display: flex;
@@ -3036,6 +3142,23 @@ textarea:focus-visible {
   opacity: 0.6;
 }
 
+.ds-settings-secondary-action {
+  min-height: 34px;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-elevated);
+  color: var(--ds-text);
+  cursor: pointer;
+  font-size: var(--ds-size-label);
+  font-weight: 650;
+  padding: 0 11px;
+}
+
+.ds-settings-secondary-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .ds-settings-status-badge {
   display: inline-flex;
   min-height: 30px;
@@ -3154,6 +3277,48 @@ textarea:focus-visible {
   color: var(--ds-text);
   font-size: var(--ds-size-body);
   font-weight: 650;
+}
+
+.ds-settings-permission-rules {
+  display: grid;
+  gap: 10px;
+}
+
+.ds-settings-permission-rule {
+  display: grid;
+  grid-template-columns: minmax(108px, 0.7fr) minmax(180px, 1.6fr) minmax(96px, 0.7fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  padding: 10px;
+  background: var(--ds-surface-subtle);
+}
+
+.ds-settings-permission-rule input,
+.ds-settings-permission-rule select {
+  min-height: 36px;
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-elevated);
+  color: var(--ds-text);
+  outline: none;
+  padding: 7px 9px;
+}
+
+.ds-settings-permission-rule input:focus,
+.ds-settings-permission-rule select:focus {
+  border-color: var(--ds-accent);
+  box-shadow: var(--ds-focus-ring);
+}
+
+.ds-settings-empty-note {
+  margin: 0;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-body);
+  line-height: 1.5;
 }
 
 .ds-setting-row.is-wide {
@@ -3471,6 +3636,14 @@ textarea:focus-visible {
   }
 
   .ds-settings-primary-action {
+    width: 100%;
+  }
+
+  .ds-settings-permission-rule {
+    grid-template-columns: 1fr;
+  }
+
+  .ds-settings-secondary-action {
     width: 100%;
   }
 

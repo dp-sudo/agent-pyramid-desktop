@@ -13,6 +13,7 @@ export function WorkbenchTopBar(): ReactElement {
   const isBusy = getActiveThreadInFlightTurn(state) !== null;
   const inspectorModes: Array<Exclude<RightPanelMode, null>> = [
     "changes",
+    "checkpoints",
     "todo",
     "plan",
   ];

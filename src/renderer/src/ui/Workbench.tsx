@@ -4,6 +4,7 @@ import {
   getActiveThreadInFlightTurn,
   getThreadInFlightTurn,
   useWorkbench,
+  type ToolProgressUpdate,
   type WorkbenchActions,
   type WorkbenchRoute,
   type WorkbenchState,
@@ -31,6 +32,7 @@ import {
   type RuntimeErrorEvent,
   type ThreadRecord,
   type ThreadSummary,
+  type ToolProgressEvent,
 } from "../../../shared/agent-contracts";
 import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
 export {
@@ -41,6 +43,7 @@ export {
 } from "./components/workbench/WorkbenchErrorToast";
 
 const SIDEBAR_KEYBOARD_STEP = 16;
+const TOOL_PROGRESS_RENDER_FLUSH_MS = 100;
 
 type WorkbenchComposerSendPayload = Pick<FloatingComposerRequestPayload, "text"> &
   Partial<Omit<FloatingComposerRequestPayload, "text">> &
@@ -54,6 +57,8 @@ export function Workbench(): ReactElement {
   const selectThreadRequestRef = useRef(0);
   const sendInProgressRef = useRef(false);
   const subscribedThreadIdsRef = useRef(new Set<string>());
+  const toolProgressBuffersRef = useRef(new Map<string, ToolProgressUpdate>());
+  const toolProgressFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingApprovalResponsesRef = useRef<Record<string, ApprovalPendingDecision>>({});
   const [leftSidebarDragging, setLeftSidebarDragging] = useState(false);
   const [pendingApprovalResponses, setPendingApprovalResponses] = useState<
@@ -127,8 +132,58 @@ export function Workbench(): ReactElement {
     };
   }, [actions, state.showArchivedThreads]);
 
+  const flushToolProgressBuffers = useCallback((): void => {
+    if (toolProgressFlushTimerRef.current) {
+      clearTimeout(toolProgressFlushTimerRef.current);
+      toolProgressFlushTimerRef.current = null;
+    }
+    const updates = [...toolProgressBuffersRef.current.values()];
+    toolProgressBuffersRef.current.clear();
+    for (const update of updates) {
+      actions.appendToolProgress(update);
+    }
+  }, [actions]);
+
+  const queueToolProgress = useCallback(
+    (event: ToolProgressEvent): void => {
+      const key = `${event.threadId}:${event.turnId}:${event.toolCallId}`;
+      const current = toolProgressBuffersRef.current.get(key);
+      toolProgressBuffersRef.current.set(key, {
+        threadId: event.threadId,
+        turnId: event.turnId,
+        toolCallId: event.toolCallId,
+        seq: event.seq,
+        stdout: event.stream === "stdout"
+          ? `${current?.stdout ?? ""}${event.chunk}`
+          : current?.stdout,
+        stderr: event.stream === "stderr"
+          ? `${current?.stderr ?? ""}${event.chunk}`
+          : current?.stderr,
+      });
+      if (toolProgressFlushTimerRef.current) return;
+      toolProgressFlushTimerRef.current = setTimeout(
+        flushToolProgressBuffers,
+        TOOL_PROGRESS_RENDER_FLUSH_MS,
+      );
+    },
+    [flushToolProgressBuffers],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (toolProgressFlushTimerRef.current) {
+        clearTimeout(toolProgressFlushTimerRef.current);
+      }
+      toolProgressBuffersRef.current.clear();
+    };
+  }, []);
+
   const handleRuntimeEvent = useCallback(
     (event: RuntimeEvent): void => {
+      if (event.kind === "tool_progress") {
+        queueToolProgress(event);
+        return;
+      }
       applyWorkbenchRuntimeEvent(
         event,
         {
@@ -138,7 +193,7 @@ export function Workbench(): ReactElement {
         actions,
       );
     },
-    [actions, state.activeThread],
+    [actions, queueToolProgress, state.activeThread],
   );
 
   useEffect(() => {
@@ -860,6 +915,7 @@ export function isGlobalRuntimeErrorEvent(event: RuntimeErrorEvent): boolean {
 
 type WorkbenchRuntimeEventActions = Pick<
   WorkbenchActions,
+  | "appendToolProgress"
   | "appendItem"
   | "setError"
   | "turnEnded"
@@ -894,6 +950,15 @@ export function applyWorkbenchRuntimeEvent(
     actions.appendItem(event.item);
   } else if (event.kind === "item_updated" && isActiveThreadEvent) {
     actions.updateItem(event.item);
+  } else if (event.kind === "tool_progress" && isActiveThreadEvent) {
+    actions.appendToolProgress({
+      threadId: event.threadId,
+      turnId: event.turnId,
+      toolCallId: event.toolCallId,
+      seq: event.seq,
+      ...(event.stream === "stdout" ? { stdout: event.chunk } : {}),
+      ...(event.stream === "stderr" ? { stderr: event.chunk } : {}),
+    });
   } else if (event.kind === "turn_completed") {
     actions.turnEnded(event.threadId, event.status);
   } else if (event.kind === "tool_budget_reached") {

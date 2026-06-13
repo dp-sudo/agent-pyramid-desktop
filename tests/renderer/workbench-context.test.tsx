@@ -15,6 +15,7 @@ import type {
   ModelConfigProfilesState,
   ThreadRecord,
   ThreadSummary,
+  ToolItem,
   TurnRecord,
   UserItem,
 } from "../../src/shared/agent-contracts";
@@ -302,6 +303,78 @@ describe("WorkbenchContext reducer", () => {
     const updated = reducer(appended, { type: "updateItem", item: assistantItem });
 
     expect(updated.items).toEqual([assistantItem]);
+  });
+
+  it("appends tool progress to running tool items and leaves completed results untouched", () => {
+    const runningTool: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "run_command",
+      args: { command: "npm test" },
+      status: "running",
+      createdAt: "2026-06-07T00:00:00.000Z",
+    };
+    const selected = reducer(INITIAL_STATE, {
+      type: "selectThread",
+      thread: thread(),
+      items: [runningTool],
+    });
+
+    const withStdout = reducer(selected, {
+      type: "appendToolProgress",
+      progress: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        toolCallId: "call-1",
+        seq: 1,
+        stdout: "out-1\n",
+      },
+    });
+    const withStderr = reducer(withStdout, {
+      type: "appendToolProgress",
+      progress: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        toolCallId: "call-1",
+        seq: 2,
+        stderr: "err-1\n",
+      },
+    });
+
+    expect(withStderr.items[0]).toMatchObject({
+      result: {
+        kind: "tool_progress",
+        stdout: "out-1\n",
+        stderr: "err-1\n",
+      },
+    });
+
+    const completed = reducer(withStderr, {
+      type: "updateItem",
+      item: {
+        ...runningTool,
+        status: "completed",
+        result: { stdout: "final\n" },
+      },
+    });
+    const ignored = reducer(completed, {
+      type: "appendToolProgress",
+      progress: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        toolCallId: "call-1",
+        seq: 3,
+        stdout: "late\n",
+      },
+    });
+
+    expect(ignored.items[0]).toMatchObject({
+      status: "completed",
+      result: { stdout: "final\n" },
+    });
   });
 
   it("keeps composer model state aligned with selected config and profile", () => {

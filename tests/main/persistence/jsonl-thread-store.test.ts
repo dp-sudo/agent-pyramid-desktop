@@ -155,6 +155,77 @@ describe("JsonlThreadStore", () => {
     }
   });
 
+  it("truncates messages and events from a selected turn boundary", async () => {
+    const thread = await store.createThread({
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const firstItem: Item = {
+      kind: "user",
+      id: "item-first",
+      threadId: thread.id,
+      turnId: "turn-first",
+      text: "first",
+      createdAt: "2026-06-07T00:00:00.000Z",
+    };
+    const secondItem: Item = {
+      kind: "user",
+      id: "item-second",
+      threadId: thread.id,
+      turnId: "turn-second",
+      text: "second",
+      createdAt: "2026-06-07T00:01:00.000Z",
+    };
+    const thirdItem: Item = {
+      kind: "assistant",
+      id: "item-third",
+      threadId: thread.id,
+      turnId: "turn-third",
+      text: "third",
+      createdAt: "2026-06-07T00:02:00.000Z",
+    };
+    const firstEvent: RuntimeEvent = {
+      kind: "item_appended",
+      threadId: thread.id,
+      turnId: "turn-first",
+      item: firstItem,
+    };
+    const secondEvent: RuntimeEvent = {
+      kind: "item_appended",
+      threadId: thread.id,
+      turnId: "turn-second",
+      item: secondItem,
+    };
+    const thirdEvent: RuntimeEvent = {
+      kind: "item_appended",
+      threadId: thread.id,
+      turnId: "turn-third",
+      item: thirdItem,
+    };
+    await store.appendItem(thread.id, firstItem);
+    await store.appendItem(thread.id, secondItem);
+    await store.appendItem(thread.id, thirdItem);
+    await store.appendEvent(thread.id, firstEvent);
+    await store.appendEvent(thread.id, secondEvent);
+    await store.appendEvent(thread.id, thirdEvent);
+
+    await expect(store.truncateThreadFromTurn(thread.id, "turn-second")).resolves.toEqual({
+      itemsRemoved: 2,
+      eventsRemoved: 2,
+    });
+
+    const items: Item[] = [];
+    for await (const item of store.replayItems(thread.id)) {
+      items.push(item);
+    }
+    const events: RuntimeEvent[] = [];
+    for await (const event of store.replayEvents(thread.id)) {
+      events.push(event);
+    }
+    expect(items).toEqual([firstItem]);
+    expect(events).toEqual([firstEvent]);
+  });
+
   it("skips JSONL records owned by a different thread during replay", async () => {
     const thread = await store.createThread({
       workspace: "/workspace",

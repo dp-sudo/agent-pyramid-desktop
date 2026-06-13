@@ -23,8 +23,11 @@
 - 建立工具注册机制：`src/main/application/tools/`。
 - 建立首批 coding agent 写入工具：`read_file` 会记录文件读状态，`read_file` / `search_files` 都严格校验 UTF-8 文本；`edit_file` / `write_file` 使用共享 workspace 路径策略、读后未过期校验和结构化 diff preview，经 approval gate 后写入工作区文本文件；`apply_patch` 支持受限 unified diff dry-run、多文件 diff preview、`No newline at end of file` 语义保留和一次性提交；`rollback_file` 可回滚当前 app 会话内最近一次 agent 文件写入。
 - 建立开发命令工具组：`run_command`、可配置 `shell_command`、`git_bash_command`、`powershell_command`、`wsl_command`、`rg_search`、结构化 Git 工具、npm/pnpm/yarn/bun 包管理器包装器、通用 lint/format/test/build 包装器、长驻 command session 和 shell 环境探测都通过 `createCommandTools()` 独立注册。
+- 建立工具进度事件：`AgentToolContext.reportProgress` 让前台命令类工具将 stdout/stderr 片段实时转成 `tool_progress` runtime event，renderer 按 `toolCallId` 合并到运行中的 tool card，最终 `ToolItem.result` 仍由完成事件覆盖。
+- 建立持久化 checkpoint / rewind：`src/main/persistence/checkpoint-store.ts` 在 Electron `userData/checkpoints/` 下按 thread JSONL 保存 turn checkpoint，记录每个 turn/file 的 pre-edit 与 post-write 快照；`src/main/index.ts` 在 main 进程组合根创建并注入 `CheckpointStore`，`AgentRuntime.startTurn()` 调用 `CheckpointStore.beginTurn()` 创建 checkpoint 元数据并把 checkpoint recorder 注入工具上下文，`coding-tools.ts` 在 `edit_file` / `write_file` / `delete_file` / `apply_patch` / `rollback_file` 写入边界调用 `recordFileSnapshot`；`src/main/ipc/checkpoints-handlers.ts` 暴露 checkpoint list 与 code/session rewind，复用 shared checkpoint 类型、`checkpoint:list` / `checkpoint:rewind` IPC channel 和 `CHECKPOINT_LIST_FAILED` / `CHECKPOINT_REWIND_BUSY` / `CHECKPOINT_REWIND_FAILED` 错误码；`src/preload/index.ts` 暴露 `agentApi.checkpoints.*`；`RightInspector` 增加 `CheckpointsPanel`，配套 `shell.css` 样式和中英文 i18n；相关测试覆盖 checkpoint store、IPC handler、runtime 注入、coding tools 快照和 renderer 展示逻辑。
 - 建立首批诊断工具：`diagnose_workspace` 在 active workspace 内运行 TypeScript/typecheck 并解析结构化错误；`diagnose_file` 使用 TypeScript Language Service 对单文件做语法/语义/建议诊断，用于编辑后的 workspace 级与文件级验证闭环。
 - 建立 Code/Write tool access 边界：`AgentRuntime` 默认在 Write threads 中隐藏并拒绝 Code-only 编码/命令工具，同时保留可注入的 per-mode tool access policy 以便单独允许或禁用指定工具。
+- 建立 per-call 权限规则：`RuntimePreferences.permissionRules` 可按命令文本或写入路径持久化配置 `allow | ask | deny`，由 `permission-policy.ts` 在 runtime approval/sandbox 决策中评估，硬性 read-only / never 拒绝仍优先。
 - 建立 MiniMax、DeepSeek、自定义 OpenAI-compatible 的供应商感知协议适配：`src/main/infrastructure/minimax/`。
 - 建立大模型多配置档案：`src/shared/agent-contracts.ts`、`src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`src/preload/index.ts`、`src/renderer/src/ui/SettingsView.tsx`，配置保存到 Electron `userData/config` 文件。
 - 建立 React 桌面控制台 UI：`src/renderer/src/ui/`。
@@ -43,7 +46,7 @@
 1. 领域层不依赖 MiniMax、Electron、React 或 HTTP 响应结构。
 2. LLM 接入统一通过 `LlmGateway`，供应商协议差异只存在于 `infrastructure`。
 3. Agent 编排器只处理运行流程，不直接拼接供应商请求体。
-4. 工具能力通过 `ToolRegistry` 接口注册、预览和执行，后续工具不得绕过注册机制；runtime 先按 thread mode 与可配置 tool access policy 决定工具是否进入当前 turn catalog，再基于 metadata、`approvalPolicy` 与 `sandboxMode` 做审批/拒绝决策。
+4. 工具能力通过 `ToolRegistry` 接口注册、预览和执行，后续工具不得绕过注册机制；runtime 先按 thread mode 与可配置 tool access policy 决定工具是否进入当前 turn catalog，再基于 `sandboxMode`、`approvalPolicy`、`RuntimePreferences.permissionRules` 和工具 metadata 做审批/拒绝决策。
 5. 渲染层只通过 preload 暴露的安全 API 调用主进程，不直接访问 Node 能力。
 6. 界面语言和主题切换属于渲染层展示机制，语言资源集中维护在 `src/renderer/src/i18n/`，可支持语言由 `src/shared/locale.ts` 统一定义；设置页“基础设置”直接调用渲染层 localStorage 偏好，不进入主进程运行时配置。会影响 Agent runtime、工具目录、命令限制、上下文压缩或新线程安全默认值的设置必须进入 shared `RuntimePreferences`、main-process persistence 和 typed IPC。
 7. 大模型运行时仍以 `src/shared/agent-contracts.ts` 中的 `ModelConfig` 作为当前激活配置契约；持久层在外层维护 `ModelConfigProfilesState`（`activeProfileId + profiles[]`），`ModelConfigStore.get()` 只返回当前激活档案的 `ModelConfig`，避免 Agent 运行循环感知多档案 UI。
@@ -70,6 +73,52 @@
 - 新增或修改 Agent 运行框架、LLM 接入、工具、IPC、持久化、UI 状态或 i18n 时，应优先补充对应 `tests/` 用例，再运行上述命令。
 
 ## 变更记录
+
+### 2026-06-12 - Persistent checkpoint / rewind
+- 新增：`src/main/persistence/checkpoint-store.ts` 持久化 turn checkpoint，按 thread JSONL 保存 prompt、workspace、turn 元数据和每个文件的 pre-edit / post-write 快照；restore 会重新校验 workspace 边界与符号链接路径，并支持从指定 turn 起恢复代码快照。
+- 接入：`src/main/index.ts` 创建并注册 `CheckpointStore`；`AgentRuntime` 在 turn 开始时调用 `beginTurn`，执行工具时把 checkpoint recorder 注入 `AgentToolContext`；`coding-tools.ts` 在 `edit_file`、`write_file`、`delete_file`、`apply_patch`、`rollback_file` 写入边界调用 `recordFileSnapshot`。
+- 类型：`src/shared/agent-contracts.ts` 增加 checkpoint file summary、meta、list/rewind request/response 类型，`src/shared/ipc-errors.ts` 增加 `CHECKPOINT_LIST_FAILED`、`CHECKPOINT_REWIND_BUSY`、`CHECKPOINT_REWIND_FAILED`。
+- IPC：`src/shared/ipc.ts` 增加 `checkpoint:list` 与 `checkpoint:rewind` channel 并纳入 renderer 可调用清单；`src/main/ipc/checkpoints-handlers.ts` 校验 renderer 请求、拒绝运行中 thread rewind、调用 code restore，并在 session rewind 时截断 thread items/events 与 checkpoint 记录。
+- 渲染端：`src/preload/index.ts` 暴露 `agentApi.checkpoints.list/rewind`；`RightInspector` 增加 `CheckpointsPanel`，支持查看 checkpoint 文件摘要、执行 code rewind 或 code + session rewind，并配套 `shell.css` 样式与 zh-CN/en 文案。
+- 测试：新增或扩展 checkpoint store、checkpoint IPC handler、AgentRuntime、coding tools、RightInspector、Workbench topbar 和 shared 契约测试，覆盖持久化、路径边界、快照注入、busy 保护、session rewind 和 UI 状态。
+- 验证：按变更要求运行 `npm run typecheck`、`npm run test`、`npm run build` 后再交付。
+
+### 2026-06-12 - Tool progress events
+- Added live-only `tool_progress` runtime events carrying
+  `{ threadId, turnId, toolCallId, chunk, stream, seq }` over the existing
+  `SSE_PUSH_CHANNEL`. The shared runtime event guard and event bus validation
+  now recognize the new event kind.
+- Extended `AgentToolContext` with `reportProgress`; `AgentRuntime` injects a
+  per-tool-call sink, catches and logs progress emit failures, and keeps final
+  tool completion/failure on the existing `item_updated` path.
+- Wired foreground command-backed tools to stream stdout/stderr progress with
+  time/byte throttling while preserving the existing bounded final
+  stdout/stderr result.
+- Extended renderer state so `tool_progress` is batched by `toolCallId`, merged
+  into the matching running tool card as temporary `[stdout]` / `[stderr]`
+  details, and overwritten by the final `ToolItem.result`.
+- Verification plan: shared/event-bus/runtime/command-tools/renderer tests cover
+  event validation, progress emission, stdout/stderr collection, active-thread
+  routing and final-result overwrite; full `typecheck/test/build` verification
+  is run before handoff.
+
+### 2026-06-12 - Per-call permission rules
+- Added config-backed `RuntimePreferences.permissionRules` for command/write
+  per-call approval decisions. Rules store `{ id, tool, pattern, effect }`,
+  validate strictly through `runtime-preferences-schema.ts`, and replace the
+  full array on update so malformed or duplicate rules cannot silently persist.
+- Added `src/main/application/permission-policy.ts` as the pure evaluator for
+  command text and write-path matching. Runtime applies hard read-only sandbox
+  and `approvalPolicy: never` denials first, then resolves matching rule effects
+  by `deny > ask > allow`, then falls back to the existing metadata approval
+  logic.
+- Extended Settings > Tools and permissions with a per-call rule editor and
+  synchronized zh-CN/en copy. The existing runtime preferences IPC path handles
+  add/edit/delete and surfaces schema errors through the settings error notice.
+- Verification plan: targeted tests cover shared guards, runtime preference
+  parsing/persistence, permission evaluator priority/matching, runtime
+  hard-deny precedence, and settings helper merge semantics; full
+  `typecheck/test/build` verification is run before handoff.
 
 ### 2026-06-11 - Command tool hardening follow-up
 - Hardened `rollback_file` so in-memory file history can only be rolled back by the same thread that created the latest history entry, preventing same-workspace cross-thread rollback of another session's write.

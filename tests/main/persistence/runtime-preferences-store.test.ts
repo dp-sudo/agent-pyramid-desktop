@@ -93,6 +93,20 @@ describe("RuntimePreferencesStore", () => {
         enabled: false,
         strategy: "recent-only",
       },
+      permissionRules: [
+        {
+          id: "allow-tests",
+          tool: "command",
+          pattern: "npm test*",
+          effect: "allow",
+        },
+        {
+          id: "ask-src",
+          tool: "write",
+          pattern: "src/*",
+          effect: "ask",
+        },
+      ],
     });
 
     expect(updated.defaultApprovalPolicy).toBe("never");
@@ -109,6 +123,20 @@ describe("RuntimePreferencesStore", () => {
     );
     expect(updated.compaction.enabled).toBe(false);
     expect(updated.compaction.strategy).toBe("recent-only");
+    expect(updated.permissionRules).toEqual([
+      {
+        id: "allow-tests",
+        tool: "command",
+        pattern: "npm test*",
+        effect: "allow",
+      },
+      {
+        id: "ask-src",
+        tool: "write",
+        pattern: "src/*",
+        effect: "ask",
+      },
+    ]);
   });
 
   it("rejects runtime default profile ids that do not exist", async () => {
@@ -251,6 +279,28 @@ describe("RuntimePreferencesStore", () => {
         compaction: { strategy: "full-history" },
       })),
     ).rejects.toThrow("compaction.strategy is invalid.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        permissionRules: [
+          { id: "bad", tool: "command", pattern: "npm *", effect: "sometimes" },
+        ],
+      })),
+    ).rejects.toThrow("permissionRules[0].effect is invalid.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        permissionRules: [
+          { id: "duplicate", tool: "command", pattern: "npm *", effect: "allow" },
+          { id: "duplicate", tool: "write", pattern: "src/*", effect: "ask" },
+        ],
+      })),
+    ).rejects.toThrow("permissionRules[1].id is duplicated.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        permissionRules: [
+          { id: "nul", tool: "command", pattern: "npm\0*", effect: "allow" },
+        ],
+      })),
+    ).rejects.toThrow("permissionRules[0].pattern cannot contain NUL bytes.");
   });
 
   it("normalizes malformed persisted runtime preferences", async () => {
@@ -275,6 +325,9 @@ describe("RuntimePreferencesStore", () => {
         enabled: false,
         strategy: "unknown",
       },
+      permissionRules: [
+        { id: "allow-tests", tool: "command", pattern: "npm test*", effect: "allow" },
+      ],
     }));
 
     const preferences = await store.get();
@@ -301,14 +354,23 @@ describe("RuntimePreferencesStore", () => {
     expect(preferences.command.maxOutputBytes).toBe(65_536);
     expect(preferences.compaction.enabled).toBe(false);
     expect(preferences.compaction.strategy).toBe(DEFAULT_RUNTIME_PREFERENCES.compaction.strategy);
+    expect(preferences.permissionRules).toEqual([
+      { id: "allow-tests", tool: "command", pattern: "npm test*", effect: "allow" },
+    ]);
     expect(raw.runtimePreferences).toEqual(preferences);
   });
 
   it("parses runtime preferences updates independently for IPC reuse", () => {
     expect(parseRuntimePreferencesUpdate({
       command: { maxOutputBytes: 4096 },
+      permissionRules: [
+        { id: "deny-rm", tool: "command", pattern: "rm *", effect: "deny" },
+      ],
     })).toEqual({
       command: { maxOutputBytes: 4096 },
+      permissionRules: [
+        { id: "deny-rm", tool: "command", pattern: "rm *", effect: "deny" },
+      ],
     });
 
     expect(() => parseRuntimePreferencesUpdate(null)).toThrow(
@@ -317,6 +379,11 @@ describe("RuntimePreferencesStore", () => {
     expect(() => parseRuntimePreferencesUpdate({ approvalExperience: {} })).toThrow(
       "approvalExperience must include at least one field.",
     );
+    expect(() => parseRuntimePreferencesUpdate({
+      permissionRules: [
+        { id: "bad", tool: "network", pattern: "*", effect: "deny" },
+      ],
+    })).toThrow("permissionRules[0].tool is invalid.");
   });
 });
 

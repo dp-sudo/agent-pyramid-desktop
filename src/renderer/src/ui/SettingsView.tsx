@@ -27,9 +27,13 @@ import {
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
   MODEL_REASONING_EFFORTS,
   RUNTIME_COMPACTION_STRATEGIES,
+  RUNTIME_PERMISSION_RULE_EFFECTS,
+  RUNTIME_PERMISSION_RULE_TOOLS,
   RUNTIME_TOOL_NAMES,
   THREAD_APPROVAL_POLICIES,
   THREAD_SANDBOX_MODES,
+  type McpServerConfig,
+  type McpServerConfigUpdate,
   type AgentAutonomyLevel,
   type LlmProtocol,
   type ModelConfig,
@@ -38,6 +42,9 @@ import {
   type ModelConfigUpdate,
   type ModelReasoningEffort,
   type RuntimeCompactionStrategy,
+  type RuntimePermissionRule,
+  type RuntimePermissionRuleEffect,
+  type RuntimePermissionRuleTool,
   type RuntimePreferences,
   type RuntimePreferencesUpdate,
   type RuntimeToolName,
@@ -93,6 +100,7 @@ interface RuntimeCommandDraft {
   timeoutMs: string;
   maxOutputBytes: string;
 }
+type RuntimePermissionRuleEditableField = "tool" | "pattern" | "effect";
 type SettingsSection =
   | "basic"
   | "model"
@@ -118,6 +126,7 @@ const BASIC_SETTINGS_CATEGORIES: readonly SettingsCategory[] = ["appearance"];
 const AGENT_SETTINGS_CATEGORIES: readonly SettingsCategory[] = ["compaction"];
 const TOOLS_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "permissions",
+  "mcpServers",
   "toolAccess",
   "commandLimits",
 ];
@@ -163,6 +172,9 @@ export function SettingsView(): ReactElement {
   const [commandDraft, setCommandDraft] = useState<RuntimeCommandDraft>(() =>
     toRuntimeCommandDraft(state.runtimePreferences.command),
   );
+  const [permissionRulePatternDrafts, setPermissionRulePatternDrafts] = useState<
+    Record<string, string>
+  >({});
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const [runtimeSaveState, setRuntimeSaveState] = useState<RuntimeSaveState>("loading");
   const [error, setError] = useState<string>("");
@@ -331,6 +343,7 @@ export function SettingsView(): ReactElement {
   function applyRuntimePreferences(preferences: RuntimePreferences): void {
     setRuntimePreferences(preferences);
     setCommandDraft(toRuntimeCommandDraft(preferences.command));
+    setPermissionRulePatternDrafts(toPermissionRulePatternDrafts(preferences.permissionRules));
     actions.setRuntimePreferences(preferences);
   }
 
@@ -496,6 +509,147 @@ export function SettingsView(): ReactElement {
   function updateDefaultSandboxMode(event: ChangeEvent<HTMLSelectElement>): void {
     const value = event.target.value as ThreadSandboxMode;
     void updateRuntimePreferences({ defaultSandboxMode: value });
+  }
+
+  function addRuntimePermissionRule(): void {
+    void updateRuntimePreferences({
+      permissionRules: [
+        ...runtimePreferences.permissionRules,
+        createDefaultPermissionRule(),
+      ],
+    });
+  }
+
+  function updateRuntimePermissionRule(
+    id: string,
+    field: RuntimePermissionRuleEditableField,
+    value: string,
+  ): void {
+    const nextRules = runtimePreferences.permissionRules.map((rule) => {
+      if (rule.id !== id) {
+        return rule;
+      }
+      if (field === "tool") {
+        return { ...rule, tool: value as RuntimePermissionRuleTool };
+      }
+      if (field === "effect") {
+        return { ...rule, effect: value as RuntimePermissionRuleEffect };
+      }
+      return { ...rule, pattern: value };
+    });
+    void updateRuntimePreferences({ permissionRules: nextRules });
+  }
+
+  function updateRuntimePermissionRulePatternDraft(id: string, value: string): void {
+    setPermissionRulePatternDrafts((current) => ({ ...current, [id]: value }));
+  }
+
+  function commitRuntimePermissionRulePattern(id: string, value: string): void {
+    const existingRule = runtimePreferences.permissionRules.find((rule) => rule.id === id);
+    if (!existingRule) {
+      return;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setPermissionRulePatternDrafts((current) => ({ ...current, [id]: existingRule.pattern }));
+      setRuntimeSaveState("error");
+      setRuntimeError(t("settings.errors.permissionRulePatternRequired"));
+      return;
+    }
+    updateRuntimePermissionRule(id, "pattern", trimmed);
+  }
+
+  function handlePermissionRulePatternKeyDown(
+    id: string,
+    event: KeyboardEvent<HTMLInputElement>,
+  ): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitRuntimePermissionRulePattern(id, event.currentTarget.value);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      const currentPattern = runtimePreferences.permissionRules.find((rule) => rule.id === id)
+        ?.pattern;
+      if (currentPattern !== undefined) {
+        setPermissionRulePatternDrafts((current) => ({ ...current, [id]: currentPattern }));
+      }
+      setRuntimeError("");
+    }
+  }
+
+  function deleteRuntimePermissionRule(id: string): void {
+    void updateRuntimePreferences({
+      permissionRules: runtimePreferences.permissionRules.filter((rule) => rule.id !== id),
+    });
+  }
+
+  function addMcpServer(): void {
+    void updateRuntimePreferences({
+      mcpServers: [
+        ...runtimePreferences.mcpServers,
+        createDefaultMcpServer(t("settings.mcpServers.defaultName")),
+      ],
+    });
+  }
+
+  function updateMcpServer(id: string, update: McpServerConfigUpdate): void {
+    void updateRuntimePreferences({
+      mcpServers: updateMcpServerConfigs(runtimePreferences.mcpServers, id, update),
+    });
+  }
+
+  function updateMcpServerEnv(id: string, raw: string): void {
+    const parsed = parseMcpServerEnvDraft(raw, t);
+    if (!parsed.ok) {
+      setRuntimeSaveState("error");
+      setRuntimeError(parsed.message);
+      return;
+    }
+    updateMcpServer(id, { env: parsed.value });
+  }
+
+  function deleteMcpServer(id: string): void {
+    void updateRuntimePreferences({
+      mcpServers: runtimePreferences.mcpServers.filter((server) => server.id !== id),
+    });
+  }
+
+  async function handleMcpConnect(serverId: string): Promise<void> {
+    if (!window.agentApi) return;
+    setRuntimeError("");
+    const result = await window.agentApi.mcp.connect({ serverId });
+    if (!result.ok) {
+      setRuntimeSaveState("error");
+      setRuntimeError(result.message);
+      return;
+    }
+    setRuntimeSaveState("saved");
+  }
+
+  async function handleMcpDisconnect(serverId: string): Promise<void> {
+    if (!window.agentApi) return;
+    setRuntimeError("");
+    const result = await window.agentApi.mcp.disconnect({ serverId });
+    if (!result.ok) {
+      setRuntimeSaveState("error");
+      setRuntimeError(result.message);
+      return;
+    }
+    setRuntimeSaveState("saved");
+  }
+
+  async function handleMcpRefreshTools(serverId: string): Promise<void> {
+    if (!window.agentApi) return;
+    setRuntimeError("");
+    const result = await window.agentApi.mcp.refreshTools({ serverId });
+    if (!result.ok) {
+      setRuntimeSaveState("error");
+      setRuntimeError(result.message);
+      return;
+    }
+    setRuntimeSaveState("saved");
   }
 
   function updateCompactionStrategy(event: ChangeEvent<HTMLSelectElement>): void {
@@ -1632,6 +1786,86 @@ export function SettingsView(): ReactElement {
                   </select>
                 }
               />
+              <SettingRow
+                title={t("settings.fields.permissionRules")}
+                description={t("settings.descriptions.permissionRules")}
+                wide
+                control={
+                  <div className="ds-settings-permission-rules">
+                    {runtimePreferences.permissionRules.length === 0 ? (
+                      <p className="ds-settings-empty-note">
+                        {t("settings.permissionRules.empty")}
+                      </p>
+                    ) : null}
+                    {runtimePreferences.permissionRules.map((rule) => (
+                      <div className="ds-settings-permission-rule" key={rule.id}>
+                        <select
+                          value={rule.tool}
+                          aria-label={t("settings.fields.permissionRuleTool")}
+                          disabled={runtimeControlsDisabled}
+                          onChange={(event) =>
+                            updateRuntimePermissionRule(rule.id, "tool", event.target.value)
+                          }
+                        >
+                          {RUNTIME_PERMISSION_RULE_TOOLS.map((tool) => (
+                            <option key={tool} value={tool}>
+                              {t(`settings.permissionRuleTools.${tool}`)}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          value={permissionRulePatternDrafts[rule.id] ?? rule.pattern}
+                          aria-label={t("settings.fields.permissionRulePattern")}
+                          placeholder={t("settings.placeholders.permissionRulePattern")}
+                          disabled={runtimeControlsDisabled}
+                          onChange={(event) =>
+                            updateRuntimePermissionRulePatternDraft(rule.id, event.target.value)
+                          }
+                          onBlur={(event) =>
+                            commitRuntimePermissionRulePattern(
+                              rule.id,
+                              event.currentTarget.value,
+                            )
+                          }
+                          onKeyDown={(event) =>
+                            handlePermissionRulePatternKeyDown(rule.id, event)
+                          }
+                        />
+                        <select
+                          value={rule.effect}
+                          aria-label={t("settings.fields.permissionRuleEffect")}
+                          disabled={runtimeControlsDisabled}
+                          onChange={(event) =>
+                            updateRuntimePermissionRule(rule.id, "effect", event.target.value)
+                          }
+                        >
+                          {RUNTIME_PERMISSION_RULE_EFFECTS.map((effect) => (
+                            <option key={effect} value={effect}>
+                              {t(`settings.permissionRuleEffects.${effect}`)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="ds-settings-secondary-action"
+                          disabled={runtimeControlsDisabled}
+                          onClick={() => deleteRuntimePermissionRule(rule.id)}
+                        >
+                          {t("settings.actions.deleteRule")}
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="ds-settings-primary-action"
+                      disabled={runtimeControlsDisabled}
+                      onClick={addRuntimePermissionRule}
+                    >
+                      {t("settings.actions.addRule")}
+                    </button>
+                  </div>
+                }
+              />
             </SettingsCard>
           ) : null}
 
@@ -1662,6 +1896,148 @@ export function SettingsView(): ReactElement {
                     />
                   </div>
                 ))}
+              </div>
+            </SettingsCard>
+          ) : null}
+
+          {section === "tools" && category === "mcpServers" ? (
+            <SettingsCard
+              title={t("settings.sections.mcpServers")}
+              description={t("settings.sections.mcpServersDesc")}
+            >
+              <div className="ds-settings-mcp-list">
+                {runtimePreferences.mcpServers.length === 0 ? (
+                  <p className="ds-settings-empty-note">
+                    {t("settings.mcpServers.empty")}
+                  </p>
+                ) : null}
+                {runtimePreferences.mcpServers.map((server) => (
+                  <article className="ds-settings-mcp-server" key={server.id}>
+                    <div className="ds-settings-mcp-header">
+                      <div>
+                        <strong>{server.name}</strong>
+                        <span>{server.command}</span>
+                      </div>
+                      <Toggle
+                        checked={server.enabled}
+                        label={t("settings.fields.mcpServerEnabled")}
+                        disabled={runtimeControlsDisabled}
+                        onChange={(checked) => updateMcpServer(server.id, { enabled: checked })}
+                      />
+                    </div>
+                    <div className="ds-settings-mcp-grid">
+                      <label>
+                        <span>{t("settings.fields.mcpServerName")}</span>
+                        <input
+                          value={server.name}
+                          disabled={runtimeControlsDisabled}
+                          onChange={(event) =>
+                            updateMcpServer(server.id, { name: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{t("settings.fields.mcpServerCommand")}</span>
+                        <input
+                          value={server.command}
+                          disabled={runtimeControlsDisabled}
+                          onChange={(event) =>
+                            updateMcpServer(server.id, { command: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{t("settings.fields.mcpServerArgs")}</span>
+                        <input
+                          value={server.args.join(" ")}
+                          disabled={runtimeControlsDisabled}
+                          onChange={(event) =>
+                            updateMcpServer(server.id, {
+                              args: splitWhitespaceList(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{t("settings.fields.mcpServerCwd")}</span>
+                        <input
+                          value={server.cwd ?? ""}
+                          disabled={runtimeControlsDisabled}
+                          onChange={(event) =>
+                            updateMcpServer(server.id, {
+                              cwd: event.target.value.trim() || undefined,
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{t("settings.fields.mcpServerReadOnlyTools")}</span>
+                        <input
+                          value={server.readOnlyTools.join(", ")}
+                          disabled={runtimeControlsDisabled}
+                          onChange={(event) =>
+                            updateMcpServer(server.id, {
+                              readOnlyTools: splitCommaList(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="is-wide">
+                        <span>{t("settings.fields.mcpServerEnv")}</span>
+                        <textarea
+                          key={`${server.id}:${JSON.stringify(server.env)}`}
+                          defaultValue={JSON.stringify(server.env, null, 2)}
+                          disabled={runtimeControlsDisabled}
+                          rows={4}
+                          spellCheck={false}
+                          onBlur={(event) => updateMcpServerEnv(server.id, event.currentTarget.value)}
+                        />
+                      </label>
+                    </div>
+                    <div className="ds-settings-mcp-actions">
+                      <button
+                        type="button"
+                        className="ds-settings-secondary-action"
+                        disabled={runtimeControlsDisabled || !window.agentApi}
+                        onClick={() => void handleMcpConnect(server.id)}
+                      >
+                        {t("settings.actions.connectMcpServer")}
+                      </button>
+                      <button
+                        type="button"
+                        className="ds-settings-secondary-action"
+                        disabled={runtimeControlsDisabled || !window.agentApi}
+                        onClick={() => void handleMcpDisconnect(server.id)}
+                      >
+                        {t("settings.actions.disconnectMcpServer")}
+                      </button>
+                      <button
+                        type="button"
+                        className="ds-settings-secondary-action"
+                        disabled={runtimeControlsDisabled || !window.agentApi}
+                        onClick={() => void handleMcpRefreshTools(server.id)}
+                      >
+                        {t("settings.actions.refreshMcpTools")}
+                      </button>
+                      <button
+                        type="button"
+                        className="ds-settings-secondary-action"
+                        disabled={runtimeControlsDisabled}
+                        onClick={() => deleteMcpServer(server.id)}
+                      >
+                        {t("settings.actions.deleteMcpServer")}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                <button
+                  type="button"
+                  className="ds-settings-primary-action"
+                  disabled={runtimeControlsDisabled}
+                  onClick={addMcpServer}
+                >
+                  {t("settings.actions.addMcpServer")}
+                </button>
               </div>
             </SettingsCard>
           ) : null}
@@ -1825,6 +2201,12 @@ function toRuntimeCommandDraft(
     timeoutMs: String(command.timeoutMs),
     maxOutputBytes: String(command.maxOutputBytes),
   };
+}
+
+function toPermissionRulePatternDrafts(
+  rules: readonly RuntimePermissionRule[],
+): Record<string, string> {
+  return Object.fromEntries(rules.map((rule) => [rule.id, rule.pattern]));
 }
 
 export function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
@@ -2025,6 +2407,11 @@ export function mergeRuntimePreferencesUpdates(
     ...(current.compaction || update.compaction
       ? { compaction: { ...current.compaction, ...update.compaction } }
       : {}),
+    ...(update.permissionRules !== undefined
+      ? { permissionRules: clonePermissionRules(update.permissionRules) }
+      : current.permissionRules !== undefined
+        ? { permissionRules: clonePermissionRules(current.permissionRules) }
+        : {}),
   };
 }
 
@@ -2032,6 +2419,102 @@ function cloneRuntimePreferencesUpdate(
   update: RuntimePreferencesUpdate,
 ): RuntimePreferencesUpdate {
   return mergeRuntimePreferencesUpdates({}, update);
+}
+
+function createDefaultPermissionRule(): RuntimePermissionRule {
+  return {
+    id: createRuntimePreferenceId(),
+    tool: "command",
+    pattern: "npm test*",
+    effect: "ask",
+  };
+}
+
+export function createDefaultMcpServer(name: string): McpServerConfig {
+  const now = new Date().toISOString();
+  return {
+    id: createRuntimePreferenceId(),
+    name,
+    transport: "stdio",
+    command: "node",
+    args: [],
+    env: {},
+    enabled: false,
+    readOnlyTools: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function updateMcpServerConfigs(
+  servers: readonly McpServerConfig[],
+  id: string,
+  update: McpServerConfigUpdate,
+): McpServerConfig[] {
+  const updatedAt = new Date().toISOString();
+  return servers.map((server) =>
+    server.id === id
+      ? {
+          ...server,
+          ...update,
+          args: update.args ? [...update.args] : server.args,
+          env: update.env ? { ...update.env } : server.env,
+          readOnlyTools: update.readOnlyTools
+            ? [...update.readOnlyTools]
+            : server.readOnlyTools,
+          updatedAt,
+        }
+      : server,
+  );
+}
+
+type McpServerEnvDraftResult =
+  | { ok: true; value: Record<string, string> }
+  | { ok: false; message: string };
+
+export function parseMcpServerEnvDraft(
+  raw: string,
+  t: SettingsTranslator,
+): McpServerEnvDraftResult {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: {} };
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, message: t("settings.errors.mcpEnvObject") };
+    }
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!key.trim() || key.includes("\0") || typeof value !== "string" || value.includes("\0")) {
+        return { ok: false, message: t("settings.errors.mcpEnvObject") };
+      }
+      env[key.trim()] = value;
+    }
+    return { ok: true, value: env };
+  } catch {
+    return { ok: false, message: t("settings.errors.mcpEnvJson") };
+  }
+}
+
+export function splitWhitespaceList(value: string): string[] {
+  return value.split(/\s+/).map((entry) => entry.trim()).filter(Boolean);
+}
+
+export function splitCommaList(value: string): string[] {
+  return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
+function createRuntimePreferenceId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function clonePermissionRules(
+  rules: readonly RuntimePermissionRule[],
+): RuntimePermissionRule[] {
+  return rules.map((rule) => ({ ...rule }));
 }
 
 export function messageOfUnknownError(error: unknown): string {

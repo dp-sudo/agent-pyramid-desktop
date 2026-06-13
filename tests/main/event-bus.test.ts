@@ -81,6 +81,16 @@ function eventForKind(kind: RuntimeEventKind): RuntimeEvent {
         toolName: "edit_file",
         args: {},
       };
+    case "tool_progress":
+      return {
+        kind,
+        threadId: "thread-1",
+        turnId: "turn-1",
+        toolCallId: "call-1",
+        chunk: "running\n",
+        stream: "stdout",
+        seq: 1,
+      };
     case "tool_budget_reached":
       return {
         kind,
