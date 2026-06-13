@@ -35,6 +35,7 @@ import {
   type ToolProgressEvent,
 } from "../../../shared/agent-contracts";
 import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
+import { resolveMcpInputReferences } from "./mcp-input";
 export {
   copyWorkbenchErrorMessage,
   shouldShowWorkbenchErrorToast,
@@ -536,12 +537,18 @@ export function Workbench(): ReactElement {
       const goalMode = payload.goalMode ?? false;
       const mode = payload.mode ?? "agent";
       const attachmentIds = payload.attachmentIds ?? [];
+      const resolvedMcpInput = await resolveCodeMcpInputReferences(sendPayload, t);
+      if (!resolvedMcpInput.ok) {
+        actions.setError(resolvedMcpInput.message);
+        return false;
+      }
+      const turnPayload = resolvedMcpInput.value;
 
       if (goalMode && threadId && !state.activeThread?.goal) {
         const goalResult = await runWorkbenchIpc(() =>
           window.agentApi.goals.update({
             threadId,
-            goal: sendPayload.text,
+            goal: turnPayload.displayText ?? turnPayload.text,
             status: "active",
           }),
         );
@@ -556,8 +563,8 @@ export function Workbench(): ReactElement {
       const result = await runWorkbenchIpc(() =>
         window.agentApi.turns.start({
           threadId,
-          text: sendPayload.text,
-          displayText: sendPayload.displayText,
+          text: turnPayload.text,
+          displayText: turnPayload.displayText,
           model: state.composer.model,
           modelProfileId: explicitComposerModelProfileId(state.composer),
           reasoningEffort:
@@ -942,6 +949,13 @@ export function applyWorkbenchRuntimeEvent(
     }
     return;
   }
+  if (
+    event.kind === "mcp_server_connection" ||
+    event.kind === "mcp_tool_list_changed" ||
+    event.kind === "mcp_surface_changed"
+  ) {
+    return;
+  }
 
   const isActiveThreadEvent = event.threadId === activeThreadId;
   if (event.kind === "turn_started") {
@@ -1063,6 +1077,26 @@ export function buildComposerSendPayload(
     displayText: attachmentOnlyText,
     threadTitle: attachmentOnlyText,
   };
+}
+
+export async function resolveCodeMcpInputReferences(
+  payload: {
+    text: string;
+    displayText?: string;
+    threadTitle: string;
+  },
+  t: (key: string, options?: Record<string, unknown>) => string,
+): Promise<{
+  ok: true;
+  value: { text: string; displayText?: string; threadTitle: string };
+} | { ok: false; message: string }> {
+  if (!window.agentApi?.mcp) {
+    return { ok: true, value: payload };
+  }
+  if (!payload.text.includes("/mcp__") && !payload.text.includes("@")) {
+    return { ok: true, value: payload };
+  }
+  return resolveMcpInputReferences(payload, window.agentApi.mcp, t);
 }
 
 export function normalizeWriteAssistantSendPayload(

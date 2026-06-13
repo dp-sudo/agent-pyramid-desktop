@@ -77,6 +77,7 @@ Current groups:
 | Write mode | `agentApi.write.*` | `src/main/ipc/write-handlers.ts` |
 | Model config | `agentApi.modelConfig.*` | `src/main/ipc/model-config-handlers.ts` |
 | Runtime preferences | `agentApi.runtimePreferences.*` | `src/main/ipc/runtime-preferences-handlers.ts` |
+| MCP | `agentApi.mcp.*` | `src/main/ipc/mcp-handlers.ts` |
 
 ## Contract Table
 
@@ -347,6 +348,58 @@ Notes:
   `compaction` is consumed by runtime message preparation before model
   requests. Unsupported stored shapes normalize to defaults on read and
   malformed update payloads fail before store access.
+- `mcpServers` stores external MCP server configs. `stdio` servers require a
+  command; `streamable-http` servers require an HTTP(S) URL and may carry
+  request headers. Settings writes the config through this same preferences
+  channel, then the main composition root reconfigures `McpHost`.
+
+### MCP
+
+| Channel | Preload Method | Request | Success Value | Error Codes |
+| --- | --- | --- | --- | --- |
+| `mcp:servers:list` | `mcp.listServers()` | none | `McpServerListResponse` | `MCP_SERVER_LIST_FAILED` |
+| `mcp:servers:connect` | `mcp.connect(request)` | `McpServerConnectRequest` | `McpServerStatusRecord` | `MCP_SERVER_CONNECT_FAILED` |
+| `mcp:servers:disconnect` | `mcp.disconnect(request)` | `McpServerDisconnectRequest` | `McpServerStatusRecord` | `MCP_SERVER_DISCONNECT_FAILED` |
+| `mcp:tools:list` | `mcp.listTools(request?)` | `McpServerToolsRequest?` | `McpServerToolsResponse` | `MCP_TOOL_LIST_FAILED` |
+| `mcp:tools:refresh` | `mcp.refreshTools(request)` | `McpServerRefreshToolsRequest` | `McpServerStatusRecord` | `MCP_TOOL_REFRESH_FAILED` |
+| `mcp:surface:refresh` | `mcp.refreshSurface(request)` | `McpServerRefreshToolsRequest` | `McpServerStatusRecord` | `MCP_SURFACE_REFRESH_FAILED` |
+| `mcp:prompts:list` | `mcp.listPrompts(request?)` | `McpServerPromptsRequest?` | `McpServerPromptsResponse` | `MCP_PROMPT_LIST_FAILED` |
+| `mcp:prompts:get` | `mcp.getPrompt(request)` | `McpPromptGetRequest` | `McpPromptResult` | `MCP_PROMPT_GET_FAILED` |
+| `mcp:resources:list` | `mcp.listResources(request?)` | `McpServerResourcesRequest?` | `McpServerResourcesResponse` | `MCP_RESOURCE_LIST_FAILED` |
+| `mcp:resources:read` | `mcp.readResource(request)` | `McpResourceReadRequest` | `McpResourceReadResult` | `MCP_RESOURCE_READ_FAILED` |
+
+Notes:
+
+- `McpHost` is main-process only. Renderer access is limited to status,
+  connect/disconnect, tools, prompts and resources through `agentApi.mcp.*`.
+- `McpClient` supports `stdio` and Streamable HTTP transports. Streamable HTTP
+  preserves `Mcp-Session-Id` across requests and accepts JSON or SSE JSON-RPC
+  responses.
+- MCP tools are registered into the existing `ToolRegistry` as
+  `mcp__<server>__<tool>`, then flow through runtime tool availability,
+  sandbox, approval and `permissionRules` like other tools.
+- `McpServerStatusRecord.status` includes `cached` and `lazy` in addition to
+  disconnected/connecting/connected/failed. `cached` means matching schema was
+  loaded from `McpCacheStore`; `lazy` means a live reconnect failed but cached
+  tool schema remains registered for a later retry.
+- `McpServerStatusRecord.lastStartupDurationMs`,
+  `startupSuccessCount`, and `startupFailureCount` expose startup stats from
+  the MCP cache store. They are observations, not user-editable config.
+- MCP prompt and resource surface APIs are separate from model tool calls.
+  The Code composer resolves `/mcp__<server>__<prompt>` and
+  `@<server>:<uri>` before `turn:start`, preserving the visible input in
+  `displayText` while sending resolved prompt/resource context as `text`.
+- Prompt/resource list results may come from cached surface descriptors.
+  `mcp:prompts:get` and `mcp:resources:read` force a live lazy connect before
+  returning content.
+- MCP prompt/resource surface refresh is auxiliary. A surface refresh failure
+  records `lastError` on the server status but does not unregister already
+  connected MCP tools.
+- Streamable HTTP transport returns bounded status-only failures. 401/403
+  responses add auth diagnostics that mention whether credentials are present
+  in headers, env or URL without echoing credential values or response bodies.
+- MCP request parsers reject malformed objects, blank required strings and NUL
+  bytes before touching `McpHost`.
 
 ## Runtime Event Push Contract
 
@@ -381,6 +434,9 @@ Current `RuntimeEvent.kind` values:
 - `item_updated`
 - `approval_requested`
 - `tool_progress`
+- `mcp_server_connection`
+- `mcp_tool_list_changed`
+- `mcp_surface_changed`
 - `tool_budget_reached`
 - `goal_updated`
 - `runtime_error`
@@ -396,6 +452,12 @@ in-flight turn metadata. The shared runtime event guard requires those repeated
 top-level fields to match `turn.threadId`, `turn.id`, and `turn.startedAt`; for
 `item_appended` / `item_updated`, `event.threadId` and `event.turnId` must match
 the nested `item.threadId` and `item.turnId`.
+
+MCP runtime events are process-level events without `threadId`. `sse-handlers.ts`
+forwards `mcp_server_connection`, `mcp_tool_list_changed`, and
+`mcp_surface_changed` once per subscribed window; `Workbench` ignores them for
+chat timelines, while Settings refreshes MCP server status from the MCP IPC
+surface.
 
 When adding a runtime event, update:
 

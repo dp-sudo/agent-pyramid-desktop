@@ -432,19 +432,35 @@ function parseMcpServerConfig(
   if (value.transport !== undefined && !MCP_SERVER_TRANSPORTS.includes(value.transport as never)) {
     throw new Error(`mcpServers[${index}].transport is invalid.`);
   }
-  const command = parseNonBlankString(value.command, `mcpServers[${index}].command`);
+  const transport = value.transport === "streamable-http" ? "streamable-http" : "stdio";
+  const command = value.command !== undefined
+    ? parseNonBlankString(value.command, `mcpServers[${index}].command`)
+    : undefined;
+  const url = value.url !== undefined
+    ? parseHttpUrl(value.url, `mcpServers[${index}].url`)
+    : undefined;
+  if (transport === "stdio" && command === undefined) {
+    throw new Error(`mcpServers[${index}].command must be a non-empty string.`);
+  }
+  if (transport === "streamable-http" && url === undefined) {
+    throw new Error(`mcpServers[${index}].url must be an http or https URL.`);
+  }
   const createdAt = parseIsoTimestamp(value.createdAt, `mcpServers[${index}].createdAt`);
   const updatedAt = parseIsoTimestamp(value.updatedAt, `mcpServers[${index}].updatedAt`);
   return {
     id,
     name,
-    transport: "stdio",
-    command,
+    transport,
+    ...(command !== undefined ? { command } : {}),
     args: parseStringArray(value.args, `mcpServers[${index}].args`),
     env: parseStringRecord(value.env, `mcpServers[${index}].env`),
     ...(value.cwd !== undefined
       ? { cwd: parseNonBlankString(value.cwd, `mcpServers[${index}].cwd`) }
       : {}),
+    ...(url !== undefined ? { url } : {}),
+    headers: value.headers === undefined
+      ? {}
+      : parseStringRecord(value.headers, `mcpServers[${index}].headers`),
     enabled: parseBoolean(value.enabled, `mcpServers[${index}].enabled`),
     readOnlyTools: parseStringArray(
       value.readOnlyTools,
@@ -460,6 +476,7 @@ function cloneMcpServerConfigs(value: readonly McpServerConfig[]): McpServerConf
     ...server,
     args: [...server.args],
     env: { ...server.env },
+    headers: { ...server.headers },
     readOnlyTools: [...server.readOnlyTools],
   }));
 }
@@ -517,6 +534,19 @@ function parseNonBlankString(value: unknown, field: string): string {
     throw new Error(`${field} cannot contain NUL bytes.`);
   }
   return parsed;
+}
+
+function parseHttpUrl(value: unknown, field: string): string {
+  const parsed = parseNonBlankString(value, field);
+  try {
+    const url = new URL(parsed);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return parsed;
+    }
+  } catch {
+    // Fall through to the shared error below.
+  }
+  throw new Error(`${field} must be an http or https URL.`);
 }
 
 function parseStringArray(value: unknown, field: string): string[] {

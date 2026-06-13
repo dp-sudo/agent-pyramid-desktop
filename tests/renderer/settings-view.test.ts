@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   canSubmitModelSettingsSection,
   clearDeletedDefaultProfileReferences,
+  formatMcpStartupStats,
   getDefaultCategoryForSection,
   getFirstVisibleSettingsCategoryForSection,
   isProfileDeletePending,
   isSettingsCategoryInSection,
   mergeRuntimePreferencesUpdates,
   messageOfUnknownError,
+  parseMcpServerStringRecordDraft,
   prunePendingProfileDeleteId,
   resolveRuntimePreferencesAfterProfileActivationRefreshFailure,
   shouldAllowSettingsCategorySelection,
@@ -33,6 +35,7 @@ import {
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
   RUNTIME_TOOL_NAMES,
+  type McpServerConfig,
 } from "../../src/shared/agent-contracts";
 
 describe("SettingsView helpers", () => {
@@ -251,6 +254,19 @@ describe("SettingsView helpers", () => {
   });
 
   it("merges queued runtime preference updates without dropping nested controls", () => {
+    const mcpServer: McpServerConfig = {
+      id: "server-1",
+      name: "local-mcp",
+      transport: "stdio",
+      command: "node",
+      args: [],
+      env: {},
+      headers: {},
+      enabled: false,
+      readOnlyTools: [],
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+    };
     const first = mergeRuntimePreferencesUpdates(null, {
       toolAvailability: {
         code: { run_command: false },
@@ -261,6 +277,7 @@ describe("SettingsView helpers", () => {
       permissionRules: [
         { id: "ask-tests", tool: "command", pattern: "npm test*", effect: "ask" },
       ],
+      mcpServers: [mcpServer],
     });
 
     expect(mergeRuntimePreferencesUpdates(first, {
@@ -275,6 +292,7 @@ describe("SettingsView helpers", () => {
       permissionRules: [
         { id: "deny-src", tool: "write", pattern: "src/*", effect: "deny" },
       ],
+      mcpServers: [{ ...mcpServer, enabled: true }],
     })).toEqual({
       defaultApprovalPolicy: "never",
       toolAvailability: {
@@ -296,7 +314,46 @@ describe("SettingsView helpers", () => {
       permissionRules: [
         { id: "deny-src", tool: "write", pattern: "src/*", effect: "deny" },
       ],
+      mcpServers: [{ ...mcpServer, enabled: true }],
     });
+  });
+
+  it("parses MCP JSON drafts for env and headers", () => {
+    expect(parseMcpServerStringRecordDraft(
+      "{\"Authorization\":\"Bearer test\"}",
+      testT,
+      "headers",
+    )).toEqual({ ok: true, value: { Authorization: "Bearer test" } });
+    expect(parseMcpServerStringRecordDraft("", testT, "env"))
+      .toEqual({ ok: true, value: {} });
+    expect(parseMcpServerStringRecordDraft("[]", testT, "headers"))
+      .toEqual({ ok: false, message: "Headers JSON must be an object." });
+    expect(parseMcpServerStringRecordDraft("{bad", testT, "env"))
+      .toEqual({ ok: false, message: "Environment must be valid JSON." });
+  });
+
+  it("formats MCP startup stats only when runtime observations exist", () => {
+    const baseStatus = {
+      id: "server-1",
+      name: "local-mcp",
+      transport: "stdio" as const,
+      enabled: true,
+      status: "connected" as const,
+      toolCount: 0,
+      tools: [],
+      promptCount: 0,
+      prompts: [],
+      resourceCount: 0,
+      resources: [],
+    };
+
+    expect(formatMcpStartupStats(baseStatus, testT)).toBeNull();
+    expect(formatMcpStartupStats({
+      ...baseStatus,
+      lastStartupDurationMs: 42,
+      startupSuccessCount: 2,
+      startupFailureCount: 1,
+    }, testT)).toBe("Last startup 42 ms, 2 ok, 1 failed");
   });
 
   it("lets later queued runtime preference updates override the same field", () => {
@@ -405,6 +462,15 @@ function testT(key: string, options?: Record<string, unknown>): string {
   }
   if (key === "settings.errors.maxTokensTooLarge") {
     return "Max output tokens must stay below context.";
+  }
+  if (key === "settings.errors.mcpHeadersObject") {
+    return "Headers JSON must be an object.";
+  }
+  if (key === "settings.errors.mcpEnvJson") {
+    return "Environment must be valid JSON.";
+  }
+  if (key === "settings.mcpServers.startupStats") {
+    return `Last startup ${String(options?.duration)} ms, ${String(options?.successes)} ok, ${String(options?.failures)} failed`;
   }
   return key;
 }

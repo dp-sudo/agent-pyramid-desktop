@@ -3321,6 +3321,166 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
+.ds-settings-mcp-list {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.ds-settings-mcp-server {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-subtle);
+  padding: 12px;
+}
+
+.ds-settings-mcp-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ds-settings-mcp-header div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ds-settings-mcp-header strong {
+  overflow-wrap: anywhere;
+  color: var(--ds-text);
+  font-size: var(--ds-size-title);
+  font-weight: 700;
+}
+
+.ds-settings-mcp-header span {
+  overflow-wrap: anywhere;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-settings-mcp-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ds-settings-mcp-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  font-weight: 650;
+}
+
+.ds-settings-mcp-grid label.is-wide {
+  grid-column: 1 / -1;
+}
+
+.ds-settings-mcp-grid input,
+.ds-settings-mcp-grid select,
+.ds-settings-mcp-grid textarea {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-elevated);
+  color: var(--ds-text);
+  font: inherit;
+  font-size: var(--ds-size-body);
+  outline: none;
+  padding: 7px 9px;
+}
+
+.ds-settings-mcp-grid textarea {
+  resize: vertical;
+}
+
+.ds-settings-mcp-grid input:focus,
+.ds-settings-mcp-grid select:focus,
+.ds-settings-mcp-grid textarea:focus {
+  border-color: var(--ds-accent);
+  box-shadow: var(--ds-focus-ring);
+}
+
+.ds-settings-mcp-surface,
+.ds-settings-mcp-surface-empty {
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-card);
+  padding: 10px;
+}
+
+.ds-settings-mcp-surface-empty {
+  margin: 0;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-settings-mcp-surface {
+  display: grid;
+  gap: 8px;
+}
+
+.ds-settings-mcp-surface-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ds-settings-mcp-surface-counts span {
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  font-weight: 650;
+  padding: 4px 8px;
+}
+
+.ds-settings-mcp-surface-error {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ds-danger);
+  font-size: var(--ds-size-caption);
+  line-height: 1.45;
+}
+
+.ds-settings-mcp-surface-meta {
+  margin: 0;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  line-height: 1.45;
+}
+
+.ds-settings-mcp-surface-list {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ds-settings-mcp-surface-list strong {
+  color: var(--ds-text);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-settings-mcp-surface-list span {
+  overflow-wrap: anywhere;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  line-height: 1.45;
+}
+
+.ds-settings-mcp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .ds-setting-row.is-wide {
   flex-direction: column;
   gap: 10px;

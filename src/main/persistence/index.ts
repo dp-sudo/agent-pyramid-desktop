@@ -191,11 +191,8 @@ export class JsonlThreadStore {
     if (!isRuntimeEvent(event)) {
       throw new Error("Runtime event shape is invalid.");
     }
-    if (
-      !("threadId" in event) ||
-      event.threadId !== threadId ||
-      !ownsNestedEventRecords(event, threadId)
-    ) {
+    if (!isThreadScopedRuntimeEvent(event) || event.threadId !== threadId ||
+      !ownsNestedEventRecords(event, threadId)) {
       throw new Error("Runtime event threadId does not match target thread.");
     }
     return this.serialized(threadId, async () => {
@@ -220,7 +217,9 @@ export class JsonlThreadStore {
       this.eventsPath(threadId),
       "events",
       isRuntimeEvent,
-      (event) => event.threadId === threadId && ownsNestedEventRecords(event, threadId),
+      (event) => isThreadScopedRuntimeEvent(event) &&
+        event.threadId === threadId &&
+        ownsNestedEventRecords(event, threadId),
     );
   }
 
@@ -260,7 +259,9 @@ export class JsonlThreadStore {
         this.eventsPath(threadId),
         "events",
         isRuntimeEvent,
-        (event) => event.threadId === threadId && ownsNestedEventRecords(event, threadId),
+        (event) => isThreadScopedRuntimeEvent(event) &&
+          event.threadId === threadId &&
+          ownsNestedEventRecords(event, threadId),
       );
       const eventBoundary = events.findIndex((event) => {
         const eventTurnId = runtimeEventTurnId(event);
@@ -628,6 +629,12 @@ function ownsNestedEventRecords(event: RuntimeEvent, threadId: string): boolean 
   }
 }
 
+function isThreadScopedRuntimeEvent(
+  event: RuntimeEvent,
+): event is RuntimeEvent & { threadId: string } {
+  return "threadId" in event;
+}
+
 function runtimeEventTurnId(event: RuntimeEvent): string | undefined {
   switch (event.kind) {
     case "turn_started":
@@ -641,7 +648,11 @@ function runtimeEventTurnId(event: RuntimeEvent): string | undefined {
       return event.turnId;
     case "goal_updated":
     case "runtime_error":
-      return event.turnId;
+      return "turnId" in event ? event.turnId : undefined;
+    case "mcp_server_connection":
+    case "mcp_tool_list_changed":
+    case "mcp_surface_changed":
+      return undefined;
     default: {
       const exhaustive: never = event;
       return exhaustive;

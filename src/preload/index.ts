@@ -14,6 +14,14 @@ import type {
   McpServerConnectRequest,
   McpServerDisconnectRequest,
   McpServerListResponse,
+  McpPromptGetRequest,
+  McpPromptResult,
+  McpResourceReadRequest,
+  McpResourceReadResult,
+  McpServerPromptsRequest,
+  McpServerPromptsResponse,
+  McpServerResourcesRequest,
+  McpServerResourcesResponse,
   McpServerRefreshToolsRequest,
   McpServerStatusRecord,
   McpServerToolsRequest,
@@ -91,6 +99,11 @@ import {
   MCP_SERVERS_CONNECT_CHANNEL,
   MCP_SERVERS_DISCONNECT_CHANNEL,
   MCP_SERVERS_LIST_CHANNEL,
+  MCP_SURFACE_REFRESH_CHANNEL,
+  MCP_PROMPTS_GET_CHANNEL,
+  MCP_PROMPTS_LIST_CHANNEL,
+  MCP_RESOURCES_LIST_CHANNEL,
+  MCP_RESOURCES_READ_CHANNEL,
   MCP_TOOLS_LIST_CHANNEL,
   MCP_TOOLS_REFRESH_CHANNEL,
   RUNTIME_PREFERENCES_GET_CHANNEL,
@@ -269,6 +282,37 @@ const mcp = {
   ): Promise<IpcResult<McpServerStatusRecord>> {
     return ipcRenderer.invoke(MCP_TOOLS_REFRESH_CHANNEL, request) as Promise<
       IpcResult<McpServerStatusRecord>
+    >;
+  },
+  refreshSurface(
+    request: McpServerRefreshToolsRequest,
+  ): Promise<IpcResult<McpServerStatusRecord>> {
+    return ipcRenderer.invoke(MCP_SURFACE_REFRESH_CHANNEL, request) as Promise<
+      IpcResult<McpServerStatusRecord>
+    >;
+  },
+  listPrompts(
+    request?: McpServerPromptsRequest,
+  ): Promise<IpcResult<McpServerPromptsResponse>> {
+    return ipcRenderer.invoke(MCP_PROMPTS_LIST_CHANNEL, request) as Promise<
+      IpcResult<McpServerPromptsResponse>
+    >;
+  },
+  getPrompt(request: McpPromptGetRequest): Promise<IpcResult<McpPromptResult>> {
+    return ipcRenderer.invoke(MCP_PROMPTS_GET_CHANNEL, request) as Promise<
+      IpcResult<McpPromptResult>
+    >;
+  },
+  listResources(
+    request?: McpServerResourcesRequest,
+  ): Promise<IpcResult<McpServerResourcesResponse>> {
+    return ipcRenderer.invoke(MCP_RESOURCES_LIST_CHANNEL, request) as Promise<
+      IpcResult<McpServerResourcesResponse>
+    >;
+  },
+  readResource(request: McpResourceReadRequest): Promise<IpcResult<McpResourceReadResult>> {
+    return ipcRenderer.invoke(MCP_RESOURCES_READ_CHANNEL, request) as Promise<
+      IpcResult<McpResourceReadResult>
     >;
   },
 };

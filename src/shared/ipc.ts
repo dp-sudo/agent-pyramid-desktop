@@ -66,6 +66,11 @@ export const MCP_SERVERS_CONNECT_CHANNEL = "mcp:servers:connect";
 export const MCP_SERVERS_DISCONNECT_CHANNEL = "mcp:servers:disconnect";
 export const MCP_TOOLS_LIST_CHANNEL = "mcp:tools:list";
 export const MCP_TOOLS_REFRESH_CHANNEL = "mcp:tools:refresh";
+export const MCP_SURFACE_REFRESH_CHANNEL = "mcp:surface:refresh";
+export const MCP_PROMPTS_LIST_CHANNEL = "mcp:prompts:list";
+export const MCP_PROMPTS_GET_CHANNEL = "mcp:prompts:get";
+export const MCP_RESOURCES_LIST_CHANNEL = "mcp:resources:list";
+export const MCP_RESOURCES_READ_CHANNEL = "mcp:resources:read";
 
 /** All channels a renderer may invoke on the main process. */
 export const RENDERER_TO_MAIN_CHANNELS = [
@@ -110,6 +115,11 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   MCP_SERVERS_DISCONNECT_CHANNEL,
   MCP_TOOLS_LIST_CHANNEL,
   MCP_TOOLS_REFRESH_CHANNEL,
+  MCP_SURFACE_REFRESH_CHANNEL,
+  MCP_PROMPTS_LIST_CHANNEL,
+  MCP_PROMPTS_GET_CHANNEL,
+  MCP_RESOURCES_LIST_CHANNEL,
+  MCP_RESOURCES_READ_CHANNEL,
 ] as const;
 
 export type RendererToMainChannel = (typeof RENDERER_TO_MAIN_CHANNELS)[number];

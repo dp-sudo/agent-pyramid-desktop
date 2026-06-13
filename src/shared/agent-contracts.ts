@@ -345,11 +345,13 @@ export interface RuntimeCompactionPreferences {
   strategy: RuntimeCompactionStrategy;
 }
 
-export const MCP_SERVER_TRANSPORTS = ["stdio"] as const;
+export const MCP_SERVER_TRANSPORTS = ["stdio", "streamable-http"] as const;
 export type McpServerTransport = (typeof MCP_SERVER_TRANSPORTS)[number];
 export const MCP_SERVER_STATUSES = [
   "disconnected",
   "connecting",
+  "cached",
+  "lazy",
   "connected",
   "failed",
 ] as const;
@@ -359,10 +361,12 @@ export interface McpServerConfig {
   id: string;
   name: string;
   transport: McpServerTransport;
-  command: string;
+  command?: string;
   args: string[];
   env: Record<string, string>;
   cwd?: string;
+  url?: string;
+  headers: Record<string, string>;
   enabled: boolean;
   readOnlyTools: string[];
   createdAt: string;
@@ -372,7 +376,16 @@ export interface McpServerConfig {
 export type McpServerConfigUpdate = Partial<
   Pick<
     McpServerConfig,
-    "name" | "command" | "args" | "env" | "cwd" | "enabled" | "readOnlyTools"
+    | "name"
+    | "transport"
+    | "command"
+    | "args"
+    | "env"
+    | "cwd"
+    | "url"
+    | "headers"
+    | "enabled"
+    | "readOnlyTools"
   >
 >;
 
@@ -383,6 +396,46 @@ export interface McpToolInfo {
   readOnly: boolean;
 }
 
+export interface McpPromptArgumentInfo {
+  name: string;
+  description?: string;
+  required: boolean;
+}
+
+export interface McpPromptInfo {
+  name: string;
+  description: string;
+  arguments: McpPromptArgumentInfo[];
+}
+
+export interface McpPromptMessage {
+  role: string;
+  content: unknown;
+}
+
+export interface McpPromptResult {
+  description?: string;
+  messages: McpPromptMessage[];
+}
+
+export interface McpResourceInfo {
+  uri: string;
+  name: string;
+  description: string;
+  mimeType?: string;
+}
+
+export interface McpResourceContent {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+}
+
+export interface McpResourceReadResult {
+  contents: McpResourceContent[];
+}
+
 export interface McpServerStatusRecord {
   id: string;
   name: string;
@@ -391,6 +444,13 @@ export interface McpServerStatusRecord {
   status: McpServerStatus;
   toolCount: number;
   tools: McpToolInfo[];
+  promptCount: number;
+  prompts: McpPromptInfo[];
+  resourceCount: number;
+  resources: McpResourceInfo[];
+  lastStartupDurationMs?: number;
+  startupSuccessCount?: number;
+  startupFailureCount?: number;
   lastConnectedAt?: string;
   lastError?: string;
 }
@@ -925,6 +985,15 @@ export interface McpToolListChangedEvent {
   occurredAt: string;
 }
 
+export interface McpSurfaceChangedEvent {
+  kind: "mcp_surface_changed";
+  serverId: string;
+  serverName: string;
+  promptCount: number;
+  resourceCount: number;
+  occurredAt: string;
+}
+
 export interface RuntimeErrorEvent {
   kind: "runtime_error";
   threadId?: string;
@@ -969,6 +1038,7 @@ export type RuntimeEvent =
   | ToolProgressEvent
   | McpServerConnectionEvent
   | McpToolListChangedEvent
+  | McpSurfaceChangedEvent
   | ToolBudgetReachedEvent
   | GoalUpdatedEvent
   | RuntimeErrorEvent;
@@ -983,6 +1053,7 @@ export const RUNTIME_EVENT_KINDS = [
   "tool_progress",
   "mcp_server_connection",
   "mcp_tool_list_changed",
+  "mcp_surface_changed",
   "tool_budget_reached",
   "goal_updated",
   "runtime_error",
@@ -1211,6 +1282,41 @@ export interface McpServerRefreshToolsRequest {
   serverId: string;
 }
 
+export interface McpServerPromptsRequest {
+  serverId?: string;
+}
+
+export interface McpServerPromptsResponse {
+  servers: Array<{
+    serverId: string;
+    serverName: string;
+    prompts: McpPromptInfo[];
+  }>;
+}
+
+export interface McpPromptGetRequest {
+  serverId: string;
+  name: string;
+  arguments?: Record<string, string>;
+}
+
+export interface McpServerResourcesRequest {
+  serverId?: string;
+}
+
+export interface McpServerResourcesResponse {
+  servers: Array<{
+    serverId: string;
+    serverName: string;
+    resources: McpResourceInfo[];
+  }>;
+}
+
+export interface McpResourceReadRequest {
+  serverId: string;
+  uri: string;
+}
+
 // ============================================================================
 // Generic IPC envelope
 // ============================================================================
@@ -1376,6 +1482,12 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
         v.tools.every(isMcpToolInfo) &&
         v.tools.length === v.toolCount &&
         isIsoTimestampString(v.occurredAt);
+    case "mcp_surface_changed":
+      return hasString(v, "serverId") &&
+        hasString(v, "serverName") &&
+        isNonNegativeInteger(v.promptCount) &&
+        isNonNegativeInteger(v.resourceCount) &&
+        isIsoTimestampString(v.occurredAt);
     case "tool_budget_reached":
       return hasString(v, "threadId") &&
         hasString(v, "turnId") &&
@@ -1513,19 +1625,26 @@ function isMcpServerConfigs(value: unknown): value is McpServerConfig[] {
 
 function isMcpServerConfig(value: unknown): value is McpServerConfig {
   if (!isRecord(value)) return false;
-  return isNonBlankStringWithoutNul(value.id) &&
+  const baseValid = isNonBlankStringWithoutNul(value.id) &&
     isNonBlankStringWithoutNul(value.name) &&
     isMcpServerTransport(value.transport) &&
-    isNonBlankStringWithoutNul(value.command) &&
+    (value.command === undefined || isNonBlankStringWithoutNul(value.command)) &&
     Array.isArray(value.args) &&
     value.args.every(isStringWithoutNul) &&
     isStringRecordWithoutNul(value.env) &&
     (value.cwd === undefined || isNonBlankStringWithoutNul(value.cwd)) &&
+    (value.url === undefined || isNonBlankStringWithoutNul(value.url)) &&
+    isStringRecordWithoutNul(value.headers) &&
     typeof value.enabled === "boolean" &&
     Array.isArray(value.readOnlyTools) &&
     value.readOnlyTools.every(isNonBlankStringWithoutNul) &&
     isIsoTimestampString(value.createdAt) &&
     isIsoTimestampString(value.updatedAt);
+  if (!baseValid) return false;
+  if (value.transport === "stdio") {
+    return isNonBlankStringWithoutNul(value.command);
+  }
+  return isHttpUrl(value.url);
 }
 
 function isMcpToolInfo(value: unknown): value is McpToolInfo {
@@ -1534,6 +1653,16 @@ function isMcpToolInfo(value: unknown): value is McpToolInfo {
     hasString(value, "description") &&
     isRecord(value.inputSchema) &&
     typeof value.readOnly === "boolean";
+}
+
+function isHttpUrl(value: unknown): value is string {
+  if (!isNonBlankStringWithoutNul(value)) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function isNullableString(value: unknown): value is string | null {

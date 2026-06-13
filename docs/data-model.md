@@ -524,6 +524,8 @@ Contracts:
 - `RuntimeCommandPreferences`
 - `RuntimeCompactionPreferences`
 - `RuntimePermissionRule`
+- `McpServerConfig`
+- `McpServerStatusRecord`
 
 Storage file:
 
@@ -553,7 +555,7 @@ Key semantics:
   tool switch. Disabled tools are omitted from LLM tool definitions and forced
   calls to disabled tools produce failed tool items.
 - `permissionRules` is an ordered array of `{ id, tool, pattern, effect }`
-  records where `tool` is `command | write` and `effect` is
+  records where `tool` is `command | write | mcp` and `effect` is
   `allow | ask | deny`. Updates replace the full rule array and must contain
   unique non-empty ids, non-empty patterns without NUL bytes, and valid enum
   values. If the persisted field exists but is malformed, config loading fails
@@ -561,8 +563,26 @@ Key semantics:
 - Runtime evaluates `permissionRules` after hard `read-only` sandbox and
   `approvalPolicy: never` denials. Command rules match raw `command` arguments
   for shell-like command tools; write rules match `path` arguments or
-  `apply_patch` target paths. Matching effects resolve by
+  `apply_patch` target paths; MCP rules match `server/tool` derived from
+  `mcp__<server>__<tool>` names. Matching effects resolve by
   `deny > ask > allow`; no match falls back to normal approval logic.
+- `mcpServers` is an array of external MCP server configs. Each config stores
+  `id`, `name`, `transport`, optional stdio fields (`command`, `args`, `env`,
+  `cwd`), optional Streamable HTTP fields (`url`, `headers`), `enabled`,
+  `readOnlyTools`, and timestamps. The parser requires unique ids/names,
+  `command` for `stdio`, an HTTP(S) `url` for `streamable-http`, string record
+  env/header values and no NUL bytes.
+- MCP server status, tool descriptors, prompts and resources are runtime
+  surface state exposed through `McpServerStatusRecord` over IPC.
+  `status` can be `disconnected`, `connecting`, `cached`, `lazy`,
+  `connected`, or `failed`. `lastStartupDurationMs`,
+  `startupSuccessCount`, and `startupFailureCount` are runtime observations
+  from the MCP cache/stats store.
+- `McpCacheStore` persists an optimization cache at `userData/mcp/cache.json`.
+  It stores public tool schemas, prompt/resource descriptors, capability
+  snapshots and startup stats keyed by a fingerprint of the server runtime
+  config. It is not the config authority, and malformed or stale cache entries
+  are ignored in favor of a live MCP handshake.
 - Mode default profile ids are consumed by `AgentRuntime` when a turn request
   does not specify `modelProfileId`.
 - `defaultApprovalPolicy` and `defaultSandboxMode` are consumed by thread
@@ -608,6 +628,11 @@ Renderer state is not persistence authority for runtime data. It is a projection
 - IPC results
 - runtime event stream
 - local UI preferences
+
+MCP Settings keeps live `mcpServerStatuses` in component state. It is refreshed
+from `agentApi.mcp.listServers()` and process-level MCP runtime events; the
+persisted config authority remains `RuntimePreferences.mcpServers`, while
+`userData/mcp/cache.json` is only the schema/stats acceleration cache.
 
 ## Local Preferences
 

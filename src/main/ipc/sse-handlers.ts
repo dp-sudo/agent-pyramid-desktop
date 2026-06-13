@@ -115,6 +115,10 @@ function ensureWebContentsSubscriptions(
       if (webContents.isDestroyed()) return;
       webContents.send(SSE_PUSH_CHANNEL, evt);
     }),
+    bus.onKind("mcp_surface_changed", (evt: RuntimeEvent) => {
+      if (webContents.isDestroyed()) return;
+      webContents.send(SSE_PUSH_CHANNEL, evt);
+    }),
   ];
   const bucket: WebContentsSubscriptions = {
     cleanup: onWebContentsDestroyed(webContents, () => {

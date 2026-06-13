@@ -23,6 +23,7 @@ import {
   LLM_PROTOCOLS,
   MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
+  MCP_SERVER_TRANSPORTS,
   MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
   MODEL_REASONING_EFFORTS,
@@ -34,6 +35,8 @@ import {
   THREAD_SANDBOX_MODES,
   type McpServerConfig,
   type McpServerConfigUpdate,
+  type McpServerStatusRecord,
+  type McpServerTransport,
   type AgentAutonomyLevel,
   type LlmProtocol,
   type ModelConfig,
@@ -169,6 +172,9 @@ export function SettingsView(): ReactElement {
   const [runtimePreferences, setRuntimePreferences] = useState<RuntimePreferences>(
     state.runtimePreferences,
   );
+  const [mcpServerStatuses, setMcpServerStatuses] = useState<
+    Record<string, McpServerStatusRecord>
+  >({});
   const [commandDraft, setCommandDraft] = useState<RuntimeCommandDraft>(() =>
     toRuntimeCommandDraft(state.runtimePreferences.command),
   );
@@ -299,11 +305,25 @@ export function SettingsView(): ReactElement {
         setRuntimeSaveState("error");
         setRuntimeError(runtimePreferencesResult.message);
       }
+      await refreshMcpServerStatuses(false);
     })();
     return () => {
       cancelled = true;
     };
   }, [actions]);
+
+  useEffect(() => {
+    if (!window.agentApi) return undefined;
+    return window.agentApi.sse.onEvent((event) => {
+      if (
+        event.kind === "mcp_server_connection" ||
+        event.kind === "mcp_tool_list_changed" ||
+        event.kind === "mcp_surface_changed"
+      ) {
+        void refreshMcpServerStatuses(false);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     if (!shouldBlockSettingsNavigation(saveState, profileHasUnsavedChanges)) {
@@ -585,6 +605,21 @@ export function SettingsView(): ReactElement {
     });
   }
 
+  async function refreshMcpServerStatuses(showErrors = true): Promise<void> {
+    if (!window.agentApi) return;
+    const result = await window.agentApi.mcp.listServers();
+    if (!result.ok) {
+      if (showErrors) {
+        setRuntimeSaveState("error");
+        setRuntimeError(result.message);
+      }
+      return;
+    }
+    setMcpServerStatuses(Object.fromEntries(
+      result.value.servers.map((server) => [server.id, server]),
+    ));
+  }
+
   function addMcpServer(): void {
     void updateRuntimePreferences({
       mcpServers: [
@@ -600,6 +635,17 @@ export function SettingsView(): ReactElement {
     });
   }
 
+  function updateMcpServerTransport(id: string, transport: McpServerTransport): void {
+    const server = runtimePreferences.mcpServers.find((candidate) => candidate.id === id);
+    if (!server) return;
+    updateMcpServer(id, {
+      transport,
+      ...(transport === "stdio"
+        ? { url: undefined, headers: {}, command: server.command || "node" }
+        : { command: undefined, args: [], env: {}, cwd: undefined, url: server.url || "http://localhost:3000/mcp" }),
+    });
+  }
+
   function updateMcpServerEnv(id: string, raw: string): void {
     const parsed = parseMcpServerEnvDraft(raw, t);
     if (!parsed.ok) {
@@ -608,6 +654,16 @@ export function SettingsView(): ReactElement {
       return;
     }
     updateMcpServer(id, { env: parsed.value });
+  }
+
+  function updateMcpServerHeaders(id: string, raw: string): void {
+    const parsed = parseMcpServerStringRecordDraft(raw, t, "headers");
+    if (!parsed.ok) {
+      setRuntimeSaveState("error");
+      setRuntimeError(parsed.message);
+      return;
+    }
+    updateMcpServer(id, { headers: parsed.value });
   }
 
   function deleteMcpServer(id: string): void {
@@ -625,6 +681,7 @@ export function SettingsView(): ReactElement {
       setRuntimeError(result.message);
       return;
     }
+    setMcpServerStatuses((current) => ({ ...current, [result.value.id]: result.value }));
     setRuntimeSaveState("saved");
   }
 
@@ -637,6 +694,7 @@ export function SettingsView(): ReactElement {
       setRuntimeError(result.message);
       return;
     }
+    setMcpServerStatuses((current) => ({ ...current, [result.value.id]: result.value }));
     setRuntimeSaveState("saved");
   }
 
@@ -648,6 +706,11 @@ export function SettingsView(): ReactElement {
       setRuntimeSaveState("error");
       setRuntimeError(result.message);
       return;
+    }
+    setMcpServerStatuses((current) => ({ ...current, [result.value.id]: result.value }));
+    const surface = await window.agentApi.mcp.refreshSurface({ serverId });
+    if (surface.ok) {
+      setMcpServerStatuses((current) => ({ ...current, [surface.value.id]: surface.value }));
     }
     setRuntimeSaveState("saved");
   }
@@ -1916,7 +1979,7 @@ export function SettingsView(): ReactElement {
                     <div className="ds-settings-mcp-header">
                       <div>
                         <strong>{server.name}</strong>
-                        <span>{server.command}</span>
+                        <span>{mcpServerConnectionLabel(server, mcpServerStatuses[server.id], t)}</span>
                       </div>
                       <Toggle
                         checked={server.enabled}
@@ -1927,6 +1990,25 @@ export function SettingsView(): ReactElement {
                     </div>
                     <div className="ds-settings-mcp-grid">
                       <label>
+                        <span>{t("settings.fields.mcpServerTransport")}</span>
+                        <select
+                          value={server.transport}
+                          disabled={runtimeControlsDisabled}
+                          onChange={(event) =>
+                            updateMcpServerTransport(
+                              server.id,
+                              event.target.value as McpServerTransport,
+                            )
+                          }
+                        >
+                          {MCP_SERVER_TRANSPORTS.map((transport) => (
+                            <option key={transport} value={transport}>
+                              {t(`settings.mcpTransports.${transport}`)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
                         <span>{t("settings.fields.mcpServerName")}</span>
                         <input
                           value={server.name}
@@ -1936,40 +2018,74 @@ export function SettingsView(): ReactElement {
                           }
                         />
                       </label>
-                      <label>
-                        <span>{t("settings.fields.mcpServerCommand")}</span>
-                        <input
-                          value={server.command}
-                          disabled={runtimeControlsDisabled}
-                          onChange={(event) =>
-                            updateMcpServer(server.id, { command: event.target.value })
-                          }
-                        />
-                      </label>
-                      <label>
-                        <span>{t("settings.fields.mcpServerArgs")}</span>
-                        <input
-                          value={server.args.join(" ")}
-                          disabled={runtimeControlsDisabled}
-                          onChange={(event) =>
-                            updateMcpServer(server.id, {
-                              args: splitWhitespaceList(event.target.value),
-                            })
-                          }
-                        />
-                      </label>
-                      <label>
-                        <span>{t("settings.fields.mcpServerCwd")}</span>
-                        <input
-                          value={server.cwd ?? ""}
-                          disabled={runtimeControlsDisabled}
-                          onChange={(event) =>
-                            updateMcpServer(server.id, {
-                              cwd: event.target.value.trim() || undefined,
-                            })
-                          }
-                        />
-                      </label>
+                      {server.transport === "stdio" ? (
+                        <>
+                          <label>
+                            <span>{t("settings.fields.mcpServerCommand")}</span>
+                            <input
+                              value={server.command ?? ""}
+                              placeholder={t("settings.placeholders.mcpServerCommand")}
+                              disabled={runtimeControlsDisabled}
+                              onChange={(event) =>
+                                updateMcpServer(server.id, { command: event.target.value })
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>{t("settings.fields.mcpServerArgs")}</span>
+                            <input
+                              value={server.args.join(" ")}
+                              placeholder={t("settings.placeholders.mcpServerArgs")}
+                              disabled={runtimeControlsDisabled}
+                              onChange={(event) =>
+                                updateMcpServer(server.id, {
+                                  args: splitWhitespaceList(event.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>{t("settings.fields.mcpServerCwd")}</span>
+                            <input
+                              value={server.cwd ?? ""}
+                              placeholder={t("settings.placeholders.mcpServerCwd")}
+                              disabled={runtimeControlsDisabled}
+                              onChange={(event) =>
+                                updateMcpServer(server.id, {
+                                  cwd: event.target.value.trim() || undefined,
+                                })
+                              }
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <>
+                          <label>
+                            <span>{t("settings.fields.mcpServerUrl")}</span>
+                            <input
+                              value={server.url ?? ""}
+                              placeholder={t("settings.placeholders.mcpServerUrl")}
+                              disabled={runtimeControlsDisabled}
+                              onChange={(event) =>
+                                updateMcpServer(server.id, { url: event.target.value })
+                              }
+                            />
+                          </label>
+                          <label className="is-wide">
+                            <span>{t("settings.fields.mcpServerHeaders")}</span>
+                            <textarea
+                              key={`${server.id}:${JSON.stringify(server.headers)}:headers`}
+                              defaultValue={JSON.stringify(server.headers, null, 2)}
+                              disabled={runtimeControlsDisabled}
+                              rows={4}
+                              spellCheck={false}
+                              onBlur={(event) =>
+                                updateMcpServerHeaders(server.id, event.currentTarget.value)
+                              }
+                            />
+                          </label>
+                        </>
+                      )}
                       <label>
                         <span>{t("settings.fields.mcpServerReadOnlyTools")}</span>
                         <input
@@ -1982,18 +2098,30 @@ export function SettingsView(): ReactElement {
                           }
                         />
                       </label>
-                      <label className="is-wide">
-                        <span>{t("settings.fields.mcpServerEnv")}</span>
-                        <textarea
-                          key={`${server.id}:${JSON.stringify(server.env)}`}
-                          defaultValue={JSON.stringify(server.env, null, 2)}
-                          disabled={runtimeControlsDisabled}
-                          rows={4}
-                          spellCheck={false}
-                          onBlur={(event) => updateMcpServerEnv(server.id, event.currentTarget.value)}
-                        />
-                      </label>
+                      {server.transport === "stdio" ? (
+                        <label className="is-wide">
+                          <span>{t("settings.fields.mcpServerEnv")}</span>
+                          <textarea
+                            key={`${server.id}:${JSON.stringify(server.env)}:env`}
+                            defaultValue={JSON.stringify(server.env, null, 2)}
+                            disabled={runtimeControlsDisabled}
+                            rows={4}
+                            spellCheck={false}
+                            onBlur={(event) =>
+                              updateMcpServerEnv(server.id, event.currentTarget.value)
+                            }
+                          />
+                        </label>
+                      ) : null}
                     </div>
+                    <McpServerSurfaceSummary
+                      status={mcpServerStatuses[server.id]}
+                      emptyLabel={t("settings.mcpServers.surfaceEmpty")}
+                      toolsLabel={t("settings.mcpServers.tools")}
+                      promptsLabel={t("settings.mcpServers.prompts")}
+                      resourcesLabel={t("settings.mcpServers.resources")}
+                      t={t}
+                    />
                     <div className="ds-settings-mcp-actions">
                       <button
                         type="button"
@@ -2017,7 +2145,7 @@ export function SettingsView(): ReactElement {
                         disabled={runtimeControlsDisabled || !window.agentApi}
                         onClick={() => void handleMcpRefreshTools(server.id)}
                       >
-                        {t("settings.actions.refreshMcpTools")}
+                        {t("settings.actions.refreshMcpServer")}
                       </button>
                       <button
                         type="button"
@@ -2412,6 +2540,11 @@ export function mergeRuntimePreferencesUpdates(
       : current.permissionRules !== undefined
         ? { permissionRules: clonePermissionRules(current.permissionRules) }
         : {}),
+    ...(update.mcpServers !== undefined
+      ? { mcpServers: update.mcpServers.map(cloneMcpServerConfig) }
+      : current.mcpServers !== undefined
+        ? { mcpServers: current.mcpServers.map(cloneMcpServerConfig) }
+        : {}),
   };
 }
 
@@ -2430,6 +2563,16 @@ function createDefaultPermissionRule(): RuntimePermissionRule {
   };
 }
 
+function cloneMcpServerConfig(server: McpServerConfig): McpServerConfig {
+  return {
+    ...server,
+    args: [...server.args],
+    env: { ...server.env },
+    headers: { ...server.headers },
+    readOnlyTools: [...server.readOnlyTools],
+  };
+}
+
 export function createDefaultMcpServer(name: string): McpServerConfig {
   const now = new Date().toISOString();
   return {
@@ -2439,6 +2582,7 @@ export function createDefaultMcpServer(name: string): McpServerConfig {
     command: "node",
     args: [],
     env: {},
+    headers: {},
     enabled: false,
     readOnlyTools: [],
     createdAt: now,
@@ -2459,6 +2603,7 @@ export function updateMcpServerConfigs(
           ...update,
           args: update.args ? [...update.args] : server.args,
           env: update.env ? { ...update.env } : server.env,
+          headers: update.headers ? { ...update.headers } : server.headers,
           readOnlyTools: update.readOnlyTools
             ? [...update.readOnlyTools]
             : server.readOnlyTools,
@@ -2476,23 +2621,37 @@ export function parseMcpServerEnvDraft(
   raw: string,
   t: SettingsTranslator,
 ): McpServerEnvDraftResult {
+  return parseMcpServerStringRecordDraft(raw, t, "env");
+}
+
+export function parseMcpServerStringRecordDraft(
+  raw: string,
+  t: SettingsTranslator,
+  kind: "env" | "headers",
+): McpServerEnvDraftResult {
   const trimmed = raw.trim();
   if (!trimmed) return { ok: true, value: {} };
+  const objectError = kind === "headers"
+    ? t("settings.errors.mcpHeadersObject")
+    : t("settings.errors.mcpEnvObject");
+  const jsonError = kind === "headers"
+    ? t("settings.errors.mcpHeadersJson")
+    : t("settings.errors.mcpEnvJson");
   try {
     const parsed = JSON.parse(trimmed) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { ok: false, message: t("settings.errors.mcpEnvObject") };
+      return { ok: false, message: objectError };
     }
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(parsed)) {
       if (!key.trim() || key.includes("\0") || typeof value !== "string" || value.includes("\0")) {
-        return { ok: false, message: t("settings.errors.mcpEnvObject") };
+        return { ok: false, message: objectError };
       }
       env[key.trim()] = value;
     }
     return { ok: true, value: env };
   } catch {
-    return { ok: false, message: t("settings.errors.mcpEnvJson") };
+    return { ok: false, message: jsonError };
   }
 }
 
@@ -2502,6 +2661,104 @@ export function splitWhitespaceList(value: string): string[] {
 
 export function splitCommaList(value: string): string[] {
   return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
+function mcpServerConnectionLabel(
+  server: McpServerConfig,
+  status: McpServerStatusRecord | undefined,
+  t: SettingsTranslator,
+): string {
+  if (!status) {
+    return server.transport === "stdio"
+      ? server.command ?? t("settings.mcpServers.unconfigured")
+      : server.url ?? t("settings.mcpServers.unconfigured");
+  }
+  return t("settings.mcpServers.statusSummary", {
+    status: t(`settings.mcpStatuses.${status.status}`),
+    tools: status.toolCount,
+    prompts: status.promptCount,
+    resources: status.resourceCount,
+  });
+}
+
+function McpServerSurfaceSummary({
+  status,
+  emptyLabel,
+  toolsLabel,
+  promptsLabel,
+  resourcesLabel,
+  t,
+}: {
+  status?: McpServerStatusRecord;
+  emptyLabel: string;
+  toolsLabel: string;
+  promptsLabel: string;
+  resourcesLabel: string;
+  t: SettingsTranslator;
+}): ReactElement {
+  if (!status) {
+    return <p className="ds-settings-mcp-surface-empty">{emptyLabel}</p>;
+  }
+  const startupStats = formatMcpStartupStats(status, t);
+  return (
+    <div className="ds-settings-mcp-surface">
+      <div className="ds-settings-mcp-surface-counts">
+        <span>{toolsLabel}: {status.toolCount}</span>
+        <span>{promptsLabel}: {status.promptCount}</span>
+        <span>{resourcesLabel}: {status.resourceCount}</span>
+      </div>
+      {startupStats ? (
+        <p className="ds-settings-mcp-surface-meta">{startupStats}</p>
+      ) : null}
+      {status.lastError ? (
+        <p className="ds-settings-mcp-surface-error">{status.lastError}</p>
+      ) : null}
+      <McpSurfaceList
+        label={toolsLabel}
+        values={status.tools.map((tool) => tool.name)}
+      />
+      <McpSurfaceList
+        label={promptsLabel}
+        values={status.prompts.map((prompt) => prompt.name)}
+      />
+      <McpSurfaceList
+        label={resourcesLabel}
+        values={status.resources.map((resource) => resource.name || resource.uri)}
+      />
+    </div>
+  );
+}
+
+export function formatMcpStartupStats(
+  status: McpServerStatusRecord,
+  t: SettingsTranslator,
+): string | null {
+  if (status.lastStartupDurationMs === undefined &&
+    status.startupSuccessCount === undefined &&
+    status.startupFailureCount === undefined) {
+    return null;
+  }
+  return t("settings.mcpServers.startupStats", {
+    duration: status.lastStartupDurationMs ?? 0,
+    successes: status.startupSuccessCount ?? 0,
+    failures: status.startupFailureCount ?? 0,
+  });
+}
+
+function McpSurfaceList({
+  label,
+  values,
+}: {
+  label: string;
+  values: string[];
+}): ReactElement | null {
+  if (values.length === 0) return null;
+  return (
+    <div className="ds-settings-mcp-surface-list">
+      <strong>{label}</strong>
+      <span>{values.slice(0, 6).join(", ")}</span>
+    </div>
+  );
 }
 
 function createRuntimePreferenceId(): string {

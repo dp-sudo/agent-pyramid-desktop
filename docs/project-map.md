@@ -108,6 +108,7 @@ flowchart LR
 | Main composition | `src/main/index.ts` | 创建 stores、event bus、worker pool、tool registry、AgentRuntime，注册 IPC handlers，创建窗口。 |
 | Runtime orchestration | `src/main/application/agent-runtime.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、approval gate、中断和事件广播。 |
 | Tool system | `src/main/application/tools/*`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口和内置工具。 |
+| MCP host | `src/main/infrastructure/mcp/*`、`src/main/ipc/mcp-handlers.ts` | stdio / Streamable HTTP MCP client lifecycle、动态工具注册、cache/lazy schema、startup stats、auth diagnostics、prompts/resources surface 和 MCP IPC。 |
 | LLM worker | `src/main/infrastructure/llm-worker/*` | main 到 worker 的请求路由、流式 chunk 转发和取消。 |
 | Provider gateway | `src/main/infrastructure/minimax/*` | MiniMax、DeepSeek、自定义 OpenAI-compatible 请求适配；runtime 会把所选模型 profile 的 `protocol` 传入 `LlmRequest`，由 gateway 分流到 OpenAI-compatible 或 Anthropic-compatible 请求形态。 |
 | Persistence | `src/main/persistence/*` | 线程 JSONL、附件、模型配置 profiles、runtime preferences 的 userData 持久化。 |
@@ -168,6 +169,7 @@ flowchart TD
 | Stream runtime events | `src/main/event-bus.ts` | `src/main/ipc/sse-handlers.ts`、`src/preload/index.ts`、`Workbench.tsx` |
 | Add or change IPC | `src/shared/ipc.ts`、`src/shared/ipc-errors.ts` | `src/shared/agent-contracts.ts`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts` |
 | Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、`AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime` tool access policy、`AgentRuntime.resolveToolPolicy()` |
+| Change MCP | `src/main/infrastructure/mcp/*` | `src/shared/agent-contracts.ts`、`src/shared/ipc.ts`、`src/main/ipc/mcp-handlers.ts`、`src/preload/index.ts`、`SettingsView.tsx`、`src/renderer/src/ui/mcp-input.ts` |
 | Change thread data | `src/shared/agent-contracts.ts` | `src/main/persistence/index.ts`、IPC handlers、renderer state and tests |
 | Change model config | `src/shared/agent-contracts.ts` | `src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`SettingsView.tsx` |
 | Change runtime preferences | `src/shared/agent-contracts.ts` | `src/main/persistence/runtime-preferences-store.ts`、`src/main/ipc/runtime-preferences-handlers.ts`、`src/preload/index.ts`、`AgentRuntime` |
@@ -187,6 +189,10 @@ flowchart TD
   persisted separately from the final `ToolItem.result`.
 - Tools are exposed to the model through `ToolRegistry.listDefinitions()`.
 - Tool execution goes through `ToolRegistry.execute()`; direct tool bypass is not part of the architecture.
+- MCP servers are configured in `RuntimePreferences.mcpServers`, connected by
+  `McpHost`, and their tools are registered as `mcp__<server>__<tool>` in the
+  same `ToolRegistry`. Matching cached schema can expose lazy placeholders
+  while the live server reconnects.
 - Read-only workspace tools skip approval.
 - `edit_file` / `write_file` / `apply_patch` require approval, strict UTF-8 text, and fresh read-state before writing existing files.
 - `rollback_file` uses in-memory runtime file history to undo the latest agent write when the current file still matches that history entry.
@@ -203,7 +209,7 @@ flowchart TD
   `RuntimePreferences.toolAvailability` to hide and reject Code-only
   coding/command tools by default; policy overrides can allow or deny
   individual tool names per thread mode before approval/sandbox checks run.
-- Per-call command/write permission rules live in
+- Per-call command/write/MCP permission rules live in
   `RuntimePreferences.permissionRules` and are evaluated by
   `src/main/application/permission-policy.ts` inside `AgentRuntime.resolveToolPolicy()`;
   hard read-only sandbox and `approvalPolicy: never` denials still run before
@@ -241,6 +247,7 @@ flowchart TD
 | Event bus | `tests/main/event-bus.test.ts` |
 | Worker pool | `tests/main/infrastructure/worker-pool.test.ts` |
 | Provider gateway | `tests/main/infrastructure/minimax-gateway.test.ts`、`tests/main/infrastructure/minimax-types.test.ts` |
+| MCP host/client | `tests/main/infrastructure/mcp-*.test.ts`、`tests/main/ipc/mcp-handlers.test.ts`、`tests/renderer/mcp-input.test.ts` |
 | Thread persistence | `tests/main/persistence/jsonl-thread-store.test.ts` |
 | Attachments | `tests/main/persistence/attachment-store.test.ts` |
 | Model config | `tests/main/persistence/model-config-store.test.ts` |

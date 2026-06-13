@@ -212,7 +212,14 @@
     "attachmentTooLarge": "Images must be {{limit}} or smaller.",
     "attachmentAddBlocked": "Wait for the current turn to finish before adding images.",
     "attachmentOnlyMessageSingle": "Please analyze the attached image.",
-    "attachmentOnlyMessageMultiple": "Please analyze the attached images."
+    "attachmentOnlyMessageMultiple": "Please analyze the attached images.",
+    "mcpPromptCommandInvalid": "MCP prompt commands must use /mcp__server__prompt followed by positional arguments.",
+    "mcpPromptServerNotFound": "MCP prompt server was not found: {{server}}",
+    "mcpPromptNotFound": "MCP prompt was not found: {{server}}/{{prompt}}",
+    "mcpPromptTooManyArgs": "MCP prompt {{prompt}} accepts {{count}} positional arguments.",
+    "mcpPromptMissingArgs": "MCP prompt {{prompt}} requires arguments: {{args}}",
+    "mcpPromptEmpty": "MCP prompt {{prompt}} returned no text content.",
+    "mcpResourceServerNotFound": "MCP resource server was not found: {{server}}"
   },
   "settings": {
     "title": "Settings",
@@ -261,7 +268,11 @@
       "integerRange": "{{field}} must be between {{min}} and {{max}}.",
       "compactLimitTooLarge": "Auto compact limit must be less than or equal to the context window.",
       "maxTokensTooLarge": "Max output tokens must be less than the context window.",
-      "permissionRulePatternRequired": "Pattern cannot be blank."
+      "permissionRulePatternRequired": "Pattern cannot be blank.",
+      "mcpEnvObject": "Environment JSON must be an object with string keys and values.",
+      "mcpEnvJson": "Environment must be valid JSON.",
+      "mcpHeadersObject": "Headers JSON must be an object with string keys and values.",
+      "mcpHeadersJson": "Headers must be valid JSON."
     },
     "status": {
       "idle": "Ready",
@@ -315,7 +326,9 @@
       "commandLimits": "Command limits",
       "commandLimitsDesc": "Timeout and output caps",
       "approvalPresentation": "Approval presentation",
-      "approvalPresentationDesc": "Diffs, scrolling, records, toasts"
+      "approvalPresentationDesc": "Diffs, scrolling, records, toasts",
+      "mcpServers": "MCP servers",
+      "mcpServersDesc": "External tools and surfaces"
     },
     "sections": {
       "appearance": "Appearance and language",
@@ -345,7 +358,9 @@
       "commandLimits": "Command execution limits",
       "commandLimitsDesc": "Set default limits used by command-backed tools unless a stricter tool call override is supplied.",
       "approvalPresentation": "Approval presentation",
-      "approvalPresentationDesc": "Control how approvals, read-only tool records, and runtime failure toasts are shown."
+      "approvalPresentationDesc": "Control how approvals, read-only tool records, and runtime failure toasts are shown.",
+      "mcpServers": "External MCP servers",
+      "mcpServersDesc": "Connect stdio or Streamable HTTP MCP servers, then expose their tools, prompts, and resources through the workbench."
     },
     "descriptions": {
       "locale": "Switch the interface copy between supported languages.",
@@ -377,7 +392,7 @@
       "allowComposerImagePaste": "Allow clipboard image files to become composer attachments without blocking regular text paste.",
       "defaultApprovalPolicy": "Default approval policy assigned to newly created threads.",
       "defaultSandboxMode": "Default sandbox mode assigned to newly created threads.",
-      "permissionRules": "Apply per-call rules to command text or write paths. Matches resolve by deny, ask, then allow priority; unmatched calls fall back to existing approval and sandbox logic.",
+      "permissionRules": "Apply per-call rules to command text, write paths, or MCP tools. Matches resolve by deny, ask, then allow priority; unmatched calls fall back to existing approval and sandbox logic.",
       "commandTimeout": "Default timeout and maximum tool-call timeout in milliseconds for run_command and diagnose_workspace.",
       "commandMaxOutput": "Maximum stdout and stderr bytes kept for command-backed tools.",
       "compactionEnabled": "Allow the runtime to compact or trim history before model requests.",
@@ -430,7 +445,17 @@
       "showDiffByDefault": "Open diffs by default",
       "autoScrollOnRequest": "Auto-scroll approvals",
       "showReadOnlyToolRecords": "Show read-only tool records",
-      "showFailureToasts": "Show failure toasts"
+      "showFailureToasts": "Show failure toasts",
+      "mcpServerEnabled": "Enabled",
+      "mcpServerTransport": "Transport",
+      "mcpServerName": "Server name",
+      "mcpServerCommand": "Command",
+      "mcpServerArgs": "Arguments",
+      "mcpServerCwd": "Working directory",
+      "mcpServerUrl": "Server URL",
+      "mcpServerHeaders": "Headers JSON",
+      "mcpServerEnv": "Environment JSON",
+      "mcpServerReadOnlyTools": "Read-only tool names"
     },
     "protocols": {
       "openai-compatible": "OpenAI-compatible",
@@ -511,14 +536,19 @@
     "placeholders": {
       "compactLimit": "90% of context window",
       "apiKey": "sk-...",
-      "permissionRulePattern": "npm test* or src/*"
+      "permissionRulePattern": "npm test* or src/*",
+      "mcpServerCommand": "node",
+      "mcpServerArgs": "/path/to/server.js",
+      "mcpServerCwd": "Leave blank to inherit the app working directory",
+      "mcpServerUrl": "http://localhost:3000/mcp"
     },
     "permissionRules": {
       "empty": "No per-call rules yet. Unmatched commands and writes still use the default approval and sandbox policies."
     },
     "permissionRuleTools": {
       "command": "Command",
-      "write": "Write"
+      "write": "Write",
+      "mcp": "MCP"
     },
     "permissionRuleEffects": {
       "allow": "Allow",
@@ -527,7 +557,12 @@
     },
     "actions": {
       "addRule": "Add rule",
-      "deleteRule": "Delete"
+      "deleteRule": "Delete",
+      "addMcpServer": "Add MCP server",
+      "deleteMcpServer": "Delete",
+      "connectMcpServer": "Connect",
+      "disconnectMcpServer": "Disconnect",
+      "refreshMcpServer": "Refresh"
     },
     "efforts": {
       "low": "Low",
@@ -558,6 +593,29 @@
       "customName": "Custom OpenAI",
       "copyName": "{{name}} copy",
       "noActive": "No active model profile."
+    },
+    "mcpServers": {
+      "empty": "No MCP servers yet. Add one, connect it, then refresh tools and surfaces.",
+      "defaultName": "local-mcp",
+      "unconfigured": "Not configured",
+      "surfaceEmpty": "Connect or refresh this server to load tools, prompts, and resources.",
+      "tools": "Tools",
+      "prompts": "Prompts",
+      "resources": "Resources",
+      "startupStats": "Last startup {{duration}} ms · {{successes}} ok · {{failures}} failed",
+      "statusSummary": "{{status}} · {{tools}} tools · {{prompts}} prompts · {{resources}} resources"
+    },
+    "mcpTransports": {
+      "stdio": "stdio",
+      "streamable-http": "Streamable HTTP"
+    },
+    "mcpStatuses": {
+      "disconnected": "Disconnected",
+      "connecting": "Connecting",
+      "cached": "Cached",
+      "lazy": "Lazy reconnect",
+      "connected": "Connected",
+      "failed": "Failed"
     }
   },
   "routes": {

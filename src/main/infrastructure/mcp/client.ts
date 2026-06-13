@@ -1,4 +1,8 @@
 import type {
+  McpPromptInfo,
+  McpPromptResult,
+  McpResourceInfo,
+  McpResourceReadResult,
   McpServerConfig,
   McpToolInfo,
 } from "../../../shared/agent-contracts.js";
@@ -9,11 +13,19 @@ import {
 import {
   MCP_PROTOCOL_VERSION,
   normalizeMcpCallToolResult,
+  normalizeMcpPromptGetResult,
+  normalizeMcpPromptsListResult,
+  normalizeMcpResourceReadResult,
+  normalizeMcpResourcesListResult,
   normalizeMcpToolsListResult,
   serializeMcpCallToolResult,
+  type McpPromptDescriptor,
+  type McpResourceDescriptor,
   type McpToolDescriptor,
 } from "./protocol.js";
-import { StdioMcpTransport, type McpTransport } from "./stdio-transport.js";
+import { HttpMcpTransport } from "./http-transport.js";
+import { StdioMcpTransport } from "./stdio-transport.js";
+import type { McpTransport } from "./transport.js";
 
 export interface McpClientOptions {
   transport?: McpTransport;
@@ -27,10 +39,16 @@ export interface McpToolCallOutput {
   isError: boolean;
 }
 
+export interface McpSurfaceRefreshResult {
+  prompts: McpPromptInfo[];
+  resources: McpResourceInfo[];
+  errors: string[];
+}
+
 /**
- * Tools-only MCP client. It owns the MCP lifecycle over an injected transport:
- * initialize, initialized notification, tools/list, and tools/call. Prompts,
- * resources, roots, and sampling are intentionally outside this first host.
+ * MCP client owns the protocol lifecycle over an injected transport. Tools are
+ * adapted into AgentTool by McpHost; prompts and resources stay as queryable
+ * surfaces because the renderer/runtime consume them through dedicated IPC.
  */
 export class McpClient {
   private readonly transport: McpTransport;
@@ -38,6 +56,9 @@ export class McpClient {
   private readonly toolCallTimeoutMs: number;
   private readonly readOnlyTools: ReadonlySet<string>;
   private tools: McpToolDescriptor[] = [];
+  private prompts: McpPromptDescriptor[] = [];
+  private resources: McpResourceDescriptor[] = [];
+  private capabilities: Record<string, unknown> = {};
   private removeToolsChangedListener: (() => void) | null = null;
   private toolsChangedListener: (() => void) | null = null;
 
@@ -45,14 +66,14 @@ export class McpClient {
     private readonly config: McpServerConfig,
     options: McpClientOptions = {},
   ) {
-    this.transport = options.transport ?? StdioMcpTransport.start(config);
+    this.transport = options.transport ?? createTransport(config);
     this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? MCP_HANDSHAKE_TIMEOUT_MS;
     this.toolCallTimeoutMs = options.toolCallTimeoutMs ?? MCP_TOOL_CALL_TIMEOUT_MS;
     this.readOnlyTools = new Set(config.readOnlyTools);
   }
 
   async connect(): Promise<McpToolDescriptor[]> {
-    await withTimeout(
+    const initializeResult = await withTimeout(
       (signal) => this.transport.call("initialize", {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
@@ -64,13 +85,19 @@ export class McpClient {
       this.handshakeTimeoutMs,
       `MCP server ${this.config.name} initialize timed out.`,
     );
+    this.capabilities = normalizeCapabilities(initializeResult);
     await this.transport.notify("notifications/initialized");
     this.removeToolsChangedListener = this.transport.onNotification((notification) => {
       if (notification.method === "notifications/tools/list_changed") {
         this.toolsChangedListener?.();
       }
     });
-    return this.refreshTools();
+    const tools = await this.refreshTools();
+    const surface = await this.refreshSurfaceBestEffort();
+    if (surface.errors.length > 0) {
+      console.warn("[mcp-client] failed to refresh auxiliary MCP surface:", surface.errors.join("; "));
+    }
+    return tools;
   }
 
   async refreshTools(): Promise<McpToolDescriptor[]> {
@@ -96,6 +123,117 @@ export class McpClient {
       ...tool,
       inputSchema: { ...tool.inputSchema },
     }));
+  }
+
+  capabilitiesSnapshot(): Record<string, unknown> {
+    return { ...this.capabilities };
+  }
+
+  async refreshSurface(): Promise<{
+    prompts: McpPromptInfo[];
+    resources: McpResourceInfo[];
+  }> {
+    const [prompts, resources] = await Promise.all([
+      this.refreshPrompts(),
+      this.refreshResources(),
+    ]);
+    return { prompts, resources };
+  }
+
+  async refreshSurfaceBestEffort(): Promise<McpSurfaceRefreshResult> {
+    const [prompts, resources] = await Promise.all([
+      this.refreshPrompts().then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      ),
+      this.refreshResources().then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      ),
+    ]);
+    const errors: string[] = [];
+    if (!prompts.ok) {
+      this.prompts = [];
+      errors.push(messageOf(prompts.error));
+    }
+    if (!resources.ok) {
+      this.resources = [];
+      errors.push(messageOf(resources.error));
+    }
+    return {
+      prompts: prompts.ok ? prompts.value : [],
+      resources: resources.ok ? resources.value : [],
+      errors,
+    };
+  }
+
+  async refreshPrompts(): Promise<McpPromptInfo[]> {
+    if (!hasCapability(this.capabilities, "prompts")) {
+      this.prompts = [];
+      return [];
+    }
+    const result = await withTimeout(
+      (signal) => this.transport.call("prompts/list", {}, { signal }),
+      this.handshakeTimeoutMs,
+      `MCP server ${this.config.name} prompts/list timed out.`,
+    );
+    this.prompts = normalizeMcpPromptsListResult(result);
+    return this.listPrompts();
+  }
+
+  listPrompts(): McpPromptInfo[] {
+    return this.prompts.map(toPromptInfo);
+  }
+
+  async getPrompt(
+    name: string,
+    args: Record<string, string>,
+  ): Promise<McpPromptResult> {
+    const prompt = this.prompts.find((candidate) => candidate.name === name);
+    if (!prompt) {
+      throw new Error(`MCP prompt is not registered on ${this.config.name}: ${name}`);
+    }
+    return normalizeMcpPromptGetResult(await withTimeout(
+      (signal) =>
+        this.transport.call("prompts/get", {
+          name: prompt.rawName,
+          arguments: args,
+        }, { signal }),
+      this.toolCallTimeoutMs,
+      `MCP prompt ${name} timed out.`,
+    ));
+  }
+
+  async refreshResources(): Promise<McpResourceInfo[]> {
+    if (!hasCapability(this.capabilities, "resources")) {
+      this.resources = [];
+      return [];
+    }
+    const result = await withTimeout(
+      (signal) => this.transport.call("resources/list", {}, { signal }),
+      this.handshakeTimeoutMs,
+      `MCP server ${this.config.name} resources/list timed out.`,
+    );
+    this.resources = normalizeMcpResourcesListResult(result);
+    return this.listResources();
+  }
+
+  listResources(): McpResourceInfo[] {
+    return this.resources.map((resource) => ({ ...resource }));
+  }
+
+  async readResource(uri: string): Promise<McpResourceReadResult> {
+    if (!this.resources.some((resource) => resource.uri === uri)) {
+      throw new Error(`MCP resource is not registered on ${this.config.name}: ${uri}`);
+    }
+    return normalizeMcpResourceReadResult(await withTimeout(
+      (signal) =>
+        this.transport.call("resources/read", {
+          uri,
+        }, { signal }),
+      this.toolCallTimeoutMs,
+      `MCP resource ${uri} timed out.`,
+    ));
   }
 
   async callTool(
@@ -137,6 +275,13 @@ export class McpClient {
     this.toolsChangedListener = null;
     await this.transport.close();
   }
+}
+
+function createTransport(config: McpServerConfig): McpTransport {
+  if (config.transport === "streamable-http") {
+    return HttpMcpTransport.start(config);
+  }
+  return StdioMcpTransport.start(config);
 }
 
 export function namespaceMcpToolName(serverName: string, rawToolName: string): string {
@@ -187,4 +332,31 @@ function combineAbortSignals(
   outer.addEventListener("abort", abort, { once: true });
   inner.addEventListener("abort", abort, { once: true });
   return controller.signal;
+}
+
+function normalizeCapabilities(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const capabilities = (value as Record<string, unknown>).capabilities;
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) {
+    return {};
+  }
+  return capabilities as Record<string, unknown>;
+}
+
+function hasCapability(capabilities: Record<string, unknown>, name: string): boolean {
+  return capabilities[name] !== undefined;
+}
+
+function toPromptInfo(prompt: McpPromptDescriptor): McpPromptInfo {
+  return {
+    name: prompt.name,
+    description: prompt.description,
+    arguments: prompt.arguments.map((arg) => ({ ...arg })),
+  };
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -348,6 +348,12 @@ Workbench runtime failure toasts must keep the full error text visible, provide 
 - 当前“基础设置”大类包含外观与语言、启动与布局、会话与工作区三组小类；这些本地偏好选择后立即生效并保存到渲染端 localStorage，不使用模型配置保存按钮。
 - 当前“大模型设置”大类包含模型档案、连接信息、上下文和推理行为四个小类；新增其它大类时必须在入口层分流，不把不同大类的配置项混入同一组小类。
 - 所有写入 `runtimePreferences` 的设置控件在运行时偏好加载或保存中必须禁用，并阻止重复提交，避免旧保存响应覆盖较新的用户选择。
+- MCP Servers 属于“工具与权限”大类，必须使用现有 Settings 行式控件和 `--ds-*`
+  token；stdio 与 Streamable HTTP 字段在入口层按 transport 分流，状态、
+  tools/prompts/resources surface 作为同一卡片内的紧凑辅助信息展示。
 - 模型 profile 删除必须使用卡片内行内确认态，不使用系统 `confirm`，并提供明确的确认、取消和删除中状态。
 - 模型 profile 表单处于 dirty 状态时，切换/创建/复制/删除 profile 或返回工作台必须先提示保存，不能静默丢弃未保存修改。
 - Settings 返回工作台必须回到进入设置前的最近 code/write 工作台；模型 token 表单提交前必须在 renderer 做本地化正整数与上下限校验。
+- Code composer 的 MCP prompt/resource 输入解析不增加独立营销式说明面板；
+  `/mcp__<server>__<prompt>` 与 `@<server>:<uri>` 发送失败必须进入现有可见错误状态，
+  成功时 timeline 保留用户原始输入作为 `displayText`。

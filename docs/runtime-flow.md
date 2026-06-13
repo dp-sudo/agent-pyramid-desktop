@@ -193,6 +193,12 @@ Runtime context placement:
 - Base `SYSTEM_PROMPT` stays stable.
 - Plan and goal instructions are runtime context messages, not merged into the base prompt.
 - User attachments become `AgentContentBlock[]` in `AgentMessage.content`.
+- Code composer MCP inputs are resolved before `turn:start`: a leading
+  `/mcp__<server>__<prompt>` calls `agentApi.mcp.getPrompt()` and
+  `@<server>:<uri>` references call `agentApi.mcp.readResource()`. The resolved
+  prompt/resource content is sent as `TurnStartRequest.text`, while the original
+  command/reference remains in `displayText` for the timeline and checkpoint
+  prompt.
 
 LLM request construction:
 
@@ -307,6 +313,10 @@ Tool availability:
 - Other registered tools pass through `AgentRuntime` tool access policy and
   persisted `RuntimePreferences.toolAvailability` before they are sent to the
   model or executed from a forced model tool call.
+- MCP tools are registered dynamically by `McpHost` using the
+  `mcp__<server>__<tool>` namespace. Code threads can see them through the same
+  catalog path as built-ins; Write threads hide them by default with the
+  mode-aware tool access policy.
 - The default tool access policy denies Code-only tools in Write threads:
   coding write tools, foreground shell tools, WSL / Git Bash / PowerShell
   tools, Git tools, package/task wrappers, command session tools, shell
@@ -338,7 +348,8 @@ Approval policy currently implemented in runtime:
 - `sandboxMode: "read-only"` denies non-read-only tools before execution.
 - `approvalPolicy: "never"` denies non-read-only tools before execution.
 - `RuntimePreferences.permissionRules` then evaluates per-call command text or
-  write paths for command/write tool families. Matching rules resolve by
+  write paths for command/write tool families, and `server/tool` values for MCP
+  tool names. Matching rules resolve by
   `deny > ask > allow`; unmatched calls fall back to the normal metadata-based
   policy. Hard `read-only` and `never` denials run first, so an allow rule
   cannot bypass them.
@@ -535,6 +546,53 @@ Failure behavior:
 
 `RuntimeEventBus` carries live UI events such as `item_appended`, `item_updated`, `approval_requested`, and `goal_updated`. The bus validates emitted runtime event shapes and kind/name consistency before delivery, while preserving Node `EventEmitter` listener lifecycle meta events (`newListener` / `removeListener`) for diagnostics and cleanup hooks. The durable event log is narrower: terminal turn usage/failure and tool budget audit events live in `events.jsonl`, while item state lives in `messages.jsonl`.
 
+## MCP Host Lifecycle
+
+`McpHost` is created in the main composition root with the shared
+`InMemoryToolRegistry` and `RuntimeEventBus`. Runtime preferences provide the
+server config list:
+
+```text
+runtimePreferences.mcpServers
+  -> McpHost.configure()
+  -> McpCacheStore cached surface install when fingerprint matches
+  -> connectEnabled() / connect(serverId)
+  -> McpClient initialize + tools/list
+  -> ToolRegistry.register(mcp__server__tool)
+```
+
+Lifecycle rules:
+
+- `stdio` transport uses newline-delimited JSON-RPC over a child process.
+- `streamable-http` transport posts JSON-RPC messages to an HTTP(S) endpoint,
+  supports JSON or SSE responses, and reuses `Mcp-Session-Id` when a server
+  returns one.
+- Server failures are isolated. A failed connect unregisters only that server's
+  MCP tools and emits `mcp_server_connection`; if a matching cached schema
+  exists, the host keeps cached tools registered as lazy placeholders and
+  reports `status: "lazy"` with `lastError`.
+- `McpCacheStore` persists public tool schema, prompt/resource descriptors,
+  server capability snapshots and startup stats under `userData/mcp/cache.json`.
+  The cache is a pure optimization: corrupted files, missing records or
+  fingerprint mismatches fall back to a live handshake.
+- Cache-backed tools are visible to Code threads before the live server
+  finishes connecting. Their first execution forces a server connect, swaps the
+  placeholder for a live `AgentTool`, then forwards the original call through
+  the normal ToolRegistry and approval path.
+- Cached prompt/resource surfaces can be listed immediately. `getPrompt()` and
+  `readResource()` force the same lazy connect before reading live content.
+- Streamable HTTP 401/403 failures are rewritten as non-sensitive auth
+  diagnostics that indicate whether auth material exists in headers, env or
+  URL, without logging credential values or response bodies.
+- `notifications/tools/list_changed` triggers a server-local tools refresh and
+  `mcp_tool_list_changed`.
+- Prompts/resources are auxiliary surface. `connect()` refreshes them
+  best-effort after tools connect, and manual `refreshSurface()` failures keep
+  existing tools registered while reporting `lastError` and
+  `mcp_surface_changed`.
+- Prompt/resource list/get/read calls are exposed to renderer through MCP IPC;
+  they are not model tools and do not pass through approval.
+
 ## Renderer Event Consumption
 
 `Workbench.tsx` keeps SSE subscriptions for every thread opened in the window.
@@ -563,6 +621,9 @@ Renderer event handling:
 - `turn_failed`: `actions.turnEnded(event.threadId, "failed")`; visible error only for the active thread
 - `runtime_error`: visible error only for global errors or the active thread
 - `goal_updated`: update active thread goal
+- `mcp_server_connection`, `mcp_tool_list_changed`, `mcp_surface_changed`:
+  ignored by the chat timeline; Settings listens for them and refreshes MCP
+  server status through `agentApi.mcp.listServers()`
 - `tool_budget_reached`: no UI error; warning item appears in timeline
 
 State storage:

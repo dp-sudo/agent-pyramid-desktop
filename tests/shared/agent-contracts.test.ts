@@ -23,6 +23,7 @@ import {
   ITEM_KINDS,
   LLM_PROTOCOLS,
   MAX_ATTACHMENT_BYTES,
+  MCP_SERVER_TRANSPORTS,
   PLAN_STEP_STATUSES,
   RUNTIME_COMPACTION_STRATEGIES,
   RUNTIME_EVENT_KINDS,
@@ -49,6 +50,7 @@ import {
   isRuntimeEvent,
   isRuntimeEventKind,
   isRuntimePreferences,
+  isMcpServerTransport,
   isRuntimeToolName,
   isThreadApprovalPolicy,
   isThreadGoalStatus,
@@ -210,6 +212,61 @@ describe("shared agent contracts", () => {
       ...DEFAULT_RUNTIME_PREFERENCES,
       permissionRules: [
         { id: "bad", tool: "command", pattern: "npm *", effect: "sometimes" },
+      ],
+    })).toBe(false);
+    expect(MCP_SERVER_TRANSPORTS).toEqual(["stdio", "streamable-http"]);
+    expect(isMcpServerTransport("stdio")).toBe(true);
+    expect(isMcpServerTransport("streamable-http")).toBe(true);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      mcpServers: [],
+    })).toBe(true);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      mcpServers: [
+        {
+          id: "server-1",
+          name: "local-mcp",
+          transport: "stdio",
+          command: "node",
+          args: [],
+          env: {},
+          headers: {},
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z",
+        },
+        {
+          id: "server-2",
+          name: "remote-mcp",
+          transport: "streamable-http",
+          args: [],
+          env: {},
+          url: "https://mcp.example.test/mcp",
+          headers: { Authorization: "Bearer test" },
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z",
+        },
+      ],
+    })).toBe(true);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      mcpServers: [
+        {
+          id: "server-1",
+          name: "remote-mcp",
+          transport: "streamable-http",
+          args: [],
+          env: {},
+          headers: {},
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-08T00:00:00.000Z",
+          updatedAt: "2026-06-08T00:00:00.000Z",
+        },
       ],
     })).toBe(false);
   });
@@ -505,6 +562,9 @@ describe("shared agent contracts", () => {
       "item_updated",
       "approval_requested",
       "tool_progress",
+      "mcp_server_connection",
+      "mcp_tool_list_changed",
+      "mcp_surface_changed",
       "tool_budget_reached",
       "goal_updated",
       "runtime_error",
@@ -512,7 +572,17 @@ describe("shared agent contracts", () => {
     expect(isItemKind("plan")).toBe(true);
     expect(isItemKind("unknown")).toBe(false);
     expect(isRuntimeEventKind("tool_progress")).toBe(true);
+    expect(isRuntimeEventKind("mcp_surface_changed")).toBe(true);
     expect(isRuntimeEventKind("tool_started")).toBe(false);
+    expect(isRuntimeEvent({
+      kind: "mcp_server_connection",
+      serverId: "server-1",
+      serverName: "local-mcp",
+      status: "lazy",
+      toolCount: 1,
+      occurredAt: "2026-06-08T00:00:00.000Z",
+      message: "Retrying from cached MCP schema.",
+    })).toBe(true);
   });
 
   it("keeps write put requests limited to the implemented plain write contract", () => {

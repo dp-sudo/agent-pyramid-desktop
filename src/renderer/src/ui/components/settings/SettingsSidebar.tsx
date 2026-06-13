@@ -11,6 +11,7 @@ export type SettingsCategory =
   | "reasoning"
   | "compaction"
   | "permissions"
+  | "mcpServers"
   | "toolAccess"
   | "commandLimits"
   | "modelDefaults"

@@ -16,6 +16,7 @@ import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
 import { createCodingTools } from "./application/tools/coding-tools.js";
 import { createCommandTools } from "./application/tools/command-tools.js";
 import { InMemoryToolRegistry } from "./application/tools/in-memory-tool-registry.js";
+import { McpCacheStore } from "./infrastructure/mcp/cache-store.js";
 import { McpHost } from "./infrastructure/mcp/host.js";
 import { configureWindowsAppIdentity } from "./application/app-identity.js";
 import { registerThreadHandlers } from "./ipc/threads-handlers.js";
@@ -49,7 +50,8 @@ const bus = new RuntimeEventBus();
 bus.setMaxListeners(50);
 const pool = new LlmWorkerPool(1);
 const registry = new InMemoryToolRegistry([]);
-const mcpHost = new McpHost(registry, bus);
+const mcpCacheStore = new McpCacheStore(userDataDir);
+const mcpHost = new McpHost(registry, bus, mcpCacheStore);
 const runtime = new AgentRuntime({
   store,
   attachmentStore,
@@ -179,6 +181,7 @@ app.whenReady().then(async () => {
     await modelConfigStore.init();
     await runtimePreferencesStore.init();
     await checkpointStore.init();
+    await mcpCacheStore.init();
   } catch (error) {
     console.error("[main] persistence init failed:", error);
     throw error;

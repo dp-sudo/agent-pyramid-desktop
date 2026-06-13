@@ -1,4 +1,10 @@
-import type { McpToolInfo } from "../../../shared/agent-contracts.js";
+import type {
+  McpPromptInfo,
+  McpPromptResult,
+  McpResourceInfo,
+  McpResourceReadResult,
+  McpToolInfo,
+} from "../../../shared/agent-contracts.js";
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 
@@ -36,6 +42,12 @@ export type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
 export interface McpToolDescriptor extends McpToolInfo {
   rawName: string;
 }
+
+export interface McpPromptDescriptor extends McpPromptInfo {
+  rawName: string;
+}
+
+export interface McpResourceDescriptor extends McpResourceInfo {}
 
 export interface McpCallToolContentBlock {
   type: string;
@@ -99,6 +111,39 @@ export function normalizeMcpCallToolResult(value: unknown): McpCallToolResult {
   return result;
 }
 
+export function normalizeMcpPromptsListResult(value: unknown): McpPromptDescriptor[] {
+  if (!isRecord(value) || !Array.isArray(value.prompts)) {
+    throw new Error("MCP prompts/list result must contain a prompts array.");
+  }
+  return value.prompts.map(normalizeMcpPromptDescriptor);
+}
+
+export function normalizeMcpPromptGetResult(value: unknown): McpPromptResult {
+  if (!isRecord(value) || !Array.isArray(value.messages)) {
+    throw new Error("MCP prompts/get result must contain a messages array.");
+  }
+  return {
+    ...(typeof value.description === "string" ? { description: value.description } : {}),
+    messages: value.messages.map(normalizeMcpPromptMessage),
+  };
+}
+
+export function normalizeMcpResourcesListResult(value: unknown): McpResourceDescriptor[] {
+  if (!isRecord(value) || !Array.isArray(value.resources)) {
+    throw new Error("MCP resources/list result must contain a resources array.");
+  }
+  return value.resources.map(normalizeMcpResourceDescriptor);
+}
+
+export function normalizeMcpResourceReadResult(value: unknown): McpResourceReadResult {
+  if (!isRecord(value) || !Array.isArray(value.contents)) {
+    throw new Error("MCP resources/read result must contain a contents array.");
+  }
+  return {
+    contents: value.contents.map(normalizeMcpResourceContent),
+  };
+}
+
 export function serializeMcpCallToolResult(result: McpCallToolResult): string {
   const textBlocks = (result.content ?? [])
     .filter((block) => block.type === "text" && typeof block.text === "string")
@@ -124,6 +169,73 @@ function normalizeMcpToolDescriptor(value: unknown): McpToolDescriptor {
     description: typeof value.description === "string" ? value.description : "",
     inputSchema,
     readOnly: annotations.readOnlyHint === true,
+  };
+}
+
+function normalizeMcpPromptDescriptor(value: unknown): McpPromptDescriptor {
+  if (!isRecord(value) || typeof value.name !== "string" || !value.name.trim()) {
+    throw new Error("MCP prompt descriptor requires a non-empty name.");
+  }
+  const args = Array.isArray(value.arguments) ? value.arguments : [];
+  return {
+    rawName: value.name.trim(),
+    name: value.name.trim(),
+    description: typeof value.description === "string" ? value.description : "",
+    arguments: args.map(normalizeMcpPromptArgument),
+  };
+}
+
+function normalizeMcpPromptArgument(value: unknown): McpPromptDescriptor["arguments"][number] {
+  if (!isRecord(value) || typeof value.name !== "string" || !value.name.trim()) {
+    throw new Error("MCP prompt argument requires a non-empty name.");
+  }
+  return {
+    name: value.name.trim(),
+    ...(typeof value.description === "string" ? { description: value.description } : {}),
+    required: value.required === true,
+  };
+}
+
+function normalizeMcpPromptMessage(value: unknown): McpPromptResult["messages"][number] {
+  if (!isRecord(value) || typeof value.role !== "string" || !value.role.trim()) {
+    throw new Error("MCP prompt message requires a non-empty role.");
+  }
+  if (!("content" in value)) {
+    throw new Error("MCP prompt message requires content.");
+  }
+  return {
+    role: value.role.trim(),
+    content: value.content,
+  };
+}
+
+function normalizeMcpResourceDescriptor(value: unknown): McpResourceDescriptor {
+  if (!isRecord(value) || typeof value.uri !== "string" || !value.uri.trim()) {
+    throw new Error("MCP resource descriptor requires a non-empty uri.");
+  }
+  return {
+    uri: value.uri.trim(),
+    name: typeof value.name === "string" && value.name.trim() ? value.name.trim() : value.uri.trim(),
+    description: typeof value.description === "string" ? value.description : "",
+    ...(typeof value.mimeType === "string" ? { mimeType: value.mimeType } : {}),
+  };
+}
+
+function normalizeMcpResourceContent(value: unknown): McpResourceReadResult["contents"][number] {
+  if (!isRecord(value) || typeof value.uri !== "string" || !value.uri.trim()) {
+    throw new Error("MCP resource content requires a non-empty uri.");
+  }
+  if (value.text !== undefined && typeof value.text !== "string") {
+    throw new Error("MCP resource text content must be a string.");
+  }
+  if (value.blob !== undefined && typeof value.blob !== "string") {
+    throw new Error("MCP resource blob content must be a string.");
+  }
+  return {
+    uri: value.uri.trim(),
+    ...(typeof value.mimeType === "string" ? { mimeType: value.mimeType } : {}),
+    ...(typeof value.text === "string" ? { text: value.text } : {}),
+    ...(typeof value.blob === "string" ? { blob: value.blob } : {}),
   };
 }
 

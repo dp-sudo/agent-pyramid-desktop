@@ -462,6 +462,11 @@ Send behavior:
   payload builder.
 - New thread is created automatically when no active thread exists.
 - Goal mode can create/update thread goal before starting a turn.
+- Code sends resolve MCP inputs before `turn:start`: a leading
+  `/mcp__<server>__<prompt>` is expanded through `agentApi.mcp.getPrompt()`,
+  and `@<server>:<uri>` references append resource text through
+  `agentApi.mcp.readResource()`. The original draft stays in `displayText`, so
+  the user bubble shows the command/reference instead of injected context.
 
 ### Right Inspector
 
@@ -910,7 +915,7 @@ Category ownership:
 | `basic` | `appearance` | Renderer `basicPreferences` localStorage, i18n and theme helpers. |
 | `model` | `profiles`, `connection`, `context`, `reasoning` | Main `ModelConfigStore` through `modelConfig.*` IPC. |
 | `agent` | `compaction` | Config-backed `RuntimePreferencesStore`; consumed by `AgentRuntime.prepareMessagesForRequest()`. |
-| `tools` | `permissions`, `toolAccess`, `commandLimits` | Config-backed `RuntimePreferencesStore`; consumed by thread creation, tool catalog filtering and command-backed tools. |
+| `tools` | `permissions`, `mcpServers`, `toolAccess`, `commandLimits` | Config-backed `RuntimePreferencesStore`; consumed by thread creation, MCP host configuration, tool catalog filtering and command-backed tools. |
 | `workbench` | `startup`, `layout`, `session`, `modelDefaults`, `attachments` | Renderer `basicPreferences` for UI-only fields and composer attachment entry points; config-backed `RuntimePreferencesStore` for Code/Write default model profile ids. |
 | `visibility` | `approvalPresentation` | Config-backed `RuntimePreferencesStore`; consumed by approval/timeline/toast presentation in renderer. |
 
@@ -928,8 +933,25 @@ Agent Behavior categories:
 Tools And Permissions categories:
 
 - `permissions`
+- `mcpServers`
 - `toolAccess`
 - `commandLimits`
+
+MCP Servers category:
+
+- Configures `RuntimePreferences.mcpServers` through the same runtime
+  preferences save queue as other tool settings.
+- Supports `stdio` command/args/cwd/env fields and `streamable-http` URL/header
+  fields. Header/env textareas parse JSON objects and surface validation errors
+  through the settings status area.
+- Displays live status from `agentApi.mcp.listServers()` plus
+  `mcp_server_connection`, `mcp_tool_list_changed`, and `mcp_surface_changed`
+  SSE events. Status labels include connected lifecycle states plus `cached`
+  and `lazy` when schema comes from the MCP cache while a live reconnect is
+  pending or failed.
+- Shows tools/prompts/resources counts and compact name lists for each server,
+  `lastError` diagnostics, startup stats when available, plus connect,
+  disconnect, refresh tools, refresh surface, delete and add actions.
 
 Workbench Settings categories:
 

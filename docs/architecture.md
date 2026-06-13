@@ -149,8 +149,10 @@ flowchart TD
   AppReady --> Stores
   AppReady --> Pool
   Registry --> Tools
+  Registry --> Mcp["McpHost\nexternal MCP tools"]
   Stores --> Runtime
   Bus --> Runtime
+  Bus --> Mcp
   Pool --> Runtime
   Registry --> Runtime
   Runtime --> Handlers
@@ -172,6 +174,7 @@ Registered IPC groups:
 - `write`: markdown list, get, put, inline complete.
 - `modelConfig`: get/update and profile lifecycle.
 - `runtimePreferences`: get/update runtime preference state.
+- `mcp`: server status/connect/disconnect, tools refresh, prompts and resources.
 
 ## Runtime Turn Lifecycle
 
@@ -234,6 +237,7 @@ flowchart LR
   Workspace["list_files\nread_file\nsearch_files"]
   Coding["edit_file\nwrite_file\napply_patch\nrollback_file"]
   Command["run_command\ndiagnose_workspace\ndiagnose_file"]
+  Mcp["MCP tools\nmcp__server__tool"]
   Goal["update_goal"]
   Approval["Approval gate"]
 
@@ -243,11 +247,13 @@ flowchart LR
   InMemory --> Workspace
   InMemory --> Coding
   InMemory --> Command
+  InMemory --> Mcp
   InMemory --> Goal
   Runtime --> Approval
   Approval -->|"skipped for read-only workspace tools"| Workspace
   Approval -->|"diff preview for writes"| Coding
   Approval -->|"default ask; auto can allow"| Command
+  Approval -->|"readOnlyHint can skip; writers ask"| Mcp
   Approval -->|"skipped when mode-gated and available"| Plan
   Approval -->|"skipped when goal mode/active goal allows it"| Goal
 ```
@@ -272,6 +278,12 @@ Tool availability is decided at the runtime boundary:
   commands.
 - `diagnose_file`: read-only diagnostics tool that uses TypeScript Language
   Service for one file and does not require approval.
+- MCP tools are dynamically registered by `McpHost` from configured stdio or
+  Streamable HTTP MCP servers. They use `mcp__<server>__<tool>` names, reuse the
+  normal ToolRegistry/approval/sandbox/permission path, and are hidden from
+  Write threads by the default tool access policy. Matching cached schema can
+  register lazy placeholders before a live server is ready; the first call
+  forces reconnect and then continues through the same ToolRegistry path.
 - Unknown or unavailable tool calls produce a visible `runtime_error` with
   `code: "tool_not_found"`.
 
@@ -454,6 +466,7 @@ The push event channel is separate:
 | `src/main/application/tools/` | Tool registry and built-in tool implementations. |
 | `src/main/infrastructure/minimax/` | Provider HTTP/SSE protocols and message/tool conversion. |
 | `src/main/infrastructure/llm-worker/` | Worker isolation, worker affinity, cancellation, worker protocol. |
+| `src/main/infrastructure/mcp/` | MCP client, host, cache/stats store, auth diagnostics, stdio and Streamable HTTP transports, protocol normalization. |
 | `src/main/ipc/` | IPC envelope handlers and Electron-only services. |
 | `src/main/persistence/` | userData persistence and migration/normalization. |
 | `src/preload/index.ts` | Minimal bridge API and SSE listener fan-out. |

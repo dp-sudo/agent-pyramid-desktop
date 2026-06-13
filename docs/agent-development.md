@@ -1267,3 +1267,16 @@
 - Added `resources/icons/icon.ico` and wired `build.win.icon`, so Windows artifacts no longer use Electron's default icon.
 - Added `package:win:signed` with `forceCodeSigning=true`; release signing uses `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` or `CSC_LINK` / `CSC_KEY_PASSWORD` from the local environment and keeps PFX files and passwords out of the repository.
 - Deferred final branded icon replacement, certificate procurement, and NSIS/MSIX installer UX until release assets and signing identity are confirmed.
+
+### 2026-06-13 - MCP host phase 1 implementation
+- Added the external MCP host path: `RuntimePreferences.mcpServers` configures stdio or Streamable HTTP servers, `McpHost` connects them, and remote tools are registered into the existing `ToolRegistry` as `mcp__<server>__<tool>`.
+- Extended MCP IPC/preload with server status, connect/disconnect, tools refresh, prompts list/get, resources list/read and surface refresh. MCP process-level events are forwarded live-only through `sse:push`.
+- Settings now includes an MCP Servers tool category with transport-specific config fields, live status, tools/prompts/resources surface summaries and manual connect/refresh actions.
+- Code composer now resolves `/mcp__<server>__<prompt>` and `@<server>:<uri>` before starting a turn, preserving the visible command/reference in `displayText` while sending resolved context to the model.
+- MCP prompt/resource surface refresh is best-effort after tools connect; failures report `lastError` without unregistering connected tools.
+
+### 2026-06-13 - MCP cache, lazy reconnect and auth diagnostics
+- Added `McpCacheStore` under `userData/mcp/cache.json` for public MCP tool schemas, prompt/resource descriptors, capability snapshots and startup stats. Cache records are keyed by a fingerprint of the server runtime config and ignored on corruption or mismatch.
+- `McpHost` now installs matching cached schema as `cached` / `lazy` status placeholders. Cached tools are registered as lazy `mcp__<server>__<tool>` adapters, first execution forces a live reconnect, and failed reconnect keeps cached schema visible with `lastError` for retry.
+- Cached prompt/resource descriptors can be listed before the server is live; `getPrompt()` and `readResource()` force the same lazy reconnect before returning content.
+- Streamable HTTP MCP 401/403 errors now report non-sensitive auth diagnostics, indicating whether auth material is configured in headers, env or URL without echoing credential values or response bodies.

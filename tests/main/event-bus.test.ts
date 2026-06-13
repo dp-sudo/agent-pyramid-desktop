@@ -101,6 +101,40 @@ function eventForKind(kind: RuntimeEventKind): RuntimeEvent {
         message: "Continue this turn.",
         reachedAt: "2026-06-08T00:00:00.000Z",
       };
+    case "mcp_server_connection":
+      return {
+        kind,
+        serverId: "server-1",
+        serverName: "local-mcp",
+        status: "connected",
+        toolCount: 1,
+        occurredAt: "2026-06-08T00:00:00.000Z",
+      };
+    case "mcp_tool_list_changed":
+      return {
+        kind,
+        serverId: "server-1",
+        serverName: "local-mcp",
+        toolCount: 1,
+        tools: [
+          {
+            name: "mcp__local-mcp__echo",
+            description: "Echo",
+            inputSchema: { type: "object" },
+            readOnly: true,
+          },
+        ],
+        occurredAt: "2026-06-08T00:00:00.000Z",
+      };
+    case "mcp_surface_changed":
+      return {
+        kind,
+        serverId: "server-1",
+        serverName: "local-mcp",
+        promptCount: 1,
+        resourceCount: 1,
+        occurredAt: "2026-06-08T00:00:00.000Z",
+      };
     case "goal_updated":
       return {
         kind,
@@ -241,15 +275,19 @@ describe("RuntimeEventBus", () => {
       bus.emit(kind, eventForKind(kind));
     }
 
-    expect(listener).toHaveBeenCalledTimes(RUNTIME_EVENT_KINDS.length);
+    const threadScopedKinds = RUNTIME_EVENT_KINDS.filter(
+      (kind) => "threadId" in eventForKind(kind),
+    );
+
+    expect(listener).toHaveBeenCalledTimes(threadScopedKinds.length);
     expect(listener.mock.calls.map(([event]) => event.kind)).toEqual([
-      ...RUNTIME_EVENT_KINDS,
+      ...threadScopedKinds,
     ]);
 
     unsubscribe();
     for (const kind of RUNTIME_EVENT_KINDS) {
       bus.emit(kind, eventForKind(kind));
     }
-    expect(listener).toHaveBeenCalledTimes(RUNTIME_EVENT_KINDS.length);
+    expect(listener).toHaveBeenCalledTimes(threadScopedKinds.length);
   });
 });

@@ -212,7 +212,14 @@
     "attachmentTooLarge": "图片大小不能超过 {{limit}}。",
     "attachmentAddBlocked": "请等待当前对话完成后再添加图片。",
     "attachmentOnlyMessageSingle": "请分析这张附件图片。",
-    "attachmentOnlyMessageMultiple": "请分析这些附件图片。"
+    "attachmentOnlyMessageMultiple": "请分析这些附件图片。",
+    "mcpPromptCommandInvalid": "MCP prompt 命令必须使用 /mcp__server__prompt，并可追加位置参数。",
+    "mcpPromptServerNotFound": "未找到 MCP prompt server：{{server}}",
+    "mcpPromptNotFound": "未找到 MCP prompt：{{server}}/{{prompt}}",
+    "mcpPromptTooManyArgs": "MCP prompt {{prompt}} 只接受 {{count}} 个位置参数。",
+    "mcpPromptMissingArgs": "MCP prompt {{prompt}} 缺少参数：{{args}}",
+    "mcpPromptEmpty": "MCP prompt {{prompt}} 未返回文本内容。",
+    "mcpResourceServerNotFound": "未找到 MCP resource server：{{server}}"
   },
   "settings": {
     "title": "设置",
@@ -260,7 +267,11 @@
       "integerRange": "{{field}} 必须在 {{min}} 到 {{max}} 之间。",
       "compactLimitTooLarge": "自动压缩阈值不能大于上下文窗口。",
       "maxTokensTooLarge": "最大输出 token 必须小于上下文窗口。",
-      "permissionRulePatternRequired": "匹配模式不能为空。"
+      "permissionRulePatternRequired": "匹配模式不能为空。",
+      "mcpEnvObject": "环境变量 JSON 必须是字符串键值对象。",
+      "mcpEnvJson": "环境变量必须是合法 JSON。",
+      "mcpHeadersObject": "Headers JSON 必须是字符串键值对象。",
+      "mcpHeadersJson": "Headers 必须是合法 JSON。"
     },
     "status": {
       "idle": "已就绪",
@@ -310,7 +321,7 @@
       "permissions": "权限",
       "permissionsDesc": "审批和沙盒默认值",
       "mcpServers": "MCP Server",
-      "mcpServersDesc": "外部 stdio 工具",
+      "mcpServersDesc": "外部工具和 surface",
       "toolAccess": "工具访问",
       "toolAccessDesc": "Code 和 Write 工具",
       "commandLimits": "命令限制",
@@ -341,8 +352,8 @@
       "compactionDesc": "选择运行时在模型请求前如何裁剪或压缩对话历史。",
       "permissions": "审批与沙盒默认值",
       "permissionsDesc": "这些默认值只应用到新建会话，不会改写已有会话。",
-      "mcpServers": "外部 MCP 工具",
-      "mcpServersDesc": "配置 stdio MCP server，并将其 tools 以 mcp__server__tool 名称接入现有工具审批链。",
+      "mcpServers": "外部 MCP Server",
+      "mcpServersDesc": "配置 stdio 或 Streamable HTTP MCP server，并将 tools、prompts、resources 接入工作台。",
       "toolAccess": "工具可用性",
       "toolAccessDesc": "控制哪些工具会在审批和沙盒检查前暴露给 Code 与 Write turn。",
       "commandLimits": "命令执行限制",
@@ -440,7 +451,10 @@
       "showDiffByDefault": "默认展开 diff",
       "autoScrollOnRequest": "自动滚动审批",
       "showReadOnlyToolRecords": "显示只读工具记录",
-      "showFailureToasts": "显示失败 toast"
+      "showFailureToasts": "显示失败 toast",
+      "mcpServerTransport": "传输",
+      "mcpServerUrl": "Server URL",
+      "mcpServerHeaders": "Headers JSON"
     },
     "themes": {
       "light": "浅色",
@@ -462,11 +476,19 @@
       "permissionRulePattern": "npm test*、src/* 或 server/tool",
       "mcpServerCommand": "node",
       "mcpServerArgs": "/path/to/server.js",
-      "mcpServerCwd": "留空表示继承应用工作目录"
+      "mcpServerCwd": "留空表示继承应用工作目录",
+      "mcpServerUrl": "http://localhost:3000/mcp"
     },
     "mcpServers": {
-      "empty": "暂无 MCP server。添加后可连接 stdio server 并刷新工具列表。",
-      "defaultName": "local-mcp"
+      "empty": "暂无 MCP server。添加后可连接 server，并刷新工具和 surface。",
+      "defaultName": "local-mcp",
+      "unconfigured": "未配置",
+      "surfaceEmpty": "连接或刷新此 server 后加载 tools、prompts 和 resources。",
+      "tools": "Tools",
+      "prompts": "Prompts",
+      "resources": "Resources",
+      "startupStats": "最近启动 {{duration}} ms · {{successes}} 次成功 · {{failures}} 次失败",
+      "statusSummary": "{{status}} · {{tools}} tools · {{prompts}} prompts · {{resources}} resources"
     },
     "permissionRules": {
       "empty": "暂无按调用规则。未匹配的命令和写入仍使用默认审批与沙盒策略。"
@@ -488,7 +510,8 @@
       "deleteMcpServer": "删除",
       "connectMcpServer": "连接",
       "disconnectMcpServer": "断开",
-      "refreshMcpTools": "刷新工具"
+      "refreshMcpTools": "刷新工具",
+      "refreshMcpServer": "刷新"
     },
     "efforts": {
       "low": "低",
@@ -582,6 +605,18 @@
       "diagnose_file": "诊断文件",
       "create_plan": "创建计划",
       "update_goal": "更新目标"
+    },
+    "mcpTransports": {
+      "stdio": "stdio",
+      "streamable-http": "Streamable HTTP"
+    },
+    "mcpStatuses": {
+      "disconnected": "已断开",
+      "connecting": "连接中",
+      "cached": "已缓存",
+      "lazy": "懒重连",
+      "connected": "已连接",
+      "failed": "失败"
     }
   },
   "routes": {

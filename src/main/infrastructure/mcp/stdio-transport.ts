@@ -12,14 +12,7 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
 } from "./protocol.js";
-
-export interface McpTransport {
-  call(method: string, params: unknown, options?: { signal?: AbortSignal }): Promise<unknown>;
-  notify(method: string, params?: unknown): Promise<void>;
-  close(): Promise<void>;
-  onNotification(listener: (notification: JsonRpcNotification) => void): () => void;
-  stderrTail(): string;
-}
+import type { McpTransport } from "./transport.js";
 
 interface PendingCall {
   resolve(value: unknown): void;
@@ -63,6 +56,9 @@ export class StdioMcpTransport implements McpTransport {
   }
 
   static start(config: McpServerConfig): StdioMcpTransport {
+    if (!config.command) {
+      throw new Error(`MCP server ${config.name} requires a stdio command.`);
+    }
     const child = spawn(config.command, config.args, {
       cwd: config.cwd,
       env: { ...process.env, ...config.env },
