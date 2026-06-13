@@ -17,6 +17,7 @@ import { RuntimePreferencesStore } from "../persistence/runtime-preferences-stor
 import { CheckpointStore } from "../persistence/checkpoint-store.js";
 import { LlmWorkerPool, isLlmWorkerError } from "../infrastructure/llm-worker/worker-pool.js";
 import { RuntimeEventBus } from "../event-bus.js";
+import type { SkillService } from "../skills/skill-service.js";
 import { FileReadStateStore } from "./tools/file-read-state.js";
 import { FileHistoryStore } from "./tools/file-history-state.js";
 import {
@@ -69,6 +70,7 @@ import type {
   ToolProgressStream,
   UserItem,
 } from "../../shared/agent-contracts.js";
+import { normalizeSkillId, type Skill, type SkillTurnResolution } from "../../shared/skills/index.js";
 import {
   DEFAULT_RUNTIME_PREFERENCES,
   THREAD_MODES,
@@ -88,6 +90,7 @@ interface RuntimeDeps {
   pool: LlmWorkerPool;
   bus: RuntimeEventBus;
   registry: ToolRegistry;
+  skillService?: SkillService;
   toolAccessPolicy?: ToolAccessPolicy;
 }
 
@@ -469,9 +472,15 @@ export class AgentRuntime {
   ): Promise<void> {
     try {
       const history = await this.collectHistory(thread, turn.id);
+      const skillResolution = await this.resolveSkillsForTurn(
+        turn,
+        thread,
+        userText,
+        runtimePreferences,
+      );
       const messages: AgentMessage[] = [
         ...history,
-        ...this.buildRuntimeContextMessages(turn, thread),
+        ...this.buildRuntimeContextMessages(turn, thread, skillResolution),
         { role: "user", content: await this.buildUserContent(userText, attachmentIds) },
       ];
 
@@ -562,7 +571,13 @@ export class AgentRuntime {
         });
 
         for (const call of response.toolCalls) {
-          const result = await this.executeToolCall(turn, thread, call, runtimePreferences);
+          const result = await this.executeToolCall(
+            turn,
+            thread,
+            call,
+            runtimePreferences,
+            modelConfig,
+          );
           messages.push({
             role: "tool",
             content: result.content,
@@ -923,6 +938,7 @@ export class AgentRuntime {
     thread: ThreadRecord,
     call: AgentToolCall,
     runtimePreferences: RuntimePreferences,
+    modelConfig: ModelConfig,
   ): Promise<AgentToolResult> {
     const toolItem: ToolItem = {
       kind: "tool",
@@ -1041,17 +1057,21 @@ export class AgentRuntime {
           );
         }
       };
-      const executionPromise = this.deps.registry.execute(call, {
+      const toolContext = {
         threadId: turn.threadId,
         turnId: turn.id,
         workspace: thread.workspace,
         signal: controller.signal,
         commandDefaults: runtimePreferences.command,
+        runtimePreferences,
         reportProgress,
         readState: this.readState,
         fileHistory: this.fileHistory,
         checkpoint: this.deps.checkpointStore,
-      });
+      };
+      const executionPromise =
+        this.executeSubagentSkillCall(turn, thread, call, runtimePreferences, modelConfig, controller.signal) ??
+        this.deps.registry.execute(call, toolContext);
       activeExecution.settled = executionPromise.then(
         () => undefined,
         () => undefined,
@@ -1111,6 +1131,234 @@ export class AgentRuntime {
         content: JSON.stringify(toolItem.result),
       };
     }
+  }
+
+  private executeSubagentSkillCall(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    call: AgentToolCall,
+    runtimePreferences: RuntimePreferences,
+    modelConfig: ModelConfig,
+    signal: AbortSignal,
+  ): Promise<AgentToolResult> | null {
+    if (call.name !== "run_skill" || !this.deps.skillService) return null;
+    return this.runSubagentSkillFromToolCall(
+      turn,
+      thread,
+      call,
+      runtimePreferences,
+      modelConfig,
+      signal,
+    );
+  }
+
+  private async runSubagentSkillFromToolCall(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    call: AgentToolCall,
+    runtimePreferences: RuntimePreferences,
+    modelConfig: ModelConfig,
+    signal: AbortSignal,
+  ): Promise<AgentToolResult> {
+    const skillId = parseRunSkillIdArgument(call.arguments.skillId);
+    const loaded = await this.deps.skillService?.loadWorkspaceSkills(
+      thread.workspace,
+      runtimePreferences.skills,
+    );
+    const skill = loaded?.skills.find((candidate) =>
+      candidate.id === normalizeSkillId(skillId) ||
+      normalizeSkillId(candidate.name) === normalizeSkillId(skillId)
+    );
+    if (!skill || skill.runAs !== "subagent") {
+      return this.deps.registry.execute(call, {
+        threadId: turn.threadId,
+        turnId: turn.id,
+        workspace: thread.workspace,
+        signal,
+        commandDefaults: runtimePreferences.command,
+        runtimePreferences,
+        readState: this.readState,
+        fileHistory: this.fileHistory,
+        checkpoint: this.deps.checkpointStore,
+      });
+    }
+    const task = parseRunSkillTaskArgument(call.arguments.arguments);
+    const answer = await this.runSubagentSkillLoop(
+      turn,
+      thread,
+      skill,
+      task,
+      runtimePreferences,
+      modelConfig,
+      signal,
+    );
+    return {
+      toolCallId: call.id,
+      name: call.name,
+      content: [
+        `Subagent skill: ${skill.name} (${skill.id})`,
+        answer,
+      ].join("\n\n"),
+      displayResult: {
+        skillId: skill.id,
+        name: skill.name,
+        runAs: skill.runAs,
+        model: skill.model || modelConfig.model,
+        effort: isModelReasoningEffort(skill.effort) ? skill.effort : modelConfig.model_reasoning_effort,
+        isolated: true,
+        content: answer,
+      },
+    };
+  }
+
+  private async runSubagentSkillLoop(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    skill: Skill,
+    task: string,
+    runtimePreferences: RuntimePreferences,
+    modelConfig: ModelConfig,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const tools = this.listSubagentToolDefinitions(skill);
+    const messages: AgentMessage[] = [{ role: "user", content: task }];
+    const maxToolRounds = resolveMaxToolRounds(modelConfig.agent_autonomy);
+    for (let round = 0; round <= maxToolRounds; round += 1) {
+      if (signal.aborted || turn.status !== "in-flight") {
+        throw new Error("Subagent skill was interrupted.");
+      }
+      const request = this.buildSubagentLlmRequest(
+        skill,
+        messages,
+        tools,
+        modelConfig,
+        runtimePreferences,
+      );
+      const response = await this.deps.pool.chat({ id: thread.id }, request, () => undefined);
+      if (response.toolCalls.length === 0) {
+        const answer = response.text.trim();
+        return answer || "Subagent completed without a final answer.";
+      }
+      if (round >= maxToolRounds) {
+        throw new Error(
+          `Subagent skill "${skill.id}" reached its automatic tool budget before producing a final answer.`,
+        );
+      }
+      messages.push({
+        role: "assistant",
+        content: response.text,
+        toolCalls: response.toolCalls,
+      });
+      for (const childCall of response.toolCalls) {
+        const childResult = await this.executeSubagentToolCall(
+          turn,
+          thread,
+          skill,
+          childCall,
+          runtimePreferences,
+          signal,
+        );
+        messages.push({
+          role: "tool",
+          content: childResult.content,
+          toolCallId: childResult.toolCallId,
+        });
+      }
+    }
+    throw new Error(`Subagent skill "${skill.id}" did not produce a final answer.`);
+  }
+
+  private buildSubagentLlmRequest(
+    skill: Skill,
+    messages: AgentMessage[],
+    tools: AgentToolDefinition[],
+    modelConfig: ModelConfig,
+    runtimePreferences: RuntimePreferences,
+  ): LlmRequest {
+    const systemPrompt = [
+      `You are running as isolated subagent skill "${skill.name}" (${skill.id}).`,
+      "Only your final answer will be returned to the parent turn.",
+      "Do not assume access to the parent conversation beyond the task below.",
+      "Stay within the skill instructions.",
+      skill.body,
+    ].join("\n\n");
+    const reasoningEffort = isModelReasoningEffort(skill.effort)
+      ? skill.effort
+      : modelConfig.model_reasoning_effort;
+    return {
+      protocol: modelConfig.protocol,
+      provider: modelConfig.model_provide,
+      model: skill.model || modelConfig.model,
+      apiKey: modelConfig.OPENAI_API_KEY,
+      baseUrl: modelConfig.base_url,
+      systemPrompt,
+      messages: prepareMessagesForRequest(messages, {
+        systemPrompt,
+        tools,
+        compactTokenLimit: modelConfig.model_auto_compact_token_limit,
+        contextWindow: modelConfig.model_context_window,
+        maxTokens: modelConfig.max_tokens,
+        compaction: runtimePreferences.compaction,
+      }),
+      tools,
+      maxTokens: modelConfig.max_tokens,
+      temperature: 1,
+      thinking: modelConfig.thinking,
+      reasoningEffort,
+    };
+  }
+
+  private listSubagentToolDefinitions(skill: Skill): AgentToolDefinition[] {
+    const allowed = new Set(skill.allowedTools);
+    if (allowed.size === 0) return [];
+    return this.deps.registry
+      .listDefinitions()
+      .filter((definition) => {
+        if (!allowed.has(definition.name) || definition.name === "run_skill") return false;
+        const tool = this.deps.registry.getTool(definition.name);
+        return Boolean(tool?.metadata?.isReadOnly);
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private async executeSubagentToolCall(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    skill: Skill,
+    call: AgentToolCall,
+    runtimePreferences: RuntimePreferences,
+    signal: AbortSignal,
+  ): Promise<AgentToolResult> {
+    const tool = this.deps.registry.getTool(call.name);
+    if (!skill.allowedTools.includes(call.name) || call.name === "run_skill") {
+      return {
+        toolCallId: call.id,
+        name: call.name,
+        content: stableStringify({
+          denied: true,
+          message: `Tool "${call.name}" is not allowed for subagent skill "${skill.id}".`,
+        }),
+      };
+    }
+    if (!tool?.metadata?.isReadOnly) {
+      return {
+        toolCallId: call.id,
+        name: call.name,
+        content: stableStringify({
+          denied: true,
+          message:
+            `Tool "${call.name}" is not available to subagent skill "${skill.id}" because only read-only tools are supported.`,
+        }),
+      };
+    }
+    return this.deps.registry.execute(call, {
+      threadId: turn.threadId,
+      turnId: `${turn.id}:subagent:${skill.id}`,
+      workspace: thread.workspace,
+      signal,
+      commandDefaults: runtimePreferences.command,
+      runtimePreferences,
+    });
   }
 
   private listToolDefinitionsForTurn(
@@ -1584,7 +1832,46 @@ export class AgentRuntime {
     return SYSTEM_PROMPT;
   }
 
-  private buildRuntimeContextMessages(turn: TurnRecord, thread: ThreadRecord): AgentMessage[] {
+  private async resolveSkillsForTurn(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    userText: string,
+    runtimePreferences: RuntimePreferences,
+  ): Promise<SkillTurnResolution | null> {
+    if (!this.deps.skillService || !runtimePreferences.skills.enabled) return null;
+    try {
+      const resolution = await this.deps.skillService.resolveTurn({
+        workspace: thread.workspace,
+        preferences: runtimePreferences.skills,
+        text: userText,
+      });
+      for (const validationError of resolution.validationErrors) {
+        this.deps.bus.emit("runtime_error", {
+          kind: "runtime_error",
+          threadId: turn.threadId,
+          turnId: turn.id,
+          code: "internal",
+          message: `Skill load warning at ${validationError.root}: ${validationError.message}`,
+        });
+      }
+      return resolution;
+    } catch (error) {
+      this.deps.bus.emit("runtime_error", {
+        kind: "runtime_error",
+        threadId: turn.threadId,
+        turnId: turn.id,
+        code: "internal",
+        message: `Skill resolution failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return null;
+    }
+  }
+
+  private buildRuntimeContextMessages(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    skillResolution: SkillTurnResolution | null,
+  ): AgentMessage[] {
     const parts: string[] = [];
     if (turn.mode === "plan") {
       parts.push(PLAN_MODE_INSTRUCTION);
@@ -1594,6 +1881,13 @@ export class AgentRuntime {
       if (thread.goal) {
         parts.push(`Current thread goal: ${thread.goal.text}`);
       }
+    }
+    if (skillResolution && skillResolution.instructions.length > 0) {
+      parts.push([
+        "Matched Agent Skills are active for this turn.",
+        "Follow each Active Skill instruction when it is relevant to the user's request.",
+        ...skillResolution.instructions,
+      ].join("\n\n"));
     }
     if (parts.length === 0) return [];
     return [{ role: "system", content: parts.join("\n\n") }];
@@ -2512,6 +2806,26 @@ function estimateTokens(value: string): number {
 
 function stableStringify(value: unknown): string {
   return JSON.stringify(canonicalizeJson(value));
+}
+
+function parseRunSkillIdArgument(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("run_skill requires a non-empty skillId.");
+  }
+  if (value.includes("\0")) {
+    throw new Error("run_skill skillId cannot contain NUL bytes.");
+  }
+  return value.trim();
+}
+
+function parseRunSkillTaskArgument(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("run_skill subagent skills require non-empty arguments.");
+  }
+  if (value.includes("\0")) {
+    throw new Error("run_skill arguments cannot contain NUL bytes.");
+  }
+  return value.trim();
 }
 
 function canonicalizeJson(value: unknown): unknown {

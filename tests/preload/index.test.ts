@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SSE_PUSH_CHANNEL,
+  SKILL_LIST_CHANNEL,
   WRITE_CREATE_CHANNEL,
   WRITE_DELETE_CHANNEL,
   WRITE_RENAME_CHANNEL,
@@ -102,6 +103,21 @@ describe("preload bridge", () => {
       { workspace: "/workspace", path: "drafts/notes.md" },
     );
   });
+
+  it("exposes skill catalog IPC methods", async () => {
+    const api = getAgentApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({
+      ok: true,
+      value: { workspace: "/workspace", enabled: true, skills: [], roots: [], validationErrors: [] },
+    });
+
+    await api.skills.list({ workspace: "/workspace" });
+
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith(
+      SKILL_LIST_CHANNEL,
+      { workspace: "/workspace" },
+    );
+  });
 });
 
 function getAgentApi(): {
@@ -114,6 +130,9 @@ function getAgentApi(): {
     ): Promise<IpcResult<{ path: string; content: string; bytes: number }>>;
     rename(request: WriteRenameRequest): Promise<IpcResult<{ path: string; newPath: string }>>;
     delete(request: WriteDeleteRequest): Promise<IpcResult<{ path: string }>>;
+  };
+  skills: {
+    list(request: { workspace: string }): Promise<IpcResult<unknown>>;
   };
 } {
   const api = electronMock.exposed.get("agentApi");
@@ -130,6 +149,9 @@ function getAgentApi(): {
       ): Promise<IpcResult<{ path: string; content: string; bytes: number }>>;
       rename(request: WriteRenameRequest): Promise<IpcResult<{ path: string; newPath: string }>>;
       delete(request: WriteDeleteRequest): Promise<IpcResult<{ path: string }>>;
+    };
+    skills: {
+      list(request: { workspace: string }): Promise<IpcResult<unknown>>;
     };
   };
 }

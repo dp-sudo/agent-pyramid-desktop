@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canSubmitModelSettingsSection,
   clearDeletedDefaultProfileReferences,
+  formatSkillTriggerSummary,
   formatMcpStartupStats,
   getDefaultCategoryForSection,
   getFirstVisibleSettingsCategoryForSection,
@@ -9,6 +10,7 @@ import {
   isSettingsCategoryInSection,
   mergeRuntimePreferencesUpdates,
   messageOfUnknownError,
+  parseRuntimeSkillsExtraRootsDraft,
   parseMcpServerStringRecordDraft,
   prunePendingProfileDeleteId,
   resolveRuntimePreferencesAfterProfileActivationRefreshFailure,
@@ -22,6 +24,7 @@ import {
   validateCodeBlockCollapseLineThreshold,
   validateModelSettingsForm,
   validateRuntimeCommandDraft,
+  validateRuntimeSkillsNumericDraft,
   type SettingsFormState,
 } from "../../src/renderer/src/ui/SettingsView";
 import {
@@ -33,9 +36,12 @@ import {
   DEFAULT_MODEL_CONFIG,
   DEFAULT_RUNTIME_PREFERENCES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
+  MAX_RUNTIME_SKILLS_ACTIVE_LIMIT,
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
+  MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
   RUNTIME_TOOL_NAMES,
   type McpServerConfig,
+  type RuntimeSkillCatalogEntry,
 } from "../../src/shared/agent-contracts";
 
 describe("SettingsView helpers", () => {
@@ -101,6 +107,8 @@ describe("SettingsView helpers", () => {
     expect(isSettingsCategoryInSection("model", "reasoning")).toBe(true);
     expect(isSettingsCategoryInSection("model", "appearance")).toBe(false);
     expect(isSettingsCategoryInSection("agent", "compaction")).toBe(true);
+    expect(isSettingsCategoryInSection("agent", "skills")).toBe(true);
+    expect(isSettingsCategoryInSection("tools", "skills")).toBe(false);
     expect(isSettingsCategoryInSection("tools", "toolAccess")).toBe(true);
     expect(isSettingsCategoryInSection("tools", "commandLimits")).toBe(true);
     expect(isSettingsCategoryInSection("workbench", "modelDefaults")).toBe(true);
@@ -165,6 +173,7 @@ describe("SettingsView helpers", () => {
 
   it("identifies advanced Settings categories and keeps safe fallbacks visible", () => {
     expect(isSettingsCategoryAdvanced("context")).toBe(true);
+    expect(isSettingsCategoryAdvanced("skills")).toBe(true);
     expect(isSettingsCategoryAdvanced("toolAccess")).toBe(true);
     expect(isSettingsCategoryAdvanced("profiles")).toBe(false);
     expect(getFirstVisibleSettingsCategoryForSection("model", false)).toBe("profiles");
@@ -229,6 +238,73 @@ describe("SettingsView helpers", () => {
       });
   });
 
+  it("validates skill runtime drafts before runtime preference updates", () => {
+    expect(validateRuntimeSkillsNumericDraft("activeLimit", "", testT))
+      .toEqual({ ok: true, value: null });
+    expect(validateRuntimeSkillsNumericDraft("activeLimit", "0", testT))
+      .toEqual({ ok: true, value: 0 });
+    expect(validateRuntimeSkillsNumericDraft("activeLimit", "2.5", testT))
+      .toEqual({
+        ok: false,
+        message: "Active skill limit must be a non-negative whole number.",
+      });
+    expect(validateRuntimeSkillsNumericDraft(
+      "activeLimit",
+      String(MAX_RUNTIME_SKILLS_ACTIVE_LIMIT + 1),
+      testT,
+    )).toEqual({
+      ok: false,
+      message: `Active skill limit must be between ${MIN_RUNTIME_SKILLS_ACTIVE_LIMIT} and ${MAX_RUNTIME_SKILLS_ACTIVE_LIMIT}.`,
+    });
+    expect(parseRuntimeSkillsExtraRootsDraft(
+      " .agent/skills \n\nshared-skills\n.agent/skills",
+      testT,
+    )).toEqual({ ok: true, value: [".agent/skills", "shared-skills"] });
+    expect(parseRuntimeSkillsExtraRootsDraft("ok\nbad\0root", testT))
+      .toEqual({
+        ok: false,
+        message: "Skill root line 2 cannot contain NUL bytes.",
+      });
+  });
+
+  it("formats skill catalog trigger summaries", () => {
+    const skill: RuntimeSkillCatalogEntry = {
+      id: "project/review",
+      name: "Review",
+      description: "Review current changes.",
+      version: "1.0.0",
+      runAs: "inline",
+      scope: "project",
+      priority: 100,
+      rootDir: "/workspace/.agent/skills/review",
+      skillPath: "/workspace/.agent/skills/review/SKILL.md",
+      allowedTools: ["read_file"],
+      trigger: {
+        manual: true,
+        commands: ["/review"],
+        keywords: ["review"],
+        promptPatterns: ["audit"],
+        fileTypes: [".ts"],
+      },
+      referenceCount: 0,
+      referenceNames: [],
+    };
+
+    expect(formatSkillTriggerSummary(skill, testT)).toBe(
+      "Manual · Commands: /review · Keywords: review · Prompt patterns: audit · File types: .ts",
+    );
+    expect(formatSkillTriggerSummary({
+      ...skill,
+      trigger: {
+        manual: false,
+        commands: [],
+        keywords: [],
+        promptPatterns: [],
+        fileTypes: [],
+      },
+    }, testT)).toBe("No automatic triggers");
+  });
+
   it("validates code block fold threshold drafts before saving local preferences", () => {
     expect(validateCodeBlockCollapseLineThreshold("24", testT))
       .toEqual({ ok: true, value: 24 });
@@ -274,6 +350,7 @@ describe("SettingsView helpers", () => {
       approvalExperience: { showDiffByDefault: false },
       command: { timeoutMs: 45_000 },
       compaction: { enabled: false },
+      skills: { activeLimit: 2, extraRoots: ["project-skills"] },
       permissionRules: [
         { id: "ask-tests", tool: "command", pattern: "npm test*", effect: "ask" },
       ],
@@ -289,6 +366,10 @@ describe("SettingsView helpers", () => {
       approvalExperience: { autoScrollOnRequest: false },
       command: { maxOutputBytes: 65_536 },
       compaction: { strategy: "aggressive" },
+      skills: {
+        instructionBudgetBytes: 48_000,
+        extraRoots: ["project-skills", "shared-skills"],
+      },
       permissionRules: [
         { id: "deny-src", tool: "write", pattern: "src/*", effect: "deny" },
       ],
@@ -310,6 +391,11 @@ describe("SettingsView helpers", () => {
       compaction: {
         enabled: false,
         strategy: "aggressive",
+      },
+      skills: {
+        activeLimit: 2,
+        instructionBudgetBytes: 48_000,
+        extraRoots: ["project-skills", "shared-skills"],
       },
       permissionRules: [
         { id: "deny-src", tool: "write", pattern: "src/*", effect: "deny" },
@@ -448,15 +534,33 @@ function testT(key: string, options?: Record<string, unknown>): string {
   if (key === "settings.fields.maxTokens") return "Max output tokens";
   if (key === "settings.fields.commandTimeout") return "Command timeout";
   if (key === "settings.fields.commandMaxOutput") return "Command output limit";
+  if (key === "settings.fields.skillsActiveLimit") return "Active skill limit";
+  if (key === "settings.fields.skillsInstructionBudgetBytes") {
+    return "Instruction budget bytes";
+  }
   if (key === "settings.fields.codeBlockCollapseLineThreshold") {
     return "Code block fold line count";
   }
   if (key === "settings.errors.positiveInteger") {
     return `${String(options?.field)} must be a positive whole number.`;
   }
+  if (key === "settings.errors.nonNegativeInteger") {
+    return `${String(options?.field)} must be a non-negative whole number.`;
+  }
   if (key === "settings.errors.integerRange") {
     return `${String(options?.field)} must be between ${String(options?.min)} and ${String(options?.max)}.`;
   }
+  if (key === "settings.errors.skillsExtraRootNul") {
+    return `Skill root line ${String(options?.index)} cannot contain NUL bytes.`;
+  }
+  if (key === "settings.skills.manualTrigger") return "Manual";
+  if (key === "settings.skills.commands") return `Commands: ${String(options?.values)}`;
+  if (key === "settings.skills.keywords") return `Keywords: ${String(options?.values)}`;
+  if (key === "settings.skills.promptPatterns") {
+    return `Prompt patterns: ${String(options?.values)}`;
+  }
+  if (key === "settings.skills.fileTypes") return `File types: ${String(options?.values)}`;
+  if (key === "settings.skills.noTriggers") return "No automatic triggers";
   if (key === "settings.errors.compactLimitTooLarge") {
     return "Auto compact limit must fit in context.";
   }

@@ -35,6 +35,7 @@ flowchart LR
   Attachments["AttachmentStore"]
   Config["ModelConfigStore"]
   Preferences["RuntimePreferencesStore\nconfig-backed"]
+  Skills["SkillService"]
   Registry["ToolRegistry"]
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool"]
@@ -49,6 +50,7 @@ flowchart LR
   Runtime --> Attachments
   Runtime --> Config
   Runtime --> Preferences
+  Runtime --> Skills
   Runtime --> Registry
   Runtime --> Pool
   Runtime --> Bus
@@ -163,7 +165,8 @@ After the user item is persisted, `AgentRuntime.runTurn()` builds the model mess
 flowchart TD
   Start["runTurn"]
   History["collectHistory(thread, exclude current turn)"]
-  Context["buildRuntimeContextMessages(plan/goal)"]
+  Skills["resolve workspace skills"]
+  Context["buildRuntimeContextMessages(plan/goal/skills)"]
   User["buildUserContent(text + attachments)"]
   Loop["for round <= maxToolRounds"]
   BuildReq["buildLlmRequest"]
@@ -179,7 +182,7 @@ flowchart TD
   NeedsContinuation["append budget warning\nmark needs_continuation"]
   Failed["mark failed / emit runtime_error"]
 
-  Start --> History --> Context --> User --> Loop
+  Start --> History --> Skills --> Context --> User --> Loop
   Loop --> BuildReq --> Compact --> Chat --> Stream --> Persist --> ToolCheck
   ToolCheck -- "no" --> Complete
   ToolCheck -- "yes" --> Budget
@@ -192,6 +195,18 @@ Runtime context placement:
 
 - Base `SYSTEM_PROMPT` stays stable.
 - Plan and goal instructions are runtime context messages, not merged into the base prompt.
+- Skills are also runtime context messages. When `RuntimePreferences.skills.enabled`
+  is true, `SkillService` scans workspace convention roots
+  (`.agent/skills`, `.agents/skills`, `.claude/skills`, `.codex/skills`,
+  `.reasonix/skills`, `skills`) plus configured `skills.extraRoots`, matches
+  the current prompt against filesystem and built-in skill triggers, and
+  injects budgeted `Active Skill` instructions before the user message. Built-in
+  `explore` / `review` are read-only subagent skills; `teach-me` / `interview`
+  are inline guidance skills. Filesystem project/custom skills override built-in
+  skills with the same normalized id.
+- Skill load validation errors emit `runtime_error(code: "internal")` with the
+  failing root in the message; missing convention roots are ignored, while
+  missing configured extra roots are surfaced as validation errors.
 - User attachments become `AgentContentBlock[]` in `AgentMessage.content`.
 - Code composer MCP inputs are resolved before `turn:start`: a leading
   `/mcp__<server>__<prompt>` calls `agentApi.mcp.getPrompt()` and
@@ -310,6 +325,15 @@ Tool availability:
 
 - `create_plan` is only enabled when `turn.mode === "plan"`.
 - `update_goal` is enabled when `turn.goalMode` is true or the thread has an active goal.
+- `list_skills` and `run_skill` are read-only skill tools. They are enabled by
+  default in Code and Write threads through `RuntimePreferences.toolAvailability`
+  and load skills from the active thread workspace. `list_skills` returns the
+  skill catalog, roots and validation warnings; `run_skill` returns inline
+  skills' `SKILL.md` body plus `references/*.md` content as a tool result.
+  `runAs: subagent` skills run through an isolated child LLM loop with only
+  allowed read-only tools exposed; child messages and tool calls are not written
+  to parent JSONL, and only the final answer returns as the parent `run_skill`
+  result.
 - Other registered tools pass through `AgentRuntime` tool access policy and
   persisted `RuntimePreferences.toolAvailability` before they are sent to the
   model or executed from a forced model tool call.

@@ -45,6 +45,7 @@ flowchart LR
     IpcHandlers["IPC handlers"]
     Runtime["AgentRuntime"]
     Registry["InMemoryToolRegistry"]
+    Skills["SkillService"]
     Bus["RuntimeEventBus"]
     Threads["JsonlThreadStore"]
     Attachments["AttachmentStore"]
@@ -80,6 +81,7 @@ flowchart LR
   IpcHandlers --> RuntimePrefs
   IpcHandlers --> WriteSvc
   Runtime --> Registry
+  Runtime --> Skills
   Runtime --> Bus
   Runtime --> Threads
   Runtime --> Attachments
@@ -94,6 +96,7 @@ flowchart LR
   Threads --> Filesystem
   Attachments --> Filesystem
   AppConfig --> Filesystem
+  Skills --> Filesystem
   WriteSvc --> Filesystem
   Bus --> IpcHandlers
   IpcHandlers -. "sse:push RuntimeEvent" .-> AgentApi
@@ -137,17 +140,19 @@ Security invariants:
 ```mermaid
 flowchart TD
   AppReady["app.whenReady()"]
-  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore\nRuntimePreferencesStore\n(shared AppConfigFile for config)"]
+  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore\nRuntimePreferencesStore\nCheckpointStore\nMcpCacheStore\n(shared AppConfigFile for config)"]
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool(1)"]
   Registry["InMemoryToolRegistry"]
-  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateGoalTools()"]
+  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateSkillTools()\ncreateGoalTools()"]
+  Skills["SkillService"]
   Runtime["AgentRuntime"]
   Handlers["register*Handlers()"]
   Window["BrowserWindow"]
 
   AppReady --> Stores
   AppReady --> Pool
+  AppReady --> Skills
   Registry --> Tools
   Registry --> Mcp["McpHost\nexternal MCP tools"]
   Stores --> Runtime
@@ -155,6 +160,7 @@ flowchart TD
   Bus --> Mcp
   Pool --> Runtime
   Registry --> Runtime
+  Skills --> Runtime
   Runtime --> Handlers
   Stores --> Handlers
   Bus --> Handlers
@@ -170,11 +176,13 @@ Registered IPC groups:
 - `goals`: update.
 - `attachments`: create, get, delete.
 - `usage`: daily aggregation.
+- `checkpoints`: list, code rewind, optional session rewind.
 - `workspace`: pick directory.
-- `write`: markdown list, get, put, inline complete.
+- `write`: markdown list, get, put, create, rename, delete, inline complete.
 - `modelConfig`: get/update and profile lifecycle.
 - `runtimePreferences`: get/update runtime preference state.
-- `mcp`: server status/connect/disconnect, tools refresh, prompts and resources.
+- `mcp`: server status/connect/disconnect, tools refresh/list, surface refresh, prompts and resources.
+- `skills`: read-only workspace skill catalog diagnostics.
 
 ## Runtime Turn Lifecycle
 

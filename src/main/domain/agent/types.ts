@@ -2,6 +2,7 @@ import type {
   LlmProtocol,
   ModelReasoningEffort,
   RuntimeCommandPreferences,
+  RuntimePreferences,
   ToolProgressStream,
   TokenUsage,
 } from "../../../shared/agent-contracts";
@@ -42,6 +43,7 @@ export interface AgentToolContext {
   workspace?: string;
   signal?: AbortSignal;
   commandDefaults?: RuntimeCommandPreferences;
+  runtimePreferences?: RuntimePreferences;
   reportProgress?: (chunk: string, stream: ToolProgressStream) => void;
   readState?: {
     get(filePath: string): {
@@ -180,7 +182,7 @@ export interface AgentTool {
   metadata?: {
     isReadOnly?: boolean;
     isDestructive?: boolean;
-    category?: "workspace" | "plan" | "goal" | "command";
+    category?: "workspace" | "plan" | "goal" | "command" | "skill";
   };
   preview?(input: Record<string, unknown>, context: AgentToolContext): Promise<unknown>;
   execute(input: Record<string, unknown>, context: AgentToolContext): Promise<string | AgentToolResult>;

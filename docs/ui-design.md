@@ -347,6 +347,7 @@ Workbench runtime failure toasts must keep the full error text visible, provide 
 - Settings 的“会话与工作区”小类只呈现实际可配置的归档显示与工作区恢复；线程删除确认是 Sidebar 的强制行内交互，不再作为设置项或设置文案出现。
 - 当前“基础设置”大类包含外观与语言、启动与布局、会话与工作区三组小类；这些本地偏好选择后立即生效并保存到渲染端 localStorage，不使用模型配置保存按钮。
 - 当前“大模型设置”大类包含模型档案、连接信息、上下文和推理行为四个小类；新增其它大类时必须在入口层分流，不把不同大类的配置项混入同一组小类。
+- 当前“Agent 行为”大类包含自动压缩和 Skills runtime 两个小类；Skills 控件必须复用 `RuntimePreferences.skills`，不得引入渲染端私有 skill 配置。Skills catalog 诊断必须通过 `agentApi.skills.list()` 读取当前工作区摘要、扫描根和校验警告，保持只读，不在设置页暴露完整 `SKILL.md` body 或 reference content。
 - 所有写入 `runtimePreferences` 的设置控件在运行时偏好加载或保存中必须禁用，并阻止重复提交，避免旧保存响应覆盖较新的用户选择。
 - MCP Servers 属于“工具与权限”大类，必须使用现有 Settings 行式控件和 `--ds-*`
   token；stdio 与 Streamable HTTP 字段在入口层按 transport 分流，状态、

@@ -15,7 +15,9 @@ import { createGoalTools } from "./application/tools/goal-tools.js";
 import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
 import { createCodingTools } from "./application/tools/coding-tools.js";
 import { createCommandTools } from "./application/tools/command-tools.js";
+import { createSkillTools } from "./application/tools/skill-tools.js";
 import { InMemoryToolRegistry } from "./application/tools/in-memory-tool-registry.js";
+import { SkillService } from "./skills/skill-service.js";
 import { McpCacheStore } from "./infrastructure/mcp/cache-store.js";
 import { McpHost } from "./infrastructure/mcp/host.js";
 import { configureWindowsAppIdentity } from "./application/app-identity.js";
@@ -28,6 +30,7 @@ import { registerGoalHandlers } from "./ipc/goals-handlers.js";
 import { registerUsageHandlers } from "./ipc/usage-handlers.js";
 import { registerCheckpointHandlers } from "./ipc/checkpoints-handlers.js";
 import { registerMcpHandlers } from "./ipc/mcp-handlers.js";
+import { registerSkillHandlers } from "./ipc/skills-handlers.js";
 import { registerWorkspaceHandlers } from "./ipc/workspace-handlers.js";
 import { registerWriteHandlers } from "./ipc/write-handlers.js";
 import { registerModelConfigHandlers } from "./ipc/model-config-handlers.js";
@@ -50,6 +53,7 @@ const bus = new RuntimeEventBus();
 bus.setMaxListeners(50);
 const pool = new LlmWorkerPool(1);
 const registry = new InMemoryToolRegistry([]);
+const skillService = new SkillService();
 const mcpCacheStore = new McpCacheStore(userDataDir);
 const mcpHost = new McpHost(registry, bus, mcpCacheStore);
 const runtime = new AgentRuntime({
@@ -61,6 +65,7 @@ const runtime = new AgentRuntime({
   pool,
   bus,
   registry,
+  skillService,
 });
 registry.register(createPlanTool);
 for (const tool of createWorkspaceTools()) {
@@ -70,6 +75,9 @@ for (const tool of createCodingTools()) {
   registry.register(tool);
 }
 for (const tool of createCommandTools()) {
+  registry.register(tool);
+}
+for (const tool of createSkillTools({ skillService })) {
   registry.register(tool);
 }
 for (const tool of createGoalTools({
@@ -209,6 +217,7 @@ app.whenReady().then(async () => {
   registerUsageHandlers(store);
   registerCheckpointHandlers(checkpointStore, store, runtime);
   registerMcpHandlers(mcpHost);
+  registerSkillHandlers(skillService, runtimePreferencesStore);
   registerWorkspaceHandlers();
   registerWriteHandlers();
   registerModelConfigHandlers(modelConfigStore);

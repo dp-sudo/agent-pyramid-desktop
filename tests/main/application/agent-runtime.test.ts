@@ -14,8 +14,10 @@ import { createCodingTools } from "../../../src/main/application/tools/coding-to
 import { createPlanTool } from "../../../src/main/application/tools/create-plan-tool";
 import { createGoalTools } from "../../../src/main/application/tools/goal-tools";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
+import { createSkillTools } from "../../../src/main/application/tools/skill-tools";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
 import { RuntimeEventBus } from "../../../src/main/event-bus";
+import { SkillService } from "../../../src/main/skills/skill-service";
 import type {
   AgentTool,
   LlmRequest,
@@ -190,6 +192,7 @@ describe("AgentRuntime", () => {
   function createRuntime(
     registry = new InMemoryToolRegistry([]),
     toolAccessPolicy?: ToolAccessPolicy,
+    skillService?: SkillService,
   ): AgentRuntime {
     return new AgentRuntime({
       store,
@@ -199,8 +202,26 @@ describe("AgentRuntime", () => {
       pool: fakePool as unknown as LlmWorkerPool,
       bus,
       registry,
+      ...(skillService ? { skillService } : {}),
       ...(toolAccessPolicy ? { toolAccessPolicy } : {}),
     });
+  }
+
+  async function writeWorkspaceSkill(
+    workspace: string,
+    relativeDir: string,
+    input: {
+      frontmatter: string[];
+      body: string;
+    },
+  ): Promise<void> {
+    const root = path.join(workspace, relativeDir);
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(
+      path.join(root, "SKILL.md"),
+      ["---", ...input.frontmatter, "---", "", input.body].join("\n"),
+      "utf8",
+    );
   }
 
   it("starts a turn, streams live items, persists final items, and completes", async () => {
@@ -785,6 +806,374 @@ describe("AgentRuntime", () => {
       title: "Test plan",
       steps: [expect.objectContaining({ title: "Write tests", status: "completed" })],
     });
+  });
+
+  it("injects matched project skills as dynamic system context", async () => {
+    const workspace = path.join(userDataDir, "workspace");
+    await writeWorkspaceSkill(workspace, ".agent/skills/example-skill", {
+      frontmatter: [
+        "id: example-skill",
+        "name: Example Skill",
+        "description: Follow the example skill.",
+        "keywords: example skill",
+      ],
+      body: "Use the example skill instructions.",
+    });
+    const thread = await store.createThread({
+      title: "Skills Runtime",
+      workspace,
+      mode: "code",
+    });
+    const skillService = new SkillService();
+    const registry = new InMemoryToolRegistry(createSkillTools({ skillService }));
+
+    await createRuntime(registry, undefined, skillService).startTurn({
+      threadId: thread.id,
+      text: "Please use the example skill.",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[0].systemPrompt).not.toContain("Active Skill");
+    expect(fakePool.requests[0].tools.map((tool) => tool.name)).toContain("run_skill");
+    expect(fakePool.requests[0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "system",
+          content: expect.stringContaining("Active Skill: Example Skill (example-skill)"),
+        }),
+      ]),
+    );
+  });
+
+  it("runs run_skill without approval and feeds the result back into the tool loop", async () => {
+    const workspace = path.join(userDataDir, "workspace");
+    await writeWorkspaceSkill(workspace, ".agent/skills/example-skill", {
+      frontmatter: [
+        "id: example-skill",
+        "name: Example Skill",
+        "description: Follow the example skill.",
+      ],
+      body: "Use the example skill instructions.",
+    });
+    const thread = await store.createThread({
+      title: "Skills Runtime",
+      workspace,
+      mode: "code",
+    });
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-skill",
+            name: "run_skill",
+            arguments: { skillId: "example-skill" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Skill used.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+    const skillService = new SkillService();
+    const registry = new InMemoryToolRegistry(createSkillTools({ skillService }));
+
+    await createRuntime(registry, undefined, skillService).startTurn({
+      threadId: thread.id,
+      text: "Run $example-skill.",
+    });
+    await waitFor(() => fakePool.requests.length === 2 && !events.some((event) => event.kind === "approval_requested"));
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    expect(fakePool.requests[1].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "call-skill",
+          content: expect.stringContaining("Use the example skill instructions."),
+        }),
+      ]),
+    );
+  });
+
+  it("runs subagent skills in an isolated child model loop and returns only the final answer", async () => {
+    const workspace = path.join(userDataDir, "workspace");
+    await writeWorkspaceSkill(workspace, ".agent/skills/review-skill", {
+      frontmatter: [
+        "id: review-skill",
+        "name: Review Skill",
+        "description: Review in isolation.",
+        "runAs: subagent",
+        "model: skill-model",
+        "effort: high",
+      ],
+      body: "Only return a distilled review.",
+    });
+    const thread = await store.createThread({
+      title: "Skills Runtime",
+      workspace,
+      mode: "code",
+    });
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-skill",
+            name: "run_skill",
+            arguments: { skillId: "review-skill", arguments: "Review src/app.ts" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Subagent found one issue.",
+        reasoning: "private child reasoning",
+        toolCalls: [],
+        raw: {},
+      },
+      {
+        text: "Parent final.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+    const skillService = new SkillService();
+    const registry = new InMemoryToolRegistry(createSkillTools({ skillService }));
+
+    await createRuntime(registry, undefined, skillService).startTurn({
+      threadId: thread.id,
+      text: "Run $review-skill.",
+    });
+    await waitFor(() => fakePool.requests.length === 3);
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[1].model).toBe("skill-model");
+    expect(fakePool.requests[1].reasoningEffort).toBe("high");
+    expect(fakePool.requests[1].systemPrompt).toContain("Only return a distilled review.");
+    expect(fakePool.requests[1].messages).toEqual([
+      { role: "user", content: "Review src/app.ts" },
+    ]);
+    expect(fakePool.requests[2].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "call-skill",
+          content: expect.stringContaining("Subagent found one issue."),
+        }),
+      ]),
+    );
+
+    const replayed: Item[] = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    const toolItems = finalItems(replayed).filter((item): item is Extract<Item, { kind: "tool" }> =>
+      item.kind === "tool"
+    );
+    expect(toolItems.map((item) => item.name)).toEqual(["run_skill"]);
+    expect(toolItems[0]?.result).toMatchObject({
+      isolated: true,
+      content: "Subagent found one issue.",
+    });
+  });
+
+  it("runs built-in subagent skills when no workspace skill is present", async () => {
+    const workspace = path.join(userDataDir, "workspace");
+    const thread = await store.createThread({
+      title: "Built-in Skills Runtime",
+      workspace,
+      mode: "code",
+    });
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-skill",
+            name: "run_skill",
+            arguments: { skillId: "review", arguments: "Review the current change." },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Built-in review result.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+      {
+        text: "Parent final.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+    const skillService = new SkillService();
+    const registry = new InMemoryToolRegistry(createSkillTools({ skillService }));
+
+    await createRuntime(registry, undefined, skillService).startTurn({
+      threadId: thread.id,
+      text: "/review",
+    });
+    await waitFor(() => fakePool.requests.length === 3);
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "system",
+          content: expect.stringContaining("Active Skill: Review (review)"),
+        }),
+      ]),
+    );
+    expect(fakePool.requests[1].systemPrompt).toContain("isolated code-review subagent");
+    expect(fakePool.requests[2].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "call-skill",
+          content: expect.stringContaining("Built-in review result."),
+        }),
+      ]),
+    );
+  });
+
+  it("limits subagent skill tools to allowed read-only tools without persisting child tool calls", async () => {
+    const workspace = path.join(userDataDir, "workspace");
+    await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+    await fs.writeFile(path.join(workspace, "src", "app.ts"), "export const value = 1;\n", "utf8");
+    await writeWorkspaceSkill(workspace, ".agent/skills/review-skill", {
+      frontmatter: [
+        "id: review-skill",
+        "name: Review Skill",
+        "description: Review with tools.",
+        "runAs: subagent",
+        "allowed-tools: read_file, write_file",
+      ],
+      body: "Read files, then summarize.",
+    });
+    const thread = await store.createThread({
+      title: "Skills Runtime",
+      workspace,
+      mode: "code",
+    });
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-skill",
+            name: "run_skill",
+            arguments: { skillId: "review-skill", arguments: "Review src/app.ts" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "child-read",
+            name: "read_file",
+            arguments: { path: "src/app.ts" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "Subagent reviewed the file.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+      {
+        text: "Parent final.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+    const skillService = new SkillService();
+    const registry = new InMemoryToolRegistry([
+      ...createSkillTools({ skillService }),
+      ...createWorkspaceTools(),
+      ...createCodingTools(),
+    ]);
+
+    await createRuntime(registry, undefined, skillService).startTurn({
+      threadId: thread.id,
+      text: "Run $review-skill.",
+    });
+    await waitFor(() => fakePool.requests.length === 4);
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[1].tools.map((tool) => tool.name)).toEqual(["read_file"]);
+    expect(fakePool.requests[2].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "child-read",
+          content: expect.stringContaining("export const value = 1;"),
+        }),
+      ]),
+    );
+    const replayed: Item[] = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    const toolItems = finalItems(replayed).filter((item): item is Extract<Item, { kind: "tool" }> =>
+      item.kind === "tool"
+    );
+    expect(toolItems.map((item) => item.name)).toEqual(["run_skill"]);
+  });
+
+  it("surfaces invalid skill packages as runtime errors while continuing the turn", async () => {
+    const workspace = path.join(userDataDir, "workspace");
+    await writeWorkspaceSkill(workspace, ".agent/skills/bad-skill", {
+      frontmatter: [
+        "id: bad-skill",
+        "name: Bad Skill",
+        "description: Broken.",
+        "priority: not-a-number",
+      ],
+      body: "Broken skill.",
+    });
+    const thread = await store.createThread({
+      title: "Skills Runtime",
+      workspace,
+      mode: "code",
+    });
+    const skillService = new SkillService();
+
+    await createRuntime(new InMemoryToolRegistry([]), undefined, skillService).startTurn({
+      threadId: thread.id,
+      text: "Run normally.",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests).toHaveLength(1);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "runtime_error",
+          code: "internal",
+          message: expect.stringContaining("Skill load warning"),
+        }),
+      ]),
+    );
   });
 
   it("keeps plan instructions next to the current user message when trimming history", async () => {

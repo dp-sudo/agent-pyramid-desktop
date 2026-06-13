@@ -20,12 +20,17 @@ import {
   DEFAULT_MODEL_CONFIG,
   DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
+  DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
   LLM_PROTOCOLS,
   MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
   MCP_SERVER_TRANSPORTS,
   MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
+  MAX_RUNTIME_SKILLS_ACTIVE_LIMIT,
+  MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+  MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
+  MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
   MODEL_REASONING_EFFORTS,
   RUNTIME_COMPACTION_STRATEGIES,
   RUNTIME_PERMISSION_RULE_EFFECTS,
@@ -51,6 +56,8 @@ import {
   type RuntimePreferences,
   type RuntimePreferencesUpdate,
   type RuntimeToolName,
+  type RuntimeSkillCatalogEntry,
+  type SkillListResponse,
   type ThreadApprovalPolicy,
   type ThreadSandboxMode,
 } from "../../../shared/agent-contracts";
@@ -99,9 +106,15 @@ export interface SettingsFormState {
 export type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
 type RuntimeSaveState = Exclude<SaveState, "dirty">;
 type RuntimeCommandDraftField = "timeoutMs" | "maxOutputBytes";
+type RuntimeSkillsDraftField = "activeLimit" | "instructionBudgetBytes";
 interface RuntimeCommandDraft {
   timeoutMs: string;
   maxOutputBytes: string;
+}
+interface RuntimeSkillsDraft {
+  activeLimit: string;
+  instructionBudgetBytes: string;
+  extraRoots: string;
 }
 type RuntimePermissionRuleEditableField = "tool" | "pattern" | "effect";
 type SettingsSection =
@@ -126,7 +139,7 @@ const MODEL_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "reasoning",
 ];
 const BASIC_SETTINGS_CATEGORIES: readonly SettingsCategory[] = ["appearance"];
-const AGENT_SETTINGS_CATEGORIES: readonly SettingsCategory[] = ["compaction"];
+const AGENT_SETTINGS_CATEGORIES: readonly SettingsCategory[] = ["compaction", "skills"];
 const TOOLS_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   "permissions",
   "mcpServers",
@@ -178,6 +191,12 @@ export function SettingsView(): ReactElement {
   const [commandDraft, setCommandDraft] = useState<RuntimeCommandDraft>(() =>
     toRuntimeCommandDraft(state.runtimePreferences.command),
   );
+  const [skillsDraft, setSkillsDraft] = useState<RuntimeSkillsDraft>(() =>
+    toRuntimeSkillsDraft(state.runtimePreferences.skills),
+  );
+  const [skillCatalog, setSkillCatalog] = useState<SkillListResponse | null>(null);
+  const [skillCatalogLoading, setSkillCatalogLoading] = useState(false);
+  const [skillCatalogError, setSkillCatalogError] = useState("");
   const [permissionRulePatternDrafts, setPermissionRulePatternDrafts] = useState<
     Record<string, string>
   >({});
@@ -349,6 +368,19 @@ export function SettingsView(): ReactElement {
     setCodeBlockThresholdDraft(String(preferences.codeBlockCollapseLineThreshold));
   }, [preferences.codeBlockCollapseLineThreshold]);
 
+  useEffect(() => {
+    if (section !== "agent" || category !== "skills") return;
+    void refreshSkillCatalog(false);
+  }, [
+    category,
+    runtimePreferences.skills.activeLimit,
+    runtimePreferences.skills.enabled,
+    runtimePreferences.skills.extraRoots,
+    runtimePreferences.skills.instructionBudgetBytes,
+    section,
+    state.workspaceRoot,
+  ]);
+
   function applyProfilesState(state: ModelConfigProfilesState): void {
     const active = findActiveProfile(state);
     setProfilesState(state);
@@ -363,6 +395,7 @@ export function SettingsView(): ReactElement {
   function applyRuntimePreferences(preferences: RuntimePreferences): void {
     setRuntimePreferences(preferences);
     setCommandDraft(toRuntimeCommandDraft(preferences.command));
+    setSkillsDraft(toRuntimeSkillsDraft(preferences.skills));
     setPermissionRulePatternDrafts(toPermissionRulePatternDrafts(preferences.permissionRules));
     actions.setRuntimePreferences(preferences);
   }
@@ -715,9 +748,134 @@ export function SettingsView(): ReactElement {
     setRuntimeSaveState("saved");
   }
 
+  async function refreshSkillCatalog(showErrors = true): Promise<void> {
+    if (!state.workspaceRoot) {
+      setSkillCatalog(null);
+      setSkillCatalogError("");
+      return;
+    }
+    if (!window.agentApi) {
+      setSkillCatalog(null);
+      setSkillCatalogError(i18n.t("settings.preloadMissing"));
+      return;
+    }
+    setSkillCatalogLoading(true);
+    if (showErrors) setSkillCatalogError("");
+    try {
+      const result = await window.agentApi.skills.list({ workspace: state.workspaceRoot });
+      if (!result.ok) {
+        setSkillCatalog(null);
+        if (showErrors) setSkillCatalogError(result.message);
+        return;
+      }
+      setSkillCatalog(result.value);
+      setSkillCatalogError("");
+    } catch (loadError) {
+      setSkillCatalog(null);
+      if (showErrors) setSkillCatalogError(messageOfUnknownError(loadError));
+    } finally {
+      setSkillCatalogLoading(false);
+    }
+  }
+
   function updateCompactionStrategy(event: ChangeEvent<HTMLSelectElement>): void {
     const value = event.target.value as RuntimeCompactionStrategy;
     void updateRuntimePreferences({ compaction: { strategy: value } });
+  }
+
+  function updateSkillsDraft(field: RuntimeSkillsDraftField, value: string): void {
+    setSkillsDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function resetSkillsDraftField(field: RuntimeSkillsDraftField): void {
+    setSkillsDraft((current) => ({
+      ...current,
+      [field]: String(runtimePreferences.skills[field]),
+    }));
+  }
+
+  async function commitSkillsDraft(
+    field: RuntimeSkillsDraftField,
+    raw = skillsDraft[field],
+  ): Promise<void> {
+    const validation = validateRuntimeSkillsNumericDraft(field, raw, t);
+    if (!validation.ok) {
+      setRuntimeSaveState("error");
+      setRuntimeError(validation.message);
+      return;
+    }
+    if (validation.value === null) {
+      resetSkillsDraftField(field);
+      setRuntimeError("");
+      return;
+    }
+    if (validation.value === runtimePreferences.skills[field]) {
+      resetSkillsDraftField(field);
+      setRuntimeError("");
+      return;
+    }
+    const update: RuntimePreferencesUpdate =
+      field === "activeLimit"
+        ? { skills: { activeLimit: validation.value } }
+        : { skills: { instructionBudgetBytes: validation.value } };
+    await updateRuntimePreferences(update);
+  }
+
+  function handleSkillsDraftKeyDown(
+    field: RuntimeSkillsDraftField,
+    event: KeyboardEvent<HTMLInputElement>,
+  ): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void commitSkillsDraft(field, event.currentTarget.value);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      resetSkillsDraftField(field);
+      setRuntimeError("");
+    }
+  }
+
+  function updateSkillsExtraRoots(value: string): void {
+    setSkillsDraft((current) => ({ ...current, extraRoots: value }));
+  }
+
+  async function commitSkillsExtraRoots(raw = skillsDraft.extraRoots): Promise<void> {
+    const validation = parseRuntimeSkillsExtraRootsDraft(raw, t);
+    if (!validation.ok) {
+      setRuntimeSaveState("error");
+      setRuntimeError(validation.message);
+      return;
+    }
+    const currentRoots = runtimePreferences.skills.extraRoots;
+    if (arraysEqual(validation.value, currentRoots)) {
+      setSkillsDraft((current) => ({
+        ...current,
+        extraRoots: formatRuntimeSkillsExtraRoots(currentRoots),
+      }));
+      setRuntimeError("");
+      return;
+    }
+    await updateRuntimePreferences({ skills: { extraRoots: validation.value } });
+  }
+
+  function handleSkillsExtraRootsKeyDown(
+    event: KeyboardEvent<HTMLTextAreaElement>,
+  ): void {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      void commitSkillsExtraRoots(event.currentTarget.value);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setSkillsDraft((current) => ({
+        ...current,
+        extraRoots: formatRuntimeSkillsExtraRoots(runtimePreferences.skills.extraRoots),
+      }));
+      setRuntimeError("");
+    }
   }
 
   function updateCodeDefaultModelProfile(event: ChangeEvent<HTMLSelectElement>): void {
@@ -1806,6 +1964,207 @@ export function SettingsView(): ReactElement {
             </SettingsCard>
           ) : null}
 
+          {section === "agent" && category === "skills" ? (
+            <SettingsCard
+              title={t("settings.sections.skills")}
+              description={t("settings.sections.skillsDesc")}
+            >
+              <SettingRow
+                title={t("settings.fields.skillsEnabled")}
+                description={t("settings.descriptions.skillsEnabled")}
+                control={
+                  <Toggle
+                    checked={runtimePreferences.skills.enabled}
+                    label={t("settings.fields.skillsEnabled")}
+                    disabled={runtimeControlsDisabled}
+                    onChange={(checked) =>
+                      void updateRuntimePreferences({ skills: { enabled: checked } })
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.skillsActiveLimit")}
+                description={t("settings.descriptions.skillsActiveLimit")}
+                controlId="skills_active_limit"
+                control={
+                  <input
+                    id="skills_active_limit"
+                    type="number"
+                    min={MIN_RUNTIME_SKILLS_ACTIVE_LIMIT}
+                    max={MAX_RUNTIME_SKILLS_ACTIVE_LIMIT}
+                    step={1}
+                    value={skillsDraft.activeLimit}
+                    disabled={runtimeControlsDisabled || !runtimePreferences.skills.enabled}
+                    onChange={(event) => updateSkillsDraft("activeLimit", event.target.value)}
+                    onBlur={(event) =>
+                      void commitSkillsDraft("activeLimit", event.currentTarget.value)
+                    }
+                    onKeyDown={(event) => handleSkillsDraftKeyDown("activeLimit", event)}
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.skillsInstructionBudgetBytes")}
+                description={t("settings.descriptions.skillsInstructionBudgetBytes", {
+                  defaultBytes: DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+                })}
+                controlId="skills_instruction_budget_bytes"
+                control={
+                  <input
+                    id="skills_instruction_budget_bytes"
+                    type="number"
+                    min={MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES}
+                    max={MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES}
+                    step={1024}
+                    value={skillsDraft.instructionBudgetBytes}
+                    disabled={runtimeControlsDisabled || !runtimePreferences.skills.enabled}
+                    onChange={(event) =>
+                      updateSkillsDraft("instructionBudgetBytes", event.target.value)
+                    }
+                    onBlur={(event) =>
+                      void commitSkillsDraft(
+                        "instructionBudgetBytes",
+                        event.currentTarget.value,
+                      )
+                    }
+                    onKeyDown={(event) =>
+                      handleSkillsDraftKeyDown("instructionBudgetBytes", event)
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.skillsExtraRoots")}
+                description={t("settings.descriptions.skillsExtraRoots")}
+                controlId="skills_extra_roots"
+                wide
+                control={
+                  <textarea
+                    id="skills_extra_roots"
+                    rows={4}
+                    value={skillsDraft.extraRoots}
+                    placeholder={t("settings.placeholders.skillsExtraRoots")}
+                    disabled={runtimeControlsDisabled || !runtimePreferences.skills.enabled}
+                    onChange={(event) => updateSkillsExtraRoots(event.target.value)}
+                    onBlur={(event) => void commitSkillsExtraRoots(event.currentTarget.value)}
+                    onKeyDown={handleSkillsExtraRootsKeyDown}
+                  />
+                }
+              />
+              <SettingRow
+                title={t("settings.fields.skillsCatalog")}
+                description={t("settings.descriptions.skillsCatalog")}
+                wide
+                control={
+                  <div className="ds-settings-skill-catalog">
+                    <div className="ds-settings-skill-catalog-toolbar">
+                      <span>
+                        {state.workspaceRoot || t("settings.skills.noWorkspace")}
+                      </span>
+                      <button
+                        type="button"
+                        className="ds-settings-secondary-action"
+                        disabled={!state.workspaceRoot || skillCatalogLoading}
+                        onClick={() => void refreshSkillCatalog()}
+                      >
+                        {skillCatalogLoading
+                          ? t("settings.skills.loading")
+                          : t("settings.skills.refresh")}
+                      </button>
+                    </div>
+                    {skillCatalogError ? (
+                      <p className="ds-settings-skill-error">{skillCatalogError}</p>
+                    ) : null}
+                    {!state.workspaceRoot ? (
+                      <p className="ds-settings-empty-note">
+                        {t("settings.skills.noWorkspaceDesc")}
+                      </p>
+                    ) : null}
+                    {state.workspaceRoot && skillCatalog && !skillCatalogLoading ? (
+                      <>
+                        <div className="ds-settings-skill-meta">
+                          <span>
+                            {t("settings.skills.catalogSummary", {
+                              count: skillCatalog.skills.length,
+                              roots: skillCatalog.roots.length,
+                            })}
+                          </span>
+                          <span>
+                            {skillCatalog.enabled
+                              ? t("settings.skills.enabled")
+                              : t("settings.skills.disabled")}
+                          </span>
+                        </div>
+                        {skillCatalog.validationErrors.length > 0 ? (
+                          <div className="ds-settings-skill-warnings">
+                            <strong>{t("settings.skills.validationWarnings")}</strong>
+                            {skillCatalog.validationErrors.map((warning) => (
+                              <span key={`${warning.root}:${warning.message}`}>
+                                {warning.root}: {warning.message}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        {skillCatalog.roots.length > 0 ? (
+                          <div className="ds-settings-skill-roots">
+                            <strong>{t("settings.skills.roots")}</strong>
+                            {skillCatalog.roots.map((root) => (
+                              <span key={`${root.scope}:${root.path}`}>
+                                {t(`settings.skillScopes.${root.scope}`)} · {root.path}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        {skillCatalog.skills.length === 0 ? (
+                          <p className="ds-settings-empty-note">
+                            {t("settings.skills.empty")}
+                          </p>
+                        ) : (
+                          <div className="ds-settings-skill-list">
+                            {skillCatalog.skills.map((skill) => (
+                              <article className="ds-settings-skill-card" key={skill.id}>
+                                <div className="ds-settings-skill-card-header">
+                                  <div>
+                                    <strong>{skill.name}</strong>
+                                    <span>{skill.id}</span>
+                                  </div>
+                                  <span>
+                                    {t(`settings.skillScopes.${skill.scope}`)} ·{" "}
+                                    {t(`settings.skillRunModes.${skill.runAs}`)}
+                                  </span>
+                                </div>
+                                {skill.description ? <p>{skill.description}</p> : null}
+                                <div className="ds-settings-skill-card-meta">
+                                  <span>{formatSkillTriggerSummary(skill, t)}</span>
+                                  {skill.allowedTools.length > 0 ? (
+                                    <span>
+                                      {t("settings.skills.allowedTools", {
+                                        tools: skill.allowedTools.join(", "),
+                                      })}
+                                    </span>
+                                  ) : null}
+                                  {skill.referenceCount > 0 ? (
+                                    <span>
+                                      {t("settings.skills.references", {
+                                        count: skill.referenceCount,
+                                        names: skill.referenceNames.join(", "),
+                                      })}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
+                }
+              />
+            </SettingsCard>
+          ) : null}
+
           {section === "tools" && category === "permissions" ? (
             <SettingsCard
               title={t("settings.sections.permissions")}
@@ -2331,6 +2690,20 @@ function toRuntimeCommandDraft(
   };
 }
 
+function toRuntimeSkillsDraft(
+  skills: RuntimePreferences["skills"],
+): RuntimeSkillsDraft {
+  return {
+    activeLimit: String(skills.activeLimit),
+    instructionBudgetBytes: String(skills.instructionBudgetBytes),
+    extraRoots: formatRuntimeSkillsExtraRoots(skills.extraRoots),
+  };
+}
+
+function formatRuntimeSkillsExtraRoots(roots: readonly string[]): string {
+  return roots.join("\n");
+}
+
 function toPermissionRulePatternDrafts(
   rules: readonly RuntimePermissionRule[],
 ): Record<string, string> {
@@ -2423,6 +2796,14 @@ type RuntimeCommandDraftValidationResult =
   | { ok: true; value: number | null }
   | { ok: false; message: string };
 
+type RuntimeSkillsNumericDraftValidationResult =
+  | { ok: true; value: number | null }
+  | { ok: false; message: string };
+
+type RuntimeSkillsExtraRootsDraftValidationResult =
+  | { ok: true; value: string[] }
+  | { ok: false; message: string };
+
 type BasicPreferenceDraftValidationResult =
   | { ok: true; value: number }
   | { ok: false; message: string };
@@ -2457,6 +2838,87 @@ export function validateRuntimeCommandDraft(
     };
   }
   return { ok: true, value: parsed };
+}
+
+export function validateRuntimeSkillsNumericDraft(
+  field: RuntimeSkillsDraftField,
+  raw: string,
+  t: SettingsTranslator,
+): RuntimeSkillsNumericDraftValidationResult {
+  const label = field === "activeLimit"
+    ? t("settings.fields.skillsActiveLimit")
+    : t("settings.fields.skillsInstructionBudgetBytes");
+  const min = field === "activeLimit"
+    ? MIN_RUNTIME_SKILLS_ACTIVE_LIMIT
+    : MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES;
+  const max = field === "activeLimit"
+    ? MAX_RUNTIME_SKILLS_ACTIVE_LIMIT
+    : MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES;
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: null };
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return {
+      ok: false,
+      message: t("settings.errors.nonNegativeInteger", { field: label }),
+    };
+  }
+  if (parsed < min || parsed > max) {
+    return {
+      ok: false,
+      message: t("settings.errors.integerRange", { field: label, min, max }),
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+export function parseRuntimeSkillsExtraRootsDraft(
+  raw: string,
+  t: SettingsTranslator,
+): RuntimeSkillsExtraRootsDraftValidationResult {
+  const roots = raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const invalidIndex = roots.findIndex((root) => root.includes("\0"));
+  if (invalidIndex >= 0) {
+    return {
+      ok: false,
+      message: t("settings.errors.skillsExtraRootNul", { index: invalidIndex + 1 }),
+    };
+  }
+  return { ok: true, value: Array.from(new Set(roots)) };
+}
+
+export function formatSkillTriggerSummary(
+  skill: RuntimeSkillCatalogEntry,
+  t: SettingsTranslator,
+): string {
+  const parts: string[] = [];
+  if (skill.trigger.manual) {
+    parts.push(t("settings.skills.manualTrigger"));
+  }
+  if (skill.trigger.commands.length > 0) {
+    parts.push(t("settings.skills.commands", {
+      values: skill.trigger.commands.join(", "),
+    }));
+  }
+  if (skill.trigger.keywords.length > 0) {
+    parts.push(t("settings.skills.keywords", {
+      values: skill.trigger.keywords.join(", "),
+    }));
+  }
+  if (skill.trigger.promptPatterns.length > 0) {
+    parts.push(t("settings.skills.promptPatterns", {
+      values: skill.trigger.promptPatterns.join(", "),
+    }));
+  }
+  if (skill.trigger.fileTypes.length > 0) {
+    parts.push(t("settings.skills.fileTypes", {
+      values: skill.trigger.fileTypes.join(", "),
+    }));
+  }
+  return parts.length > 0 ? parts.join(" · ") : t("settings.skills.noTriggers");
 }
 
 export function validateCodeBlockCollapseLineThreshold(
@@ -2535,6 +2997,19 @@ export function mergeRuntimePreferencesUpdates(
     ...(current.compaction || update.compaction
       ? { compaction: { ...current.compaction, ...update.compaction } }
       : {}),
+    ...(current.skills || update.skills
+      ? {
+          skills: {
+            ...current.skills,
+            ...update.skills,
+            ...(update.skills?.extraRoots
+              ? { extraRoots: [...update.skills.extraRoots] }
+              : current.skills?.extraRoots
+                ? { extraRoots: [...current.skills.extraRoots] }
+                : {}),
+          },
+        }
+      : {}),
     ...(update.permissionRules !== undefined
       ? { permissionRules: clonePermissionRules(update.permissionRules) }
       : current.permissionRules !== undefined
@@ -2571,6 +3046,11 @@ function cloneMcpServerConfig(server: McpServerConfig): McpServerConfig {
     headers: { ...server.headers },
     readOnlyTools: [...server.readOnlyTools],
   };
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index]);
 }
 
 export function createDefaultMcpServer(name: string): McpServerConfig {

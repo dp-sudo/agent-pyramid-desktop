@@ -29,6 +29,8 @@ import type {
   RuntimeEvent,
   RuntimePreferences,
   RuntimePreferencesUpdate,
+  SkillListRequest,
+  SkillListResponse,
   SseSubscribeRequest,
   SseUnsubscribeRequest,
   ThreadCreateInput,
@@ -108,6 +110,7 @@ import {
   MCP_TOOLS_REFRESH_CHANNEL,
   RUNTIME_PREFERENCES_GET_CHANNEL,
   RUNTIME_PREFERENCES_UPDATE_CHANNEL,
+  SKILL_LIST_CHANNEL,
 } from "../shared/ipc";
 
 const threads = {
@@ -434,6 +437,14 @@ const runtimePreferences = {
   },
 };
 
+const skills = {
+  list(request: SkillListRequest): Promise<IpcResult<SkillListResponse>> {
+    return ipcRenderer.invoke(SKILL_LIST_CHANNEL, request) as Promise<
+      IpcResult<SkillListResponse>
+    >;
+  },
+};
+
 export const agentApi = {
   threads,
   turns,
@@ -448,6 +459,7 @@ export const agentApi = {
   write,
   modelConfig,
   runtimePreferences,
+  skills,
 };
 
 contextBridge.exposeInMainWorld("agentApi", agentApi);

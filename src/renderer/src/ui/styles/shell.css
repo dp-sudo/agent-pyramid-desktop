@@ -3321,6 +3321,136 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
+.ds-settings-skill-catalog {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+}
+
+.ds-settings-skill-catalog-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ds-settings-skill-catalog-toolbar > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-settings-skill-error {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ds-danger);
+  font-size: var(--ds-size-caption);
+  line-height: 1.45;
+}
+
+.ds-settings-skill-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ds-settings-skill-meta span,
+.ds-settings-skill-card-meta span {
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  font-weight: 650;
+  line-height: 1.35;
+  padding: 4px 8px;
+}
+
+.ds-settings-skill-warnings,
+.ds-settings-skill-roots {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-card);
+  padding: 10px;
+}
+
+.ds-settings-skill-warnings strong,
+.ds-settings-skill-roots strong {
+  color: var(--ds-text);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-settings-skill-warnings span,
+.ds-settings-skill-roots span {
+  overflow-wrap: anywhere;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  line-height: 1.45;
+}
+
+.ds-settings-skill-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ds-settings-skill-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-subtle);
+  padding: 12px;
+}
+
+.ds-settings-skill-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ds-settings-skill-card-header div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ds-settings-skill-card-header strong {
+  overflow-wrap: anywhere;
+  color: var(--ds-text);
+  font-size: var(--ds-size-body-lg);
+  font-weight: 700;
+}
+
+.ds-settings-skill-card-header span {
+  overflow-wrap: anywhere;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-settings-skill-card > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-body);
+  line-height: 1.5;
+}
+
+.ds-settings-skill-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
 .ds-settings-mcp-list {
   display: grid;
   gap: 12px;
@@ -3516,6 +3646,7 @@ textarea:focus-visible {
 
 .ds-setting-row-control input,
 .ds-setting-row-control select,
+.ds-setting-row-control textarea,
 .ds-secret-input input {
   min-height: 38px;
   width: 100%;
@@ -3529,9 +3660,15 @@ textarea:focus-visible {
 
 .ds-setting-row-control input:focus,
 .ds-setting-row-control select:focus,
+.ds-setting-row-control textarea:focus,
 .ds-secret-input:focus-within {
   border-color: var(--ds-accent);
   box-shadow: var(--ds-focus-ring);
+}
+
+.ds-setting-row-control textarea {
+  min-height: 104px;
+  resize: vertical;
 }
 
 .ds-secret-input {
@@ -3805,6 +3942,12 @@ textarea:focus-visible {
 
   .ds-settings-secondary-action {
     width: 100%;
+  }
+
+  .ds-settings-skill-catalog-toolbar,
+  .ds-settings-skill-card-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .ds-setting-row-control {

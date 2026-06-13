@@ -523,6 +523,8 @@ Contracts:
 - `RuntimeApprovalExperiencePreferences`
 - `RuntimeCommandPreferences`
 - `RuntimeCompactionPreferences`
+- `RuntimeSkillsPreferences`
+- `SkillListRequest` / `SkillListResponse`
 - `RuntimePermissionRule`
 - `McpServerConfig`
 - `McpServerStatusRecord`
@@ -593,6 +595,25 @@ Key semantics:
   override.
 - `compaction.enabled` and `compaction.strategy` are consumed by
   `AgentRuntime.prepareMessagesForRequest()` before every model request.
+- `skills.enabled`, `skills.activeLimit`, `skills.instructionBudgetBytes`, and
+  `skills.extraRoots` control project skill discovery and injection. When
+  enabled, `SkillService` scans workspace convention roots plus configured extra
+  roots, resolves matched `SKILL.md` packages, and injects budgeted skill
+  instructions as dynamic runtime context. Built-in skills are represented as
+  `scope: "builtin"` and are lower priority than project/custom filesystem
+  skills with the same id. The read-only `list_skills` and `run_skill` tools
+  reuse the same preferences to expose the catalog, load warnings and inline
+  skill body. `runAs: subagent` skills execute in a transient isolated child LLM
+  loop and return only the final answer to the parent `ToolItem`; child messages
+  and child tool calls are not persisted.
+  Invalid configured roots or malformed skill packages are surfaced as
+  validation/runtime errors; missing convention roots are ignored.
+- `SkillListResponse` is a renderer IPC diagnostics model, not persisted data. It
+  returns the current workspace, discovery enabled state, `RuntimeSkillCatalogEntry[]`
+  summaries, scan root summaries and validation warnings for Settings. Catalog
+  entries expose metadata, trigger summaries, allowed tool names and reference
+  names/counts only; full `SKILL.md` bodies and reference contents are not part of
+  this response shape.
 - `approvalExperience` is consumed by renderer presentation only; it controls
   approval diff expansion, pending-approval scrolling, read-only tool record
   visibility and failure toasts without bypassing runtime approval enforcement.

@@ -108,6 +108,7 @@ flowchart LR
 | Main composition | `src/main/index.ts` | 创建 stores、event bus、worker pool、tool registry、AgentRuntime，注册 IPC handlers，创建窗口。 |
 | Runtime orchestration | `src/main/application/agent-runtime.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、approval gate、中断和事件广播。 |
 | Tool system | `src/main/application/tools/*`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口和内置工具。 |
+| Skills system | `src/shared/skills/*`、`src/main/skills/skill-service.ts`、`src/main/application/tools/skill-tools.ts`、`src/main/ipc/skills-handlers.ts` | 发现 workspace skills、解析 `SKILL.md`、按 turn 匹配注入 inline 动态上下文，并通过只读 `list_skills` / `run_skill` 工具和 Settings `skills:list` IPC 暴露技能目录摘要、验证警告、inline 技能指令和 isolated read-only subagent 结果。 |
 | MCP host | `src/main/infrastructure/mcp/*`、`src/main/ipc/mcp-handlers.ts` | stdio / Streamable HTTP MCP client lifecycle、动态工具注册、cache/lazy schema、startup stats、auth diagnostics、prompts/resources surface 和 MCP IPC。 |
 | LLM worker | `src/main/infrastructure/llm-worker/*` | main 到 worker 的请求路由、流式 chunk 转发和取消。 |
 | Provider gateway | `src/main/infrastructure/minimax/*` | MiniMax、DeepSeek、自定义 OpenAI-compatible 请求适配；runtime 会把所选模型 profile 的 `protocol` 传入 `LlmRequest`，由 gateway 分流到 OpenAI-compatible 或 Anthropic-compatible 请求形态。 |
@@ -133,7 +134,8 @@ flowchart TD
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool"]
   Registry["InMemoryToolRegistry"]
-  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateGoalTools()"]
+  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateSkillTools()\ncreateGoalTools()"]
+  Skills["SkillService"]
   Runtime["AgentRuntime"]
   Handlers["register*Handlers"]
   Window["BrowserWindow"]
@@ -142,11 +144,13 @@ flowchart TD
   AppReady --> Bus
   AppReady --> Pool
   AppReady --> Registry
+  AppReady --> Skills
   Registry --> Tools
   Stores --> Runtime
   Bus --> Runtime
   Pool --> Runtime
   Registry --> Runtime
+  Skills --> Runtime
   Runtime --> Handlers
   Stores --> Handlers
   Bus --> Handlers
@@ -169,6 +173,7 @@ flowchart TD
 | Stream runtime events | `src/main/event-bus.ts` | `src/main/ipc/sse-handlers.ts`、`src/preload/index.ts`、`Workbench.tsx` |
 | Add or change IPC | `src/shared/ipc.ts`、`src/shared/ipc-errors.ts` | `src/shared/agent-contracts.ts`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts` |
 | Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、`AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime` tool access policy、`AgentRuntime.resolveToolPolicy()` |
+| Change skills | `src/shared/skills/*` | `src/main/skills/skill-service.ts`、`src/main/application/tools/skill-tools.ts`、`src/main/ipc/skills-handlers.ts`、`src/main/application/agent-runtime.ts`、`RuntimePreferences.skills`、Settings UI、runtime/IPC/renderer tests |
 | Change MCP | `src/main/infrastructure/mcp/*` | `src/shared/agent-contracts.ts`、`src/shared/ipc.ts`、`src/main/ipc/mcp-handlers.ts`、`src/preload/index.ts`、`SettingsView.tsx`、`src/renderer/src/ui/mcp-input.ts` |
 | Change thread data | `src/shared/agent-contracts.ts` | `src/main/persistence/index.ts`、IPC handlers、renderer state and tests |
 | Change model config | `src/shared/agent-contracts.ts` | `src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`SettingsView.tsx` |
@@ -189,6 +194,23 @@ flowchart TD
   persisted separately from the final `ToolItem.result`.
 - Tools are exposed to the model through `ToolRegistry.listDefinitions()`.
 - Tool execution goes through `ToolRegistry.execute()`; direct tool bypass is not part of the architecture.
+- Skills are discovered from workspace convention roots (`.agent/skills`,
+  `.agents/skills`, `.claude/skills`, `.codex/skills`, `.reasonix/skills`,
+  `skills`) and configured `RuntimePreferences.skills.extraRoots`.
+- Built-in skills (`explore`, `review`, `teach-me`, `interview`) are appended
+  after filesystem discovery. Project skills override custom skills, and both
+  override built-ins with the same normalized id.
+- Matched skills are injected as dynamic system context next to plan/goal
+  instructions; the stable base `systemPrompt` remains unchanged.
+- `list_skills` and `run_skill` are read-only tools in both Code and Write
+  modes. `list_skills` returns the workspace skills index, roots and validation
+  warnings; `run_skill` returns inline skills' full `SKILL.md` body and
+  `references/*.md` content. `runAs: subagent` skills run in an isolated child
+  LLM loop with only their allowed read-only tools exposed; only the final
+  answer returns to the parent turn.
+- Settings uses `skills:list` through preload to show the same workspace catalog
+  as summaries, scan roots and validation warnings without exposing full skill
+  bodies or reference contents to the renderer settings panel.
 - MCP servers are configured in `RuntimePreferences.mcpServers`, connected by
   `McpHost`, and their tools are registered as `mcp__<server>__<tool>` in the
   same `ToolRegistry`. Matching cached schema can expose lazy placeholders
@@ -248,6 +270,7 @@ flowchart TD
 | Worker pool | `tests/main/infrastructure/worker-pool.test.ts` |
 | Provider gateway | `tests/main/infrastructure/minimax-gateway.test.ts`、`tests/main/infrastructure/minimax-types.test.ts` |
 | MCP host/client | `tests/main/infrastructure/mcp-*.test.ts`、`tests/main/ipc/mcp-handlers.test.ts`、`tests/renderer/mcp-input.test.ts` |
+| Skills | `tests/main/skills/skill-service.test.ts`、`tests/main/ipc/skills-handlers.test.ts`、`tests/main/application/tools.test.ts`、`tests/renderer/settings-view.test.ts` |
 | Thread persistence | `tests/main/persistence/jsonl-thread-store.test.ts` |
 | Attachments | `tests/main/persistence/attachment-store.test.ts` |
 | Model config | `tests/main/persistence/model-config-store.test.ts` |

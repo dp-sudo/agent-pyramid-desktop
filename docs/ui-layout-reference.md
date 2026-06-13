@@ -914,7 +914,7 @@ Category ownership:
 | --- | --- | --- |
 | `basic` | `appearance` | Renderer `basicPreferences` localStorage, i18n and theme helpers. |
 | `model` | `profiles`, `connection`, `context`, `reasoning` | Main `ModelConfigStore` through `modelConfig.*` IPC. |
-| `agent` | `compaction` | Config-backed `RuntimePreferencesStore`; consumed by `AgentRuntime.prepareMessagesForRequest()`. |
+| `agent` | `compaction`, `skills` | Config-backed `RuntimePreferencesStore`; consumed by `AgentRuntime.prepareMessagesForRequest()` and `SkillService` turn resolution. |
 | `tools` | `permissions`, `mcpServers`, `toolAccess`, `commandLimits` | Config-backed `RuntimePreferencesStore`; consumed by thread creation, MCP host configuration, tool catalog filtering and command-backed tools. |
 | `workbench` | `startup`, `layout`, `session`, `modelDefaults`, `attachments` | Renderer `basicPreferences` for UI-only fields and composer attachment entry points; config-backed `RuntimePreferencesStore` for Code/Write default model profile ids. |
 | `visibility` | `approvalPresentation` | Config-backed `RuntimePreferencesStore`; consumed by approval/timeline/toast presentation in renderer. |
@@ -929,6 +929,7 @@ Model categories:
 Agent Behavior categories:
 
 - `compaction`
+- `skills`
 
 Tools And Permissions categories:
 
@@ -1128,6 +1129,21 @@ Compaction:
 - Strategy select: `balanced`, `recent-only`, `preserve-tools`, `aggressive`.
 - Disabling automatic compaction still keeps hard context-window enforcement in
   runtime.
+
+Skills:
+
+- Enable/disable workspace, custom and built-in skill discovery.
+- Active skill limit numeric input controls how many matched skills can inject
+  turn context.
+- Instruction budget numeric input controls the UTF-8 byte budget for injected
+  skill instructions.
+- Extra roots textarea accepts one path per line; relative paths resolve inside
+  the active workspace.
+- Discovered skills panel calls `agentApi.skills.list({ workspace })` for the
+  current workspace and displays compact catalog stats, scan roots, validation
+  warnings, scope/run mode labels, trigger summaries, allowed tools and reference
+  names. The panel is read-only and does not render full `SKILL.md` bodies or
+  reference contents.
 
 ### Tools And Permissions
 

@@ -42,6 +42,7 @@ describe("RuntimePreferencesStore", () => {
     expect(raw.runtimePreferences).toEqual(DEFAULT_RUNTIME_PREFERENCES);
     expect(preferences.toolAvailability.write.apply_patch).toBe(false);
     expect(preferences.toolAvailability.code.apply_patch).toBe(true);
+    expect(preferences.skills).toEqual(DEFAULT_RUNTIME_PREFERENCES.skills);
     expect(existsSync(path.join(userDataDir, "runtime-preferences.json"))).toBe(false);
   });
 
@@ -93,6 +94,12 @@ describe("RuntimePreferencesStore", () => {
         enabled: false,
         strategy: "recent-only",
       },
+      skills: {
+        enabled: false,
+        activeLimit: 5,
+        instructionBudgetBytes: 32_000,
+        extraRoots: ["custom-skills"],
+      },
       permissionRules: [
         {
           id: "allow-tests",
@@ -123,6 +130,12 @@ describe("RuntimePreferencesStore", () => {
     );
     expect(updated.compaction.enabled).toBe(false);
     expect(updated.compaction.strategy).toBe("recent-only");
+    expect(updated.skills).toEqual({
+      enabled: false,
+      activeLimit: 5,
+      instructionBudgetBytes: 32_000,
+      extraRoots: ["custom-skills"],
+    });
     expect(updated.permissionRules).toEqual([
       {
         id: "allow-tests",
@@ -271,6 +284,16 @@ describe("RuntimePreferencesStore", () => {
     ).rejects.toThrow("toolAvailability tool value must be a boolean.");
     await expect(
       store.update(malformedRuntimePreferencesUpdate({
+        skills: { activeLimit: -1 },
+      })),
+    ).rejects.toThrow("skills.activeLimit must be an integer");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        skills: { extraRoots: ["ok", "bad\0root"] },
+      })),
+    ).rejects.toThrow("skills.extraRoots[1] cannot contain NUL bytes.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
         toolAvailability: { code: {} },
       })),
     ).rejects.toThrow("toolAvailability mode must include at least one tool.");
@@ -325,6 +348,12 @@ describe("RuntimePreferencesStore", () => {
         enabled: false,
         strategy: "unknown",
       },
+      skills: {
+        enabled: false,
+        activeLimit: 99,
+        instructionBudgetBytes: 512,
+        extraRoots: ["valid-root", "bad\0root"],
+      },
       permissionRules: [
         { id: "allow-tests", tool: "command", pattern: "npm test*", effect: "allow" },
       ],
@@ -354,6 +383,11 @@ describe("RuntimePreferencesStore", () => {
     expect(preferences.command.maxOutputBytes).toBe(65_536);
     expect(preferences.compaction.enabled).toBe(false);
     expect(preferences.compaction.strategy).toBe(DEFAULT_RUNTIME_PREFERENCES.compaction.strategy);
+    expect(preferences.skills).toEqual({
+      ...DEFAULT_RUNTIME_PREFERENCES.skills,
+      enabled: false,
+      extraRoots: ["valid-root"],
+    });
     expect(preferences.permissionRules).toEqual([
       { id: "allow-tests", tool: "command", pattern: "npm test*", effect: "allow" },
     ]);
@@ -363,11 +397,13 @@ describe("RuntimePreferencesStore", () => {
   it("parses runtime preferences updates independently for IPC reuse", () => {
     expect(parseRuntimePreferencesUpdate({
       command: { maxOutputBytes: 4096 },
+      skills: { activeLimit: 2 },
       permissionRules: [
         { id: "deny-rm", tool: "command", pattern: "rm *", effect: "deny" },
       ],
     })).toEqual({
       command: { maxOutputBytes: 4096 },
+      skills: { activeLimit: 2 },
       permissionRules: [
         { id: "deny-rm", tool: "command", pattern: "rm *", effect: "deny" },
       ],

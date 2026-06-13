@@ -294,6 +294,8 @@ export const RUNTIME_TOOL_NAMES = [
   "detect_shell_environment",
   "diagnose_workspace",
   "diagnose_file",
+  "list_skills",
+  "run_skill",
   "create_plan",
   "update_goal",
 ] as const;
@@ -312,6 +314,8 @@ export const RUNTIME_READ_ONLY_TOOL_NAMES = [
   "read_command_session",
   "detect_shell_environment",
   "diagnose_file",
+  "list_skills",
+  "run_skill",
 ] as const satisfies readonly RuntimeToolName[];
 export type RuntimeReadOnlyToolName = (typeof RUNTIME_READ_ONLY_TOOL_NAMES)[number];
 
@@ -343,6 +347,63 @@ export interface RuntimeCommandPreferences {
 export interface RuntimeCompactionPreferences {
   enabled: boolean;
   strategy: RuntimeCompactionStrategy;
+}
+
+export interface RuntimeSkillsPreferences {
+  enabled: boolean;
+  activeLimit: number;
+  instructionBudgetBytes: number;
+  extraRoots: string[];
+}
+
+export type RuntimeSkillScope = "project" | "custom" | "builtin";
+export type RuntimeSkillRunAs = "inline" | "subagent";
+
+export interface RuntimeSkillTriggerSummary {
+  manual: boolean;
+  keywords: string[];
+  commands: string[];
+  promptPatterns: string[];
+  fileTypes: string[];
+}
+
+export interface RuntimeSkillCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  runAs: RuntimeSkillRunAs;
+  scope: RuntimeSkillScope;
+  priority: number;
+  rootDir: string;
+  skillPath: string;
+  allowedTools: string[];
+  trigger: RuntimeSkillTriggerSummary;
+  referenceCount: number;
+  referenceNames: string[];
+}
+
+export interface RuntimeSkillRootSummary {
+  path: string;
+  scope: RuntimeSkillScope;
+  missingIsError: boolean;
+}
+
+export interface RuntimeSkillValidationSummary {
+  root: string;
+  message: string;
+}
+
+export interface SkillListRequest {
+  workspace: string;
+}
+
+export interface SkillListResponse {
+  workspace: string;
+  enabled: boolean;
+  skills: RuntimeSkillCatalogEntry[];
+  roots: RuntimeSkillRootSummary[];
+  validationErrors: RuntimeSkillValidationSummary[];
 }
 
 export const MCP_SERVER_TRANSPORTS = ["stdio", "streamable-http"] as const;
@@ -477,6 +538,7 @@ export interface RuntimePreferences {
   approvalExperience: RuntimeApprovalExperiencePreferences;
   command: RuntimeCommandPreferences;
   compaction: RuntimeCompactionPreferences;
+  skills: RuntimeSkillsPreferences;
   permissionRules: RuntimePermissionRule[];
   mcpServers: McpServerConfig[];
 }
@@ -490,6 +552,7 @@ export interface RuntimePreferencesUpdate {
   approvalExperience?: Partial<RuntimeApprovalExperiencePreferences>;
   command?: Partial<RuntimeCommandPreferences>;
   compaction?: Partial<RuntimeCompactionPreferences>;
+  skills?: Partial<RuntimeSkillsPreferences>;
   permissionRules?: RuntimePermissionRule[];
   mcpServers?: McpServerConfig[];
 }
@@ -500,6 +563,12 @@ export const MAX_RUNTIME_COMMAND_TIMEOUT_MS = 120_000;
 export const DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES = 32 * 1024;
 export const MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES = 1_024;
 export const MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES = 1024 * 1024;
+export const DEFAULT_RUNTIME_SKILLS_ACTIVE_LIMIT = 3;
+export const MIN_RUNTIME_SKILLS_ACTIVE_LIMIT = 0;
+export const MAX_RUNTIME_SKILLS_ACTIVE_LIMIT = 16;
+export const DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES = 24_000;
+export const MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES = 1_024;
+export const MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES = 128 * 1024;
 
 export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferences = {
   code: {
@@ -537,6 +606,8 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     detect_shell_environment: true,
     diagnose_workspace: true,
     diagnose_file: true,
+    list_skills: true,
+    run_skill: true,
     create_plan: true,
     update_goal: true,
   },
@@ -575,6 +646,8 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     detect_shell_environment: false,
     diagnose_workspace: false,
     diagnose_file: false,
+    list_skills: true,
+    run_skill: true,
     create_plan: true,
     update_goal: true,
   },
@@ -599,6 +672,12 @@ export const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   compaction: {
     enabled: true,
     strategy: "balanced",
+  },
+  skills: {
+    enabled: true,
+    activeLimit: DEFAULT_RUNTIME_SKILLS_ACTIVE_LIMIT,
+    instructionBudgetBytes: DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+    extraRoots: [],
   },
   permissionRules: [],
   mcpServers: [],
@@ -649,8 +728,21 @@ export function isRuntimePreferences(value: unknown): value is RuntimePreference
     isRuntimeApprovalExperiencePreferences(value.approvalExperience) &&
     isRuntimeCommandPreferences(value.command) &&
     isRuntimeCompactionPreferences(value.compaction) &&
+    isRuntimeSkillsPreferences(value.skills) &&
     isRuntimePermissionRules(value.permissionRules) &&
     isMcpServerConfigs(value.mcpServers);
+}
+
+export function isSkillListResponse(value: unknown): value is SkillListResponse {
+  if (!isRecord(value)) return false;
+  return hasString(value, "workspace") &&
+    typeof value.enabled === "boolean" &&
+    Array.isArray(value.skills) &&
+    value.skills.every(isRuntimeSkillCatalogEntry) &&
+    Array.isArray(value.roots) &&
+    value.roots.every(isRuntimeSkillRootSummary) &&
+    Array.isArray(value.validationErrors) &&
+    value.validationErrors.every(isRuntimeSkillValidationSummary);
 }
 
 // ----------------------------------------------------------------------------
@@ -1582,6 +1674,79 @@ function isRuntimeCompactionPreferences(
   if (!isRecord(value)) return false;
   return typeof value.enabled === "boolean" &&
     isRuntimeCompactionStrategy(value.strategy);
+}
+
+function isRuntimeSkillsPreferences(value: unknown): value is RuntimeSkillsPreferences {
+  if (!isRecord(value)) return false;
+  return typeof value.enabled === "boolean" &&
+    isIntegerInRange(
+      value.activeLimit,
+      MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
+      MAX_RUNTIME_SKILLS_ACTIVE_LIMIT,
+    ) &&
+    isIntegerInRange(
+      value.instructionBudgetBytes,
+      MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+      MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+    ) &&
+    Array.isArray(value.extraRoots) &&
+    value.extraRoots.every((entry) => typeof entry === "string" && !entry.includes("\0"));
+}
+
+function isRuntimeSkillScope(value: unknown): value is RuntimeSkillScope {
+  return value === "project" || value === "custom" || value === "builtin";
+}
+
+function isRuntimeSkillRunAs(value: unknown): value is RuntimeSkillRunAs {
+  return value === "inline" || value === "subagent";
+}
+
+function isRuntimeSkillTriggerSummary(
+  value: unknown,
+): value is RuntimeSkillTriggerSummary {
+  if (!isRecord(value)) return false;
+  return typeof value.manual === "boolean" &&
+    Array.isArray(value.keywords) &&
+    value.keywords.every(isStringWithoutNul) &&
+    Array.isArray(value.commands) &&
+    value.commands.every(isStringWithoutNul) &&
+    Array.isArray(value.promptPatterns) &&
+    value.promptPatterns.every(isStringWithoutNul) &&
+    Array.isArray(value.fileTypes) &&
+    value.fileTypes.every(isStringWithoutNul);
+}
+
+function isRuntimeSkillCatalogEntry(value: unknown): value is RuntimeSkillCatalogEntry {
+  if (!isRecord(value)) return false;
+  return hasNonBlankString(value, "id") &&
+    hasNonBlankString(value, "name") &&
+    hasString(value, "description") &&
+    hasNonBlankString(value, "version") &&
+    isRuntimeSkillRunAs(value.runAs) &&
+    isRuntimeSkillScope(value.scope) &&
+    Number.isInteger(value.priority) &&
+    hasString(value, "rootDir") &&
+    hasString(value, "skillPath") &&
+    Array.isArray(value.allowedTools) &&
+    value.allowedTools.every(isStringWithoutNul) &&
+    isRuntimeSkillTriggerSummary(value.trigger) &&
+    isNonNegativeInteger(value.referenceCount) &&
+    Array.isArray(value.referenceNames) &&
+    value.referenceNames.every(isStringWithoutNul);
+}
+
+function isRuntimeSkillRootSummary(value: unknown): value is RuntimeSkillRootSummary {
+  if (!isRecord(value)) return false;
+  return hasString(value, "path") &&
+    isRuntimeSkillScope(value.scope) &&
+    typeof value.missingIsError === "boolean";
+}
+
+function isRuntimeSkillValidationSummary(
+  value: unknown,
+): value is RuntimeSkillValidationSummary {
+  if (!isRecord(value)) return false;
+  return hasString(value, "root") && hasString(value, "message");
 }
 
 function isRuntimePermissionRules(value: unknown): value is RuntimePermissionRule[] {

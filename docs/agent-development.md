@@ -24,6 +24,7 @@
 - 建立首批 coding agent 写入工具：`read_file` 会记录文件读状态，`read_file` / `search_files` 都严格校验 UTF-8 文本；`edit_file` / `write_file` 使用共享 workspace 路径策略、读后未过期校验和结构化 diff preview，经 approval gate 后写入工作区文本文件；`apply_patch` 支持受限 unified diff dry-run、多文件 diff preview、`No newline at end of file` 语义保留和一次性提交；`rollback_file` 可回滚当前 app 会话内最近一次 agent 文件写入。
 - 建立开发命令工具组：`run_command`、可配置 `shell_command`、`git_bash_command`、`powershell_command`、`wsl_command`、`rg_search`、结构化 Git 工具、npm/pnpm/yarn/bun 包管理器包装器、通用 lint/format/test/build 包装器、长驻 command session 和 shell 环境探测都通过 `createCommandTools()` 独立注册。
 - 建立工具进度事件：`AgentToolContext.reportProgress` 让前台命令类工具将 stdout/stderr 片段实时转成 `tool_progress` runtime event，renderer 按 `toolCallId` 合并到运行中的 tool card，最终 `ToolItem.result` 仍由完成事件覆盖。
+- 建立 workspace skills 运行时注入：`src/shared/skills/*` 解析 `SKILL.md`、触发器和 references，`src/main/skills/skill-service.ts` 按 workspace 约定根与 `RuntimePreferences.skills.extraRoots` 发现技能，并追加内置 `explore`、`review`、`teach-me`、`interview` playbook；`AgentRuntime` 在每个 turn 前解析匹配 inline 技能并注入动态 system context，`createSkillTools()` 提供只读 `list_skills` / `run_skill` 工具查看技能目录、加载警告和 inline 技能说明；`runAs: subagent` 技能由 runtime 启动 isolated read-only child LLM loop，父上下文只接收最终答案。
 - 建立持久化 checkpoint / rewind：`src/main/persistence/checkpoint-store.ts` 在 Electron `userData/checkpoints/` 下按 thread JSONL 保存 turn checkpoint，记录每个 turn/file 的 pre-edit 与 post-write 快照；`src/main/index.ts` 在 main 进程组合根创建并注入 `CheckpointStore`，`AgentRuntime.startTurn()` 调用 `CheckpointStore.beginTurn()` 创建 checkpoint 元数据并把 checkpoint recorder 注入工具上下文，`coding-tools.ts` 在 `edit_file` / `write_file` / `delete_file` / `apply_patch` / `rollback_file` 写入边界调用 `recordFileSnapshot`；`src/main/ipc/checkpoints-handlers.ts` 暴露 checkpoint list 与 code/session rewind，复用 shared checkpoint 类型、`checkpoint:list` / `checkpoint:rewind` IPC channel 和 `CHECKPOINT_LIST_FAILED` / `CHECKPOINT_REWIND_BUSY` / `CHECKPOINT_REWIND_FAILED` 错误码；`src/preload/index.ts` 暴露 `agentApi.checkpoints.*`；`RightInspector` 增加 `CheckpointsPanel`，配套 `shell.css` 样式和中英文 i18n；相关测试覆盖 checkpoint store、IPC handler、runtime 注入、coding tools 快照和 renderer 展示逻辑。
 - 建立首批诊断工具：`diagnose_workspace` 在 active workspace 内运行 TypeScript/typecheck 并解析结构化错误；`diagnose_file` 使用 TypeScript Language Service 对单文件做语法/语义/建议诊断，用于编辑后的 workspace 级与文件级验证闭环。
 - 建立 Code/Write tool access 边界：`AgentRuntime` 默认在 Write threads 中隐藏并拒绝 Code-only 编码/命令工具，同时保留可注入的 per-mode tool access policy 以便单独允许或禁用指定工具。
@@ -36,7 +37,7 @@
 - 清理 Write 模式 IPC 契约：`WritePutRequest` 只保留当前已实现的 plain UTF-8 写入字段，删除未接入 handler 的 `viaGit` 旧字段，避免调用方误以为 `write.put` 会走 git apply。
 - 修复设置页模型档案状态机：profile 保存失败后如果表单仍与 active profile 不一致，切换 section/profile、复制、删除或返回工作台会继续触发未保存修改守卫，避免把失败后的用户修改静默丢弃。
 - 修复 SSE IPC envelope 边界：`sse:subscribe` / `sse:unsubscribe` 对坏请求返回 `SSE_SUBSCRIBE_FAILED` / `SSE_UNSUBSCRIBE_FAILED`，不再让 ipcMain handler 直接 throw。
-- 设置页采用六个一级设置区 + 左侧区内小类导航：基础设置承载外观与语言，大模型设置承载模型档案、连接信息、上下文和推理行为，Agent 行为承载上下文压缩，工具与权限承载默认审批/沙盒、工具目录和命令限制，工作台设置承载启动/布局/会话和 Code/Write 默认模型，通知与可见性承载 approval 展示偏好。
+- 设置页采用六个一级设置区 + 左侧区内小类导航：基础设置承载外观与语言，大模型设置承载模型档案、连接信息、上下文和推理行为，Agent 行为承载上下文压缩与 skills 发现/注入偏好，工具与权限承载默认审批/沙盒、工具目录和命令限制，工作台设置承载启动/布局/会话和 Code/Write 默认模型，通知与可见性承载 approval 展示偏好。
 - 打磨前端可用性与可访问性：设置页左侧导航支持当前大类内搜索，设置表单的 `input/select` 通过 `SettingRow` 建立真实 label 关联，模型 profile 脏表单和 Write 工作台脏文档会在窗口刷新/关闭前触发未保存提示；Composer 附件处理新增 pending 反馈并阻止处理中发送，模型选择器补充空态；Write 工作台搜索改为短防抖，减少高频 IPC 抖动。
 - 建立中英文国际化资源和语言切换能力：`src/renderer/src/i18n/`、`src/shared/locale.ts`。
 - 建立 Vitest 自动化测试体系：`vitest.config.ts`、`tsconfig.test.json`、`tests/`，覆盖共享契约、主进程持久化、模型配置、附件、工具、事件总线、LLM 网关、AgentRuntime 和渲染端 reducer。
@@ -53,6 +54,7 @@
 8. LLM 网关按 `ModelConfig.model_provide` 做供应商感知请求体分流：`MiniMax` 使用 `max_completion_tokens/reasoning_split/thinking.type=adaptive|disabled`，`DeepSeek` 使用 `/chat/completions`、`max_tokens/thinking.type=enabled|disabled/reasoning_effort=high|max`，其他供应商走通用 OpenAI-compatible 请求体。
    `AgentRuntime` now forwards the selected model profile `protocol` into `LlmRequest`; OpenAI-compatible and Anthropic-compatible profiles share the same runtime path while the gateway owns provider-specific body/SSE mapping.
 9. 自动化测试使用 Vitest，优先测试公开类、共享契约和纯状态逻辑；持久化测试使用临时目录隔离，LLM 网关测试通过 mock `fetch` 验证请求体和 SSE 解析，不依赖真实 API key。
+10. Skills 是运行时上下文能力，不是构建输入：`SkillService` 只从当前 thread workspace 的约定目录、显式配置根和内置 skill 列表加载技能，无效 skill 以 validation error 暴露；project > custom > builtin 决定同 id 覆盖关系；匹配的 inline skill 作为当前 turn 的动态 system message 注入；技能目录和加载警告通过只读 `list_skills` 暴露，inline skill body 通过只读 `run_skill` 工具按 id 读取；`runAs: subagent` 通过 runtime-owned child LLM loop 执行，只暴露 `allowedTools` 中的只读工具，子消息和子工具调用不写入父线程。
 
 
 ## 维护要求
@@ -73,6 +75,37 @@
 - 新增或修改 Agent 运行框架、LLM 接入、工具、IPC、持久化、UI 状态或 i18n 时，应优先补充对应 `tests/` 用例，再运行上述命令。
 
 ## 变更记录
+
+### 2026-06-13 - Workspace skills runtime injection
+- Added the workspace skill loader and registry flow: project convention roots
+  (`.agent/skills`, `.agents/skills`, `.claude/skills`, `.codex/skills`,
+  `.reasonix/skills`, `skills`) plus `RuntimePreferences.skills.extraRoots`
+  feed `SkillService`, which keeps validation errors typed instead of hiding
+  invalid skill packages.
+- Extended `AgentRuntime` so each turn resolves matched skills before building
+  request messages, emits runtime warnings for skill validation/resolution
+  failures, and injects bounded active skill instructions next to plan/goal
+  dynamic context.
+- Registered the read-only `run_skill` tool through `createSkillTools()` so the
+  model can request an inline skill body by id while still using the active
+  workspace and runtime skills preferences.
+- Added the read-only `list_skills` catalog tool so the model can inspect
+  available skill ids, descriptions, triggers, roots and validation warnings
+  before loading a full playbook.
+- Added the `runAs: subagent` runtime path: `AgentRuntime` intercepts
+  `run_skill`, runs a transient isolated child LLM loop with only allowed
+  read-only tools exposed, honors skill `model` / `effort`, and returns only the
+  final answer as the parent tool result.
+- Added built-in `explore`, `review`, `teach-me`, and `interview` skills. Project
+  and custom filesystem skills override built-ins with the same normalized id.
+- Added Settings > Agent behavior > Skills controls for `skills.enabled`,
+  `activeLimit`, `instructionBudgetBytes`, and newline-separated `extraRoots`,
+  reusing the existing runtime preference save queue and renderer validation.
+- Extended shared runtime preferences and skill contracts, persistence
+  normalization, focused runtime/tool/service tests, and architecture/runtime
+  docs for the new skill discovery and injection path.
+- Verification: `npm run typecheck`, `npm run test`, `npm run build`, and
+  `git diff --check`.
 
 ### 2026-06-12 - Persistent checkpoint / rewind
 - 新增：`src/main/persistence/checkpoint-store.ts` 持久化 turn checkpoint，按 thread JSONL 保存 prompt、workspace、turn 元数据和每个文件的 pre-edit / post-write 快照；restore 会重新校验 workspace 边界与符号链接路径，并支持从指定 turn 起恢复代码快照。

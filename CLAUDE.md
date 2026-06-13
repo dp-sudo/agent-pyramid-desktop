@@ -84,7 +84,7 @@ No linter or formatter is configured. Do not add one without an explicit task an
 Main process:
 
 - Composition root: `src/main/index.ts`.
-- Wires `JsonlThreadStore`, `AttachmentStore`, `ModelConfigStore`, `RuntimePreferencesStore`, `RuntimeEventBus`, `LlmWorkerPool`, `AgentRuntime` and `InMemoryToolRegistry`.
+- Wires `JsonlThreadStore`, `AttachmentStore`, `ModelConfigStore`, `RuntimePreferencesStore`, `CheckpointStore`, `RuntimeEventBus`, `LlmWorkerPool`, `AgentRuntime`, `SkillService`, `McpCacheStore`, `McpHost` and `InMemoryToolRegistry`.
 - Registers all `src/main/ipc/*-handlers.ts`.
 - Owns Electron security settings, CSP, external navigation and filesystem access.
 
@@ -113,9 +113,11 @@ Renderer:
 
 Cross-process contracts:
 
-- `src/shared/agent-contracts.ts` defines `ModelConfig`, `RuntimePreferences`, `ThreadRecord`, `TurnRecord`, `Item`, `RuntimeEvent`, approvals, goals, attachments, usage, write-mode requests and `IpcResult<T>`.
+- `src/shared/agent-contracts.ts` defines `ModelConfig`, `RuntimePreferences`, `ThreadRecord`, `TurnRecord`, `Item`, `RuntimeEvent`, approvals, goals, attachments, usage, checkpoints, skills, MCP, write-mode requests and `IpcResult<T>`.
 - `src/shared/ipc.ts` defines all channel names and `RENDERER_TO_MAIN_CHANNELS`.
+- `src/shared/ipc-errors.ts` defines stable IPC error codes.
 - `src/shared/locale.ts` defines supported locales.
+- `src/shared/skills/*` defines workspace skill parsing, registry, built-ins and manifest contracts.
 
 If a shared field changes, search first and update all layers:
 
@@ -137,23 +139,41 @@ Current event kinds:
 - `item_appended`
 - `item_updated`
 - `approval_requested`
+- `tool_progress`
+- `mcp_server_connection`
+- `mcp_tool_list_changed`
+- `mcp_surface_changed`
 - `tool_budget_reached`
 - `goal_updated`
 - `runtime_error`
 
 Tool rounds are controlled by `agent_autonomy` defaults and optional `AGENT_MAX_TOOL_ROUNDS`, clamped from 1 to 128. Current defaults are conservative 12, balanced 32 and deep 64.
 
+Turn terminal states: `in-flight`, `completed`, `failed`, `interrupted`, `needs_continuation`. When the tool round budget is exhausted the turn ends with `needs_continuation`, a `tool_budget_reached` event is emitted and the user must send another message to keep going.
+
+Interrupt path: `runtime.interruptTurn()` calls `pool.cancel(threadId)`, aborts every active tool `AbortController`, denies all pending approvals and writes an "Interrupted by user" system item. The background loop notices `turn.status !== "in-flight"` after each await, persists any truncated stream output and finalizes — never preempt the foreground write path.
+
+Three-layer tool policy in `AgentRuntime.resolveToolPolicy()`:
+1. Hard denials: tool missing, `sandboxMode: "read-only"`, `approvalPolicy: "never"`.
+2. `RuntimePreferences.permissionRules` allow/ask/deny matching `command`/`write`/`mcp` candidates with deny > ask > allow priority.
+3. `approvalPolicy: "auto"` + non-destructive tool → allow; otherwise → ask.
+
+Catalog filtering happens earlier via `isToolAllowedByAccessPolicy`: default Write threads deny all Code-only coding/command tools, MCP `mcp__*` tools are Code-only, `create_plan` is plan-mode-only and `update_goal` is goal-mode/active-goal-only.
+
 Tool rules:
 
 - Tools implement `AgentTool` and are registered through `InMemoryToolRegistry` in `src/main/index.ts`.
 - `list_files`, `read_file` and `search_files` are read-only workspace tools and skip approval.
-- `edit_file`, `write_file`, `apply_patch` and `rollback_file` are coding write tools; they require approval, workspace path validation and strict UTF-8 text handling. `rollback_file` uses in-memory runtime file history (`file-history-state`) to undo the latest agent write when the current file still matches that history entry.
+- `edit_file`, `write_file`, `delete_file`, `apply_patch` and `rollback_file` are coding write tools; they require approval, workspace path validation and strict UTF-8 text handling. `rollback_file` uses in-memory runtime file history (`file-history-state`) to undo the latest agent write when the current file still matches that history entry.
 - `run_command`, `shell_command`, `git_bash_command`, `powershell_command`, `wsl_command`, package/task wrappers, Git commit, and command session write/stop tools all run workspace shell commands and require approval.
 - `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through command execution and requires approval. `diagnose_file` uses TypeScript Language Service for one file and remains read-only.
 - Read-only developer tools (`rg_search`, `git_status`, `git_diff`, `git_log`, `git_branch`, `package_scripts`, `read_command_session`, `detect_shell_environment`, `diagnose_file`) skip approval.
+- `list_skills` and `run_skill` are read-only skill tools. `list_skills` exposes catalog summaries and validation warnings; `run_skill` loads inline `SKILL.md` instructions. `runAs: subagent` skills are executed by `AgentRuntime` in an isolated read-only child loop.
+- MCP tools are registered dynamically by `McpHost` as `mcp__<server>__<tool>`. Read-only MCP tools can skip approval; writer MCP tools use the same sandbox, approval and `RuntimePreferences.permissionRules` path as built-in tools.
 - `create_plan` is enabled only in plan mode and skips approval.
 - `update_goal` is enabled only in goal mode or active-goal threads and skips approval.
 - Write threads hide and reject Code-only coding/command tools by default. Tool access policy may allow or deny tool names per `code` / `write` mode, but approval and sandbox checks still run after catalog filtering.
+- Per-call permission rules in `RuntimePreferences.permissionRules` can allow, ask or deny command, write and MCP tool calls after hard sandbox/never-policy denials.
 - Other enabled tool calls go through the approval gate.
 - Disallowed or failing tool calls must fail visibly through `ToolItem` state and/or `runtime_error`.
 
@@ -193,13 +213,19 @@ Key invariants:
 
 - `index.json` stores `ThreadSummary[]`.
 - `thread.json` stores `ThreadRecord`.
-- `messages.jsonl` stores one `Item` per line.
-- `events.jsonl` stores one `RuntimeEvent` per line.
+- `messages.jsonl` stores one `Item` per line (timeline content).
+- `events.jsonl` stores one `RuntimeEvent` per line (persisted lifecycle/usage audit log).
 - JSON writes use temp file + fsync + rename.
 - JSONL appends use fsync.
-- Same-thread writes are serialized.
+- Same-thread writes are serialized by a per-thread mutex (`JsonlThreadStore.mutexes`).
+- `index.json` writes are serialized by a global index queue so summary updates never interleave.
+- `messages.jsonl` is the canonical timeline; `tool_progress` is **not** persisted to `events.jsonl` — live stdout/stderr is folded into the final `ToolItem.result`.
 - Replay skips malformed lines with `console.warn`; do not tighten this without a migration plan.
 - Repeated item ids in JSONL represent append-only updates; replay consumers dedupe by id and keep the latest row.
+- Deletion order: remove thread directory first, then index row. If directory removal fails the index row remains as the retry handle.
+- Appending an `Item` updates `ThreadRecord.updatedAt` and the matching `ThreadSummary.updatedAt` only when the item timestamp is newer, so list sorting follows visible activity.
+
+`userData/config` is the shared file for both `ModelConfigProfilesState` and the `runtimePreferences` section. `ModelConfigStore` and `RuntimePreferencesStore` go through `AppConfigFile` so the two sections cannot overwrite each other. The legacy `userData/runtime-preferences.json` is read only when the shared section is missing; if both exist, the shared section wins.
 
 Attachment store:
 
@@ -212,10 +238,21 @@ Attachment store:
 
 Model config store:
 
-- Stored in `userData/config`.
+- Stored in the shared `userData/config` file.
 - Current shape is `ModelConfigProfilesState`.
 - Older single-config data is normalized to profile state.
 - At least one profile must remain.
+
+Runtime preferences:
+
+- Stored in the `runtimePreferences` section of the shared `userData/config` file.
+- Legacy `userData/runtime-preferences.json` is only a migration input when the shared config section is missing.
+- Current shape includes default approval/sandbox, Code/Write default model profiles, tool availability, command limits, compaction, skills, permission rules and MCP server configs.
+
+Checkpoints and MCP cache:
+
+- Checkpoints are stored under `userData/checkpoints/` by `CheckpointStore` and support code rewind plus optional session rewind.
+- MCP public schema, prompt/resource descriptors and startup stats are cached under `userData/mcp/cache.json`; runtime config authority remains `RuntimePreferences.mcpServers`.
 
 ## IPC Rules
 
@@ -234,10 +271,13 @@ Current preload groups:
 - `goals`
 - `attachments`
 - `usage`
+- `checkpoints`
+- `mcp`
 - `workspace`
 - `write`
 - `modelConfig`
 - `runtimePreferences`
+- `skills`
 
 Adding IPC requires updating:
 
@@ -247,9 +287,10 @@ Adding IPC requires updating:
 4. `src/main/ipc/*-handlers.ts`
 5. `src/main/index.ts`
 6. `src/preload/index.ts`
-7. renderer call sites
-8. tests
-9. `docs/ipc-contracts.md`
+7. `src/renderer/src/global.d.ts` (preload API typing)
+8. renderer call sites
+9. tests
+10. `docs/ipc-contracts.md`
 
 ## Renderer Conventions
 
@@ -265,9 +306,10 @@ Adding IPC requires updating:
 ## Security Notes
 
 - Keep Electron `contextIsolation: true` and `nodeIntegration: false`.
-- Main process owns filesystem and external navigation.
+- Main process owns filesystem and external navigation. Renderer markdown links go through `setWindowOpenHandler`/`will-navigate`; only `http(s)` may leave via `shell.openExternal`.
 - Write-mode file access uses `resolveWritePathForAccess()` / `resolveWritePath()` and reuses the shared workspace path policy for lexical checks, realpath checks, symlink escape protection and skipped directory enforcement.
 - Workspace tools also enforce workspace boundaries and skip hidden/generated directories.
+- Non-empty `OPENAI_API_KEY` is encrypted on disk by `SafeStorageSecretCodec` (electron `safeStorage`) and stored under the `encrypted:v1:` prefix in `userData/config`; the in-memory `ModelConfig` keeps the plain value for runtime/gateway use. Legacy plain-text keys migrate on the next normalized write.
 - Do not expand preload APIs casually.
 - Do not place secrets in docs, tests, config or commits.
 
@@ -275,9 +317,10 @@ Adding IPC requires updating:
 
 - `tests/shared/` - shared contracts and IPC allowlist.
 - `tests/main/application/` - AgentRuntime and tools.
-- `tests/main/infrastructure/` - worker pool and MiniMax gateway/protocol parsing.
+- `tests/main/infrastructure/` - worker pool, MiniMax gateway/protocol parsing and MCP host/client/cache behavior.
 - `tests/main/ipc/` - IPC handler behavior.
-- `tests/main/persistence/` - thread, attachment and model config stores.
+- `tests/main/persistence/` - thread, attachment, checkpoint, model config and runtime preference stores.
+- `tests/main/skills/` - workspace skill loading and catalog behavior.
 - `tests/renderer/` - renderer reducer, components and timeline helpers.
 - `tests/helpers/temp-dir.ts` - temporary directory helper.
 
@@ -316,6 +359,9 @@ After edits:
 - Shared contracts: `src/shared/agent-contracts.ts`
 - IPC constants: `src/shared/ipc.ts`
 - Preload bridge: `src/preload/index.ts`
+- Checkpoints: `src/main/persistence/checkpoint-store.ts`
+- MCP host: `src/main/infrastructure/mcp/host.ts`
+- Skills: `src/main/skills/skill-service.ts`
 - Renderer state: `src/renderer/src/ui/store/WorkbenchContext.tsx`
 - Workbench UI flow: `src/renderer/src/ui/Workbench.tsx`
 - Settings UI: `src/renderer/src/ui/SettingsView.tsx`

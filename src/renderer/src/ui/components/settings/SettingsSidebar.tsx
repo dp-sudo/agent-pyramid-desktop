@@ -10,6 +10,7 @@ export type SettingsCategory =
   | "context"
   | "reasoning"
   | "compaction"
+  | "skills"
   | "permissions"
   | "mcpServers"
   | "toolAccess"

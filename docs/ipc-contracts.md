@@ -78,6 +78,7 @@ Current groups:
 | Model config | `agentApi.modelConfig.*` | `src/main/ipc/model-config-handlers.ts` |
 | Runtime preferences | `agentApi.runtimePreferences.*` | `src/main/ipc/runtime-preferences-handlers.ts` |
 | MCP | `agentApi.mcp.*` | `src/main/ipc/mcp-handlers.ts` |
+| Skills | `agentApi.skills.*` | `src/main/ipc/skills-handlers.ts` |
 
 ## Contract Table
 
@@ -352,6 +353,23 @@ Notes:
   command; `streamable-http` servers require an HTTP(S) URL and may carry
   request headers. Settings writes the config through this same preferences
   channel, then the main composition root reconfigures `McpHost`.
+
+### Skills
+
+| Channel | Preload Method | Request | Success Value | Error Codes |
+| --- | --- | --- | --- | --- |
+| `skills:list` | `skills.list(request)` | `SkillListRequest` | `SkillListResponse` | `SKILL_LIST_FAILED` |
+
+Notes:
+
+- `skills:list` is a read-only Settings diagnostics surface. It loads the active
+  workspace catalog with the current `RuntimePreferences.skills` values and
+  returns discovered skill summaries, scan roots and validation warnings.
+- The response intentionally excludes full `SKILL.md` bodies and
+  `references/*.md` contents. Full inline skill instructions remain available
+  only through runtime context injection or the `run_skill` tool path.
+- The request must be an object with a non-empty `workspace` string and no NUL
+  bytes; malformed payloads return `SKILL_LIST_FAILED`.
 
 ### MCP
 

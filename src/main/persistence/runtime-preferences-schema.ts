@@ -2,8 +2,12 @@ import {
   DEFAULT_RUNTIME_PREFERENCES,
   MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
+  MAX_RUNTIME_SKILLS_ACTIVE_LIMIT,
+  MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
   MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
+  MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
+  MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
   MCP_SERVER_TRANSPORTS,
   RUNTIME_TOOL_NAMES,
   THREAD_MODES,
@@ -22,6 +26,7 @@ import {
   type RuntimeCompactionPreferences,
   type RuntimePreferences,
   type RuntimePreferencesUpdate,
+  type RuntimeSkillsPreferences,
   type RuntimeToolAvailabilityPreferences,
 } from "../../shared/agent-contracts.js";
 
@@ -72,6 +77,9 @@ export function parseRuntimePreferencesUpdate(
   if (update.compaction !== undefined) {
     parsed.compaction = parseCompactionPreferencesUpdate(update.compaction);
   }
+  if (update.skills !== undefined) {
+    parsed.skills = parseSkillsPreferencesUpdate(update.skills);
+  }
   if (update.permissionRules !== undefined) {
     parsed.permissionRules = parseRuntimePermissionRules(update.permissionRules);
   }
@@ -101,6 +109,7 @@ export function normalizeRuntimePreferences(value: unknown): RuntimePreferences 
     approvalExperience: normalizeApprovalExperience(value.approvalExperience),
     command: normalizeCommandPreferences(value.command),
     compaction: normalizeCompactionPreferences(value.compaction),
+    skills: normalizeSkillsPreferences(value.skills),
     permissionRules: normalizeRuntimePermissionRules(value.permissionRules),
     mcpServers: normalizeMcpServerConfigs(value.mcpServers),
   };
@@ -134,6 +143,9 @@ export function mergeRuntimePreferences(
     compaction: update.compaction
       ? { ...current.compaction, ...update.compaction }
       : current.compaction,
+    skills: update.skills
+      ? { ...current.skills, ...update.skills, extraRoots: update.skills.extraRoots ?? current.skills.extraRoots }
+      : current.skills,
     ...(update.permissionRules !== undefined
       ? { permissionRules: cloneRuntimePermissionRules(update.permissionRules) }
       : {}),
@@ -150,6 +162,7 @@ export function cloneRuntimePreferences(value: RuntimePreferences): RuntimePrefe
     approvalExperience: { ...value.approvalExperience },
     command: { ...value.command },
     compaction: { ...value.compaction },
+    skills: { ...value.skills, extraRoots: [...value.skills.extraRoots] },
     permissionRules: cloneRuntimePermissionRules(value.permissionRules),
     mcpServers: cloneMcpServerConfigs(value.mcpServers),
   };
@@ -330,6 +343,71 @@ function parseCompactionPreferencesUpdate(
   }
   if (Object.keys(parsed).length === 0) {
     throw new Error("compaction must include at least one field.");
+  }
+  return parsed;
+}
+
+function normalizeSkillsPreferences(value: unknown): RuntimeSkillsPreferences {
+  const defaults = DEFAULT_RUNTIME_PREFERENCES.skills;
+  if (!isRecord(value)) return { ...defaults, extraRoots: [...defaults.extraRoots] };
+  return {
+    enabled: booleanOrDefault(value.enabled, defaults.enabled),
+    activeLimit: integerInRangeOrDefault(
+      value.activeLimit,
+      MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
+      MAX_RUNTIME_SKILLS_ACTIVE_LIMIT,
+      defaults.activeLimit,
+    ),
+    instructionBudgetBytes: integerInRangeOrDefault(
+      value.instructionBudgetBytes,
+      MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+      MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+      defaults.instructionBudgetBytes,
+    ),
+    extraRoots: Array.isArray(value.extraRoots)
+      ? value.extraRoots.filter((entry): entry is string =>
+        typeof entry === "string" && !entry.includes("\0")
+      )
+      : [...defaults.extraRoots],
+  };
+}
+
+function parseSkillsPreferencesUpdate(
+  value: unknown,
+): Partial<RuntimeSkillsPreferences> {
+  if (!isRecord(value)) {
+    throw new Error("skills must be an object.");
+  }
+  const parsed: Partial<RuntimeSkillsPreferences> = {};
+  if (value.enabled !== undefined) {
+    if (typeof value.enabled !== "boolean") {
+      throw new Error("skills.enabled must be a boolean.");
+    }
+    parsed.enabled = value.enabled;
+  }
+  if (value.activeLimit !== undefined) {
+    parsed.activeLimit = requiredIntegerInRange(
+      value.activeLimit,
+      MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
+      MAX_RUNTIME_SKILLS_ACTIVE_LIMIT,
+      "skills.activeLimit",
+    );
+  }
+  if (value.instructionBudgetBytes !== undefined) {
+    parsed.instructionBudgetBytes = requiredIntegerInRange(
+      value.instructionBudgetBytes,
+      MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+      MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+      "skills.instructionBudgetBytes",
+    );
+  }
+  if (value.extraRoots !== undefined) {
+    parsed.extraRoots = parseStringArray(value.extraRoots, "skills.extraRoots")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  if (Object.keys(parsed).length === 0) {
+    throw new Error("skills must include at least one field.");
   }
   return parsed;
 }

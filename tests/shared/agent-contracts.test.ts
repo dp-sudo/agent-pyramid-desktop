@@ -5,12 +5,15 @@ import {
   RENDERER_TO_MAIN_CHANNELS,
   RUNTIME_PREFERENCES_GET_CHANNEL,
   RUNTIME_PREFERENCES_UPDATE_CHANNEL,
+  SKILL_LIST_CHANNEL,
   TURN_START_CHANNEL,
 } from "../../src/shared/ipc";
 import {
   DEFAULT_DEEPSEEK_MODEL_CONFIG,
   DEFAULT_MODEL_CONFIG,
   DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
+  DEFAULT_RUNTIME_SKILLS_ACTIVE_LIMIT,
+  DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
   DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
   DEFAULT_RUNTIME_PREFERENCES,
   DEFAULT_THREAD_APPROVAL_POLICY,
@@ -50,6 +53,7 @@ import {
   isRuntimeEvent,
   isRuntimeEventKind,
   isRuntimePreferences,
+  isSkillListResponse,
   isMcpServerTransport,
   isRuntimeToolName,
   isThreadApprovalPolicy,
@@ -126,7 +130,57 @@ describe("shared agent contracts", () => {
     );
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(RUNTIME_PREFERENCES_GET_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(RUNTIME_PREFERENCES_UPDATE_CHANNEL);
+    expect(RENDERER_TO_MAIN_CHANNELS).toContain(SKILL_LIST_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).not.toContain("agent:run");
+  });
+
+  it("validates public skill catalog response summaries", () => {
+    const response = {
+      workspace: "/workspace",
+      enabled: true,
+      roots: [
+        { path: "/workspace/.agent/skills", scope: "project", missingIsError: false },
+        { path: "/home/me/skills", scope: "custom", missingIsError: true },
+      ],
+      validationErrors: [
+        { root: "/workspace/.agent/skills", message: "Invalid SKILL.md" },
+      ],
+      skills: [
+        {
+          id: "project/example",
+          name: "Example",
+          description: "Example skill",
+          version: "1.0.0",
+          runAs: "inline",
+          scope: "project",
+          priority: 100,
+          rootDir: "/workspace/.agent/skills/example",
+          skillPath: "/workspace/.agent/skills/example/SKILL.md",
+          allowedTools: ["read_file"],
+          trigger: {
+            manual: true,
+            commands: ["/example"],
+            keywords: ["example"],
+            promptPatterns: ["review"],
+            fileTypes: [".ts"],
+          },
+          referenceCount: 1,
+          referenceNames: ["notes"],
+        },
+      ],
+    };
+    const skillEntry = response.skills[0];
+    if (!skillEntry) throw new Error("Expected skill catalog entry.");
+
+    expect(isSkillListResponse(response)).toBe(true);
+    expect(isSkillListResponse({
+      ...response,
+      skills: [{ ...skillEntry, scope: "global" }],
+    })).toBe(false);
+    expect(isSkillListResponse({
+      ...response,
+      roots: [{ path: "/workspace/.agent/skills", scope: "global" }],
+    })).toBe(false);
   });
 
   it("keeps provider defaults internally consistent", () => {
@@ -145,6 +199,8 @@ describe("shared agent contracts", () => {
   it("keeps runtime preferences defaults and guards as a shared contract", () => {
     expect(RUNTIME_TOOL_NAMES).toContain("apply_patch");
     expect(RUNTIME_TOOL_NAMES).toContain("run_command");
+    expect(RUNTIME_TOOL_NAMES).toContain("list_skills");
+    expect(RUNTIME_TOOL_NAMES).toContain("run_skill");
     expect(RUNTIME_READ_ONLY_TOOL_NAMES).toEqual([
       "list_files",
       "read_file",
@@ -158,6 +214,8 @@ describe("shared agent contracts", () => {
       "read_command_session",
       "detect_shell_environment",
       "diagnose_file",
+      "list_skills",
+      "run_skill",
     ]);
     expect(RUNTIME_READ_ONLY_TOOL_NAMES.every((toolName) =>
       RUNTIME_TOOL_NAMES.includes(toolName),
@@ -185,10 +243,18 @@ describe("shared agent contracts", () => {
     expect(DEFAULT_RUNTIME_PREFERENCES.command.maxOutputBytes).toBe(
       DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
     );
+    expect(DEFAULT_RUNTIME_PREFERENCES.skills).toEqual({
+      enabled: true,
+      activeLimit: DEFAULT_RUNTIME_SKILLS_ACTIVE_LIMIT,
+      instructionBudgetBytes: DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
+      extraRoots: [],
+    });
     expect(DEFAULT_RUNTIME_PREFERENCES.permissionRules).toEqual([]);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.apply_patch).toBe(true);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.apply_patch).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_command).toBe(false);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_skills).toBe(true);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_skill).toBe(true);
     expect(isRuntimePreferences(DEFAULT_RUNTIME_PREFERENCES)).toBe(true);
     expect(isRuntimePreferences({
       ...DEFAULT_RUNTIME_PREFERENCES,
@@ -197,6 +263,10 @@ describe("shared agent contracts", () => {
     expect(isRuntimePreferences({
       ...DEFAULT_RUNTIME_PREFERENCES,
       compaction: { ...DEFAULT_RUNTIME_PREFERENCES.compaction, strategy: "full-history" },
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      skills: { ...DEFAULT_RUNTIME_PREFERENCES.skills, activeLimit: -1 },
     })).toBe(false);
     expect(isRuntimePreferences({
       ...DEFAULT_RUNTIME_PREFERENCES,

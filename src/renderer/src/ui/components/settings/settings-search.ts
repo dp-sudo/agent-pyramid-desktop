@@ -6,6 +6,7 @@ type SettingsTranslator = (key: string) => string;
 const ADVANCED_SETTINGS_CATEGORIES = new Set<SettingsCategory>([
   "context",
   "reasoning",
+  "skills",
   "toolAccess",
   "commandLimits",
 ]);
@@ -106,6 +107,16 @@ const SETTINGS_CATEGORY_SEARCH_KEY_PATHS: Record<SettingsCategory, readonly stri
     "settings.compactionStrategies.recent-only",
     "settings.compactionStrategies.preserve-tools",
     "settings.compactionStrategies.aggressive",
+  ],
+  skills: [
+    "settings.fields.skillsEnabled",
+    "settings.descriptions.skillsEnabled",
+    "settings.fields.skillsActiveLimit",
+    "settings.descriptions.skillsActiveLimit",
+    "settings.fields.skillsInstructionBudgetBytes",
+    "settings.descriptions.skillsInstructionBudgetBytes",
+    "settings.fields.skillsExtraRoots",
+    "settings.descriptions.skillsExtraRoots",
   ],
   permissions: [
     "settings.fields.defaultApprovalPolicy",

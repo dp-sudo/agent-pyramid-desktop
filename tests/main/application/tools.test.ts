@@ -15,7 +15,9 @@ import { FileHistoryStore } from "../../../src/main/application/tools/file-histo
 import { FileReadStateStore } from "../../../src/main/application/tools/file-read-state";
 import { createGoalTools } from "../../../src/main/application/tools/goal-tools";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
+import { createSkillTools } from "../../../src/main/application/tools/skill-tools";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
+import { SkillService } from "../../../src/main/skills/skill-service";
 import type { AgentTool, AgentToolContext } from "../../../src/main/domain/agent/types";
 import {
   RUNTIME_READ_ONLY_TOOL_NAMES,
@@ -182,6 +184,7 @@ describe("application tools", () => {
       ...createCommandTools(),
       createPlanTool,
       ...createGoalTools({ updateGoal: async () => undefined }),
+      ...createSkillTools({ skillService: new SkillService() }),
       ...createCodingTools(),
     ];
     const metadataReadOnlyNames = tools
@@ -201,6 +204,7 @@ describe("application tools", () => {
       ...createCommandTools(),
       createPlanTool,
       ...createGoalTools({ updateGoal: async () => undefined }),
+      ...createSkillTools({ skillService: new SkillService() }),
       ...createCodingTools(),
     ];
     const registeredNames = tools.map((tool) => tool.definition.name).sort();

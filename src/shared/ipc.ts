@@ -60,6 +60,9 @@ export const MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL = "config:model:profiles:act
 export const RUNTIME_PREFERENCES_GET_CHANNEL = "runtime-preferences:get";
 export const RUNTIME_PREFERENCES_UPDATE_CHANNEL = "runtime-preferences:update";
 
+// Skills catalog / diagnostics
+export const SKILL_LIST_CHANNEL = "skills:list";
+
 // MCP external tool host
 export const MCP_SERVERS_LIST_CHANNEL = "mcp:servers:list";
 export const MCP_SERVERS_CONNECT_CHANNEL = "mcp:servers:connect";
@@ -110,6 +113,7 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
   RUNTIME_PREFERENCES_GET_CHANNEL,
   RUNTIME_PREFERENCES_UPDATE_CHANNEL,
+  SKILL_LIST_CHANNEL,
   MCP_SERVERS_LIST_CHANNEL,
   MCP_SERVERS_CONNECT_CHANNEL,
   MCP_SERVERS_DISCONNECT_CHANNEL,
