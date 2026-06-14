@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { Item, ToolItem } from "../../src/shared/agent-contracts";
 import { RUNTIME_TOOL_NAMES } from "../../src/shared/agent-contracts";
 import {
+  extractToolDiffPreview,
   groupTimelineTurns,
   sortTimelineItems,
+  summarizeToolChangeResult,
   summarizeToolItem,
   summarizeToolItemHeader,
   summarizeToolItemPreview,
@@ -287,6 +289,101 @@ describe("timeline model", () => {
 
     expect(display.title).toBe("chat.tools.editFilePath:src/main/index.ts");
     expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
+  it("summarizes completed coding diffs as compact change titles", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "edit_file",
+      args: { path: "src/main/index.ts" },
+      result: {
+        path: "src/main/index.ts",
+        diff: {
+          kind: "file_diff",
+          path: "src/main/index.ts",
+          operation: "update",
+          added: 2,
+          removed: 1,
+          lines: [
+            { type: "removed", text: "old" },
+            { type: "added", text: "new" },
+          ],
+        },
+      },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, compactChangeTitleT);
+
+    expect(display.title).toBe("chat.tools.editFilePath:src/main/index.ts");
+    expect(display.compactTitle).toBe("changed:src/main/index.ts:+2:-1");
+    expect(summarizeToolChangeResult(item)).toEqual({
+      fileCount: 1,
+      path: "src/main/index.ts",
+      added: 2,
+      removed: 1,
+    });
+    expect(extractToolDiffPreview(item.result)).toMatchObject({
+      kind: "file_diff",
+      path: "src/main/index.ts",
+    });
+  });
+
+  it("summarizes multi-file patch diffs as compact change titles", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "apply_patch",
+      args: { patch: "--- a/file.ts\n+++ b/file.ts" },
+      result: {
+        diff: {
+          kind: "multi_file_diff",
+          added: 3,
+          removed: 1,
+          files: [
+            {
+              kind: "file_diff",
+              path: "first.ts",
+              operation: "update",
+              added: 1,
+              removed: 1,
+              lines: [
+                { type: "removed", text: "old" },
+                { type: "added", text: "new" },
+              ],
+            },
+            {
+              kind: "file_diff",
+              path: "second.ts",
+              operation: "create",
+              added: 2,
+              removed: 0,
+              lines: [
+                { type: "added", text: "created" },
+              ],
+            },
+          ],
+        },
+      },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, compactChangeTitleT);
+
+    expect(display.title).toBe("chat.tools.applyPatch");
+    expect(display.compactTitle).toBe("changed:2 files:+3:-1");
+    expect(summarizeToolChangeResult(item)).toEqual({
+      fileCount: 2,
+      added: 3,
+      removed: 1,
+    });
   });
 
   it("summarizes command tools with command text", () => {
@@ -586,5 +683,16 @@ function timelineTitleT(key: string, options?: Record<string, unknown>): string 
   if (key === "chat.tools.genericQuery") {
     return `${String(options?.tool)}|query:${String(options?.query)}`;
   }
+  return key;
+}
+
+function compactChangeTitleT(key: string, options?: Record<string, unknown>): string {
+  if (key === "chat.tools.changedFileSummary") {
+    return `changed:${String(options?.path)}:+${String(options?.added)}:-${String(options?.removed)}`;
+  }
+  if (key === "chat.tools.changedFilesSummary") {
+    return `changed:${String(options?.count)} files:+${String(options?.added)}:-${String(options?.removed)}`;
+  }
+  if (options?.path) return `${key}:${String(options.path)}`;
   return key;
 }

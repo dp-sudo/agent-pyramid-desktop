@@ -783,6 +783,8 @@ textarea:focus-visible {
 .ds-composer-mode-chip,
 .ds-composer-status {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 6px;
   border: 1px solid var(--ds-border-muted);
@@ -790,7 +792,10 @@ textarea:focus-visible {
   background: var(--ds-surface-subtle);
   color: var(--ds-text-muted);
   font-size: var(--ds-size-caption);
+  overflow: hidden;
   padding: 3px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ds-composer-attachment {
@@ -911,7 +916,9 @@ textarea:focus-visible {
 .ds-message-timeline {
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-block: 18px 150px;
 }
 
@@ -988,6 +995,7 @@ textarea:focus-visible {
 .ds-message-turn {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   gap: 10px;
 }
@@ -995,6 +1003,7 @@ textarea:focus-visible {
 .ds-message-block {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   gap: 6px;
 }
@@ -1008,6 +1017,7 @@ textarea:focus-visible {
 }
 
 .ds-user-bubble {
+  min-width: 0;
   max-width: min(82%, 560px);
   overflow-wrap: anywhere;
   border-radius: var(--ds-radius-lg);
@@ -1025,6 +1035,7 @@ textarea:focus-visible {
 
 .ds-assistant-bubble {
   width: min(100%, 760px);
+  min-width: 0;
   max-width: 100%;
   color: var(--ds-text);
   font-size: var(--ds-size-body);
@@ -1036,6 +1047,8 @@ textarea:focus-visible {
 }
 
 .ds-system-bubble {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   background: transparent;
   color: var(--ds-text-faint);
   font-size: var(--ds-size-caption);
@@ -1046,6 +1059,7 @@ textarea:focus-visible {
 
 .ds-markdown {
   min-width: 0;
+  max-width: 100%;
   color: var(--ds-text);
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -1145,6 +1159,7 @@ textarea:focus-visible {
 
 .ds-code-block {
   min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--ds-border-muted);
   border-radius: var(--ds-radius-md);
   background: var(--ds-surface-subtle);
@@ -1166,6 +1181,8 @@ textarea:focus-visible {
 }
 
 .ds-code-block-header span {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1214,6 +1231,7 @@ textarea:focus-visible {
 }
 
 .ds-markdown pre {
+  min-width: 0;
   max-width: 100%;
   overflow: auto;
   border: 0;
@@ -1295,8 +1313,27 @@ textarea:focus-visible {
   border-radius: var(--ds-radius-md);
 }
 
+.ds-markdown-tail-cursor {
+  display: inline-block;
+  width: 0.52em;
+  height: 1em;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: var(--ds-accent);
+  opacity: 0.78;
+  vertical-align: -0.16em;
+  animation: ds-markdown-tail-cursor-blink 1s steps(2, start) infinite;
+}
+
+@keyframes ds-markdown-tail-cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .ds-markdown-table-wrap {
   display: block;
+  min-width: 0;
   max-width: 100%;
   overflow-x: auto;
 }
@@ -1344,6 +1381,8 @@ textarea:focus-visible {
 
 .ds-work-process {
   width: min(100%, 760px);
+  min-width: 0;
+  max-width: 100%;
   border-left: 2px solid var(--ds-border-muted);
   color: var(--ds-text-muted);
   padding-left: 12px;
@@ -1380,6 +1419,7 @@ textarea:focus-visible {
 
 .ds-work-process-body {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 8px;
   padding-top: 8px;
@@ -1387,6 +1427,7 @@ textarea:focus-visible {
 
 .ds-process-entry {
   min-width: 0;
+  max-width: 100%;
   border-radius: var(--ds-radius-md);
   background: var(--ds-surface-subtle);
   color: var(--ds-text-muted);
@@ -1427,8 +1468,11 @@ textarea:focus-visible {
 }
 
 .ds-process-entry-detail {
+  min-width: 0;
+  max-width: 100%;
   margin: 8px 0 0;
   overflow: auto;
+  overflow-wrap: anywhere;
   color: var(--ds-text-muted);
   font-family: var(--ds-font-mono);
   font-size: var(--ds-size-caption);
@@ -1489,6 +1533,7 @@ textarea:focus-visible {
 }
 
 .ds-process-reasoning-preview {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--ds-text-faint);
@@ -1519,9 +1564,11 @@ textarea:focus-visible {
    summary's space-between layout. */
 .ds-process-reasoning-heading {
   display: inline-flex;
+  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
   gap: 6px;
+  overflow: hidden;
 }
 
 .ds-process-reasoning-chevron::before {
@@ -1597,11 +1644,15 @@ textarea:focus-visible {
    traceable. */
 .ds-message-turn-process {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   gap: 6px;
 }
 
 .ds-process-tool-row {
+  min-width: 0;
+  max-width: 100%;
   border-radius: var(--ds-radius-md);
   color: var(--ds-text-muted);
   font-size: var(--ds-size-caption);
@@ -1613,12 +1664,15 @@ textarea:focus-visible {
 }
 
 .ds-process-tool-row .ds-process-entry-summary {
-  gap: 0;
+  gap: 6px;
+  justify-content: flex-start;
 }
 
 .ds-process-tool-row-summary {
   display: inline-flex;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 6px;
 }
@@ -1645,6 +1699,7 @@ textarea:focus-visible {
 }
 
 .ds-process-tool-row-summary-title {
+  flex: 0 1 auto;
   min-width: 0;
   color: var(--ds-text);
   /* Allow short previews to wrap naturally; full command args stay in detail. */
@@ -1655,12 +1710,35 @@ textarea:focus-visible {
   padding-top: 6px;
 }
 
+.ds-process-tool-row .ds-tool-diff-preview {
+  margin-left: 16px;
+}
+
 .ds-process-readonly-summary-body {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 4px;
   padding-top: 6px;
   padding-left: 18px;
+}
+
+.ds-process-readonly-summary-copy {
+  display: inline-flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.ds-process-readonly-summary-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ds-text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Tone variants: running highlights the whole row (live signal), success/
@@ -1680,6 +1758,8 @@ textarea:focus-visible {
 
 .ds-plan-block {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   gap: 8px;
   border: 1px solid var(--ds-border-muted);
@@ -1791,6 +1871,8 @@ textarea:focus-visible {
 /* ---------- Approval block ---------- */
 .ds-approval-block {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   gap: 8px;
   border: 1px solid var(--ds-border);
@@ -1827,10 +1909,12 @@ textarea:focus-visible {
 }
 
 .ds-approval-args {
+  min-width: 0;
   max-width: 100%;
   max-height: 220px;
   margin: 0;
   overflow: auto;
+  overflow-wrap: anywhere;
   color: var(--ds-text-muted);
   font-family: var(--ds-font-mono);
   font-size: var(--ds-size-caption);
@@ -1839,14 +1923,48 @@ textarea:focus-visible {
 }
 
 .ds-diff-preview {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--ds-border-muted);
   border-radius: var(--ds-radius-sm);
   background: var(--ds-surface-elevated);
 }
 
+.ds-tool-diff-preview {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 8px;
+}
+
+.ds-tool-diff-preview-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+}
+
+.ds-tool-diff-preview-header span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-tool-diff-preview-header span:last-child {
+  flex: 0 0 auto;
+  color: var(--ds-text);
+  font-family: var(--ds-font-mono);
+}
+
 .ds-diff-preview-list {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 10px;
 }
 
@@ -1880,6 +1998,7 @@ textarea:focus-visible {
 }
 
 .ds-diff-preview-lines {
+  min-width: 0;
   max-height: 260px;
   overflow: auto;
   padding: 4px 0;
@@ -1890,6 +2009,7 @@ textarea:focus-visible {
 
 .ds-diff-line {
   display: grid;
+  min-width: 0;
   grid-template-columns: 22px minmax(0, 1fr);
   gap: 4px;
   padding: 1px 9px;

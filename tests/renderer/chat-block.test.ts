@@ -105,6 +105,52 @@ describe("ChatBlock approval helpers", () => {
     expect(html).not.toContain("ds-process-entry ds-process-tool");
   });
 
+  it("renders a structured diff preview for completed coding tools", () => {
+    const toolItem: Extract<Item, { kind: "tool" }> = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "edit_file",
+      args: { path: "src/foo.ts" },
+      result: {
+        path: "src/foo.ts",
+        sha256: "abc123",
+        diff: {
+          kind: "file_diff",
+          path: "src/foo.ts",
+          operation: "update",
+          added: 1,
+          removed: 1,
+          lines: [
+            { type: "context", text: "function demo() {" },
+            { type: "removed", text: "  return oldValue;" },
+            { type: "added", text: "  return newValue;" },
+            { type: "context", text: "}" },
+          ],
+        },
+      },
+      status: "completed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, { item: toolItem }),
+      ),
+    );
+
+    expect(html).toContain("ds-tool-diff-preview");
+    expect(html).toContain("src/foo.ts");
+    expect(html).toContain("return oldValue");
+    expect(html).toContain("return newValue");
+    expect(html).toContain("+1 -1");
+    expect(html).not.toContain("sha256");
+  });
+
   it("renders the full tool card in write route", () => {
     const toolItem: Extract<Item, { kind: "tool" }> = {
       kind: "tool",

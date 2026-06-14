@@ -41,6 +41,8 @@
     "expandToolDetail": "展开完整详情",
     "collapseToolDetail": "收起为预览",
     "toolDetailTruncated": "当前为预览，隐藏 {{count}} 个字符。",
+    "editedFile": "已编辑 1 个文件",
+    "editedFiles": "已编辑 {{count}} 个文件",
     "toolStatus": {
       "pending": "等待中",
       "running": "运行中",
@@ -73,6 +75,8 @@
       "runCommand": "运行命令",
       "runCommandCommand": "运行命令：{{command}}",
       "failedCommandPreview": "{{tool}} 失败：{{command}}",
+      "changedFileSummary": "已编辑 {{path}} +{{added}} -{{removed}}",
+      "changedFilesSummary": "已编辑 {{count}} 个文件 +{{added}} -{{removed}}",
       "diagnoseWorkspace": "诊断工作区",
       "diagnoseFile": "诊断文件",
       "diagnoseFilePath": "诊断文件：{{path}}",

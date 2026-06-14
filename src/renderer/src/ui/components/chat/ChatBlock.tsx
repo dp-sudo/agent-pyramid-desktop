@@ -2,7 +2,7 @@ import { useEffect, useId, useState, memo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { ApprovalPreview, FileDiffLine, Item } from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { summarizeToolAction, summarizeToolItem } from "./timeline-model";
+import { extractToolDiffPreview, summarizeToolAction, summarizeToolItem } from "./timeline-model";
 import { useWorkbench } from "../../store/WorkbenchContext";
 
 export const TOOL_DETAIL_PREVIEW_MAX_CHARS = 4000;
@@ -345,6 +345,41 @@ function ApprovalPreviewBlock({
   return <></>;
 }
 
+function ToolDiffPreviewBlock({ preview }: { preview: ApprovalPreview }): ReactElement {
+  const { t } = useTranslation();
+  const summary = summarizeDiffPreview(preview);
+  return (
+    <div className="ds-tool-diff-preview">
+      <div className="ds-tool-diff-preview-header">
+        <span>
+          {summary.fileCount === 1
+            ? t("chat.editedFile")
+            : t("chat.editedFiles", { count: summary.fileCount })}
+        </span>
+        <span>+{summary.added} -{summary.removed}</span>
+      </div>
+      <ApprovalPreviewBlock preview={preview} defaultOpen={true} />
+    </div>
+  );
+}
+
+function summarizeDiffPreview(
+  preview: ApprovalPreview,
+): { fileCount: number; added: number; removed: number } {
+  if (preview.kind === "file_diff") {
+    return {
+      fileCount: 1,
+      added: preview.added,
+      removed: preview.removed,
+    };
+  }
+  return {
+    fileCount: preview.files.length,
+    added: preview.added,
+    removed: preview.removed,
+  };
+}
+
 function FileDiffPreviewBlock({
   preview,
   defaultOpen,
@@ -456,14 +491,15 @@ function ToolBlock({
   const isCodeRoute = state.route === "code";
   const display = summarizeToolItem(item, t);
   const action = summarizeToolAction(item, t);
+  const diffPreview = extractToolDiffPreview(item.result);
   const detailId = useId();
   const [showFullDetail, setShowFullDetail] = useState(false);
   const hasLongDetail = isLongToolDetail(display.detail);
   const detailDisplay = resolveToolDetailDisplay(display.detail, showFullDetail);
 
   // Code route renders a single compact row (label + title summary); expanding
-  // reuses the same detail frame as the Write card so the full args/result and
-  // expand control stay consistent. Write/settings keep the full card style.
+  // reuses the same detail frame as the Write card. Structured coding results
+  // render a focused diff preview there instead of raw result JSON.
   if (isCodeRoute) {
     return (
       <details
@@ -475,35 +511,41 @@ function ToolBlock({
             <span className="ds-process-tool-row-summary-title">{display.compactTitle}</span>
           </span>
         </summary>
-        {display.detail ? (
+        {diffPreview || display.detail ? (
           <div className="ds-process-entry-detail-frame">
-            <pre
-              id={detailId}
-              className={`ds-process-entry-detail ${detailDisplay.truncated ? "is-truncated" : ""}`}
-            >
-              {detailDisplay.text}
-            </pre>
-            {detailDisplay.truncated ? (
-              <small className="ds-process-entry-detail-note">
-                {t("chat.toolDetailTruncated", {
-                  count: detailDisplay.hiddenCharCount,
-                })}
-              </small>
-            ) : null}
-            {hasLongDetail ? (
-              <div className="ds-process-entry-detail-actions">
-                <button
-                  type="button"
-                  aria-controls={detailId}
-                  aria-expanded={showFullDetail}
-                  onClick={() => setShowFullDetail((current) => !current)}
+            {diffPreview ? (
+              <ToolDiffPreviewBlock preview={diffPreview} />
+            ) : (
+              <>
+                <pre
+                  id={detailId}
+                  className={`ds-process-entry-detail ${detailDisplay.truncated ? "is-truncated" : ""}`}
                 >
-                  {showFullDetail
-                    ? t("chat.collapseToolDetail")
-                    : t("chat.expandToolDetail")}
-                </button>
-              </div>
-            ) : null}
+                  {detailDisplay.text}
+                </pre>
+                {detailDisplay.truncated ? (
+                  <small className="ds-process-entry-detail-note">
+                    {t("chat.toolDetailTruncated", {
+                      count: detailDisplay.hiddenCharCount,
+                    })}
+                  </small>
+                ) : null}
+                {hasLongDetail ? (
+                  <div className="ds-process-entry-detail-actions">
+                    <button
+                      type="button"
+                      aria-controls={detailId}
+                      aria-expanded={showFullDetail}
+                      onClick={() => setShowFullDetail((current) => !current)}
+                    >
+                      {showFullDetail
+                        ? t("chat.collapseToolDetail")
+                        : t("chat.expandToolDetail")}
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         ) : null}
       </details>
@@ -516,35 +558,41 @@ function ToolBlock({
         <span className="ds-process-entry-title">{display.title}</span>
         <span className="ds-process-entry-status">{display.statusText}</span>
       </summary>
-      {display.detail ? (
+      {diffPreview || display.detail ? (
         <div className="ds-process-entry-detail-frame">
-          <pre
-            id={detailId}
-            className={`ds-process-entry-detail ${detailDisplay.truncated ? "is-truncated" : ""}`}
-          >
-            {detailDisplay.text}
-          </pre>
-          {detailDisplay.truncated ? (
-            <small className="ds-process-entry-detail-note">
-              {t("chat.toolDetailTruncated", {
-                count: detailDisplay.hiddenCharCount,
-              })}
-            </small>
-          ) : null}
-          {hasLongDetail ? (
-            <div className="ds-process-entry-detail-actions">
-              <button
-                type="button"
-                aria-controls={detailId}
-                aria-expanded={showFullDetail}
-                onClick={() => setShowFullDetail((current) => !current)}
+          {diffPreview ? (
+            <ToolDiffPreviewBlock preview={diffPreview} />
+          ) : (
+            <>
+              <pre
+                id={detailId}
+                className={`ds-process-entry-detail ${detailDisplay.truncated ? "is-truncated" : ""}`}
               >
-                {showFullDetail
-                  ? t("chat.collapseToolDetail")
-                  : t("chat.expandToolDetail")}
-              </button>
-            </div>
-          ) : null}
+                {detailDisplay.text}
+              </pre>
+              {detailDisplay.truncated ? (
+                <small className="ds-process-entry-detail-note">
+                  {t("chat.toolDetailTruncated", {
+                    count: detailDisplay.hiddenCharCount,
+                  })}
+                </small>
+              ) : null}
+              {hasLongDetail ? (
+                <div className="ds-process-entry-detail-actions">
+                  <button
+                    type="button"
+                    aria-controls={detailId}
+                    aria-expanded={showFullDetail}
+                    onClick={() => setShowFullDetail((current) => !current)}
+                  >
+                    {showFullDetail
+                      ? t("chat.collapseToolDetail")
+                      : t("chat.expandToolDetail")}
+                  </button>
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
     </details>

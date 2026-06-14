@@ -293,7 +293,7 @@ Item rendering:
 | `user` | Right-side user bubble with optional attachment names. |
 | `assistant` | Markdown assistant bubble. Live output gets shiny styling. |
 | `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning follows `basicPreferences.openReasoningByDefault` until the user explicitly toggles it. Closed completed reasoning shows a light text preview and does not mount the markdown body. |
-| `tool` | Code route: compact `ds-process-tool-row` (action label + title preview) that expands to the same args/result detail frame as the card; consecutive completed read-only rows may be grouped under a read-only summary. Failed command titles use a short preview while full args/results remain in detail. Write/settings route: full `ds-process-entry ds-process-tool` card with status/tone summary. Long details render as a bounded preview with an explicit full-detail toggle in both routes. Running command-backed tools may show temporary `[stdout]` / `[stderr]` progress details; the final tool result replaces that temporary progress when `item_updated` arrives. |
+| `tool` | Code route: compact `ds-process-tool-row` (action label + title preview) that expands to the same detail frame as the card; consecutive completed read-only rows may be grouped under a read-only summary. Failed command titles use a short preview while full args/results remain in detail. Completed coding tools with `ToolItem.result.diff` show a changed-file compact title and render `ds-tool-diff-preview` with only the changed diff lines instead of raw result JSON. Write/settings route: full `ds-process-entry ds-process-tool` card with status/tone summary. Long non-diff details render as a bounded preview with an explicit full-detail toggle in both routes. Running command-backed tools may show temporary `[stdout]` / `[stderr]` progress details; the final tool result replaces that temporary progress when `item_updated` arrives. |
 | `approval` | Approval block with args JSON and allow/deny buttons. |
 | `user_input` | System-style user input prompt. |
 | `plan` | Plan block with ordered steps and per-step status class. |
@@ -321,6 +321,8 @@ Key classes:
 - `ds-process-tool-row-summary`
 - `ds-process-tool-row-summary-label`
 - `ds-process-tool-row-summary-title`
+- `ds-tool-diff-preview`
+- `ds-tool-diff-preview-header`
 - `ds-approval-block`
 - `ds-approval-actions`
 - `ds-plan-block`
@@ -385,6 +387,7 @@ Key classes:
 
 - `ds-markdown`
 - `ds-shiny-markdown`
+- `ds-markdown-tail-cursor`
 - `ds-code-block`
 - `ds-code-block-header`
 - `ds-code-block-actions`

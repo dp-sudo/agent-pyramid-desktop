@@ -1,5 +1,8 @@
 import type {
+  ApprovalPreview,
   AssistantItem,
+  FileDiffLine,
+  FileDiffPreview,
   Item,
   ToolItem,
   UserItem,
@@ -145,6 +148,42 @@ export interface ToolPreviewDisplay extends ToolDisplay {
   hiddenCharCount: number;
 }
 
+export interface ToolChangeSummary {
+  fileCount: number;
+  added: number;
+  removed: number;
+  path?: string;
+}
+
+export function extractToolDiffPreview(result: unknown): ApprovalPreview | null {
+  if (isApprovalPreviewValue(result)) return result;
+  const record = asRecord(result);
+  if (!record) return null;
+  const diff = record.diff;
+  return isApprovalPreviewValue(diff) ? diff : null;
+}
+
+export function summarizeToolChangeResult(item: ToolItem): ToolChangeSummary | null {
+  if (!MODIFY_TOOL_NAMES.has(item.name)) return null;
+  const preview = extractToolDiffPreview(item.result);
+  if (!preview) return null;
+
+  if (preview.kind === "file_diff") {
+    return {
+      fileCount: 1,
+      path: preview.path,
+      added: preview.added,
+      removed: preview.removed,
+    };
+  }
+
+  return {
+    fileCount: preview.files.length,
+    added: preview.added,
+    removed: preview.removed,
+  };
+}
+
 // Code-route compact rows derive a short action label + tone from the tool
 // category and status, instead of the full card title+status used by Write /
 // Inspector. Names are sourced from RUNTIME_TOOL_NAMES so the mapping stays in
@@ -272,7 +311,7 @@ export function summarizeToolItemHeader(
     title,
     statusText: statusText(item.status, t),
     tone: statusTone(item.status),
-    compactTitle: compactTitleForTool(item.name, item.status, { path, query, command }, t),
+    compactTitle: compactTitleForTool(item, { path, query, command }, t),
   };
 }
 
@@ -360,8 +399,7 @@ function genericRuntimeToolTitle(
 const COMPACT_COMMAND_PREVIEW_MAX_CHARS = 72;
 
 function compactTitleForTool(
-  name: string,
-  status: ToolItem["status"],
+  item: ToolItem,
   args: {
     path?: string;
     query?: string;
@@ -369,6 +407,11 @@ function compactTitleForTool(
   },
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
+  const { name, status } = item;
+  const changeSummary = status === "completed" ? summarizeToolChangeResult(item) : null;
+  if (changeSummary) {
+    return compactTitleForChangeSummary(changeSummary, t);
+  }
   if (status !== "failed") {
     return titleForTool(name, args, t);
   }
@@ -379,6 +422,24 @@ function compactTitleForTool(
     });
   }
   return titleForTool(name, args, t);
+}
+
+function compactTitleForChangeSummary(
+  summary: ToolChangeSummary,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (summary.fileCount === 1 && summary.path) {
+    return t("chat.tools.changedFileSummary", {
+      path: summary.path,
+      added: summary.added,
+      removed: summary.removed,
+    });
+  }
+  return t("chat.tools.changedFilesSummary", {
+    count: summary.fileCount,
+    added: summary.added,
+    removed: summary.removed,
+  });
 }
 
 function toolDisplayName(
@@ -593,6 +654,53 @@ function normalizePreviewLimit(limit: number): number {
 
 function normalizeHiddenCharCount(truncated: boolean, hiddenCharCount: number): number {
   return truncated ? Math.max(1, hiddenCharCount) : 0;
+}
+
+function isApprovalPreviewValue(value: unknown): value is ApprovalPreview {
+  const record = asRecord(value);
+  if (!record) return false;
+  if (record.kind === "file_diff") return isFileDiffPreviewValue(record);
+  if (record.kind !== "multi_file_diff") return false;
+  return Array.isArray(record.files) &&
+    record.files.every(isFileDiffPreviewValue) &&
+    isNonNegativeIntegerValue(record.added) &&
+    isNonNegativeIntegerValue(record.removed);
+}
+
+function isFileDiffPreviewValue(value: unknown): value is FileDiffPreview {
+  const record = asRecord(value);
+  if (!record) return false;
+  return record.kind === "file_diff" &&
+    typeof record.path === "string" &&
+    isFileDiffOperationValue(record.operation) &&
+    isNonNegativeIntegerValue(record.added) &&
+    isNonNegativeIntegerValue(record.removed) &&
+    Array.isArray(record.lines) &&
+    record.lines.every(isFileDiffLineValue);
+}
+
+function isFileDiffLineValue(value: unknown): value is FileDiffLine {
+  const record = asRecord(value);
+  if (!record) return false;
+  return isFileDiffLineTypeValue(record.type) && typeof record.text === "string";
+}
+
+function isFileDiffOperationValue(value: unknown): value is FileDiffPreview["operation"] {
+  return value === "create" || value === "update" || value === "delete";
+}
+
+function isFileDiffLineTypeValue(value: unknown): value is FileDiffLine["type"] {
+  return value === "context" || value === "added" || value === "removed";
+}
+
+function isNonNegativeIntegerValue(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function readStringArg(args: Record<string, unknown>, key: string): string | undefined {

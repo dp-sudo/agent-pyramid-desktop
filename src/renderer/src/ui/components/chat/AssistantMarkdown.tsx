@@ -31,7 +31,15 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   streaming,
   codeBlockCollapseLineThreshold = CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
 }: AssistantMarkdownProps): ReactElement {
-  const renderText = streaming ? closeDanglingCodeFence(text) : text;
+  // Streaming cleanup runs only on the live block, so finalized text keeps its
+  // original whitespace and any deliberately-unclosed fence the model chose to
+  // emit. Order matters: trim trailing blank lines first, then close any
+  // inline backticks (e.g. a lone ` at the end of a sentence), then close any
+  // dangling fenced code block.
+  const renderText = streaming
+    ? closeDanglingCodeFence(closeDanglingInlineBackticks(trimTrailingBlankLines(text)))
+    : text;
+  const tailCursor = streaming && !looksLikeTrailingWhitespace(text);
   const components = useMemo(
     () => createMarkdownComponents(codeBlockCollapseLineThreshold),
     [codeBlockCollapseLineThreshold],
@@ -41,6 +49,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       <ReactMarkdown components={components} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
         {renderText}
       </ReactMarkdown>
+      {tailCursor ? <span className="ds-markdown-tail-cursor" aria-hidden="true" /> : null}
     </div>
   );
 });
@@ -374,4 +383,34 @@ export function closeDanglingCodeFence(text: string): string {
     fenceCount += 1;
   }
   return fenceCount % 2 === 1 ? `${text}\n\`\`\`` : text;
+}
+
+// Streaming helpers below run only while the assistant is still emitting, so
+// they only ever touch the live block. Each helper is a pure string transform
+// with no React/state coupling and is independently testable.
+
+export function closeDanglingInlineBackticks(text: string): string {
+  // Counts the total number of backtick characters in the buffer. If the count
+  // is odd, the model opened an inline code span (a lone `) that never closed;
+  // appending one more ` keeps downstream markdown parsers from consuming the
+  // rest of the message as code. Fenced ``` blocks already contain balanced
+  // backticks in multiples of three, so this only fires on the genuinely
+  // dangling single-backtick case.
+  let count = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.charCodeAt(i) === 96) count += 1;
+  }
+  return count % 2 === 1 ? `${text}\`` : text;
+}
+
+export function trimTrailingBlankLines(text: string): string {
+  // Collapse runs of trailing newlines to a single newline so an in-progress
+  // stream that ends on a blank gap does not push the visible content up by an
+  // extra empty paragraph on every tick.
+  return text.replace(/[\r\n]+$/, "\n");
+}
+
+export function looksLikeTrailingWhitespace(text: string): boolean {
+  if (!text) return true;
+  return /[\s\u00A0\u200B-\u200D\uFEFF]$/.test(text);
 }

@@ -41,6 +41,8 @@
     "expandToolDetail": "Show full detail",
     "collapseToolDetail": "Show preview",
     "toolDetailTruncated": "Showing a preview. {{count}} characters hidden.",
+    "editedFile": "Edited 1 file",
+    "editedFiles": "Edited {{count}} files",
     "toolStatus": {
       "pending": "Pending",
       "running": "Running",
@@ -73,6 +75,8 @@
       "runCommand": "Run command",
       "runCommandCommand": "Run command: {{command}}",
       "failedCommandPreview": "{{tool}} failed: {{command}}",
+      "changedFileSummary": "Edited {{path}} +{{added}} -{{removed}}",
+      "changedFilesSummary": "Edited {{count}} files +{{added}} -{{removed}}",
       "diagnoseWorkspace": "Diagnose workspace",
       "diagnoseFile": "Diagnose file",
       "diagnoseFilePath": "Diagnose file: {{path}}",
