@@ -42,6 +42,7 @@ export const THREAD_SANDBOX_MODES = [
 export type ThreadSandboxMode = (typeof THREAD_SANDBOX_MODES)[number];
 
 export const DEFAULT_THREAD_RELATION: ThreadRelation = "primary";
+export const DEFAULT_THREAD_TITLE = "New thread";
 export const DEFAULT_THREAD_MODE: ThreadMode = "code";
 export const DEFAULT_THREAD_STATUS: ThreadStatus = "active";
 export const DEFAULT_THREAD_APPROVAL_POLICY: ThreadApprovalPolicy = "on-request";

@@ -264,7 +264,7 @@ function matchSkill(skill: Skill, input: SkillMatchInput): SkillMatch | null {
 
   const matchedCommand = skill.trigger.commands.find((candidate) => {
     const normalized = candidate.toLowerCase();
-    return command === normalized || lowerText.startsWith(normalized);
+    return command === normalized || startsWithSkillToken(lowerText, normalized);
   });
   if (matchedCommand) return withSkill(skill, `command:${matchedCommand}`, 900);
 
@@ -304,13 +304,42 @@ function scopeMatchBonus(skill: Skill): number {
 function explicitSkillMention(skill: Skill, lowerText: string): string | undefined {
   const id = skill.id.toLowerCase();
   const name = skill.name.toLowerCase();
-  if (lowerText.includes(`$${id}`) || lowerText.includes(`@${id}`) || lowerText.includes(`/skill:${id}`)) {
+  if (
+    includesSkillToken(lowerText, `$${id}`) ||
+    includesSkillToken(lowerText, `@${id}`) ||
+    includesSkillToken(lowerText, `/skill:${id}`)
+  ) {
     return "explicit:id";
   }
-  if (name && (lowerText.includes(`$${name}`) || lowerText.includes(`@${name}`))) {
+  if (
+    name &&
+    (includesSkillToken(lowerText, `$${name}`) ||
+      includesSkillToken(lowerText, `@${name}`))
+  ) {
     return "explicit:name";
   }
   return undefined;
+}
+
+function startsWithSkillToken(text: string, token: string): boolean {
+  return text.startsWith(token) && isSkillTokenBoundary(text[token.length]);
+}
+
+function includesSkillToken(text: string, token: string): boolean {
+  let index = text.indexOf(token);
+  while (index >= 0) {
+    const previous = index > 0 ? text[index - 1] : undefined;
+    const next = text[index + token.length];
+    if (isSkillTokenBoundary(previous) && isSkillTokenBoundary(next)) {
+      return true;
+    }
+    index = text.indexOf(token, index + 1);
+  }
+  return false;
+}
+
+function isSkillTokenBoundary(char: string | undefined): boolean {
+  return char === undefined || !/[\p{L}\p{N}_-]/u.test(char);
 }
 
 function safePatternMatches(pattern: string, prompt: string): boolean {
