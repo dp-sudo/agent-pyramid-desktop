@@ -29,6 +29,8 @@ renderer React
 - 桌面进程边界是 `main / preload / renderer / worker` 四层。
 - 跨进程契约统一出口是 `src/shared/agent-contracts.ts`；低层分组可拆在
   `src/shared/*-contracts.ts` 后由统一出口 re-export。
+- `src/shared/agent-api.ts` 是 `window.agentApi` 的类型契约来源；renderer
+  的全局类型从这里导入，而不是从 preload 反向取类型。
 - IPC channel 权威来源是 `src/shared/ipc.ts`。
 - Agent 运行时唯一主入口是 `src/main/application/agent-runtime.ts`。
 - Electron 组合根是 `src/main/index.ts`。
@@ -106,17 +108,18 @@ flowchart LR
 | Area | Primary Files | Responsibility |
 | --- | --- | --- |
 | Main composition | `src/main/index.ts` | 创建 stores、event bus、worker pool、tool registry、AgentRuntime，注册 IPC handlers，创建窗口。 |
-| Runtime orchestration | `src/main/application/agent-runtime.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、approval gate、中断和事件广播。 |
+| Runtime orchestration | `src/main/application/agent-runtime.ts`、`src/main/application/runtime-event-persist.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、approval gate、中断、item/event 持久化辅助和事件广播。 |
 | Tool system | `src/main/application/tools/*`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口和内置工具。 |
 | Skills system | `src/shared/skills/*`、`src/main/skills/skill-service.ts`、`src/main/application/tools/skill-tools.ts`、`src/main/ipc/skills-handlers.ts` | 发现 workspace skills、解析 `SKILL.md`、按 turn 匹配注入 inline 动态上下文，并通过只读 `list_skills` / `run_skill` 工具和 Settings `skills:list` IPC 暴露技能目录摘要、验证警告、inline 技能指令和 isolated read-only subagent 结果。 |
 | MCP host | `src/main/infrastructure/mcp/*`、`src/main/ipc/mcp-handlers.ts` | stdio / Streamable HTTP MCP client lifecycle、动态工具注册、cache/lazy schema、startup stats、auth diagnostics、prompts/resources surface 和 MCP IPC。 |
 | LLM worker | `src/main/infrastructure/llm-worker/*` | main 到 worker 的请求路由、流式 chunk 转发和取消。 |
 | Provider gateway | `src/main/infrastructure/minimax/*` | MiniMax、DeepSeek、自定义 OpenAI-compatible 请求适配；runtime 会把所选模型 profile 的 `protocol` 传入 `LlmRequest`，由 gateway 分流到 OpenAI-compatible 或 Anthropic-compatible 请求形态。 |
 | Persistence | `src/main/persistence/*` | 线程 JSONL、附件、模型配置 profiles、runtime preferences 的 userData 持久化。 |
-| IPC handlers | `src/main/ipc/*-handlers.ts` | 将 renderer 调用映射到 runtime、stores 和文件服务，统一返回 `IpcResult<T>`。 |
+| IPC handlers | `src/main/ipc/*-handlers.ts`、`src/main/ipc/ipc-result-handler.ts` | 将 renderer 调用映射到 runtime、stores 和文件服务，统一返回 `IpcResult<T>`；通用 handler helper 负责保留 envelope 和可追踪错误消息。 |
+| Electron platform | `src/main/infrastructure/electron-window.ts`、`src/main/infrastructure/content-security-policy.ts`、`src/main/index.ts` | 窗口创建、外部导航拦截、renderer CSP 安装和 Electron app 生命周期注册；当前 `before-quit` 分别独立关闭 MCP host 与 worker pool。 |
 | Preload bridge | `src/preload/index.ts` | 暴露 `window.agentApi`，隐藏 Electron IPC 细节。 |
-| Shared contracts | `src/shared/agent-contracts.ts`、`src/shared/model-config-contracts.ts`、`src/shared/contract-primitives.ts`、`src/shared/ipc.ts`、`src/shared/ipc-errors.ts`、`src/shared/locale.ts` | 跨进程类型统一出口、模型配置契约、基础 UUID/ISO guard、IPC channel 常量、IPC error code 和语言列表权威来源。 |
-| Renderer shell | `src/renderer/src/ui/AppShell.tsx`、`src/renderer/src/ui/Workbench.tsx`、`src/renderer/src/ui/sidebar-resize-model.ts`、`src/renderer/src/ui/workbench-composer-payload.ts`、`src/renderer/src/ui/workbench-ipc.ts`、`src/renderer/src/ui/workbench-runtime-events.ts`、`src/renderer/src/ui/workbench-thread-model.ts`、`src/renderer/src/ui/settings-navigation-model.ts`、`src/renderer/src/ui/settings-runtime-model.ts`、`src/renderer/src/ui/SettingsView.tsx` | 路由、工作台、左侧栏 resize 规则、composer payload 规则、IPC 错误边界、RuntimeEvent 分发规则、线程选择规则、设置页导航与 runtime/MCP 表单规则和主要交互流程。 |
+| Shared contracts | `src/shared/agent-contracts.ts`、`src/shared/agent-api.ts`、`src/shared/model-config-contracts.ts`、`src/shared/contract-primitives.ts`、`src/shared/ipc.ts`、`src/shared/ipc-errors.ts`、`src/shared/locale.ts` | 跨进程类型统一出口、preload bridge 类型契约、模型配置契约、基础 UUID/ISO guard、IPC channel 常量、IPC error code 和语言列表权威来源。 |
+| Renderer shell | `src/renderer/src/ui/AppShell.tsx`、`src/renderer/src/ui/Workbench.tsx`、`src/renderer/src/ui/sidebar-resize-model.ts`、`src/renderer/src/ui/workbench-composer-payload.ts`、`src/renderer/src/ui/workbench-ipc.ts`、`src/renderer/src/ui/workbench-runtime-events.ts`、`src/renderer/src/ui/workbench-thread-model.ts`、`src/renderer/src/ui/settings-basic-preferences-model.ts`、`src/renderer/src/ui/settings-navigation-model.ts`、`src/renderer/src/ui/settings-model-config-model.ts`、`src/renderer/src/ui/settings-runtime-model.ts`、`src/renderer/src/ui/settings-runtime-preferences-model.ts`、`src/renderer/src/ui/settings-view-state-model.ts`、`src/renderer/src/ui/SettingsView.tsx` | 路由、工作台、左侧栏 resize 规则、composer payload 规则、IPC 错误边界、RuntimeEvent 分发规则、线程选择规则、设置页 basic preferences 规则、设置页导航、模型配置表单规则、runtime preference 数据规则、设置页状态守卫和主要交互流程。 |
 | Renderer state | `src/renderer/src/ui/store/WorkbenchContext.tsx`、`src/renderer/src/ui/store/tool-progress-model.ts`、`src/renderer/src/ui/store/composer-model-model.ts`、`src/renderer/src/ui/store/basic-preferences-state.ts` | `useReducer` 状态中心、live tool progress 合并/截断规则、composer 模型/profile 选择规则和 basic preferences 持久化状态补丁，不使用外部状态库。 |
 | Renderer hooks | `src/renderer/src/ui/hooks/*`、`src/renderer/src/ui/components/composer/use*.ts` | Workbench 局部状态副作用和 composer 交互状态 hooks。 |
 | UI components | `src/renderer/src/ui/components/**` | sidebar、topbar、composer、timeline、inspector、write、settings 和 primitives。 |
@@ -162,7 +165,7 @@ flowchart TD
 
 - Agent turn 行为：优先看 `AgentRuntime`。
 - 持久化格式：优先看 `src/shared/agent-contracts.ts` 和 `src/main/persistence/*`。
-- renderer 可调用能力：必须经过 `src/shared/ipc.ts`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts`。
+- renderer 可调用能力：必须经过 `src/shared/ipc.ts`、`src/shared/agent-api.ts` 中的 `AgentDesktopApi`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts`。
 - LLM 请求协议：优先看 `src/main/domain/agent/types.ts` 和 `src/main/infrastructure/minimax/minimax-gateway.ts`。
 - UI 交互状态：优先看 `WorkbenchContext.tsx`，再看调用组件。
 

@@ -128,13 +128,21 @@ Security invariants:
   in `src/main/index.ts`.
 - Renderer only uses `window.agentApi` and `src/shared/*` contracts.
 - External links opened from renderer markdown are mediated by
-  `configureExternalNavigation()` in `src/main/index.ts`.
+  `configureExternalNavigation()` in `src/main/infrastructure/electron-window.ts`.
+- Renderer CSP is installed by `installContentSecurityPolicy()` in
+  `src/main/infrastructure/content-security-policy.ts`.
 - File access stays in main process handlers and tools, with workspace/path
   boundary checks.
 
 ## Main Composition Root
 
 `src/main/index.ts` creates and wires the application graph:
+
+Window navigation guards and renderer CSP live in `src/main/infrastructure/`
+platform helpers; `src/main/index.ts` passes the renderer entry file into the
+window helper and keeps lifecycle registration at the composition root. The
+current lifecycle has two independent `app.on("before-quit")` handlers: one
+closes `McpHost`, and one destroys `LlmWorkerPool`.
 
 ```mermaid
 flowchart TD

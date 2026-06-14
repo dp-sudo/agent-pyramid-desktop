@@ -7,8 +7,10 @@
 - IPC channel constants: `src/shared/ipc.ts`
 - Request/response contracts: `src/shared/agent-contracts.ts`
 - Main handlers: `src/main/ipc/*-handlers.ts`
+- Main handler envelope helper: `src/main/ipc/ipc-result-handler.ts`
 - Preload API: `src/preload/index.ts`
-- Renderer global type: `src/renderer/src/global.d.ts`
+- Renderer global type: `src/renderer/src/global.d.ts` importing
+  `AgentDesktopApi` from `src/shared/agent-api.ts`
 - Runtime events: `src/shared/agent-contracts.ts` and `src/main/event-bus.ts`
 
 Renderer must call main through `window.agentApi`; it must not import or invoke `src/main/*` directly.
@@ -25,6 +27,10 @@ Helpers are defined in `src/shared/agent-contracts.ts`:
 
 - `ok(value)`
 - `err(code, message)`
+
+Main handlers that only need the standard `try -> ok(value) / catch -> err(code, message)`
+envelope can use `registerIpcResultHandler()` from
+`src/main/ipc/ipc-result-handler.ts`.
 
 Stable error-code values are defined in `src/shared/ipc-errors.ts` and consumed
 by main handlers plus renderer-side IPC fallbacks. New handler errors must add a
@@ -552,10 +558,11 @@ Required sequence:
 3. Add the constant to `RENDERER_TO_MAIN_CHANNELS`.
 4. Add any new error-code value to `src/shared/ipc-errors.ts`.
 5. Add or update a handler in `src/main/ipc/*-handlers.ts`.
-6. Ensure handler returns `ok(...)` or `err(IPC_ERROR_CODES.*, message)`.
+6. Ensure handler returns `ok(...)` or `err(IPC_ERROR_CODES.*, message)`, or use
+   `registerIpcResultHandler()` for standard envelope wrapping.
 7. Register the handler in `src/main/index.ts`.
 8. Expose a minimal wrapper in `src/preload/index.ts`.
-9. Confirm `src/renderer/src/global.d.ts` still derives `AgentDesktopApi` from preload.
+9. Confirm `src/renderer/src/global.d.ts` still derives `AgentDesktopApi` from shared contracts.
 10. Update renderer call sites.
 11. Add or update tests.
 
