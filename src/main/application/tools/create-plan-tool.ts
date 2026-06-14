@@ -38,15 +38,17 @@ export const createPlanTool: AgentTool = {
       required: ["steps"],
     },
   },
-  async execute(input) {
-    const title = typeof input.title === "string" ? input.title.trim() : "";
-    const steps = parseSteps(input.steps);
-    return JSON.stringify({
-      title: title || undefined,
-      steps,
-    });
-  },
+  execute: executeCreatePlan,
 };
+
+async function executeCreatePlan(input: Record<string, unknown>): Promise<string> {
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  const steps = parseSteps(input.steps);
+  return JSON.stringify({
+    title: title || undefined,
+    steps,
+  });
+}
 
 function parseSteps(value: unknown): Array<{ title: string; status: PlanStepStatus }> {
   if (!Array.isArray(value) || value.length === 0) {

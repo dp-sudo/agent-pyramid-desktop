@@ -23,28 +23,17 @@ import { FileHistoryStore } from "./tools/file-history-state.js";
 import {
   ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS,
   AGENT_AUTONOMY_TOOL_ROUNDS,
-  CONTEXT_BUDGET_SAFETY_RATIO,
   DEFAULT_AGENT_AUTONOMY,
   MAX_MAX_TOOL_ROUNDS,
-  MAX_PROGRESSIVE_COMPACTION_PASSES,
   MIN_MAX_TOOL_ROUNDS,
-  MIN_PROGRESSIVE_COMPACTION_BYTES,
-  MIN_TEXT_COMPACTION_BYTES,
-  TIGHT_ASSISTANT_MESSAGE_MAX_BYTES,
-  TIGHT_SYSTEM_MESSAGE_MAX_BYTES,
-  TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
-  TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES,
-  TIGHT_TOOL_RESULT_MAX_BYTES,
-  TIGHT_TOOL_RESULT_MAX_LINES,
-  TIGHT_USER_MESSAGE_MAX_BYTES,
-  TOKEN_ESTIMATE_BYTES_PER_TOKEN,
-  TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
-  TOOL_ARGUMENT_STRING_MAX_BYTES,
   TOOL_BUDGET_CONTINUATION_MESSAGE,
-  TOOL_RESULT_MAX_BYTES,
-  TOOL_RESULT_MAX_LINES,
   TOOL_ROUND_WARNING_THRESHOLD,
 } from "./constants.js";
+import { prepareMessagesForRequest } from "./context-compaction.js";
+import { ToolCatalogService, isCommandToolName } from "./tool-catalog.js";
+import type { ToolAccessPolicy } from "./tool-catalog.js";
+import { ToolPolicyService } from "./tool-policy.js";
+import { ApprovalCoordinator } from "./approval-coordinator.js";
 import type {
   ApprovalItem,
   ApprovalRespondRequest,
@@ -73,13 +62,23 @@ import type {
 import { normalizeSkillId, type Skill, type SkillTurnResolution } from "../../shared/skills/index.js";
 import {
   DEFAULT_RUNTIME_PREFERENCES,
-  THREAD_MODES,
-  isRuntimeToolName,
   isNonNegativeInteger,
   isModelReasoningEffort,
   isThreadGoalStatus,
 } from "../../shared/agent-contracts.js";
-import { evaluatePermission } from "./permission-policy.js";
+
+export {
+  CODE_ONLY_TOOL_NAMES,
+  COMMAND_TOOL_NAMES,
+  createToolAccessPolicy,
+  isCodeOnlyToolName,
+} from "./tool-catalog.js";
+export type {
+  ToolAccessDecision,
+  ToolAccessPolicy,
+  ToolAccessPolicyConfig,
+  ToolAccessPolicyInput,
+} from "./tool-catalog.js";
 
 interface RuntimeDeps {
   store: JsonlThreadStore;
@@ -94,16 +93,6 @@ interface RuntimeDeps {
   toolAccessPolicy?: ToolAccessPolicy;
 }
 
-interface PendingApproval {
-  approvalId: string;
-  threadId: string;
-  turnId: string;
-  toolName: string;
-  args: Record<string, unknown>;
-  preview?: ApprovalItem["preview"];
-  resolve: (decision: "allow" | "deny") => void | Promise<void>;
-}
-
 interface ActiveToolExecution {
   item: ToolItem;
   controller?: AbortController;
@@ -114,22 +103,6 @@ interface ActiveToolExecution {
 type NormalizedTurnStartRequest = Omit<TurnStartRequest, "attachmentIds"> & {
   attachmentIds: string[];
 };
-
-export type ToolAccessDecision = "allow" | "deny" | "inherit";
-
-export interface ToolAccessPolicyInput {
-  name: string;
-  turn: TurnRecord;
-  thread: ThreadRecord;
-  definition?: AgentToolDefinition;
-}
-
-export type ToolAccessPolicy = (input: ToolAccessPolicyInput) => ToolAccessDecision;
-
-export interface ToolAccessPolicyConfig {
-  allowByMode?: Partial<Record<ThreadRecord["mode"], readonly string[]>>;
-  denyByMode?: Partial<Record<ThreadRecord["mode"], readonly string[]>>;
-}
 
 const SYSTEM_PROMPT = [
   "You are the runtime assistant in the Agent Pyramid desktop app.",
@@ -154,105 +127,31 @@ const GOAL_MODE_INSTRUCTION = [
   "Use update_goal when the goal text, completion state, or blocked state changes.",
 ].join(" ");
 
-export const COMMAND_TOOL_NAMES = [
-  "run_command",
-  "shell_command",
-  "git_bash_command",
-  "powershell_command",
-  "wsl_command",
-  "git_status",
-  "git_diff",
-  "git_log",
-  "git_branch",
-  "git_commit",
-  "package_scripts",
-  "package_install",
-  "package_test",
-  "package_build",
-  "run_lint",
-  "run_format",
-  "run_tests",
-  "run_build",
-  "start_command_session",
-  "read_command_session",
-  "write_command_session",
-  "stop_command_session",
-  "detect_shell_environment",
-  "diagnose_workspace",
-  "diagnose_file",
-] as const;
-const COMMAND_TOOL_NAME_SET = new Set<string>(COMMAND_TOOL_NAMES);
-export const CODE_ONLY_TOOL_NAMES = [
-  "edit_file",
-  "write_file",
-  "delete_file",
-  "apply_patch",
-  "rollback_file",
-  ...COMMAND_TOOL_NAMES,
-] as const;
-const CODE_ONLY_TOOL_NAME_SET = new Set<string>(CODE_ONLY_TOOL_NAMES);
-const DEFAULT_TOOL_ACCESS_POLICY = createToolAccessPolicy({
-  denyByMode: {
-    write: CODE_ONLY_TOOL_NAMES,
-  },
-});
-
-const MCP_TOOL_NAME_PREFIX = "mcp__";
-
-export function isCodeOnlyToolName(name: string): boolean {
-  return CODE_ONLY_TOOL_NAME_SET.has(name);
-}
-
-export function createToolAccessPolicy(config: ToolAccessPolicyConfig): ToolAccessPolicy {
-  const allowByMode = toToolAccessSets(config.allowByMode);
-  const denyByMode = toToolAccessSets(config.denyByMode);
-  assertNoToolAccessConflicts(allowByMode, denyByMode);
-  return ({ name, thread }) => {
-    if (allowByMode[thread.mode]?.has(name)) return "allow";
-    if (denyByMode[thread.mode]?.has(name)) return "deny";
-    return "inherit";
-  };
-}
-
-function toToolAccessSets(
-  config: Partial<Record<ThreadRecord["mode"], readonly string[]>> | undefined,
-): Partial<Record<ThreadRecord["mode"], ReadonlySet<string>>> {
-  return {
-    ...(config?.code ? { code: new Set(config.code) } : {}),
-    ...(config?.write ? { write: new Set(config.write) } : {}),
-  };
-}
-
-function assertNoToolAccessConflicts(
-  allowByMode: Partial<Record<ThreadRecord["mode"], ReadonlySet<string>>>,
-  denyByMode: Partial<Record<ThreadRecord["mode"], ReadonlySet<string>>>,
-): void {
-  for (const mode of THREAD_MODES) {
-    const allow = allowByMode[mode];
-    const deny = denyByMode[mode];
-    if (!allow || !deny) {
-      continue;
-    }
-    for (const name of allow) {
-      if (deny.has(name)) {
-        throw new Error(`Tool access policy conflict for ${mode}:${name}.`);
-      }
-    }
-  }
-}
-
 /**
  * Multi-turn runtime. Holds per-turn state, orchestrates worker pool,
  * enforces tool policy, persists items + events, and emits bus events.
  */
 export class AgentRuntime {
   private readonly inFlight = new Map<string, TurnRecord>(); // turnId -> record
-  private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly activeToolExecutions = new Map<string, Set<ActiveToolExecution>>();
   private readonly readState = new FileReadStateStore();
   private readonly fileHistory = new FileHistoryStore();
+  private readonly toolCatalog: ToolCatalogService;
+  private readonly toolPolicy: ToolPolicyService;
+  private readonly approvals: ApprovalCoordinator;
 
-  constructor(private readonly deps: RuntimeDeps) {}
+  constructor(private readonly deps: RuntimeDeps) {
+    this.toolCatalog = new ToolCatalogService({
+      registry: deps.registry,
+      ...(deps.toolAccessPolicy ? { toolAccessPolicy: deps.toolAccessPolicy } : {}),
+    });
+    this.toolPolicy = new ToolPolicyService(deps.registry);
+    this.approvals = new ApprovalCoordinator({
+      store: deps.store,
+      bus: deps.bus,
+      previewProvider: (call, turn, thread) => this.buildApprovalPreview(call, turn, thread),
+    });
+  }
 
   isThreadInFlight(threadId: string): boolean {
     return Array.from(this.inFlight.values()).some(
@@ -364,7 +263,7 @@ export class AgentRuntime {
     if (turn.status === "interrupted") return;
     turn.status = "interrupted";
     await this.interruptActiveToolExecutionsForTurn(turn);
-    await this.resolvePendingApprovalsForTurn(turnId, "deny");
+    await this.approvals.resolvePendingForTurn(turnId, "deny");
     this.deps.pool.cancel(turn.threadId);
     const item: SystemItem = {
       kind: "system",
@@ -399,15 +298,7 @@ export class AgentRuntime {
   }
 
   respondApproval(approval: ApprovalRespondRequest): void {
-    if (approval.decision !== "allow" && approval.decision !== "deny") {
-      throw new Error("Approval decision must be allow or deny.");
-    }
-    const pending = this.pendingApprovals.get(approval.approvalId);
-    if (!pending) {
-      throw new Error(`Approval ${approval.approvalId} is not pending.`);
-    }
-    pending.resolve(approval.decision);
-    this.pendingApprovals.delete(approval.approvalId);
+    this.approvals.respond(approval);
   }
 
   async updateThreadGoal(
@@ -717,7 +608,7 @@ export class AgentRuntime {
     runtimePreferences: RuntimePreferences,
   ): LlmRequest {
     const systemPrompt = this.buildSystemPrompt();
-    const tools = this.listToolDefinitionsForTurn(turn, thread, runtimePreferences);
+    const tools = this.toolCatalog.listDefinitionsForTurn(turn, thread, runtimePreferences);
     return {
       protocol: modelConfig.protocol,
       provider: modelConfig.model_provide,
@@ -964,7 +855,13 @@ export class AgentRuntime {
       item: toolItem,
     });
 
-    if (!this.isToolAvailableForTurn(call.name, turn, thread, runtimePreferences)) {
+    const isToolAvailable = this.toolCatalog.isToolAvailableForTurn(
+      call.name,
+      turn,
+      thread,
+      runtimePreferences,
+    );
+    if (!isToolAvailable) {
       toolItem.status = "failed";
       toolItem.result = { message: `Tool "${call.name}" is not available in this turn.` };
       await this.deps.store.appendItem(turn.threadId, toolItem);
@@ -984,12 +881,13 @@ export class AgentRuntime {
       };
     }
 
-    const policyDecision = this.resolveToolPolicy(
+    const policyDecision = this.toolPolicy.resolve({
       call,
       turn,
       thread,
       runtimePreferences,
-    );
+      isToolAvailable,
+    });
     if (policyDecision === "deny") {
       toolItem.status = "failed";
       toolItem.result = {
@@ -1008,7 +906,7 @@ export class AgentRuntime {
 
     try {
       if (policyDecision === "ask") {
-        const approval = await this.requestApproval(turn, call, thread);
+        const approval = await this.approvals.requestApproval(turn, call, thread);
         if (approval === "deny") {
           if (activeExecution.finalizedByInterrupt) {
             this.unregisterActiveToolExecution(turn.id, activeExecution);
@@ -1365,218 +1263,12 @@ export class AgentRuntime {
     });
   }
 
-  private listToolDefinitionsForTurn(
-    turn: TurnRecord,
-    thread: ThreadRecord,
-    runtimePreferences: RuntimePreferences,
-  ): AgentToolDefinition[] {
-    return this.deps.registry
-      .listDefinitions()
-      .filter((definition) =>
-        this.isToolEnabledForTurn(
-          definition.name,
-          turn,
-          thread,
-          runtimePreferences,
-          definition,
-        ),
-      );
-  }
-
-  private isToolAvailableForTurn(
-    name: string,
-    turn: TurnRecord,
-    thread: ThreadRecord,
-    runtimePreferences: RuntimePreferences,
-  ): boolean {
-    return this.listToolDefinitionsForTurn(turn, thread, runtimePreferences).some(
-      (definition) => definition.name === name,
-    );
-  }
-
-  private isToolEnabledForTurn(
-    name: string,
-    turn: TurnRecord,
-    thread: ThreadRecord,
-    runtimePreferences: RuntimePreferences,
-    definition?: AgentToolDefinition,
-  ): boolean {
-    if (name === "create_plan") {
-      return turn.mode === "plan" &&
-        this.isToolAllowedByAccessPolicy(
-          name,
-          turn,
-          thread,
-          runtimePreferences,
-          definition,
-        );
-    }
-    if (name === "update_goal") {
-      return Boolean(turn.goalMode || thread.goal?.status === "active") &&
-        this.isToolAllowedByAccessPolicy(
-          name,
-          turn,
-          thread,
-          runtimePreferences,
-          definition,
-        );
-    }
-    return this.isToolAllowedByAccessPolicy(
-      name,
-      turn,
-      thread,
-      runtimePreferences,
-      definition,
-    );
-  }
-
-  private isToolAllowedByAccessPolicy(
-    name: string,
-    turn: TurnRecord,
-    thread: ThreadRecord,
-    runtimePreferences: RuntimePreferences,
-    definition?: AgentToolDefinition,
-  ): boolean {
-    // Tool access is a catalog-level policy, separate from approval/sandbox
-    // execution policy below. A caller can override individual mode/tool pairs
-    // while the default keeps Code-only tools out of Write threads.
-    const input = { name, turn, thread, ...(definition ? { definition } : {}) };
-    const configuredDecision = this.deps.toolAccessPolicy?.(input);
-    if (configuredDecision === "allow") return true;
-    if (configuredDecision === "deny") return false;
-    if (isRuntimeToolName(name)) {
-      return runtimePreferences.toolAvailability[thread.mode][name];
-    }
-    if (name.startsWith(MCP_TOOL_NAME_PREFIX)) {
-      return thread.mode === "code";
-    }
-    return DEFAULT_TOOL_ACCESS_POLICY(input) !== "deny";
-  }
-
-  private resolveToolPolicy(
-    call: AgentToolCall,
-    turn: TurnRecord,
-    thread: ThreadRecord,
-    runtimePreferences: RuntimePreferences,
-  ): "allow" | "ask" | "deny" {
-    const name = call.name;
-    const tool = this.deps.registry.getTool(name);
-    if (!tool) {
-      return "deny";
-    }
-    if (tool.metadata?.isReadOnly) {
-      return "allow";
-    }
-    if (
-      (name === "create_plan" || name === "update_goal") &&
-      this.isToolAvailableForTurn(name, turn, thread, runtimePreferences)
-    ) {
-      return "allow";
-    }
-    if (thread.sandboxMode === "read-only") {
-      return "deny";
-    }
-    if (thread.approvalPolicy === "never") {
-      return "deny";
-    }
-    // Configurable per-call rules may only refine non-read-only command,
-    // write, or MCP calls after hard sandbox and approval denials have already
-    // been applied.
-    const permissionDecision = evaluatePermission({
-      toolName: name,
-      args: call.arguments,
-      rules: runtimePreferences.permissionRules,
-    });
-    if (permissionDecision !== "none") {
-      return permissionDecision;
-    }
-    if (thread.approvalPolicy === "auto" && tool.metadata?.isDestructive === false) {
-      return "allow";
-    }
-    return "ask";
-  }
-
   private emitToolItemUpdated(turn: TurnRecord, item: ToolItem): void {
     this.deps.bus.emit("item_updated", {
       kind: "item_updated",
       threadId: turn.threadId,
       turnId: turn.id,
       item,
-    });
-  }
-
-  private async requestApproval(
-    turn: TurnRecord,
-    call: AgentToolCall,
-    thread: ThreadRecord,
-  ): Promise<"allow" | "deny"> {
-    const approvalId = randomUUID();
-    const preview = await this.buildApprovalPreview(call, turn, thread);
-    const pendingItem: ApprovalItem = {
-      kind: "approval",
-      id: randomUUID(),
-      threadId: turn.threadId,
-      turnId: turn.id,
-      approvalId,
-      toolName: call.name,
-      args: call.arguments,
-      ...(preview ? { preview } : {}),
-      createdAt: new Date().toISOString(),
-    };
-    await this.deps.store.appendItem(turn.threadId, pendingItem);
-    this.deps.bus.emit("item_appended", {
-      kind: "item_appended",
-      threadId: turn.threadId,
-      turnId: turn.id,
-      item: pendingItem,
-    });
-
-    return new Promise<"allow" | "deny">((resolve) => {
-      this.pendingApprovals.set(approvalId, {
-        approvalId,
-        threadId: turn.threadId,
-        turnId: turn.id,
-        toolName: call.name,
-        args: call.arguments,
-        ...(preview ? { preview } : {}),
-        resolve: (decision) => {
-          const item: ApprovalItem = {
-            ...pendingItem,
-            kind: "approval",
-            decision,
-            resolvedAt: new Date().toISOString(),
-          };
-          void (async () => {
-            try {
-              await this.deps.store.appendItem(turn.threadId, item);
-            } catch (error) {
-              this.deps.bus.emit("runtime_error", {
-                kind: "runtime_error",
-                threadId: turn.threadId,
-                turnId: turn.id,
-                code: "persistence_error",
-                message: error instanceof Error ? error.message : String(error),
-              });
-            }
-            this.deps.bus.emit("item_updated", {
-              kind: "item_updated",
-              threadId: turn.threadId,
-              turnId: turn.id,
-              item,
-            });
-            resolve(decision);
-          })();
-        },
-      });
-      this.deps.bus.emit("approval_requested", {
-        kind: "approval_requested",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        approvalId,
-        toolName: call.name,
-        args: call.arguments,
-        ...(preview ? { preview } : {}),
-      });
     });
   }
 
@@ -1659,19 +1351,6 @@ export class AgentRuntime {
         message: "Timed out waiting for interrupted tools to settle.",
       });
     }
-  }
-
-  private async resolvePendingApprovalsForTurn(
-    turnId: string,
-    decision: "allow" | "deny",
-  ): Promise<void> {
-    const pendingForTurn: PendingApproval[] = [];
-    for (const [approvalId, pending] of this.pendingApprovals) {
-      if (pending.turnId !== turnId) continue;
-      pendingForTurn.push(pending);
-      this.pendingApprovals.delete(approvalId);
-    }
-    await Promise.all(pendingForTurn.map((pending) => pending.resolve(decision)));
   }
 
   private async collectHistory(
@@ -2030,7 +1709,7 @@ function parsePlanStep(value: unknown, index: number): PlanStep {
 }
 
 function interruptedToolMessage(toolName: string): string {
-  if (COMMAND_TOOL_NAME_SET.has(toolName)) {
+  if (isCommandToolName(toolName)) {
     return "Command was interrupted.";
   }
   return "Tool was interrupted.";
@@ -2187,169 +1866,6 @@ function isFileDiffLine(value: unknown): boolean {
   );
 }
 
-function prepareMessagesForRequest(
-  messages: AgentMessage[],
-  options: {
-    systemPrompt: string;
-    tools: AgentToolDefinition[];
-    compactTokenLimit: number;
-    contextWindow: number;
-    maxTokens: number;
-    compaction: RuntimePreferences["compaction"];
-  },
-): AgentMessage[] {
-  const budget = resolveContextBudget(options);
-  if (!options.compaction.enabled) {
-    return enforceHardContextLimit(messages, budget);
-  }
-
-  if (options.compaction.strategy === "recent-only") {
-    return prepareRecentOnlyMessages(messages, budget);
-  }
-
-  if (options.compaction.strategy === "aggressive") {
-    return prepareAggressiveMessages(messages, budget);
-  }
-
-  let prepared = applyRequestHistoryHygiene(
-    messages,
-    options.compaction.strategy === "preserve-tools"
-      ? PRESERVE_TOOLS_REQUEST_HYGIENE_PROFILE
-      : DEFAULT_REQUEST_HYGIENE_PROFILE,
-  );
-  if (isWithinRequestBudget(prepared, budget)) {
-    return prepared;
-  }
-
-  prepared = trimOldestDynamicMessages(prepared, budget);
-  if (isWithinRequestBudget(prepared, budget)) {
-    return prepared;
-  }
-
-  prepared = applyRequestHistoryHygiene(prepared, TIGHT_REQUEST_HYGIENE_PROFILE);
-  if (isWithinRequestBudget(prepared, budget)) {
-    return prepared;
-  }
-
-  prepared = trimOldestDynamicMessages(prepared, budget);
-  if (isWithinRequestBudget(prepared, budget)) {
-    return prepared;
-  }
-
-  return compactMandatoryMessagesToFit(prepared, budget);
-}
-
-function prepareRecentOnlyMessages(
-  messages: AgentMessage[],
-  budget: ResolvedContextBudget,
-): AgentMessage[] {
-  if (isWithinRequestBudget(messages, budget)) {
-    return messages;
-  }
-
-  let prepared = trimOldestDynamicMessages(messages, budget);
-  if (isWithinRequestBudget(prepared, budget)) {
-    return prepared;
-  }
-
-  prepared = applyRequestHistoryHygiene(prepared, TIGHT_REQUEST_HYGIENE_PROFILE);
-  if (isWithinRequestBudget(prepared, budget)) {
-    return prepared;
-  }
-
-  return compactMandatoryMessagesToFit(prepared, budget);
-}
-
-function prepareAggressiveMessages(
-  messages: AgentMessage[],
-  budget: ResolvedContextBudget,
-): AgentMessage[] {
-  let prepared = applyRequestHistoryHygiene(messages, TIGHT_REQUEST_HYGIENE_PROFILE);
-  if (isWithinRequestBudget(prepared, budget)) {
-    return prepared;
-  }
-
-  prepared = trimOldestDynamicMessages(prepared, budget);
-  if (isWithinRequestBudget(prepared, budget)) {
-    return prepared;
-  }
-
-  return compactMandatoryMessagesToFit(prepared, budget);
-}
-
-function enforceHardContextLimit(
-  messages: AgentMessage[],
-  budget: ResolvedContextBudget,
-): AgentMessage[] {
-  if (isWithinRequestBudget(messages, budget)) {
-    return messages;
-  }
-
-  const trimmed = trimOldestDynamicMessages(messages, budget);
-  if (isWithinRequestBudget(trimmed, budget)) {
-    return trimmed;
-  }
-
-  return compactMandatoryMessagesToFit(trimmed, budget);
-}
-
-interface ContextBudgetOptions {
-  systemPrompt: string;
-  tools: AgentToolDefinition[];
-  compactTokenLimit: number;
-  contextWindow: number;
-  maxTokens: number;
-}
-
-interface ResolvedContextBudget {
-  systemPrompt: string;
-  tools: AgentToolDefinition[];
-  tokenLimit: number;
-}
-
-interface RequestHygieneProfile {
-  toolResultMaxLines: number;
-  toolResultMaxBytes: number;
-  toolArgumentStringMaxBytes: number;
-  toolArgumentArrayMaxItems: number;
-}
-
-const DEFAULT_REQUEST_HYGIENE_PROFILE: RequestHygieneProfile = {
-  toolResultMaxLines: TOOL_RESULT_MAX_LINES,
-  toolResultMaxBytes: TOOL_RESULT_MAX_BYTES,
-  toolArgumentStringMaxBytes: TOOL_ARGUMENT_STRING_MAX_BYTES,
-  toolArgumentArrayMaxItems: TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
-};
-
-const TIGHT_REQUEST_HYGIENE_PROFILE: RequestHygieneProfile = {
-  toolResultMaxLines: TIGHT_TOOL_RESULT_MAX_LINES,
-  toolResultMaxBytes: TIGHT_TOOL_RESULT_MAX_BYTES,
-  toolArgumentStringMaxBytes: TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES,
-  toolArgumentArrayMaxItems: TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
-};
-
-const PRESERVE_TOOLS_REQUEST_HYGIENE_PROFILE: RequestHygieneProfile = {
-  toolResultMaxLines: TOOL_RESULT_MAX_LINES,
-  toolResultMaxBytes: TOOL_RESULT_MAX_BYTES,
-  toolArgumentStringMaxBytes: TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES,
-  toolArgumentArrayMaxItems: TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS,
-};
-
-function resolveContextBudget(options: ContextBudgetOptions): ResolvedContextBudget {
-  const configuredLimit = Math.max(1, options.compactTokenLimit);
-  const contextWindow = Math.max(1, options.contextWindow);
-  const maxOutputTokens = Math.max(0, options.maxTokens);
-  const availableInputTokens = Math.max(1, contextWindow - maxOutputTokens);
-  return {
-    systemPrompt: options.systemPrompt,
-    tools: options.tools,
-    tokenLimit: Math.max(
-      1,
-      Math.floor(Math.min(configuredLimit, availableInputTokens) * CONTEXT_BUDGET_SAFETY_RATIO),
-    ),
-  };
-}
-
 function resolveMaxToolRounds(autonomy: ModelConfig["agent_autonomy"]): number {
   const configured = process.env.AGENT_MAX_TOOL_ROUNDS;
   if (configured === undefined || !configured.trim()) {
@@ -2367,446 +1883,6 @@ function shouldWarnAboutToolBudget(nextRound: number, maxToolRounds: number): bo
     return false;
   }
   return nextRound >= Math.max(1, Math.ceil(maxToolRounds * TOOL_ROUND_WARNING_THRESHOLD));
-}
-
-function isWithinRequestBudget(
-  messages: AgentMessage[],
-  budget: ResolvedContextBudget,
-): boolean {
-  return estimateRequestTokens(budget.systemPrompt, messages, budget.tools) <= budget.tokenLimit;
-}
-
-function applyRequestHistoryHygiene(
-  messages: AgentMessage[],
-  profile: RequestHygieneProfile,
-): AgentMessage[] {
-  let changed = false;
-  const completedToolCallIds = new Set(
-    messages
-      .filter((message) => message.role === "tool" && message.toolCallId)
-      .map((message) => message.toolCallId as string),
-  );
-  const next = messages.map((message) => {
-    if (message.role === "tool") {
-      const content = compactToolResultContent(message.content, profile);
-      if (content === message.content) return message;
-      changed = true;
-      return { ...message, content };
-    }
-
-    if (message.role === "assistant" && message.toolCalls?.length) {
-      let toolCallsChanged = false;
-      const toolCalls = message.toolCalls.map((call) => {
-        if (!completedToolCallIds.has(call.id)) return call;
-        const compactedArguments = compactToolArguments(call.arguments, profile);
-        if (compactedArguments === call.arguments) return call;
-        changed = true;
-        toolCallsChanged = true;
-        return { ...call, arguments: compactedArguments };
-      });
-      return toolCallsChanged ? { ...message, toolCalls } : message;
-    }
-
-    return message;
-  });
-  return changed ? next : messages;
-}
-
-function trimOldestDynamicMessages(
-  messages: AgentMessage[],
-  budget: ResolvedContextBudget,
-): AgentMessage[] {
-  const segments = segmentMessagesForTrimming(messages);
-  const lastUserSegmentIndex = findLastSegmentIndex(
-    segments,
-    (segment) => segment.some((message) => message.role === "user"),
-  );
-  const mandatoryStartIndex =
-    lastUserSegmentIndex >= 0 ? lastUserSegmentIndex : Math.max(0, segments.length - 1);
-  const keep = flattenSegments(segments.slice(mandatoryStartIndex));
-
-  for (let index = mandatoryStartIndex - 1; index >= 0; index -= 1) {
-    const candidate = [...segments[index], ...keep];
-    if (!isWithinRequestBudget(candidate, budget)) {
-      break;
-    }
-    keep.unshift(...segments[index]);
-  }
-  return keep.length > 0 ? keep : messages.slice(-1);
-}
-
-function compactMandatoryMessagesToFit(
-  messages: AgentMessage[],
-  budget: ResolvedContextBudget,
-): AgentMessage[] {
-  let prepared = compactMessages(messages, DEFAULT_MANDATORY_COMPACTION_PROFILE);
-  for (let pass = 0; pass < MAX_PROGRESSIVE_COMPACTION_PASSES; pass += 1) {
-    if (isWithinRequestBudget(prepared, budget)) {
-      return prepared;
-    }
-    prepared = compactMessages(prepared, createProgressiveCompactionProfile(pass));
-  }
-  return prepared;
-}
-
-interface MandatoryCompactionProfile extends RequestHygieneProfile {
-  systemMessageMaxBytes: number;
-  assistantMessageMaxBytes: number;
-  userMessageMaxBytes: number;
-}
-
-const DEFAULT_MANDATORY_COMPACTION_PROFILE: MandatoryCompactionProfile = {
-  ...TIGHT_REQUEST_HYGIENE_PROFILE,
-  systemMessageMaxBytes: TIGHT_SYSTEM_MESSAGE_MAX_BYTES,
-  assistantMessageMaxBytes: TIGHT_ASSISTANT_MESSAGE_MAX_BYTES,
-  userMessageMaxBytes: TIGHT_USER_MESSAGE_MAX_BYTES,
-};
-
-function createProgressiveCompactionProfile(pass: number): MandatoryCompactionProfile {
-  const divisor = 2 ** (pass + 1);
-  return {
-    toolResultMaxLines: Math.max(1, Math.floor(TIGHT_TOOL_RESULT_MAX_LINES / divisor)),
-    toolResultMaxBytes: Math.max(
-      MIN_PROGRESSIVE_COMPACTION_BYTES,
-      Math.floor(TIGHT_TOOL_RESULT_MAX_BYTES / divisor),
-    ),
-    toolArgumentStringMaxBytes: Math.max(
-      MIN_PROGRESSIVE_COMPACTION_BYTES,
-      Math.floor(TIGHT_TOOL_ARGUMENT_STRING_MAX_BYTES / divisor),
-    ),
-    toolArgumentArrayMaxItems: Math.max(1, Math.floor(TIGHT_TOOL_ARGUMENT_ARRAY_MAX_ITEMS / divisor)),
-    systemMessageMaxBytes: Math.max(
-      MIN_PROGRESSIVE_COMPACTION_BYTES,
-      Math.floor(TIGHT_SYSTEM_MESSAGE_MAX_BYTES / divisor),
-    ),
-    assistantMessageMaxBytes: Math.max(
-      MIN_PROGRESSIVE_COMPACTION_BYTES,
-      Math.floor(TIGHT_ASSISTANT_MESSAGE_MAX_BYTES / divisor),
-    ),
-    userMessageMaxBytes: Math.max(
-      MIN_PROGRESSIVE_COMPACTION_BYTES,
-      Math.floor(TIGHT_USER_MESSAGE_MAX_BYTES / divisor),
-    ),
-  };
-}
-
-function compactMessages(
-  messages: AgentMessage[],
-  profile: MandatoryCompactionProfile,
-): AgentMessage[] {
-  return messages.map((message) => {
-    let nextMessage = message;
-    if (message.role === "tool") {
-      nextMessage = {
-        ...message,
-        content: compactContentToBytes(message.content, profile.toolResultMaxBytes),
-      };
-    } else {
-      const maxBytes =
-        message.role === "system"
-          ? profile.systemMessageMaxBytes
-          : message.role === "assistant"
-            ? profile.assistantMessageMaxBytes
-            : profile.userMessageMaxBytes;
-      nextMessage = {
-        ...message,
-        content: compactContentToBytes(message.content, maxBytes),
-      };
-    }
-
-    if (message.role !== "assistant" || !message.toolCalls?.length) {
-      return nextMessage;
-    }
-
-    let toolCallsChanged = false;
-    const toolCalls = message.toolCalls.map((call) => {
-      const compactedArguments = compactToolArguments(call.arguments, profile);
-      if (compactedArguments === call.arguments) return call;
-      toolCallsChanged = true;
-      return { ...call, arguments: compactedArguments };
-    });
-    return toolCallsChanged ? { ...nextMessage, toolCalls } : nextMessage;
-  });
-}
-
-function compactContentToBytes(
-  content: AgentMessage["content"],
-  maxBytes: number,
-): AgentMessage["content"] {
-  if (typeof content === "string") {
-    return compactTextToBytes(content, maxBytes);
-  }
-
-  let changed = false;
-  const blocks = content.map((block) => {
-    if (block.type === "text") {
-      const text = compactTextToBytes(block.text, maxBytes);
-      if (text !== block.text) changed = true;
-      return { ...block, text };
-    }
-    changed = true;
-    return {
-      type: "text" as const,
-      text: `[context budget: omitted ${block.mimeType} attachment from oversized request message]`,
-    };
-  });
-  return changed ? blocks : content;
-}
-
-function compactTextToBytes(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
-    return text;
-  }
-  if (maxBytes < MIN_TEXT_COMPACTION_BYTES) {
-    return "[context budget: omitted oversized text]";
-  }
-  const marker = "\n[context budget: omitted oversized text middle]\n";
-  const markerBytes = Buffer.byteLength(marker, "utf8");
-  const available = Math.max(0, maxBytes - markerBytes);
-  const headBytes = Math.floor(available * 0.6);
-  const tailBytes = available - headBytes;
-  return `${sliceUtf8(text, headBytes)}${marker}${sliceUtf8FromEnd(text, tailBytes)}`;
-}
-
-function segmentMessagesForTrimming(messages: AgentMessage[]): AgentMessage[][] {
-  const segments: AgentMessage[][] = [];
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (message.role === "system") {
-      const segment = [message];
-      let cursor = index + 1;
-      while (cursor < messages.length && messages[cursor].role === "system") {
-        segment.push(messages[cursor]);
-        cursor += 1;
-      }
-      if (cursor < messages.length && messages[cursor].role === "user") {
-        segment.push(messages[cursor]);
-        segments.push(segment);
-        index = cursor;
-        continue;
-      }
-      segments.push(segment);
-      index = cursor - 1;
-      continue;
-    }
-
-    if (message.role !== "assistant" || !message.toolCalls?.length) {
-      segments.push([message]);
-      continue;
-    }
-
-    const expectedToolCallIds = new Set(message.toolCalls.map((call) => call.id));
-    const segment = [message];
-    let cursor = index + 1;
-    while (cursor < messages.length) {
-      const candidate = messages[cursor];
-      if (candidate.role !== "tool" || !candidate.toolCallId || !expectedToolCallIds.has(candidate.toolCallId)) {
-        break;
-      }
-      segment.push(candidate);
-      cursor += 1;
-    }
-    segments.push(segment);
-    index = cursor - 1;
-  }
-  return segments;
-}
-
-function findLastSegmentIndex(
-  segments: AgentMessage[][],
-  predicate: (segment: AgentMessage[]) => boolean,
-): number {
-  for (let index = segments.length - 1; index >= 0; index -= 1) {
-    if (predicate(segments[index])) return index;
-  }
-  return -1;
-}
-
-function flattenSegments(segments: AgentMessage[][]): AgentMessage[] {
-  return segments.flatMap((segment) => segment);
-}
-
-function compactToolResultContent(
-  content: AgentMessage["content"],
-  profile: RequestHygieneProfile,
-): AgentMessage["content"] {
-  if (typeof content === "string") {
-    return compactToolResultText(content, profile);
-  }
-  let changed = false;
-  const blocks = content.map((block) => {
-    if (block.type === "text") {
-      const text = compactToolResultText(block.text, profile);
-      if (text !== block.text) changed = true;
-      return { ...block, text };
-    }
-    changed = true;
-    return {
-      type: "text" as const,
-      text: `[context budget: omitted ${block.mimeType} attachment from historical tool result]`,
-    };
-  });
-  return changed ? blocks : content;
-}
-
-function compactToolResultText(text: string, profile: RequestHygieneProfile): string {
-  const originalBytes = Buffer.byteLength(text, "utf8");
-  const lines = text.split("\n");
-  if (originalBytes <= profile.toolResultMaxBytes && lines.length <= profile.toolResultMaxLines) {
-    return text;
-  }
-
-  const headCount = Math.min(80, Math.max(1, Math.floor(profile.toolResultMaxLines * 0.25)));
-  const tailCount = Math.min(120, Math.max(1, Math.floor(profile.toolResultMaxLines * 0.35)));
-  const signalLines = lines
-    .slice(headCount, Math.max(headCount, lines.length - tailCount))
-    .filter((line) => /\b(error|failed?|fatal|exception|warning|denied|timeout|not found|invalid)\b/i.test(line))
-    .slice(0, Math.max(0, profile.toolResultMaxLines - headCount - tailCount));
-  const selected = [
-    ...lines.slice(0, headCount),
-    ...signalLines,
-    ...lines.slice(Math.max(headCount, lines.length - tailCount)),
-  ];
-  const fitted = fitLinesToBytes(selected, profile.toolResultMaxBytes);
-  const omittedLines = Math.max(0, lines.length - fitted.length);
-  const marker = `[context budget: omitted ${omittedLines} historical tool result line(s); narrow the next read/search for details]`;
-  return [...fitted, marker].join("\n");
-}
-
-function compactToolArguments(
-  args: Record<string, unknown>,
-  profile: RequestHygieneProfile,
-): Record<string, unknown> {
-  let changed = false;
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(args)) {
-    const compacted = compactArgumentValue(key, value, profile);
-    out[key] = compacted.value;
-    changed ||= compacted.changed;
-  }
-  return changed ? out : args;
-}
-
-function compactArgumentValue(
-  key: string,
-  value: unknown,
-  profile: RequestHygieneProfile,
-): { value: unknown; changed: boolean } {
-  if (typeof value === "string") {
-    if (isBase64Like(key, value)) {
-      return {
-        value: `[context budget: omitted base64 argument, ${Buffer.byteLength(value, "utf8")} bytes]`,
-        changed: true,
-      };
-    }
-    if (Buffer.byteLength(value, "utf8") > profile.toolArgumentStringMaxBytes) {
-      return {
-        value: compactArgumentString(value, profile.toolArgumentStringMaxBytes),
-        changed: true,
-      };
-    }
-    return { value, changed: false };
-  }
-
-  if (Array.isArray(value)) {
-    let changed = false;
-    const selected =
-      value.length > profile.toolArgumentArrayMaxItems
-        ? [
-            ...value.slice(0, Math.floor(profile.toolArgumentArrayMaxItems * 0.75)),
-            { context_budget_omitted_items: value.length - profile.toolArgumentArrayMaxItems },
-            ...value.slice(
-              -(profile.toolArgumentArrayMaxItems - Math.floor(profile.toolArgumentArrayMaxItems * 0.75)),
-            ),
-          ]
-        : value;
-    changed ||= selected !== value;
-    const compacted = selected.map((item) => {
-      const child = compactArgumentValue(key, item, profile);
-      changed ||= child.changed;
-      return child.value;
-    });
-    return changed ? { value: compacted, changed: true } : { value, changed: false };
-  }
-
-  if (!value || typeof value !== "object") {
-    return { value, changed: false };
-  }
-
-  let changed = false;
-  const out: Record<string, unknown> = {};
-  for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
-    const child = compactArgumentValue(childKey, childValue, profile);
-    out[childKey] = child.value;
-    changed ||= child.changed;
-  }
-  return changed ? { value: out, changed: true } : { value, changed: false };
-}
-
-function compactArgumentString(value: string, maxBytes: number): string {
-  if (maxBytes < MIN_TEXT_COMPACTION_BYTES) {
-    return `[context budget: omitted long argument, ${Buffer.byteLength(value, "utf8")} bytes]`;
-  }
-  const marker = "\n[context budget: omitted long argument tail]";
-  const markerBytes = Buffer.byteLength(marker, "utf8");
-  const headBytes = Math.max(0, maxBytes - markerBytes);
-  return `${sliceUtf8(value, headBytes)}${marker}`;
-}
-
-function fitLinesToBytes(lines: string[], maxBytes: number): string[] {
-  const out: string[] = [];
-  let bytes = 0;
-  for (const line of lines) {
-    const nextBytes = Buffer.byteLength(line, "utf8") + 1;
-    if (bytes + nextBytes > maxBytes) break;
-    out.push(line);
-    bytes += nextBytes;
-  }
-  return out;
-}
-
-function sliceUtf8(value: string, maxBytes: number): string {
-  let bytes = 0;
-  let out = "";
-  for (const char of value) {
-    const charBytes = Buffer.byteLength(char, "utf8");
-    if (bytes + charBytes > maxBytes) break;
-    out += char;
-    bytes += charBytes;
-  }
-  return out;
-}
-
-function sliceUtf8FromEnd(value: string, maxBytes: number): string {
-  let bytes = 0;
-  let out = "";
-  const chars = Array.from(value);
-  for (let index = chars.length - 1; index >= 0; index -= 1) {
-    const char = chars[index];
-    const charBytes = Buffer.byteLength(char, "utf8");
-    if (bytes + charBytes > maxBytes) break;
-    out = `${char}${out}`;
-    bytes += charBytes;
-  }
-  return out;
-}
-
-function estimateRequestTokens(
-  systemPrompt: string,
-  messages: AgentMessage[],
-  tools: AgentToolDefinition[],
-): number {
-  return estimateTokens(
-    stableStringify({
-      systemPrompt,
-      messages,
-      tools,
-    }),
-  );
-}
-
-function estimateTokens(value: string): number {
-  return Math.ceil(Buffer.byteLength(value, "utf8") / TOKEN_ESTIMATE_BYTES_PER_TOKEN);
 }
 
 function stableStringify(value: unknown): string {
@@ -2841,11 +1917,4 @@ function canonicalizeJson(value: unknown): unknown {
     out[key] = canonicalizeJson((value as Record<string, unknown>)[key]);
   }
   return out;
-}
-
-function isBase64Like(key: string, value: string): boolean {
-  return (
-    /(?:^|_)(?:data_)?base64$/i.test(key) ||
-    /^data:[^;,]+;base64,/i.test(value)
-  );
 }

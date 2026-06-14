@@ -4,7 +4,12 @@ import { StringDecoder } from "node:string_decoder";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import ts from "typescript";
-import type { AgentTool, AgentToolContext, AgentToolResult } from "../../domain/agent/types";
+import type {
+  AgentCommandToolContext,
+  AgentTool,
+  AgentToolContext,
+  AgentToolResult,
+} from "../../domain/agent/types";
 import {
   requireWorkspace,
   resolveWorkspacePathLexically,
@@ -62,7 +67,7 @@ type ShellKind =
   | "pwsh";
 
 type PackageManagerName = "npm" | "pnpm" | "yarn" | "bun";
-type ToolProgressCallback = NonNullable<AgentToolContext["reportProgress"]>;
+type ToolProgressCallback = NonNullable<AgentCommandToolContext["reportProgress"]>;
 type CommandProgressStream = Parameters<ToolProgressCallback>[1];
 
 interface CommandProgressReporter {

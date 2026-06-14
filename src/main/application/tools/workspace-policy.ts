@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import type { AgentToolContext } from "../../domain/agent/types";
+import type { AgentWorkspaceCapability } from "../../domain/agent/types";
 import {
   isPathInsideOrEqual,
   toPortableRelativePath,
@@ -59,7 +59,7 @@ export async function resolveWorkspacePathForAccess(
   return resolved;
 }
 
-export function requireWorkspace(context: AgentToolContext): string {
+export function requireWorkspace(context: AgentWorkspaceCapability): string {
   if (!context.workspace?.trim()) {
     throw new Error("Workspace tools require an active thread workspace.");
   }

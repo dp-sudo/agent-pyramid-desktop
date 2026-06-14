@@ -1,6 +1,6 @@
 import { normalizeSkillId } from "../../../shared/skills/index.js";
 import type { SkillService } from "../../skills/skill-service.js";
-import type { AgentTool } from "../../domain/agent/types.js";
+import type { AgentSkillToolContext, AgentTool, AgentToolResult } from "../../domain/agent/types.js";
 
 export type SkillToolDeps = {
   skillService: SkillService;
@@ -25,36 +25,7 @@ export function createSkillTools(deps: SkillToolDeps): AgentTool[] {
         isDestructive: false,
         category: "skill",
       },
-      async execute(_input, context) {
-        if (!context.workspace) {
-          throw new Error("list_skills requires a workspace.");
-        }
-        const preferences = context.runtimePreferences?.skills;
-        if (!preferences) {
-          throw new Error("list_skills requires runtime skills preferences.");
-        }
-        const loaded = await deps.skillService.loadWorkspaceSkills(context.workspace, preferences);
-        return {
-          toolCallId: "",
-          name: "list_skills",
-          content: formatSkillCatalog(loaded),
-          displayResult: {
-            skills: loaded.skills.map((skill) => ({
-              id: skill.id,
-              name: skill.name,
-              description: skill.description,
-              runAs: skill.runAs,
-              scope: skill.scope,
-              rootDir: skill.rootDir,
-              skillPath: skill.skillPath,
-              triggers: skill.trigger,
-              allowedTools: skill.allowedTools,
-            })),
-            roots: loaded.roots,
-            validationErrors: loaded.validationErrors,
-          },
-        };
-      },
+      execute: (_input, context) => executeListSkills(deps, context),
     },
     {
       definition: {
@@ -83,56 +54,100 @@ export function createSkillTools(deps: SkillToolDeps): AgentTool[] {
         isDestructive: false,
         category: "skill",
       },
-      async execute(input, context) {
-        const skillId = parseSkillId(input.skillId);
-        const skillArguments = parseOptionalSkillArguments(input.arguments);
-        if (!context.workspace) {
-          throw new Error("run_skill requires a workspace.");
-        }
-        const preferences = context.runtimePreferences?.skills;
-        if (!preferences) {
-          throw new Error("run_skill requires runtime skills preferences.");
-        }
-        const loaded = await deps.skillService.loadWorkspaceSkills(context.workspace, preferences);
-        const normalizedId = normalizeSkillId(skillId);
-        const skill = loaded.skills.find((candidate) =>
-          candidate.id === normalizedId ||
-          normalizeSkillId(candidate.name) === normalizedId
-        );
-        if (!skill) {
-          throw new Error(`Skill "${skillId}" was not found.`);
-        }
-        if (skill.runAs === "subagent") {
-          throw new Error(
-            `Skill "${skill.id}" must be executed by AgentRuntime's isolated subagent runner.`,
-          );
-        }
-        return {
-          toolCallId: "",
-          name: "run_skill",
-          content: [
-            `Skill: ${skill.name} (${skill.id})`,
-            skill.description ? `Description: ${skill.description}` : "",
-            `Run mode: ${skill.runAs}`,
-            skill.allowedTools.length ? `Allowed tools: ${skill.allowedTools.join(", ")}` : "",
-            skill.body,
-            skillArguments ? `Arguments: ${skillArguments}` : "",
-          ].filter(Boolean).join("\n\n"),
-          displayResult: {
-            skillId: skill.id,
-            name: skill.name,
-            description: skill.description,
-            rootDir: skill.rootDir,
-            skillPath: skill.skillPath,
-            validationErrors: loaded.validationErrors,
-          },
-        };
-      },
+      execute: (input, context) => executeRunSkill(input, deps, context),
     },
   ];
 }
 
 type SkillCatalogLoadResult = Awaited<ReturnType<SkillService["loadWorkspaceSkills"]>>;
+type SkillToolPreferences =
+  NonNullable<AgentSkillToolContext["runtimePreferences"]>["skills"];
+
+async function executeListSkills(
+  deps: SkillToolDeps,
+  context: AgentSkillToolContext,
+): Promise<AgentToolResult> {
+  const { workspace, preferences } = requireSkillToolContext(context, "list_skills");
+  const loaded = await deps.skillService.loadWorkspaceSkills(workspace, preferences);
+  return {
+    toolCallId: "",
+    name: "list_skills",
+    content: formatSkillCatalog(loaded),
+    displayResult: {
+      skills: loaded.skills.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        runAs: skill.runAs,
+        scope: skill.scope,
+        rootDir: skill.rootDir,
+        skillPath: skill.skillPath,
+        triggers: skill.trigger,
+        allowedTools: skill.allowedTools,
+      })),
+      roots: loaded.roots,
+      validationErrors: loaded.validationErrors,
+    },
+  };
+}
+
+async function executeRunSkill(
+  input: Record<string, unknown>,
+  deps: SkillToolDeps,
+  context: AgentSkillToolContext,
+): Promise<AgentToolResult> {
+  const skillId = parseSkillId(input.skillId);
+  const skillArguments = parseOptionalSkillArguments(input.arguments);
+  const { workspace, preferences } = requireSkillToolContext(context, "run_skill");
+  const loaded = await deps.skillService.loadWorkspaceSkills(workspace, preferences);
+  const normalizedId = normalizeSkillId(skillId);
+  const skill = loaded.skills.find((candidate) =>
+    candidate.id === normalizedId ||
+    normalizeSkillId(candidate.name) === normalizedId
+  );
+  if (!skill) {
+    throw new Error(`Skill "${skillId}" was not found.`);
+  }
+  if (skill.runAs === "subagent") {
+    throw new Error(
+      `Skill "${skill.id}" must be executed by AgentRuntime's isolated subagent runner.`,
+    );
+  }
+  return {
+    toolCallId: "",
+    name: "run_skill",
+    content: [
+      `Skill: ${skill.name} (${skill.id})`,
+      skill.description ? `Description: ${skill.description}` : "",
+      `Run mode: ${skill.runAs}`,
+      skill.allowedTools.length ? `Allowed tools: ${skill.allowedTools.join(", ")}` : "",
+      skill.body,
+      skillArguments ? `Arguments: ${skillArguments}` : "",
+    ].filter(Boolean).join("\n\n"),
+    displayResult: {
+      skillId: skill.id,
+      name: skill.name,
+      description: skill.description,
+      rootDir: skill.rootDir,
+      skillPath: skill.skillPath,
+      validationErrors: loaded.validationErrors,
+    },
+  };
+}
+
+function requireSkillToolContext(
+  context: AgentSkillToolContext,
+  toolName: "list_skills" | "run_skill",
+): { workspace: string; preferences: SkillToolPreferences } {
+  if (!context.workspace) {
+    throw new Error(`${toolName} requires a workspace.`);
+  }
+  const preferences = context.runtimePreferences?.skills;
+  if (!preferences) {
+    throw new Error(`${toolName} requires runtime skills preferences.`);
+  }
+  return { workspace: context.workspace, preferences };
+}
 
 function formatSkillCatalog(loaded: SkillCatalogLoadResult): string {
   const lines = ["Skills index"];

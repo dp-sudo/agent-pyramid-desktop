@@ -1,4 +1,4 @@
-import type { AgentTool } from "../../domain/agent/types";
+import type { AgentTool, AgentToolBaseContext } from "../../domain/agent/types";
 import type { ThreadGoalStatus } from "../../../shared/agent-contracts.js";
 
 export interface GoalToolDeps {
@@ -42,13 +42,19 @@ export function createGoalTools(deps: GoalToolDeps): AgentTool[] {
           },
         },
       },
-      async execute(input, context) {
-        const update = parseGoalUpdate(input);
-        await deps.updateGoal(context.threadId, update);
-        return JSON.stringify({ updated: true });
-      },
+      execute: (input, context) => executeUpdateGoal(input, deps, context),
     },
   ];
+}
+
+async function executeUpdateGoal(
+  input: Record<string, unknown>,
+  deps: GoalToolDeps,
+  context: AgentToolBaseContext,
+): Promise<string> {
+  const update = parseGoalUpdate(input);
+  await deps.updateGoal(context.threadId, update);
+  return JSON.stringify({ updated: true });
 }
 
 function parseGoalUpdate(input: Record<string, unknown>): {

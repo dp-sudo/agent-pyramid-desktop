@@ -37,16 +37,47 @@ export interface AgentToolResult {
   displayResult?: unknown;
 }
 
-export interface AgentToolContext {
+export interface AgentToolBaseContext {
   threadId: string;
   turnId: string;
+}
+
+export interface AgentWorkspaceCapability {
   workspace?: string;
+}
+
+export interface AgentCancellationCapability {
   signal?: AbortSignal;
+}
+
+export interface AgentCommandPreferencesCapability {
   commandDefaults?: RuntimeCommandPreferences;
+}
+
+export type AgentToolProgressReporter = (chunk: string, stream: ToolProgressStream) => void;
+
+export interface AgentProgressCapability {
+  reportProgress?: AgentToolProgressReporter;
+}
+
+export interface AgentRuntimePreferencesCapability {
   runtimePreferences?: RuntimePreferences;
-  reportProgress?: (chunk: string, stream: ToolProgressStream) => void;
-  readState?: {
-    get(filePath: string): {
+}
+
+export interface AgentReadState {
+  get(filePath: string): {
+    content: string;
+    mtimeMs: number;
+    size: number;
+    sha256: string;
+    fullSha256?: string;
+    truncated: boolean;
+    offsetBytes?: number;
+    bytesRead?: number;
+  } | undefined;
+  set(
+    filePath: string,
+    state: {
       content: string;
       mtimeMs: number;
       size: number;
@@ -55,82 +86,110 @@ export interface AgentToolContext {
       truncated: boolean;
       offsetBytes?: number;
       bytesRead?: number;
-    } | undefined;
-    set(
-      filePath: string,
-      state: {
-        content: string;
-        mtimeMs: number;
-        size: number;
-        sha256: string;
-        fullSha256?: string;
-        truncated: boolean;
-        offsetBytes?: number;
-        bytesRead?: number;
-      },
-    ): void;
-    delete(filePath: string): void;
-    clear(): void;
-  };
-  fileHistory?: {
-    push(entry: {
-      threadId: string;
-      turnId: string;
-      toolName: string;
-      workspace: string;
-      filePath: string;
-      relativePath: string;
-      operation: "create" | "update" | "delete" | "rollback";
-      beforeContent: string | null;
-      afterContent: string | null;
-      beforeSha256: string | null;
-      afterSha256: string | null;
-    }): {
-      id: string;
-      threadId: string;
-      turnId: string;
-      toolName: string;
-      workspace: string;
-      filePath: string;
-      relativePath: string;
-      operation: "create" | "update" | "delete" | "rollback";
-      beforeContent: string | null;
-      afterContent: string | null;
-      beforeSha256: string | null;
-      afterSha256: string | null;
-      createdAt: string;
-    };
-    latest(filePath: string): {
-      id: string;
-      threadId: string;
-      turnId: string;
-      toolName: string;
-      workspace: string;
-      filePath: string;
-      relativePath: string;
-      operation: "create" | "update" | "delete" | "rollback";
-      beforeContent: string | null;
-      afterContent: string | null;
-      beforeSha256: string | null;
-      afterSha256: string | null;
-      createdAt: string;
-    } | undefined;
-  };
-  checkpoint?: {
-    recordFileSnapshot(entry: {
-      threadId: string;
-      turnId: string;
-      workspace: string;
-      toolName: string;
-      relativePath: string;
-      operation: "create" | "update" | "delete" | "rollback";
-      beforeContent: string | null;
-      afterContent: string | null;
-      beforeSha256: string | null;
-      afterSha256: string | null;
-    }): Promise<void>;
-  };
+    },
+  ): void;
+  delete(filePath: string): void;
+  clear(): void;
 }
+
+export interface AgentReadStateCapability {
+  readState?: AgentReadState;
+}
+
+export interface AgentFileHistory {
+  push(entry: {
+    threadId: string;
+    turnId: string;
+    toolName: string;
+    workspace: string;
+    filePath: string;
+    relativePath: string;
+    operation: "create" | "update" | "delete" | "rollback";
+    beforeContent: string | null;
+    afterContent: string | null;
+    beforeSha256: string | null;
+    afterSha256: string | null;
+  }): {
+    id: string;
+    threadId: string;
+    turnId: string;
+    toolName: string;
+    workspace: string;
+    filePath: string;
+    relativePath: string;
+    operation: "create" | "update" | "delete" | "rollback";
+    beforeContent: string | null;
+    afterContent: string | null;
+    beforeSha256: string | null;
+    afterSha256: string | null;
+    createdAt: string;
+  };
+  latest(filePath: string): {
+    id: string;
+    threadId: string;
+    turnId: string;
+    toolName: string;
+    workspace: string;
+    filePath: string;
+    relativePath: string;
+    operation: "create" | "update" | "delete" | "rollback";
+    beforeContent: string | null;
+    afterContent: string | null;
+    beforeSha256: string | null;
+    afterSha256: string | null;
+    createdAt: string;
+  } | undefined;
+}
+
+export interface AgentFileHistoryCapability {
+  fileHistory?: AgentFileHistory;
+}
+
+export interface AgentCheckpointRecorder {
+  recordFileSnapshot(entry: {
+    threadId: string;
+    turnId: string;
+    workspace: string;
+    toolName: string;
+    relativePath: string;
+    operation: "create" | "update" | "delete" | "rollback";
+    beforeContent: string | null;
+    afterContent: string | null;
+    beforeSha256: string | null;
+    afterSha256: string | null;
+  }): Promise<void>;
+}
+
+export interface AgentCheckpointCapability {
+  checkpoint?: AgentCheckpointRecorder;
+}
+
+export interface AgentReadWorkspaceToolContext
+  extends AgentToolBaseContext,
+    AgentWorkspaceCapability,
+    AgentReadStateCapability {}
+
+export interface AgentWriteWorkspaceToolContext
+  extends AgentReadWorkspaceToolContext,
+    AgentFileHistoryCapability,
+    AgentCheckpointCapability {}
+
+export interface AgentCommandToolContext
+  extends AgentToolBaseContext,
+    AgentWorkspaceCapability,
+    AgentCancellationCapability,
+    AgentCommandPreferencesCapability,
+    AgentProgressCapability {}
+
+export interface AgentSkillToolContext
+  extends AgentToolBaseContext,
+    AgentWorkspaceCapability,
+    AgentRuntimePreferencesCapability {}
+
+export interface AgentToolContext
+  extends AgentWriteWorkspaceToolContext,
+    AgentCommandToolContext,
+    AgentSkillToolContext {}
 
 export type AgentUsage = TokenUsage;
 
