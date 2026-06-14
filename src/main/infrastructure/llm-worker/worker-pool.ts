@@ -65,6 +65,10 @@ export class LlmWorkerPool {
   constructor(
     private readonly size = 1,
     private readonly workerFactory: WorkerFactory = (filename) => new Worker(filename),
+    // Pool-level crash notifications fire for worker "error"/"exit" events that
+    // are NOT tied to a specific in-flight request (those reject per-request).
+    // Lets the composition root surface crashes on the runtime event bus.
+    private readonly onWorkerCrash?: (detail: { index: number; error: unknown }) => void,
   ) {
     if (size < 1) throw new Error("Worker pool size must be >= 1");
   }
@@ -202,11 +206,13 @@ export class LlmWorkerPool {
     const entry: PoolEntry = { worker, activeRequests: 0, index };
     worker.on("error", (error) => {
       console.error(`[llm-worker ${index}] error:`, error);
+      this.onWorkerCrash?.({ index, error });
     });
     worker.on("exit", (code) => {
       if (this.destroyed) return;
       if (code !== 0) {
         console.error(`[llm-worker ${index}] exited with code ${code}`);
+        this.onWorkerCrash?.({ index, error: new Error(`LLM worker ${index} exited with code ${code}`) });
       }
       this.replaceExitedEntry(entry);
     });

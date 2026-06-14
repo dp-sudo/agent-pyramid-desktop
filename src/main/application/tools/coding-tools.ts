@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import * as path from "node:path";
 import type { AgentTool, AgentToolContext, AgentToolResult } from "../../domain/agent/types";
 import {
+  assertNoSymlinkInPath,
+  getErrorCode,
   requireWorkspace,
   resolveWorkspacePathForAccess,
   toWorkspaceRelative,
@@ -266,7 +268,7 @@ async function prepareEdit(
   }
 
   const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
-  await assertNoSymlinkPath(workspace, relativePath, "read");
+  await assertNoSymlinkInPath(workspace, relativePath, "read", "Coding tools");
   const { content } = await readEditableTextFile(filePath, relativePath);
   assertFreshRead(context, filePath, content);
   const matches = countOccurrences(content, oldString);
@@ -295,7 +297,7 @@ async function prepareWrite(
   const createOnly = optionalBoolean(input.create_only, false, "create_only must be a boolean.");
   const overwrite = optionalBoolean(input.overwrite, false, "overwrite must be a boolean.");
   const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "write");
-  await assertNoSymlinkPath(workspace, relativePath, "write");
+  await assertNoSymlinkInPath(workspace, relativePath, "write", "Coding tools");
   let original = "";
   let operation: FileChangeResult["operation"] = "create";
 
@@ -326,7 +328,7 @@ async function prepareDelete(
   const workspace = requireWorkspace(context);
   const relativePath = requiredString(input.path, "delete_file requires a string path.");
   const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
-  await assertNoSymlinkPath(workspace, relativePath, "read");
+  await assertNoSymlinkInPath(workspace, relativePath, "read", "Coding tools");
   const { content } = await readEditableTextFile(filePath, relativePath);
   assertFreshRead(context, filePath, content);
   return buildPreparedChange(workspace, filePath, content, "", "delete");
@@ -339,7 +341,7 @@ async function prepareRollback(
   const workspace = requireWorkspace(context);
   const relativePath = requiredString(input.path, "rollback_file requires a string path.");
   const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "write");
-  await assertNoSymlinkPath(workspace, relativePath, "write");
+  await assertNoSymlinkInPath(workspace, relativePath, "write", "Coding tools");
   const entry = context.fileHistory?.latest(filePath);
   if (!entry) {
     throw new Error(`rollback_file has no history for ${relativePath}.`);
@@ -491,38 +493,9 @@ async function assertPreparedChangePathStillAllowed(
   access: "read" | "write",
 ): Promise<void> {
   const resolved = await resolveWorkspacePathForAccess(change.workspace, change.path, access);
-  await assertNoSymlinkPath(change.workspace, change.path, access);
+  await assertNoSymlinkInPath(change.workspace, change.path, access, "Coding tools");
   if (!isSamePath(path.resolve(resolved), path.resolve(change.filePath))) {
     throw new Error(`Path changed before write: ${change.path}. Read it again before writing.`);
-  }
-}
-
-async function assertNoSymlinkPath(
-  workspace: string,
-  relativePath: string,
-  access: "read" | "write",
-): Promise<void> {
-  // Destructive coding tools record and roll back lexical workspace paths.
-  // Reject symlink components so the recorded path and modified inode cannot diverge.
-  const root = path.resolve(workspace);
-  const target = path.resolve(root, relativePath);
-  const relative = path.relative(root, target);
-  if (!relative) return;
-  const segments = relative.split(path.sep).filter(Boolean);
-  let current = root;
-  for (const segment of segments) {
-    current = path.join(current, segment);
-    try {
-      const stat = await fs.lstat(current);
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Coding tools do not modify files through symbolic links: ${relativePath}`);
-      }
-    } catch (error) {
-      if (getErrorCode(error) === "ENOENT" && access === "write") {
-        return;
-      }
-      throw error;
-    }
   }
 }
 
@@ -609,7 +582,7 @@ async function preparePatch(
     }
     const operation: FileChangeResult["operation"] = file.oldPath === undefined ? "create" : "update";
     const filePath = await resolveWorkspacePathForAccess(workspace, targetPath, operation === "create" ? "write" : "read");
-    await assertNoSymlinkPath(workspace, targetPath, operation === "create" ? "write" : "read");
+    await assertNoSymlinkInPath(workspace, targetPath, operation === "create" ? "write" : "read", "Coding tools");
     if (seenTargets.has(filePath)) {
       throw new Error(`apply_patch contains duplicate file sections for ${targetPath}.`);
     }
@@ -1228,12 +1201,6 @@ function optionalBoolean(value: unknown, fallback: boolean, message: string): bo
 
 function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
-}
-
-function getErrorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error
-    ? String((error as { code?: unknown }).code)
-    : undefined;
 }
 
 function messageOf(error: unknown): string {

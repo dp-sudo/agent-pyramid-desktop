@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
 import { createReadStream } from "node:fs";
+import { warnMalformedJsonlLine } from "./jsonl-replay.js";
 import type {
   Item,
   RuntimeEvent,
@@ -526,10 +527,7 @@ export class JsonlThreadStore {
           }
           yield parsed;
         } catch (error) {
-          console.warn(
-            `[persistence] skipped malformed ${label} line ${lineNo} in ${target}:`,
-            (error as Error).message,
-          );
+          warnMalformedJsonlLine(label, lineNo, target, error);
         }
       }
     } finally {

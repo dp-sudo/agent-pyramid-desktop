@@ -9,8 +9,11 @@ import type {
 } from "../../shared/agent-contracts.js";
 import { isIsoTimestampString } from "../../shared/agent-contracts.js";
 import { isSamePath } from "../application/path-utils.js";
+import { warnMalformedJsonlLine } from "./jsonl-replay.js";
 import { writeUtf8TextFileNoFollow } from "../application/tools/text-file.js";
 import {
+  assertNoSymlinkInPath,
+  getErrorCode,
   resolveWorkspacePathForAccess,
   resolveWorkspaceRoot,
 } from "../application/tools/workspace-policy.js";
@@ -96,7 +99,7 @@ export class CheckpointStore {
     const snapshot = normalizeSnapshotInput(input);
     const access = snapshot.beforeContent === null ? "write" : "read";
     await resolveWorkspacePathForAccess(snapshot.workspace, snapshot.relativePath, access);
-    await assertNoSymlinkPath(snapshot.workspace, snapshot.relativePath, access);
+    await assertNoSymlinkInPath(snapshot.workspace, snapshot.relativePath, access, "Checkpoint restore");
 
     await this.serialized(snapshot.threadId, async () => {
       const records = await this.readRecords(snapshot.threadId);
@@ -161,7 +164,7 @@ export class CheckpointStore {
         throw new Error(`Checkpoint workspace does not match the current thread: ${snapshot.file.path}`);
       }
       const target = await resolveWorkspacePathForAccess(thread.workspace, snapshot.file.path, "write");
-      await assertNoSymlinkPath(thread.workspace, snapshot.file.path, "write");
+      await assertNoSymlinkInPath(thread.workspace, snapshot.file.path, "write", "Checkpoint restore");
       restorePlan.push({ target, file: snapshot.file });
     }
 
@@ -215,10 +218,7 @@ export class CheckpointStore {
         }
         records.push(parsed);
       } catch (error) {
-        console.warn(
-          `[checkpoint-store] skipped malformed checkpoint line ${lineNo} in ${target}:`,
-          error instanceof Error ? error.message : String(error),
-        );
+        warnMalformedJsonlLine("checkpoint", lineNo, target, error);
       }
     }
     return records;
@@ -320,40 +320,13 @@ function collectEarliestSnapshots(
   return snapshots;
 }
 
-async function assertNoSymlinkPath(
-  workspace: string,
-  relativePath: string,
-  access: "read" | "write",
-): Promise<void> {
-  const root = path.resolve(workspace);
-  const target = path.resolve(root, relativePath);
-  const relative = path.relative(root, target);
-  if (!relative) return;
-  const segments = relative.split(path.sep).filter(Boolean);
-  let current = root;
-  for (const segment of segments) {
-    current = path.join(current, segment);
-    try {
-      const stat = await fs.lstat(current);
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Checkpoint restore does not modify files through symbolic links: ${relativePath}`);
-      }
-    } catch (error) {
-      if (getErrorCode(error) === "ENOENT" && access === "write") {
-        return;
-      }
-      throw error;
-    }
-  }
-}
-
 async function resolveRestoreTarget(
   workspace: string,
   relativePath: string,
   access: "read" | "write",
 ): Promise<string> {
   const target = await resolveWorkspacePathForAccess(workspace, relativePath, access);
-  await assertNoSymlinkPath(workspace, relativePath, access);
+  await assertNoSymlinkInPath(workspace, relativePath, access, "Checkpoint restore");
   return target;
 }
 
@@ -438,10 +411,4 @@ function normalizeOperationOrNull(value: unknown): CheckpointFileOperation | nul
 
 function isShaOrNull(value: unknown): boolean {
   return value === null || (typeof value === "string" && /^[a-f0-9]{64}$/i.test(value));
-}
-
-function getErrorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error
-    ? String((error as { code?: unknown }).code)
-    : undefined;
 }

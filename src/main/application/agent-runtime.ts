@@ -40,6 +40,10 @@ import {
   normalizeThreadGoalUpdate,
   type ThreadGoalUpdate,
 } from "./thread-goal-update.js";
+import {
+  appendItemAndBroadcast,
+  persistEventOrReportError,
+} from "./runtime-event-persist.js";
 import type {
   ApprovalItem,
   ApprovalRespondRequest,
@@ -152,6 +156,27 @@ export class AgentRuntime {
     });
   }
 
+  /**
+   * Emit a runtime_error event while also logging the raw error (with stack)
+   * to the main console. Without the console.error the original stack trace is
+   * lost — runtime_error only carries message/code, making failures untraceable.
+   */
+  private reportRuntimeError(
+    turn: { threadId: string; id: string } | undefined,
+    code: RuntimeErrorEvent["code"],
+    message: string,
+    error?: unknown,
+  ): void {
+    console.error(`[runtime] ${code}:`, error ?? message);
+    this.deps.bus.emit("runtime_error", {
+      kind: "runtime_error",
+      threadId: turn?.threadId,
+      turnId: turn?.id,
+      code,
+      message,
+    });
+  }
+
   isThreadInFlight(threadId: string): boolean {
     return Array.from(this.inFlight.values()).some(
       (turn) => turn.threadId === threadId,
@@ -231,13 +256,7 @@ export class AgentRuntime {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.inFlight.delete(turn.id);
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "persistence_error",
-        message,
-      });
+      this.reportRuntimeError(turn, "persistence_error", message, error);
       await this.emitTurnFailed(turn, message);
       throw error;
     }
@@ -282,13 +301,7 @@ export class AgentRuntime {
         item,
       });
     } catch (error) {
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "persistence_error",
-        message: error instanceof Error ? error.message : String(error),
-      });
+      this.reportRuntimeError(turn, "persistence_error", error instanceof Error ? error.message : String(error), error);
     }
   }
 
@@ -405,13 +418,7 @@ export class AgentRuntime {
           }
           await this.persistTruncatedStreamOutputSafely(turn, streamState);
           const message = error instanceof Error ? error.message : String(error);
-          this.deps.bus.emit("runtime_error", {
-            kind: "runtime_error",
-            threadId: turn.threadId,
-            turnId: turn.id,
-            code: runtimeErrorCodeFromWorkerError(error),
-            message,
-          });
+          this.reportRuntimeError(turn, runtimeErrorCodeFromWorkerError(error), message, error);
           await this.emitTurnFailed(turn, message);
           await this.markTurnStatus(turn, "failed");
           return;
@@ -498,13 +505,7 @@ export class AgentRuntime {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (turn.status === "interrupted") {
-        this.deps.bus.emit("runtime_error", {
-          kind: "runtime_error",
-          threadId: turn.threadId,
-          turnId: turn.id,
-          code: "persistence_error",
-          message,
-        });
+        this.reportRuntimeError(turn, "persistence_error", message, error);
         await this.finalizeInterruptedTurn(turn);
         return;
       }
@@ -534,13 +535,13 @@ export class AgentRuntime {
         },
         createdAt: new Date().toISOString(),
       };
-      await this.deps.store.appendItem(turn.threadId, toolItem);
-      this.deps.bus.emit("item_appended", {
-        kind: "item_appended",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        item: toolItem,
-      });
+      await appendItemAndBroadcast(
+        this.deps.store,
+        this.deps.bus,
+        turn.threadId,
+        turn.id,
+        toolItem,
+      );
     }
   }
 
@@ -559,18 +560,13 @@ export class AgentRuntime {
       message,
       reachedAt: new Date().toISOString(),
     } as const;
-    try {
-      await this.deps.store.appendEvent(turn.threadId, event);
-    } catch (error) {
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "persistence_error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-    this.deps.bus.emit("tool_budget_reached", event);
+    await persistEventOrReportError(
+      this.deps.store,
+      this.deps.bus,
+      turn.threadId,
+      turn.id,
+      event,
+    );
   }
 
   private async emitTurnFailed(turn: TurnRecord, message: string): Promise<void> {
@@ -581,18 +577,13 @@ export class AgentRuntime {
       message,
       failedAt: new Date().toISOString(),
     } as const;
-    try {
-      await this.deps.store.appendEvent(turn.threadId, event);
-    } catch (error) {
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "persistence_error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-    this.deps.bus.emit("turn_failed", event);
+    await persistEventOrReportError(
+      this.deps.store,
+      this.deps.bus,
+      turn.threadId,
+      turn.id,
+      event,
+    );
   }
 
   private buildLlmRequest(
@@ -684,13 +675,7 @@ export class AgentRuntime {
     try {
       await this.persistTruncatedStreamOutput(turn, streamState);
     } catch (error) {
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "persistence_error",
-        message: error instanceof Error ? error.message : String(error),
-      });
+      this.reportRuntimeError(turn, "persistence_error", error instanceof Error ? error.message : String(error), error);
     }
   }
 
@@ -703,13 +688,13 @@ export class AgentRuntime {
     },
   ): Promise<string> {
     if (streamState.reasoningItem?.text.trim()) {
-      await this.deps.store.appendItem(turn.threadId, streamState.reasoningItem);
-      this.deps.bus.emit("item_appended", {
-        kind: "item_appended",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        item: streamState.reasoningItem,
-      });
+      await appendItemAndBroadcast(
+        this.deps.store,
+        this.deps.bus,
+        turn.threadId,
+        turn.id,
+        streamState.reasoningItem,
+      );
     } else if (response.reasoning?.trim()) {
       const finalReasoningItem: ReasoningItem = {
         kind: "reasoning",
@@ -719,13 +704,13 @@ export class AgentRuntime {
         text: response.reasoning,
         createdAt: new Date().toISOString(),
       };
-      await this.deps.store.appendItem(turn.threadId, finalReasoningItem);
-      this.deps.bus.emit("item_appended", {
-        kind: "item_appended",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        item: finalReasoningItem,
-      });
+      await appendItemAndBroadcast(
+        this.deps.store,
+        this.deps.bus,
+        turn.threadId,
+        turn.id,
+        finalReasoningItem,
+      );
     }
 
     if (streamState.assistantItem?.text.trim()) {
@@ -733,13 +718,13 @@ export class AgentRuntime {
         ...streamState.assistantItem,
         ...(turn.status === "interrupted" ? { truncated: true } : {}),
       };
-      await this.deps.store.appendItem(turn.threadId, finalAssistantItem);
-      this.deps.bus.emit("item_appended", {
-        kind: "item_appended",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        item: finalAssistantItem,
-      });
+      await appendItemAndBroadcast(
+        this.deps.store,
+        this.deps.bus,
+        turn.threadId,
+        turn.id,
+        finalAssistantItem,
+      );
       return finalAssistantItem.text;
     }
 
@@ -753,13 +738,13 @@ export class AgentRuntime {
         ...(turn.status === "interrupted" ? { truncated: true } : {}),
         createdAt: new Date().toISOString(),
       };
-      await this.deps.store.appendItem(turn.threadId, finalAssistantItem);
-      this.deps.bus.emit("item_appended", {
-        kind: "item_appended",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        item: finalAssistantItem,
-      });
+      await appendItemAndBroadcast(
+        this.deps.store,
+        this.deps.bus,
+        turn.threadId,
+        turn.id,
+        finalAssistantItem,
+      );
       return finalAssistantItem.text;
     }
 
@@ -862,13 +847,7 @@ export class AgentRuntime {
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
       this.unregisterActiveToolExecution(turn.id, activeExecution);
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "tool_not_found",
-        message: `Tool "${call.name}" is not available in this turn.`,
-      });
+      this.reportRuntimeError(turn, "tool_not_found", `Tool "${call.name}" is not available in this turn.`);
       return {
         toolCallId: call.id,
         name: call.name,
@@ -1014,13 +993,7 @@ export class AgentRuntime {
       this.emitToolItemUpdated(turn, toolItem);
       this.unregisterActiveToolExecution(turn.id, activeExecution);
       if (turn.status !== "interrupted") {
-        this.deps.bus.emit("runtime_error", {
-          kind: "runtime_error",
-          threadId: turn.threadId,
-          turnId: turn.id,
-          code: "tool_failed",
-          message: `${call.name}: ${message}`,
-        });
+        this.reportRuntimeError(turn, "tool_failed", `${call.name}: ${message}`, error);
       }
       return {
         toolCallId: call.id,
@@ -1327,24 +1300,12 @@ export class AgentRuntime {
       try {
         await this.deps.store.appendItem(turn.threadId, execution.item);
       } catch (error) {
-        this.deps.bus.emit("runtime_error", {
-          kind: "runtime_error",
-          threadId: turn.threadId,
-          turnId: turn.id,
-          code: "persistence_error",
-          message: error instanceof Error ? error.message : String(error),
-        });
+        this.reportRuntimeError(turn, "persistence_error", error instanceof Error ? error.message : String(error), error);
       }
       this.emitToolItemUpdated(turn, execution.item);
     }
     if (!await waitForInterruptedToolExecutions(settling)) {
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "internal",
-        message: "Timed out waiting for interrupted tools to settle.",
-      });
+      this.reportRuntimeError(turn, "internal", "Timed out waiting for interrupted tools to settle.");
     }
   }
 
@@ -1418,13 +1379,13 @@ export class AgentRuntime {
       level,
       createdAt: new Date().toISOString(),
     };
-    await this.deps.store.appendItem(turn.threadId, item);
-    this.deps.bus.emit("item_appended", {
-      kind: "item_appended",
-      threadId: turn.threadId,
-      turnId: turn.id,
+    await appendItemAndBroadcast(
+      this.deps.store,
+      this.deps.bus,
+      turn.threadId,
+      turn.id,
       item,
-    });
+    );
   }
 
   private resolveModelProfile(
@@ -1525,23 +1486,11 @@ export class AgentRuntime {
         text: userText,
       });
       for (const validationError of resolution.validationErrors) {
-        this.deps.bus.emit("runtime_error", {
-          kind: "runtime_error",
-          threadId: turn.threadId,
-          turnId: turn.id,
-          code: "internal",
-          message: `Skill load warning at ${validationError.root}: ${validationError.message}`,
-        });
+        this.reportRuntimeError(turn, "internal", `Skill load warning at ${validationError.root}: ${validationError.message}`);
       }
       return resolution;
     } catch (error) {
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "internal",
-        message: `Skill resolution failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      this.reportRuntimeError(turn, "internal", `Skill resolution failed: ${error instanceof Error ? error.message : String(error)}`, error);
       return null;
     }
   }
@@ -1609,13 +1558,7 @@ export class AgentRuntime {
     try {
       await this.deps.store.appendEvent(turn.threadId, event);
     } catch (error) {
-      this.deps.bus.emit("runtime_error", {
-        kind: "runtime_error",
-        threadId: turn.threadId,
-        turnId: turn.id,
-        code: "persistence_error",
-        message: error instanceof Error ? error.message : String(error),
-      });
+      this.reportRuntimeError(turn, "persistence_error", error instanceof Error ? error.message : String(error), error);
     }
     this.deps.bus.emit("turn_completed", event);
     this.inFlight.delete(turn.id);

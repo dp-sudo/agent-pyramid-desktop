@@ -170,7 +170,41 @@ async function assertTargetIsNotSymlink(targetPath: string, relativePath: string
   }
 }
 
-function getErrorCode(error: unknown): string | undefined {
+/**
+ * Walk every path segment from the workspace root and reject symbolic links so
+ * the recorded lexical path and the modified inode cannot diverge. This is the
+ * single authority used by coding tools and checkpoint restore; both previously
+ * carried byte-identical private copies that only differed in error wording.
+ */
+export async function assertNoSymlinkInPath(
+  workspace: string,
+  relativePath: string,
+  access: WorkspacePathAccess,
+  label: string,
+): Promise<void> {
+  const root = resolveWorkspaceRoot(workspace);
+  const target = path.resolve(root, relativePath);
+  const relative = path.relative(root, target);
+  if (!relative) return;
+  const segments = relative.split(path.sep).filter(Boolean);
+  let current = root;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`${label} do not modify files through symbolic links: ${relativePath}`);
+      }
+    } catch (error) {
+      if (getErrorCode(error) === "ENOENT" && access === "write") {
+        return;
+      }
+      throw error;
+    }
+  }
+}
+
+export function getErrorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code)
     : undefined;
