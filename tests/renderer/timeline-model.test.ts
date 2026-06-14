@@ -262,6 +262,7 @@ describe("timeline model", () => {
       detail: "{\n  \"query\": \"AgentRuntime\"\n}\n\nsrc/main/application/agent-runtime.ts:1",
       statusText: "chat.toolStatus.completed",
       tone: "success",
+      compactTitle: "chat.tools.searchFilesQuery:AgentRuntime",
     });
   });
 
@@ -309,7 +310,40 @@ describe("timeline model", () => {
     );
 
     expect(display.title).toBe("chat.tools.runCommandCommand:npm run test");
+    expect(display.compactTitle).toBe("chat.tools.runCommandCommand:npm run test");
     expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
+  it("uses a short compact title for failed command tools", () => {
+    const command = `find src -type d -name "__tests__" ${"nested ".repeat(16)}`;
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "run_command",
+      args: { command },
+      result: { content: "find: not found" },
+      status: "failed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key, options) => {
+      if (key === "settings.toolNames.run_command") return "Run command";
+      if (options?.tool && options?.command) {
+        return `${key}:${String(options.tool)}:${String(options.command)}`;
+      }
+      if (options?.command) return `${key}:${String(options.command)}`;
+      return key;
+    });
+
+    const normalizedCommand = command.trim();
+    expect(display.title).toBe(`chat.tools.runCommandCommand:${normalizedCommand}`);
+    expect(display.compactTitle).toMatch(/^chat\.tools\.failedCommandPreview:Run command:/);
+    expect(display.compactTitle.length).toBeLessThan(display.title.length);
+    expect(display.detail).toContain("find src -type d -name");
+    expect(display.detail).toContain("\\\"__tests__\\\"");
+    expect(display.detail).toContain("find: not found");
   });
 
   it("summarizes apply_patch as a coding tool", () => {
@@ -445,6 +479,7 @@ describe("timeline model", () => {
       title: "chat.tools.runCommandCommand:npm run build",
       statusText: "chat.toolStatus.running",
       tone: "running",
+      compactTitle: "chat.tools.runCommandCommand:npm run build",
     });
   });
 
@@ -474,6 +509,7 @@ describe("timeline model", () => {
       hiddenCharCount: 1,
       statusText: "chat.toolStatus.completed",
       tone: "success",
+      compactTitle: "chat.tools.readFilePath:src/main/index.ts",
     });
   });
 });

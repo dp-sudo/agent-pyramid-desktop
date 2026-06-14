@@ -101,6 +101,7 @@ function createMarkdownComponents(codeBlockCollapseLineThreshold: number): Compo
     pre({ node: _node, children, ...props }) {
       const language = extractCodeLanguage(children);
       const code = extractCodeText(children);
+      if (!hasVisibleCodeText(code)) return null;
       return (
         <CodeBlock
           language={language}

@@ -3,6 +3,7 @@ import {
   getApprovalPendingDecision,
   getTimelineBottomScrollTop,
   getVisibleTimelineItems,
+  groupCodeRouteProcessItems,
   isTimelineProcessOpen,
   shouldShowTimelineProcessItem,
   shouldShowTimelineJumpToBottom,
@@ -95,6 +96,28 @@ describe("MessageTimeline helpers", () => {
     expect(shouldShowTimelineProcessItem(completedReadOnlyTool, false)).toBe(false);
     expect(shouldShowTimelineProcessItem(completedWriteTool, false)).toBe(true);
     expect(shouldShowTimelineProcessItem(completedReadOnlyTool, true)).toBe(true);
+  });
+
+  it("folds consecutive completed read-only tool records for the code route", () => {
+    const readFile = toolItem("read_file", "completed");
+    const searchFiles = toolItem("search_files", "completed");
+    const failedRead = toolItem("read_file", "failed");
+    const writeFile = toolItem("write_file", "completed");
+
+    const displayItems = groupCodeRouteProcessItems([
+      readFile,
+      searchFiles,
+      failedRead,
+      writeFile,
+    ]);
+
+    expect(displayItems).toHaveLength(3);
+    expect(displayItems[0]).toMatchObject({
+      kind: "readOnlyToolSummary",
+      items: [readFile, searchFiles],
+    });
+    expect(displayItems[1]).toBe(failedRead);
+    expect(displayItems[2]).toBe(writeFile);
   });
 
   it("resolves shared pending approval decisions by approval id", () => {

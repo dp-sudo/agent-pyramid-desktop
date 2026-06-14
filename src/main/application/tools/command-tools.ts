@@ -160,7 +160,7 @@ const runCommandTool: AgentTool = {
   definition: {
     name: "run_command",
     description:
-      "Run a foreground shell command inside the current workspace. Use it for tests, builds, diagnostics, and short project commands. Long-running background processes are not supported.",
+      "Run a foreground shell command inside the current workspace. Use it for tests, builds, diagnostics, and short project commands. On Windows this uses cmd.exe syntax by default; use powershell_command for PowerShell syntax, and confirm Bash/WSL availability before POSIX shell syntax. Long-running background processes are not supported.",
     inputSchema: {
       type: "object",
       properties: {
@@ -198,7 +198,7 @@ const shellCommandTool: AgentTool = {
   definition: {
     name: "shell_command",
     description:
-      "Run a foreground workspace command through a selected shell. Supports default, cmd, sh, bash, Git Bash, powershell, pwsh, or a custom shell_path/shell_args.",
+      "Run a foreground workspace command through a selected shell. Supports default, cmd, sh, bash, Git Bash, powershell, pwsh, or a custom shell_path/shell_args. Prefer detect_shell_environment before selecting Git Bash, WSL, or POSIX shells on Windows.",
     inputSchema: {
       type: "object",
       properties: {
@@ -290,7 +290,7 @@ const powershellCommandTool: AgentTool = {
   definition: {
     name: "powershell_command",
     description:
-      "Run a foreground workspace command through PowerShell. Use executable=pwsh for PowerShell 7 or powershell for Windows PowerShell.",
+      "Run a foreground workspace command through PowerShell. Use this instead of run_command when the command uses PowerShell syntax. Use executable=pwsh for PowerShell 7 or powershell for Windows PowerShell.",
     inputSchema: {
       type: "object",
       properties: {
@@ -819,7 +819,7 @@ const detectShellEnvironmentTool: AgentTool = {
   definition: {
     name: "detect_shell_environment",
     description:
-      "Detect available shell executables, Git Bash, PowerShell/pwsh, WSL, PATH entries, and workspace path conversions.",
+      "Detect available shell executables, Git Bash, PowerShell/pwsh, WSL, PATH entries, and workspace path conversions before choosing shell-specific command syntax.",
     inputSchema: {
       type: "object",
       properties: {

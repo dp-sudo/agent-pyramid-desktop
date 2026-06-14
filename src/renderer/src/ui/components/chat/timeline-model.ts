@@ -137,11 +137,94 @@ export interface ToolDisplay {
   detail: string;
   statusText: string;
   tone: "neutral" | "running" | "success" | "danger";
+  compactTitle: string;
 }
 
 export interface ToolPreviewDisplay extends ToolDisplay {
   detailTruncated: boolean;
   hiddenCharCount: number;
+}
+
+// Code-route compact rows derive a short action label + tone from the tool
+// category and status, instead of the full card title+status used by Write /
+// Inspector. Names are sourced from RUNTIME_TOOL_NAMES so the mapping stays in
+// sync with the registered tool set; unknown tools (e.g. mcp__*) fall back to
+// the generic executed/failed label.
+export interface ToolAction {
+  label: string;
+  tone: "neutral" | "running" | "success" | "danger";
+}
+
+const EXPLORATORY_TOOL_NAMES = new Set<string>(["list_files", "search_files", "rg_search"]);
+const READ_TOOL_NAMES = new Set<string>(["read_file", "diagnose_file", "diagnose_workspace"]);
+const MODIFY_TOOL_NAMES = new Set<string>([
+  "edit_file",
+  "write_file",
+  "delete_file",
+  "apply_patch",
+  "rollback_file",
+]);
+// Command-style tools run shell/git/package/test/build/session work; the rest of
+// RUNTIME_TOOL_NAMES that is neither read-only nor a modify tool lands here so
+// run_command, git_*, package_*, run_*, *_command_session etc. read as "executed".
+const EXECUTE_TOOL_NAMES = new Set<string>([
+  "run_command",
+  "shell_command",
+  "git_bash_command",
+  "powershell_command",
+  "wsl_command",
+  "git_status",
+  "git_diff",
+  "git_log",
+  "git_branch",
+  "git_commit",
+  "package_scripts",
+  "package_install",
+  "package_test",
+  "package_build",
+  "run_lint",
+  "run_format",
+  "run_tests",
+  "run_build",
+  "start_command_session",
+  "read_command_session",
+  "write_command_session",
+  "stop_command_session",
+  "detect_shell_environment",
+  "create_plan",
+  "update_goal",
+]);
+
+export function summarizeToolAction(
+  item: ToolItem,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): ToolAction {
+  // Status dominates the label so a failed/explore or running/modify still
+  // surfaces the live outcome rather than the static category.
+  if (item.status === "failed") {
+    return { label: t("chat.toolAction.failed"), tone: "danger" };
+  }
+  if (item.status === "running") {
+    return { label: t("chat.toolAction.running"), tone: "running" };
+  }
+  if (item.status === "pending") {
+    return { label: t("chat.toolAction.pending"), tone: "neutral" };
+  }
+
+  if (EXPLORATORY_TOOL_NAMES.has(item.name)) {
+    return { label: t("chat.toolAction.explored"), tone: "success" };
+  }
+  if (READ_TOOL_NAMES.has(item.name)) {
+    return { label: t("chat.toolAction.read"), tone: "success" };
+  }
+  if (MODIFY_TOOL_NAMES.has(item.name)) {
+    return { label: t("chat.toolAction.modified"), tone: "success" };
+  }
+  if (EXECUTE_TOOL_NAMES.has(item.name)) {
+    return { label: t("chat.toolAction.executed"), tone: "success" };
+  }
+  // MCP tools (mcp__*) and any unknown tool: default to executed on completion.
+  return { label: t("chat.toolAction.executed"), tone: "success" };
 }
 
 const JSON_PREVIEW_COLLECTION_LIMIT = 24;
@@ -189,6 +272,7 @@ export function summarizeToolItemHeader(
     title,
     statusText: statusText(item.status, t),
     tone: statusTone(item.status),
+    compactTitle: compactTitleForTool(item.name, item.status, { path, query, command }, t),
   };
 }
 
@@ -271,6 +355,47 @@ function genericRuntimeToolTitle(
     return t("chat.tools.genericQuery", { tool, query: args.query });
   }
   return tool;
+}
+
+const COMPACT_COMMAND_PREVIEW_MAX_CHARS = 72;
+
+function compactTitleForTool(
+  name: string,
+  status: ToolItem["status"],
+  args: {
+    path?: string;
+    query?: string;
+    command?: string;
+  },
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (status !== "failed") {
+    return titleForTool(name, args, t);
+  }
+  if (args.command) {
+    return t("chat.tools.failedCommandPreview", {
+      tool: toolDisplayName(name, t),
+      command: previewSingleLine(args.command, COMPACT_COMMAND_PREVIEW_MAX_CHARS),
+    });
+  }
+  return titleForTool(name, args, t);
+}
+
+function toolDisplayName(
+  name: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (isRuntimeToolName(name)) {
+    return t(`settings.toolNames.${name}`);
+  }
+  return name.replaceAll("_", " ");
+}
+
+export function previewSingleLine(text: string, maxChars: number): string {
+  const normalizedText = text.trim().replace(/\s+/g, " ");
+  const normalizedMaxChars = Math.max(1, Math.floor(Number.isFinite(maxChars) ? maxChars : 1));
+  if (normalizedText.length <= normalizedMaxChars) return normalizedText;
+  return `${normalizedText.slice(0, Math.max(1, normalizedMaxChars - 1))}...`;
 }
 
 function formatToolDetail(item: ToolItem): string {

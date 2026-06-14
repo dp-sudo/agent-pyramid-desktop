@@ -94,8 +94,11 @@ export async function openTextFileNoFollow(
 /**
  * Final write commits must not follow a target symlink that appears after the
  * workspace realpath/lstat checks. O_NOFOLLOW binds the last path component to
- * the open operation on supporting platforms; on platforms without it the
- * post-open lstat recheck still detects a swap that happened during the open.
+ * the open operation on supporting platforms. On platforms without it (Windows)
+ * fs.open silently follows a swapped symlink, and O_TRUNC would truncate the
+ * linked target before any guard can run — so there we open without O_TRUNC,
+ * re-lstat to detect the swap, and only then truncate+write once the target is
+ * confirmed to be a regular file the workspace policy already approved.
  */
 export async function writeUtf8TextFileNoFollow(
   filePath: string,
@@ -103,15 +106,24 @@ export async function writeUtf8TextFileNoFollow(
   options: WriteUtf8TextFileNoFollowOptions,
 ): Promise<void> {
   const useNoFollowFlag = noFollowFlag();
+  const noFollowSupported = useNoFollowFlag !== 0;
+  // POSIX keeps O_TRUNC in the open flags (O_NOFOLLOW rejects a symlink atomically
+  // before any truncation). On Windows we defer truncation until after the
+  // post-open lstat guard so a swapped-symlink target is never truncated.
   const flags = fsConstants.O_WRONLY |
     fsConstants.O_CREAT |
     useNoFollowFlag |
-    (options.exclusive ? fsConstants.O_EXCL : fsConstants.O_TRUNC);
+    (options.exclusive
+      ? fsConstants.O_EXCL
+      : noFollowSupported
+        ? fsConstants.O_TRUNC
+        : 0);
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
     handle = await fs.open(filePath, flags, 0o666);
-    if (useNoFollowFlag === 0) {
+    if (!noFollowSupported) {
       await assertOpenedTargetNotSymlink(filePath, options);
+      await handle.truncate(0);
     }
     await handle.writeFile(content, "utf8");
   } catch (error) {

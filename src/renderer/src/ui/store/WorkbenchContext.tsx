@@ -665,8 +665,16 @@ export interface WorkbenchContextValue {
 
 const WorkbenchContext = createContext<WorkbenchContextValue | null>(null);
 
-export function WorkbenchProvider({ children }: { children: ReactNode }): ReactElement {
-  const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
+export function WorkbenchProvider({
+  children,
+  initialState,
+}: {
+  children: ReactNode;
+  // Optional override used by tests to seed a specific route/preferences
+  // without dispatching effects; production callers leave this undefined.
+  initialState?: WorkbenchState;
+}): ReactElement {
+  const [state, dispatch] = useReducer(reducer, initialState ?? INITIAL_STATE);
 
   const actions = useMemo<WorkbenchActions>(
     () => ({

@@ -75,6 +75,17 @@ describe("AssistantMarkdown", () => {
     expect(html).not.toContain("is-collapsed");
   });
 
+  it("does not render an empty fenced code block shell", () => {
+    const html = renderToStaticMarkup(
+      <AssistantMarkdown text={["Before", "", "```ts", "   ", "```", "", "After"].join("\n")} />,
+    );
+
+    expect(html).toContain("Before");
+    expect(html).toContain("After");
+    expect(html).not.toContain("class=\"ds-code-block\"");
+    expect(html).not.toContain("chat.copyCode");
+  });
+
   it("applies rehype-highlight syntax tokens inside fenced code blocks", () => {
     const html = renderToStaticMarkup(
       <AssistantMarkdown

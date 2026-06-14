@@ -2,7 +2,7 @@ import { useEffect, useId, useState, memo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { ApprovalPreview, FileDiffLine, Item } from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { summarizeToolItem } from "./timeline-model";
+import { summarizeToolAction, summarizeToolItem } from "./timeline-model";
 import { useWorkbench } from "../../store/WorkbenchContext";
 
 export const TOOL_DETAIL_PREVIEW_MAX_CHARS = 4000;
@@ -452,11 +452,64 @@ function ToolBlock({
   nested?: boolean;
 }): ReactElement {
   const { t } = useTranslation();
+  const { state } = useWorkbench();
+  const isCodeRoute = state.route === "code";
   const display = summarizeToolItem(item, t);
+  const action = summarizeToolAction(item, t);
   const detailId = useId();
   const [showFullDetail, setShowFullDetail] = useState(false);
   const hasLongDetail = isLongToolDetail(display.detail);
   const detailDisplay = resolveToolDetailDisplay(display.detail, showFullDetail);
+
+  // Code route renders a single compact row (label + title summary); expanding
+  // reuses the same detail frame as the Write card so the full args/result and
+  // expand control stay consistent. Write/settings keep the full card style.
+  if (isCodeRoute) {
+    return (
+      <details
+        className={`ds-process-tool-row is-${action.tone} ${nested ? "is-nested" : ""}`}
+      >
+        <summary className="ds-process-entry-summary">
+          <span className="ds-process-tool-row-summary">
+            <span className="ds-process-tool-row-summary-label">{action.label}</span>
+            <span className="ds-process-tool-row-summary-title">{display.compactTitle}</span>
+          </span>
+        </summary>
+        {display.detail ? (
+          <div className="ds-process-entry-detail-frame">
+            <pre
+              id={detailId}
+              className={`ds-process-entry-detail ${detailDisplay.truncated ? "is-truncated" : ""}`}
+            >
+              {detailDisplay.text}
+            </pre>
+            {detailDisplay.truncated ? (
+              <small className="ds-process-entry-detail-note">
+                {t("chat.toolDetailTruncated", {
+                  count: detailDisplay.hiddenCharCount,
+                })}
+              </small>
+            ) : null}
+            {hasLongDetail ? (
+              <div className="ds-process-entry-detail-actions">
+                <button
+                  type="button"
+                  aria-controls={detailId}
+                  aria-expanded={showFullDetail}
+                  onClick={() => setShowFullDetail((current) => !current)}
+                >
+                  {showFullDetail
+                    ? t("chat.collapseToolDetail")
+                    : t("chat.expandToolDetail")}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </details>
+    );
+  }
+
   return (
     <details className={`ds-process-entry ds-process-tool is-${display.tone} ${nested ? "is-nested" : ""}`}>
       <summary className="ds-process-entry-summary">

@@ -254,6 +254,7 @@ Key classes:
 - `ds-message-show-older`
 - `ds-message-jump-bottom`
 - `ds-message-turn`
+- `ds-message-turn-process`
 - `ds-work-process`
 - `ds-work-process-summary`
 - `ds-work-process-body`
@@ -274,6 +275,12 @@ Scroll behavior:
 - Closed work-process sections render only their summary. Process item blocks
   are mounted after the section opens, avoiding markdown/tool/diff work for
   folded historical turns.
+- Work-process grouping is route-scoped: the Write route renders the grouped
+  `ds-work-process` disclosure above; the Code route drops that wrapper and
+  renders process rows in a `ds-message-turn-process` column directly after the
+  user message. Running, failed, approval, write, and reasoning items stay
+  directly visible; consecutive completed read-only tool records fold into a
+  compact read-only summary row that can be expanded for individual details.
 
 ### Chat Blocks
 
@@ -286,7 +293,7 @@ Item rendering:
 | `user` | Right-side user bubble with optional attachment names. |
 | `assistant` | Markdown assistant bubble. Live output gets shiny styling. |
 | `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning follows `basicPreferences.openReasoningByDefault` until the user explicitly toggles it. Closed completed reasoning shows a light text preview and does not mount the markdown body. |
-| `tool` | Collapsible process entry with status/tone summary. Long details render as a bounded preview with an explicit full-detail toggle. Running command-backed tools may show temporary `[stdout]` / `[stderr]` progress details; the final tool result replaces that temporary progress when `item_updated` arrives. |
+| `tool` | Code route: compact `ds-process-tool-row` (action label + title preview) that expands to the same args/result detail frame as the card; consecutive completed read-only rows may be grouped under a read-only summary. Failed command titles use a short preview while full args/results remain in detail. Write/settings route: full `ds-process-entry ds-process-tool` card with status/tone summary. Long details render as a bounded preview with an explicit full-detail toggle in both routes. Running command-backed tools may show temporary `[stdout]` / `[stderr]` progress details; the final tool result replaces that temporary progress when `item_updated` arrives. |
 | `approval` | Approval block with args JSON and allow/deny buttons. |
 | `user_input` | System-style user input prompt. |
 | `plan` | Plan block with ordered steps and per-step status class. |
@@ -310,6 +317,10 @@ Key classes:
 - `ds-process-entry-detail-note`
 - `ds-process-entry-detail-actions`
 - `ds-process-tool`
+- `ds-process-tool-row`
+- `ds-process-tool-row-summary`
+- `ds-process-tool-row-summary-label`
+- `ds-process-tool-row-summary-title`
 - `ds-approval-block`
 - `ds-approval-actions`
 - `ds-plan-block`
@@ -344,11 +355,11 @@ Renderer:
 - Links are normalized before render. `http(s)` links get `target="_blank"` and
   `rel="noreferrer"`; page anchors stay in-renderer; relative/local/unsafe
   protocols render as plain text instead of clickable anchors.
-- Code blocks are wrapped in `ds-code-block`.
+- Non-empty code blocks are wrapped in `ds-code-block`.
 - Code language header is extracted from `language-*` class.
 - Fenced code blocks render from the extracted source string inside the
-  `ds-code-block` `<pre>`, so inline-code styling cannot leave an empty code
-  block while a turn is streaming or after it completes.
+  `ds-code-block` `<pre>`; empty or whitespace-only fenced blocks are skipped
+  so a dangling or empty model fence cannot leave a blank code shell.
 - Empty or whitespace-only inline code spans are rendered as plain text or
   omitted instead of creating visible placeholder pills.
 - Long code blocks start collapsed with expand/collapse controls while short code

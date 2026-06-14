@@ -25,6 +25,8 @@
     "showOlderTurns": "Show {{count}} earlier turns",
     "workProcessOne": "Work process · 1 item",
     "workProcessMany": "Work process · {{count}} items",
+    "readOnlyToolSummaryOne": "1 read-only step completed",
+    "readOnlyToolSummaryMany": "{{count}} read-only steps completed",
     "reasoningLabel": "Reasoning",
     "thinking": "Thinking",
     "userInputLabel": "User input needed",
@@ -45,6 +47,15 @@
       "completed": "Completed",
       "failed": "Failed"
     },
+    "toolAction": {
+      "executed": "Executed",
+      "explored": "Explored",
+      "read": "Read",
+      "modified": "Modified",
+      "failed": "Failed",
+      "running": "Running",
+      "pending": "Pending"
+    },
     "tools": {
       "listFiles": "List files",
       "listFilesPath": "List files: {{path}}",
@@ -61,6 +72,7 @@
       "rollbackFilePath": "Rollback file: {{path}}",
       "runCommand": "Run command",
       "runCommandCommand": "Run command: {{command}}",
+      "failedCommandPreview": "{{tool}} failed: {{command}}",
       "diagnoseWorkspace": "Diagnose workspace",
       "diagnoseFile": "Diagnose file",
       "diagnoseFilePath": "Diagnose file: {{path}}",

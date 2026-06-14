@@ -1591,6 +1591,93 @@ textarea:focus-visible {
   color: var(--ds-danger);
 }
 
+/* Code-route compact tool rows: a quiet summary (action label + title) without
+   the card surface used by Write. Completed read-only runs may be folded into a
+   summary row; expansion still reuses shared detail frames so args/results stay
+   traceable. */
+.ds-message-turn-process {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ds-process-tool-row {
+  border-radius: var(--ds-radius-md);
+  color: var(--ds-text-muted);
+  font-size: var(--ds-size-caption);
+  padding: 4px 8px;
+}
+
+.ds-process-tool-row.is-nested {
+  margin-left: 0;
+}
+
+.ds-process-tool-row .ds-process-entry-summary {
+  gap: 0;
+}
+
+.ds-process-tool-row-summary {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Leading ">" chevron mirrors the work-process disclosure so the row reads as
+   expandable; rotates 90deg when the row is open. */
+.ds-process-tool-row .ds-process-entry-summary::before {
+  content: ">";
+  flex: 0 0 auto;
+  color: var(--ds-text-faint);
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-size-caption);
+  transition: transform var(--ds-motion-micro) var(--ds-motion-ease);
+}
+
+.ds-process-tool-row[open] .ds-process-entry-summary::before {
+  transform: rotate(90deg);
+}
+
+.ds-process-tool-row-summary-label {
+  flex: 0 0 auto;
+  color: var(--ds-text-faint);
+  font-weight: 600;
+}
+
+.ds-process-tool-row-summary-title {
+  min-width: 0;
+  color: var(--ds-text);
+  /* Allow short previews to wrap naturally; full command args stay in detail. */
+  word-break: break-word;
+}
+
+.ds-process-tool-row .ds-process-entry-detail-frame {
+  padding-top: 6px;
+}
+
+.ds-process-readonly-summary-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  padding-left: 18px;
+}
+
+/* Tone variants: running highlights the whole row (live signal), success/
+   danger tint only the label so the row stays quiet at rest. A run of failed
+   commands must not flood the timeline with red blocks. */
+.ds-process-tool-row.is-running {
+  background: var(--ds-accent-soft);
+}
+
+.ds-process-tool-row.is-success .ds-process-tool-row-summary-label {
+  color: var(--ds-success);
+}
+
+.ds-process-tool-row.is-danger .ds-process-tool-row-summary-label {
+  color: var(--ds-danger);
+}
+
 .ds-plan-block {
   display: flex;
   flex-direction: column;

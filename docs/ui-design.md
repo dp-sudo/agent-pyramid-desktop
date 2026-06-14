@@ -280,14 +280,14 @@ Workbench runtime failure toasts must keep the full error text visible, provide 
 ## 6. Message timeline
 
 - Assistant 最终回答按 Markdown 文档渲染，不再放进高对比卡片；段落、列表、链接、任务列表、图片、分隔线、表格和代码块必须使用 `ds-markdown` 规则，并保持在中心内容列内可换行或横向滚动。
-- 代码块使用 `ds-code-block` 包裹，语言标签或默认代码标签显示在顶部栏，并提供复制按钮与失败反馈；超过 Workbench 设置中代码块折叠行数的代码块默认折叠，只渲染有界源码预览，显示带总行数的预览提示，并提供展开/折叠控制；展开后恢复完整源码，复制按钮始终复制完整源码。短代码块保持展开；宽表格使用 `ds-markdown-table-wrap` 包裹，避免模型输出撑破中心列。
+- 非空代码块使用 `ds-code-block` 包裹，语言标签或默认代码标签显示在顶部栏，并提供复制按钮与失败反馈；空白 fenced code block 不渲染代码块外壳，避免流式输出或模型空围栏留下大面积空框。超过 Workbench 设置中代码块折叠行数的代码块默认折叠，只渲染有界源码预览，显示带总行数的预览提示，并提供展开/折叠控制；展开后恢复完整源码，复制按钮始终复制完整源码。短代码块保持展开；宽表格使用 `ds-markdown-table-wrap` 包裹，避免模型输出撑破中心列。
 - 流式 Markdown 必须能容忍模型尚未输出完整代码围栏；未闭合的三反引号代码块在渲染层临时闭合，避免 live 输出退化成普通段落。Markdown 链接和图片地址必须先经过渲染端白名单规范化；不安全协议不得生成可点击链接或可加载图片。安全 Markdown 图片必须使用 lazy loading 和 async decoding，避免图片输出阻塞时间线渲染。
-- 每个 turn 内先显示用户输入，再显示可折叠 `ds-work-process`。推理、工具调用、过程性 assistant 文本放入该区域，当前运行中的 turn 默认展开；用户手动展开或折叠后，流式更新不得重置该选择。关闭的 work process 不挂载内部块，避免历史工具详情、审批 diff 和 Markdown 在折叠态继续渲染。
+- 每个 turn 内先显示用户输入，再显示过程区。Write 路由使用可折叠 `ds-work-process`：推理、工具调用、过程性 assistant 文本放入该区域，当前运行中的 turn 默认展开；用户手动展开或折叠后，流式更新不得重置该选择。关闭的 work process 不挂载内部块，避免历史工具详情、审批 diff 和 Markdown 在折叠态继续渲染。Code 路由不渲染外层 `ds-work-process`，过程项直接落入 turn 主体内的 `ds-message-turn-process` 列，紧跟在用户输入之后，使运行中的工具行无需展开即可见。
 - 长会话初始渲染必须有界：Code 时间线先在原始 `Item[]` 层保留最近 turn 窗口，再执行 turn 分组和 Markdown/tool block 渲染；用户通过显式"显示更早回合"控制加载完整历史，且截断点不能落在同一个 `turnId` 的中间。
 - 时间线分组必须先按 `createdAt` 做稳定排序，再分配 user / work process / final assistant / follow-up 区域，避免 SSE 或 replay 到达顺序影响会话文本排序。
 - 最终 assistant 回答之后到达的 follow-up 项必须保留在回答之后，不能被重新归入回答前的 work process；推理内容本身使用独立可折叠 process entry。实时推理保持展开，已完成推理是否默认展开由 Workbench Layout 设置控制。关闭的已完成推理只显示轻量文本预览，不渲染 Markdown 正文。
 - 时间线在用户接近底部时自动跟随流式输出；用户上滑阅读旧内容时不得抢滚动，只有回到底部后恢复自动跟随。
-- 工具过程使用 `ds-process-entry`：summary 显示本地化工具动作和状态，detail 展示参数与结果；失败状态使用 danger token，成功状态使用 success token。长工具详情默认显示有界预览，并提供展开完整详情 / 收起为预览的显式控制。
+- 工具过程按路由分两种呈现：Code 路由使用紧凑 `ds-process-tool-row`，summary 由工具类别派生的动作标签（已读取/已探索/已修改/已执行/执行中/执行失败/待执行）加标题摘要组成，无卡片背景；连续完成的只读工具记录聚合为一个可展开的只读步骤摘要，失败、运行中、审批、写入和推理项仍直接可见。失败命令标题只显示短预览，完整参数和结果保留在展开 detail 中。Write/settings 路由使用 `ds-process-entry ds-process-tool` 卡片：summary 显示本地化工具动作和状态，detail 展示参数与结果。失败状态使用 danger token，成功状态使用 success token，运行中状态使用 accent-soft 背景。长工具详情在两种路由下均默认显示有界预览，并提供展开完整详情 / 收起为预览的显式控制。
 - Right Inspector 的 Changes 面板只展示最近工具活动，并使用有界详情预览；Todo/Plan 面板查找最新计划时应从后向前扫描，避免为长会话构造无用的完整计划或工具摘要集合。
 - 计划项、系统提示和用户输入请求仍使用原有独立块，不混入 assistant 最终回答。
 - Approval 块使用 `ds-approval-*` 样式；allow/deny 点击后必须进入提交中状态并禁用双按钮，参数 JSON 限高滚动，避免长参数撑开时间线。当前会话未决审批还必须在 composer 上方显示 `ds-pending-approval-*` 浮层，复用同一 diff preview 和审批按钮。

@@ -25,6 +25,8 @@
     "showOlderTurns": "显示更早的 {{count}} 个回合",
     "workProcessOne": "工作过程 · 1 项",
     "workProcessMany": "工作过程 · {{count}} 项",
+    "readOnlyToolSummaryOne": "已完成 1 个只读步骤",
+    "readOnlyToolSummaryMany": "已完成 {{count}} 个只读步骤",
     "reasoningLabel": "推理思考",
     "thinking": "思考中",
     "userInputLabel": "需要用户输入",
@@ -45,6 +47,15 @@
       "completed": "已完成",
       "failed": "失败"
     },
+    "toolAction": {
+      "executed": "已执行",
+      "explored": "已探索",
+      "read": "已读取",
+      "modified": "已修改",
+      "failed": "执行失败",
+      "running": "执行中",
+      "pending": "待执行"
+    },
     "tools": {
       "listFiles": "读取目录",
       "listFilesPath": "读取目录：{{path}}",
@@ -61,6 +72,7 @@
       "rollbackFilePath": "回滚文件：{{path}}",
       "runCommand": "运行命令",
       "runCommandCommand": "运行命令：{{command}}",
+      "failedCommandPreview": "{{tool}} 失败：{{command}}",
       "diagnoseWorkspace": "诊断工作区",
       "diagnoseFile": "诊断文件",
       "diagnoseFilePath": "诊断文件：{{path}}",

@@ -4,10 +4,19 @@ import {
   getActiveThreadInFlightTurn,
   useWorkbench,
 } from "../../store/WorkbenchContext";
-import { RUNTIME_READ_ONLY_TOOL_NAMES, type Item } from "../../../../../shared/agent-contracts";
+import {
+  RUNTIME_READ_ONLY_TOOL_NAMES,
+  type Item,
+  type ToolItem,
+} from "../../../../../shared/agent-contracts";
 import { ChatBlock, type ApprovalPendingDecision } from "./ChatBlock";
 import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
-import { getTimelineItemTurnId, groupTimelineTurns, sortTimelineItems } from "./timeline-model";
+import {
+  getTimelineItemTurnId,
+  groupTimelineTurns,
+  sortTimelineItems,
+  summarizeToolItemHeader,
+} from "./timeline-model";
 
 interface MessageTimelineProps {
   onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
@@ -16,6 +25,22 @@ interface MessageTimelineProps {
 
 const TIMELINE_BOTTOM_STICKY_THRESHOLD_PX = 96;
 const TIMELINE_INITIAL_TURN_LIMIT = 80;
+const READ_ONLY_SUMMARY_PREVIEW_LIMIT = 3;
+
+type TimelineProcessItem = ReturnType<typeof groupTimelineTurns>[number]["processItems"][number];
+
+export interface TimelineReadOnlyToolSummary {
+  kind: "readOnlyToolSummary";
+  id: string;
+  items: ToolItem[];
+}
+
+export type TimelineProcessDisplayItem = TimelineProcessItem | TimelineReadOnlyToolSummary;
+
+export interface ReadOnlyToolSummaryPreview {
+  text: string;
+  hiddenCount: number;
+}
 
 export function MessageTimeline({
   onApprove,
@@ -119,6 +144,39 @@ export function MessageTimeline({
             processCount === 1
               ? t("chat.workProcessOne")
               : t("chat.workProcessMany", { count: processCount });
+          const isCodeRoute = state.route === "code";
+          const codeRouteProcessItems = isCodeRoute
+            ? groupCodeRouteProcessItems(processItems)
+            : [];
+          // Code route keeps live/failed work visible and folds completed
+          // read-only exploration into a small disclosure so routine searches
+          // do not crowd the final answer. Write/
+          // settings keep the grouped "工作过程" card.
+          const renderProcessItem = (item: TimelineProcessItem) => (
+            <ChatBlock
+              key={item.id}
+              item={item}
+              nested
+              {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
+              {...(onApprove ? { onApprove } : {})}
+              approvalPendingDecision={getApprovalPendingDecision(
+                item,
+                pendingApprovalResponses,
+              )}
+            />
+          );
+          const renderCodeProcessItem = (item: TimelineProcessDisplayItem) => {
+            if (item.kind !== "readOnlyToolSummary") {
+              return renderProcessItem(item);
+            }
+            return (
+              <ReadOnlyToolSummaryBlock
+                key={item.id}
+                summary={item}
+                renderProcessItem={renderProcessItem}
+              />
+            );
+          };
 
           return (
             <section key={turn.id} className="ds-message-turn">
@@ -133,7 +191,13 @@ export function MessageTimeline({
                 />
               ) : null}
 
-              {hasProcess ? (
+              {hasProcess && isCodeRoute ? (
+                <div className="ds-message-turn-process">
+                  {codeRouteProcessItems.map(renderCodeProcessItem)}
+                </div>
+              ) : null}
+
+              {hasProcess && !isCodeRoute ? (
                 <details
                   className="ds-work-process"
                   open={processOpen}
@@ -155,19 +219,7 @@ export function MessageTimeline({
                   </summary>
                   {processOpen ? (
                     <div className="ds-work-process-body">
-                      {processItems.map((item) => (
-                        <ChatBlock
-                          key={item.id}
-                          item={item}
-                          nested
-                          {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
-                          {...(onApprove ? { onApprove } : {})}
-                          approvalPendingDecision={getApprovalPendingDecision(
-                            item,
-                            pendingApprovalResponses,
-                          )}
-                        />
-                      ))}
+                      {processItems.map(renderProcessItem)}
                     </div>
                   ) : null}
                 </details>
@@ -215,6 +267,54 @@ export function MessageTimeline({
   );
 }
 
+function ReadOnlyToolSummaryBlock({
+  summary,
+  renderProcessItem,
+}: {
+  summary: TimelineReadOnlyToolSummary;
+  renderProcessItem: (item: TimelineProcessItem) => ReactElement;
+}): ReactElement {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const preview = summarizeReadOnlyToolSummary(summary.items, t);
+  const previewText = preview.hiddenCount > 0
+    ? t("chat.readOnlyToolSummaryPreviewMore", {
+        preview: preview.text,
+        count: preview.hiddenCount,
+      })
+    : preview.text;
+
+  return (
+    <details
+      className="ds-process-tool-row ds-process-readonly-summary is-success"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="ds-process-entry-summary">
+        <span className="ds-process-tool-row-summary">
+          <span className="ds-process-tool-row-summary-label">
+            {t("chat.toolAction.read")}
+          </span>
+          <span className="ds-process-readonly-summary-copy">
+            <span className="ds-process-tool-row-summary-title">
+              {summary.items.length === 1
+                ? t("chat.readOnlyToolSummaryOne")
+                : t("chat.readOnlyToolSummaryMany", { count: summary.items.length })}
+            </span>
+            {previewText ? (
+              <span className="ds-process-readonly-summary-preview">{previewText}</span>
+            ) : null}
+          </span>
+        </span>
+      </summary>
+      {open ? (
+        <div className="ds-process-readonly-summary-body">
+          {summary.items.map(renderProcessItem)}
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
 export function getApprovalPendingDecision(
   item: Item,
   pendingApprovalResponses: Record<string, ApprovalPendingDecision>,
@@ -227,18 +327,78 @@ export function getApprovalPendingDecision(
 const READ_ONLY_TOOL_RECORD_NAMES = new Set<string>(RUNTIME_READ_ONLY_TOOL_NAMES);
 
 function isReadOnlyToolRecord(
-  item: ReturnType<typeof groupTimelineTurns>[number]["processItems"][number],
-): boolean {
+  item: TimelineProcessItem,
+): item is ToolItem {
   return item.kind === "tool" && READ_ONLY_TOOL_RECORD_NAMES.has(item.name);
 }
 
 export function shouldShowTimelineProcessItem(
-  item: ReturnType<typeof groupTimelineTurns>[number]["processItems"][number],
+  item: TimelineProcessItem,
   showReadOnlyToolRecords: boolean,
 ): boolean {
   if (showReadOnlyToolRecords) return true;
   if (!isReadOnlyToolRecord(item)) return true;
   return item.kind === "tool" && item.status === "failed";
+}
+
+export function groupCodeRouteProcessItems(
+  items: readonly TimelineProcessItem[],
+): TimelineProcessDisplayItem[] {
+  const displayItems: TimelineProcessDisplayItem[] = [];
+  let pendingReadOnlyTools: ToolItem[] = [];
+
+  const flushReadOnlyTools = (): void => {
+    if (pendingReadOnlyTools.length === 0) return;
+    if (pendingReadOnlyTools.length === 1) {
+      displayItems.push(pendingReadOnlyTools[0]);
+    } else {
+      displayItems.push(createReadOnlyToolSummary(pendingReadOnlyTools));
+    }
+    pendingReadOnlyTools = [];
+  };
+
+  for (const item of items) {
+    if (isCompletedReadOnlyToolRecord(item)) {
+      pendingReadOnlyTools.push(item);
+      continue;
+    }
+    flushReadOnlyTools();
+    displayItems.push(item);
+  }
+
+  flushReadOnlyTools();
+  return displayItems;
+}
+
+function isCompletedReadOnlyToolRecord(item: TimelineProcessItem): item is ToolItem {
+  return isReadOnlyToolRecord(item) && item.status === "completed";
+}
+
+function createReadOnlyToolSummary(items: readonly ToolItem[]): TimelineReadOnlyToolSummary {
+  const firstItem = items[0];
+  const lastItem = items[items.length - 1];
+  return {
+    kind: "readOnlyToolSummary",
+    id: `read-only-summary:${firstItem.id}:${lastItem.id}`,
+    items: [...items],
+  };
+}
+
+export function summarizeReadOnlyToolSummary(
+  items: readonly ToolItem[],
+  t: (key: string, options?: Record<string, unknown>) => string,
+  previewLimit = READ_ONLY_SUMMARY_PREVIEW_LIMIT,
+): ReadOnlyToolSummaryPreview {
+  const normalizedLimit = Math.max(1, Math.floor(Number.isFinite(previewLimit) ? previewLimit : 1));
+  const titles = items
+    .slice(0, normalizedLimit)
+    .map((item) => summarizeToolItemHeader(item, t).compactTitle)
+    .filter((title) => title.trim().length > 0);
+
+  return {
+    text: titles.join(" · "),
+    hiddenCount: Math.max(0, items.length - normalizedLimit),
+  };
 }
 
 export function shouldStickToTimelineBottom({

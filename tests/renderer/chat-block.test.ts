@@ -15,8 +15,14 @@ import {
   shouldRecordApprovalDiffToggle,
   shouldRecordReasoningToggle,
 } from "../../src/renderer/src/ui/components/chat/ChatBlock";
-import { WorkbenchProvider } from "../../src/renderer/src/ui/store/WorkbenchContext";
+import { WorkbenchProvider, INITIAL_STATE } from "../../src/renderer/src/ui/store/WorkbenchContext";
 import type { Item } from "../../src/shared/agent-contracts";
+
+// Code route is the default (defaultStartupView="code"); the write variant
+// seeds the provider so tool blocks render the full card path.
+function writeRouteState() {
+  return { ...INITIAL_STATE, route: "write" as const };
+}
 
 describe("ChatBlock approval helpers", () => {
   it("previews long tool details without changing the full detail source", () => {
@@ -69,6 +75,96 @@ describe("ChatBlock approval helpers", () => {
     expect(html).toContain("chat.expandToolDetail");
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("TAIL");
+  });
+
+  it("renders a compact tool row in code route", () => {
+    const toolItem: Extract<Item, { kind: "tool" }> = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "read_file",
+      args: { path: "src/foo.ts" },
+      result: { content: "file body" },
+      status: "completed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, { item: toolItem }),
+      ),
+    );
+
+    expect(html).toContain("ds-process-tool-row is-success");
+    expect(html).toContain("chat.toolAction.read");
+    expect(html).toContain("src/foo.ts");
+    expect(html).not.toContain("ds-process-entry ds-process-tool");
+  });
+
+  it("renders the full tool card in write route", () => {
+    const toolItem: Extract<Item, { kind: "tool" }> = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "read_file",
+      args: { path: "src/foo.ts" },
+      result: { content: "file body" },
+      status: "completed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(WorkbenchProvider, {
+        initialState: writeRouteState(),
+        children: createElement(ChatBlock, { item: toolItem }),
+      }),
+    );
+
+    expect(html).toContain("ds-process-entry ds-process-tool is-success");
+    expect(html).toContain("chat.toolStatus.completed");
+    expect(html).not.toContain("ds-process-tool-row");
+  });
+
+  it("renders a failed tool row with the danger label tone in code route", () => {
+    const command = `find src -type d -name _tests_ ${"nested ".repeat(16)}`;
+    const toolItem: Extract<Item, { kind: "tool" }> = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "run_command",
+      args: { command },
+      result: { content: "find: not found" },
+      status: "failed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, { item: toolItem }),
+      ),
+    );
+
+    // Failed status maps to the danger tone on the row and the localized
+    // "failed" label, so the row surfaces the live outcome without relying on
+    // a whole-row red background.
+    expect(html).toContain("ds-process-tool-row is-danger");
+    expect(html).toContain("chat.toolAction.failed");
+    // The row title is a short preview, while the expandable detail still
+    // keeps the complete command args and result traceable.
+    expect(html).toContain("chat.tools.failedCommandPreview");
+    expect(html).toContain("find src -type d -name _tests_ nested nested");
+    expect(html).toContain("&quot;command&quot;");
+    expect(html).toContain("find: not found");
   });
 
   it("allows approval response only before a decision and without a pending submission", () => {

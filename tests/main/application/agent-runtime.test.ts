@@ -727,6 +727,28 @@ describe("AgentRuntime", () => {
     expect(replayed).toEqual([]);
   });
 
+  it("guides model tool choice away from shell probing during workspace inspection", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+
+    await createRuntime().startTurn({
+      threadId: thread.id,
+      text: "Inspect the repo.",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[0].systemPrompt).toContain(
+      "prefer list_files, read_file, search_files, and rg_search before shell commands",
+    );
+    expect(fakePool.requests[0].systemPrompt).toContain(
+      "On Windows, run_command uses cmd.exe syntax by default",
+    );
+    expect(fakePool.requests[0].systemPrompt).toContain("detect_shell_environment");
+  });
+
   it("exposes create_plan only in plan mode and appends a plan item without approval", async () => {
     const thread = await store.createThread({
       title: "Runtime",
