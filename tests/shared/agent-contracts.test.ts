@@ -24,6 +24,7 @@ import {
   DEFAULT_THREAD_RELATION,
   DEFAULT_THREAD_SANDBOX_MODE,
   DEFAULT_THREAD_STATUS,
+  DEFAULT_THREAD_TITLE,
   ISO_TIMESTAMP_PATTERN,
   ITEM_KINDS,
   LLM_PROTOCOLS,
@@ -562,6 +563,7 @@ describe("shared agent contracts", () => {
       "danger-full-access",
     ]);
     expect(DEFAULT_THREAD_RELATION).toBe("primary");
+    expect(DEFAULT_THREAD_TITLE).toBe("New thread");
     expect(DEFAULT_THREAD_MODE).toBe("code");
     expect(DEFAULT_THREAD_STATUS).toBe("active");
     expect(DEFAULT_THREAD_APPROVAL_POLICY).toBe("on-request");

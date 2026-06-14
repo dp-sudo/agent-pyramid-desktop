@@ -3,28 +3,43 @@ import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "../../src/shared/agent-contracts";
 import { IPC_ERROR_CODES } from "../../src/shared/ipc-errors";
 import {
-  applyWorkbenchRuntimeEvent,
   beginPendingApprovalResponse,
-  buildComposerSendPayload,
-  clampSidebarWidth,
   clearResolvedApprovalResponses,
   copyWorkbenchErrorMessage,
-  explicitComposerModelProfileId,
+  shouldShowWorkbenchErrorToast,
+  WORKBENCH_DISMISS_BUTTON_TEXT,
+} from "../../src/renderer/src/ui/Workbench";
+import {
+  clampLeftSidebarWidth as clampSidebarWidth,
+  getNextLeftSidebarWidth as getNextSidebarWidth,
+  getResetLeftSidebarWidth as getResetSidebarWidth,
+  getSidebarDividerClassName as getWorkbenchDividerClassName,
+} from "../../src/renderer/src/ui/sidebar-resize-model";
+import { explicitComposerModelProfileId } from "../../src/renderer/src/ui/store/composer-model-model";
+import {
+  applyWorkbenchRuntimeEvent,
+  isGlobalRuntimeErrorEvent,
+  shouldBufferLiveTextItemUpdate,
+  shouldFlushBufferedItemUpdatesBeforeEvent,
+} from "../../src/renderer/src/ui/workbench-runtime-events";
+import {
   filterThreadsForWorkbench,
   findLatestThreadForWorkspace,
-  formatInitialLoadErrors,
-  getNextSidebarWidth,
-  getResetSidebarWidth,
-  getWorkbenchDividerClassName,
-  isGlobalRuntimeErrorEvent,
-  messageOfWorkbenchError,
-  normalizeWriteAssistantSendPayload,
-  runWorkbenchIpc,
-  shouldShowWorkbenchErrorToast,
+  isThreadMutationBusyError,
   shouldUnsubscribeRemovedThread,
-  WORKBENCH_DISMISS_BUTTON_TEXT,
+  threadMutationBusyMessageKey,
   workbenchThreadModeForRoute,
-} from "../../src/renderer/src/ui/Workbench";
+} from "../../src/renderer/src/ui/workbench-thread-model";
+import {
+  formatInitialLoadErrors,
+  messageOfWorkbenchError,
+  runWorkbenchIpc,
+} from "../../src/renderer/src/ui/workbench-ipc";
+import {
+  buildWorkbenchThreadTitle,
+  buildComposerSendPayload,
+  normalizeWriteAssistantSendPayload,
+} from "../../src/renderer/src/ui/workbench-composer-payload";
 import type {
   AssistantItem,
   Item,
@@ -154,6 +169,15 @@ describe("Workbench", () => {
     })).toBeNull();
   });
 
+  it("keeps generated thread titles within the Workbench title limit", () => {
+    const exactTitle = "a".repeat(60);
+    const longTitle = "a".repeat(61);
+
+    expect(buildWorkbenchThreadTitle("Short title")).toBe("Short title");
+    expect(buildWorkbenchThreadTitle(exactTitle)).toBe(exactTitle);
+    expect(buildWorkbenchThreadTitle(longTitle)).toBe(`${"a".repeat(57)}...`);
+  });
+
   it("shows the shared Workbench error toast only when an error is present", () => {
     expect(shouldShowWorkbenchErrorToast(null)).toBe(false);
     expect(shouldShowWorkbenchErrorToast("Runtime failed")).toBe(true);
@@ -201,6 +225,19 @@ describe("Workbench", () => {
     expect(shouldUnsubscribeRemovedThread(subscribed, "thread-3")).toBe(false);
   });
 
+  it("maps thread mutation busy states to shared error codes and message keys", () => {
+    expect(threadMutationBusyMessageKey("delete")).toBe("threads.deleteBlockedRunning");
+    expect(threadMutationBusyMessageKey("archive")).toBe("threads.archiveBlockedRunning");
+    expect(isThreadMutationBusyError("delete", IPC_ERROR_CODES.THREAD_DELETE_BUSY))
+      .toBe(true);
+    expect(isThreadMutationBusyError("delete", IPC_ERROR_CODES.THREAD_ARCHIVE_BUSY))
+      .toBe(false);
+    expect(isThreadMutationBusyError("archive", IPC_ERROR_CODES.THREAD_ARCHIVE_BUSY))
+      .toBe(true);
+    expect(isThreadMutationBusyError("archive", IPC_ERROR_CODES.THREAD_DELETE_BUSY))
+      .toBe(false);
+  });
+
   it("identifies runtime errors that are not scoped to a subscribed thread", () => {
     expect(
       isGlobalRuntimeErrorEvent({
@@ -218,6 +255,87 @@ describe("Workbench", () => {
         message: "Thread failure",
       }),
     ).toBe(false);
+  });
+
+  it("buffers only active live assistant and reasoning item updates", () => {
+    const assistant: AssistantItem = {
+      kind: "assistant",
+      id: "assistant-1",
+      threadId: "active-thread",
+      turnId: "turn-1",
+      text: "live",
+      createdAt: "2026-06-09T00:00:00.000Z",
+    };
+    const reasoning: Extract<Item, { kind: "reasoning" }> = {
+      kind: "reasoning",
+      id: "reasoning-1",
+      threadId: "active-thread",
+      turnId: "turn-1",
+      text: "thinking",
+      createdAt: "2026-06-09T00:00:00.000Z",
+    };
+    const tool: Extract<Item, { kind: "tool" }> = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "active-thread",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "run_command",
+      args: {},
+      status: "running",
+      createdAt: "2026-06-09T00:00:00.000Z",
+    };
+
+    expect(shouldBufferLiveTextItemUpdate({
+      kind: "item_updated",
+      threadId: "active-thread",
+      turnId: "turn-1",
+      item: assistant,
+    }, "active-thread")).toBe(true);
+    expect(shouldBufferLiveTextItemUpdate({
+      kind: "item_updated",
+      threadId: "active-thread",
+      turnId: "turn-1",
+      item: reasoning,
+    }, "active-thread")).toBe(true);
+    expect(shouldBufferLiveTextItemUpdate({
+      kind: "item_updated",
+      threadId: "background-thread",
+      turnId: "turn-1",
+      item: { ...assistant, threadId: "background-thread" },
+    }, "active-thread")).toBe(false);
+    expect(shouldBufferLiveTextItemUpdate({
+      kind: "item_updated",
+      threadId: "active-thread",
+      turnId: "turn-1",
+      item: tool,
+    }, "active-thread")).toBe(false);
+  });
+
+  it("flushes buffered text updates before terminal turn events only", () => {
+    const turn = makeTurnRecord();
+
+    expect(shouldFlushBufferedItemUpdatesBeforeEvent({
+      kind: "turn_completed",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      status: "completed",
+      completedAt: "2026-06-09T00:01:00.000Z",
+    })).toBe(true);
+    expect(shouldFlushBufferedItemUpdatesBeforeEvent({
+      kind: "turn_failed",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      message: "failed",
+      failedAt: "2026-06-09T00:01:00.000Z",
+    })).toBe(true);
+    expect(shouldFlushBufferedItemUpdatesBeforeEvent({
+      kind: "turn_started",
+      threadId: turn.threadId,
+      turnId: turn.id,
+      startedAt: turn.startedAt,
+      turn,
+    })).toBe(false);
   });
 
   it("derives new thread mode from the active workbench route", () => {

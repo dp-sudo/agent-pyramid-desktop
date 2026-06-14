@@ -1,12 +1,11 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { WriteWorkspaceView } from "../../src/renderer/src/ui/components/write/WriteWorkspaceView";
 import {
   buildWriteAssistantPrompt,
-  clampWriteSidebarWidth,
   formatWriteFileMeta,
   getNextWriteDocumentPath,
-  getNextWriteSidebarWidth,
   getWriteAssistantPromptText,
   getWriteAssistantLocalContext,
   getWriteAssistantVisibleItems,
@@ -18,7 +17,6 @@ import {
   getWriteDocumentPathValidationError,
   getWriteListState,
   getWriteOpenDocumentState,
-  getWriteSidebarDividerClassName,
   getWriteWorkspaceSwitchState,
   isWriteEditorSelectionEqual,
   isWriteMarkdownDocumentPath,
@@ -32,8 +30,12 @@ import {
   shouldUseSelectedWriteWorkspace,
   shouldWarnBeforeLeavingWriteDocument,
   WRITE_SEARCH_CLEAR_BUTTON_TEXT,
-  WriteWorkspaceView,
-} from "../../src/renderer/src/ui/components/write/WriteWorkspaceView";
+} from "../../src/renderer/src/ui/components/write/write-workspace-model";
+import {
+  clampLeftSidebarWidth,
+  getNextLeftSidebarWidth,
+  getSidebarDividerClassName,
+} from "../../src/renderer/src/ui/sidebar-resize-model";
 import {
   WRITE_ASSISTANT_CONTEXT_MAX_CHARS,
   WRITE_COMPLETION_PREFIX_MAX_CHARS,
@@ -687,18 +689,18 @@ describe("WriteWorkspaceView helpers", () => {
   });
 
   it("maps write sidebar resize controls to the shared width range", () => {
-    expect(clampWriteSidebarWidth(120)).toBe(180);
-    expect(clampWriteSidebarWidth(260)).toBe(260);
-    expect(clampWriteSidebarWidth(520)).toBe(420);
-    expect(getNextWriteSidebarWidth(260, "ArrowLeft")).toBe(244);
-    expect(getNextWriteSidebarWidth(260, "ArrowRight")).toBe(276);
-    expect(getNextWriteSidebarWidth(260, "Home")).toBe(180);
-    expect(getNextWriteSidebarWidth(260, "End")).toBe(420);
-    expect(getNextWriteSidebarWidth(260, "Enter")).toBe(260);
-    expect(getWriteSidebarDividerClassName(false)).toBe(
+    expect(clampLeftSidebarWidth(120)).toBe(180);
+    expect(clampLeftSidebarWidth(260)).toBe(260);
+    expect(clampLeftSidebarWidth(520)).toBe(420);
+    expect(getNextLeftSidebarWidth(260, "ArrowLeft")).toBe(244);
+    expect(getNextLeftSidebarWidth(260, "ArrowRight")).toBe(276);
+    expect(getNextLeftSidebarWidth(260, "Home")).toBe(180);
+    expect(getNextLeftSidebarWidth(260, "End")).toBe(420);
+    expect(getNextLeftSidebarWidth(260, "Enter")).toBe(260);
+    expect(getSidebarDividerClassName(false, "ds-write-sidebar-divider")).toBe(
       "ds-workbench-divider ds-write-sidebar-divider",
     );
-    expect(getWriteSidebarDividerClassName(true)).toBe(
+    expect(getSidebarDividerClassName(true, "ds-write-sidebar-divider")).toBe(
       "ds-workbench-divider ds-write-sidebar-divider is-dragging",
     );
   });

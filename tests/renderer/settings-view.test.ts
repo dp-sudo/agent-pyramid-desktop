@@ -1,18 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  canSubmitModelSettingsSection,
   clearDeletedDefaultProfileReferences,
-  createUniqueMcpServerName,
   formatSkillTriggerSummary,
-  formatMcpStartupStats,
-  getDefaultCategoryForSection,
-  getFirstVisibleSettingsCategoryForSection,
   isProfileDeletePending,
-  isSettingsCategoryInSection,
   mergeRuntimePreferencesUpdates,
   messageOfUnknownError,
-  parseRuntimeSkillsExtraRootsDraft,
-  parseMcpServerStringRecordDraft,
   prunePendingProfileDeleteId,
   resolveRuntimePreferencesAfterProfileActivationRefreshFailure,
   shouldAllowSettingsCategorySelection,
@@ -25,10 +17,31 @@ import {
   toUpdatePayload,
   validateCodeBlockCollapseLineThreshold,
   validateModelSettingsForm,
-  validateRuntimeCommandDraft,
-  validateRuntimeSkillsNumericDraft,
   type SettingsFormState,
 } from "../../src/renderer/src/ui/SettingsView";
+import {
+  canSubmitModelSettingsSection,
+  getDefaultCategoryForSection,
+  getFirstVisibleSettingsCategoryForSection,
+  getSettingsSectionItems,
+  isSettingsCategoryInSection,
+} from "../../src/renderer/src/ui/settings-navigation-model";
+import {
+  cloneMcpServerConfig,
+  createDefaultMcpServer,
+  createUniqueMcpServerName,
+  formatMcpStartupStats,
+  mcpServerConnectionLabel,
+  updateMcpServerConfigs,
+} from "../../src/renderer/src/ui/settings-mcp-model";
+import {
+  parseMcpServerStringRecordDraft,
+  parseRuntimeSkillsExtraRootsDraft,
+  splitCommaList,
+  splitWhitespaceList,
+  validateRuntimeCommandDraft,
+  validateRuntimeSkillsNumericDraft,
+} from "../../src/renderer/src/ui/settings-runtime-model";
 import {
   filterSettingsSidebarItems,
   getSettingsCategorySearchKeywords,
@@ -95,6 +108,14 @@ describe("SettingsView helpers", () => {
   });
 
   it("keeps settings categories scoped to six first-level sections", () => {
+    expect(getSettingsSectionItems(testT).map((item) => item.id)).toEqual([
+      "basic",
+      "model",
+      "agent",
+      "tools",
+      "workbench",
+      "visibility",
+    ]);
     expect(getDefaultCategoryForSection("basic")).toBe("appearance");
     expect(getDefaultCategoryForSection("model")).toBe("profiles");
     expect(getDefaultCategoryForSection("agent")).toBe("compaction");
@@ -431,6 +452,20 @@ describe("SettingsView helpers", () => {
     )).toEqual({ ok: false, message: "Environment keys must be unique." });
   });
 
+  it("normalizes MCP list drafts before runtime preference updates", () => {
+    expect(splitWhitespaceList(" node   server.js\t--stdio ")).toEqual([
+      "node",
+      "server.js",
+      "--stdio",
+    ]);
+    expect(splitWhitespaceList("   ")).toEqual([]);
+    expect(splitCommaList(" read_file, search_files,, list_files ")).toEqual([
+      "read_file",
+      "search_files",
+      "list_files",
+    ]);
+  });
+
   it("generates MCP server default names that satisfy main-process namespace uniqueness", () => {
     expect(createUniqueMcpServerName("local-mcp", [])).toBe("local-mcp");
     expect(createUniqueMcpServerName(" local-mcp ", [
@@ -440,6 +475,48 @@ describe("SettingsView helpers", () => {
     expect(createUniqueMcpServerName("local mcp", [
       { name: "local_mcp" },
     ])).toBe("local mcp-2");
+  });
+
+  it("creates and updates MCP server configs without sharing mutable collections", () => {
+    const created = createDefaultMcpServer("local-mcp");
+    expect(created).toMatchObject({
+      name: "local-mcp",
+      transport: "stdio",
+      command: "node",
+      args: [],
+      env: {},
+      headers: {},
+      enabled: false,
+      readOnlyTools: [],
+    });
+    expect(created.id).toBeTruthy();
+    expect(created.createdAt).toBe(created.updatedAt);
+
+    const updated = updateMcpServerConfigs([created], created.id, {
+      args: ["server.js"],
+      env: { TOKEN: "one" },
+      headers: { Authorization: "Bearer test" },
+      readOnlyTools: ["read_file"],
+    })[0];
+
+    expect(updated).toMatchObject({
+      args: ["server.js"],
+      env: { TOKEN: "one" },
+      headers: { Authorization: "Bearer test" },
+      readOnlyTools: ["read_file"],
+    });
+    expect(updated).not.toBe(created);
+    expect(updated?.args).not.toBe(created.args);
+    expect(updated?.env).not.toBe(created.env);
+    expect(updated?.headers).not.toBe(created.headers);
+    expect(updated?.readOnlyTools).not.toBe(created.readOnlyTools);
+
+    const cloned = cloneMcpServerConfig(updated ?? created);
+    expect(cloned).toEqual(updated);
+    expect(cloned.args).not.toBe(updated?.args);
+    expect(cloned.env).not.toBe(updated?.env);
+    expect(cloned.headers).not.toBe(updated?.headers);
+    expect(cloned.readOnlyTools).not.toBe(updated?.readOnlyTools);
   });
 
   it("formats MCP startup stats only when runtime observations exist", () => {
@@ -464,6 +541,38 @@ describe("SettingsView helpers", () => {
       startupSuccessCount: 2,
       startupFailureCount: 1,
     }, testT)).toBe("Last startup 42 ms, 2 ok, 1 failed");
+    expect(mcpServerConnectionLabel({
+      id: "server-1",
+      name: "local-mcp",
+      transport: "stdio",
+      command: "node",
+      args: [],
+      env: {},
+      headers: {},
+      enabled: true,
+      readOnlyTools: [],
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+    }, undefined, testT)).toBe("node");
+    expect(mcpServerConnectionLabel({
+      id: "server-2",
+      name: "remote-mcp",
+      transport: "streamable-http",
+      url: "http://localhost:3000/mcp",
+      args: [],
+      env: {},
+      headers: {},
+      enabled: true,
+      readOnlyTools: [],
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+    }, {
+      ...baseStatus,
+      status: "connected",
+      toolCount: 3,
+      promptCount: 2,
+      resourceCount: 1,
+    }, testT)).toBe("Connected · 3 tools · 2 prompts · 1 resources");
   });
 
   it("lets later queued runtime preference updates override the same field", () => {
@@ -667,5 +776,9 @@ function testT(key: string, options?: Record<string, unknown>): string {
   if (key === "settings.mcpServers.startupStats") {
     return `Last startup ${String(options?.duration)} ms, ${String(options?.successes)} ok, ${String(options?.failures)} failed`;
   }
+  if (key === "settings.mcpServers.statusSummary") {
+    return `${String(options?.status)} · ${String(options?.tools)} tools · ${String(options?.prompts)} prompts · ${String(options?.resources)} resources`;
+  }
+  if (key === "settings.mcpStatuses.connected") return "Connected";
   return key;
 }
