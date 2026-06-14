@@ -10,6 +10,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useWorkbench, type WorkbenchRoute } from "../../store/WorkbenchContext";
 import { type FloatingComposerRequestPayload } from "../composer";
+import { usePanelResizer } from "../../hooks/usePanelResizer";
 import type {
   ThreadSummary,
   WriteFileEntry,
@@ -131,7 +132,6 @@ export function WriteWorkspaceView({
     selectionStart: 0,
     selectionEnd: 0,
   });
-  const [sidebarDragging, setSidebarDragging] = useState(false);
   const [creatingDocument, setCreatingDocument] = useState(false);
   const [createPath, setCreatePath] = useState("untitled.md");
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -150,6 +150,15 @@ export function WriteWorkspaceView({
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const searchDebounceTimerRef = useRef<number | null>(null);
   const listedWorkspaceRef = useRef("");
+  const {
+    dragging: sidebarDragging,
+    handlePointerDown: handleSidebarPointerDown,
+  } = usePanelResizer({
+    width: state.leftSidebarWidth,
+    onWidthChange: actions.setLeftSidebarWidth,
+    applyDragDelta: (startWidth, clientX, startX) =>
+      clampLeftSidebarWidth(startWidth + (clientX - startX)),
+  });
 
   useEffect(() => {
     activePathRef.current = activePath;
@@ -1184,26 +1193,7 @@ export function WriteWorkspaceView({
           actions.setLeftSidebarWidth(next);
         }}
         onDoubleClick={() => actions.setLeftSidebarWidth(getResetLeftSidebarWidth())}
-        onPointerDown={(event) => {
-          const startX = event.clientX;
-          const startWidth = state.leftSidebarWidth;
-          const target = event.currentTarget;
-          setSidebarDragging(true);
-          target.setPointerCapture(event.pointerId);
-          const onMove = (ev: PointerEvent): void => {
-            const dx = ev.clientX - startX;
-            actions.setLeftSidebarWidth(clampLeftSidebarWidth(startWidth + dx));
-          };
-          const clearDragListeners = (): void => {
-            setSidebarDragging(false);
-            target.removeEventListener("pointermove", onMove);
-            target.removeEventListener("pointerup", clearDragListeners);
-            target.removeEventListener("pointercancel", clearDragListeners);
-          };
-          target.addEventListener("pointermove", onMove);
-          target.addEventListener("pointerup", clearDragListeners);
-          target.addEventListener("pointercancel", clearDragListeners);
-        }}
+        onPointerDown={handleSidebarPointerDown}
       />
       <div className="ds-write-main">
         <WriteEditorPanel

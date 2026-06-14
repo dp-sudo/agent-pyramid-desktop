@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../store/WorkbenchContext";
+import { usePanelResizer } from "../../hooks/usePanelResizer";
 import {
   RIGHT_INSPECTOR_DEFAULT_WIDTH,
   RIGHT_INSPECTOR_MAX_WIDTH,
@@ -25,7 +26,15 @@ export const RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT = "x";
 export function RightInspector(): ReactElement | null {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
-  const [resizerDragging, setResizerDragging] = useState(false);
+  const {
+    dragging: resizerDragging,
+    handlePointerDown: handleResizerPointerDown,
+  } = usePanelResizer({
+    width: state.rightSidebarWidth,
+    onWidthChange: actions.setRightSidebarWidth,
+    applyDragDelta: (startWidth, clientX, startX) =>
+      clampRightInspectorWidth(startWidth + (startX - clientX)),
+  });
   if (!state.rightPanelMode) return null;
   const titleKey = state.rightPanelMode === "changes"
     ? "inspector.changes"
@@ -57,26 +66,7 @@ export function RightInspector(): ReactElement | null {
           event.preventDefault();
           actions.setRightSidebarWidth(next);
         }}
-        onPointerDown={(event) => {
-          const startX = event.clientX;
-          const startWidth = state.rightSidebarWidth;
-          const target = event.currentTarget;
-          setResizerDragging(true);
-          target.setPointerCapture(event.pointerId);
-          const onMove = (ev: PointerEvent): void => {
-            const dx = startX - ev.clientX;
-            actions.setRightSidebarWidth(clampRightInspectorWidth(startWidth + dx));
-          };
-          const clearDragListeners = (): void => {
-            setResizerDragging(false);
-            target.removeEventListener("pointermove", onMove);
-            target.removeEventListener("pointerup", clearDragListeners);
-            target.removeEventListener("pointercancel", clearDragListeners);
-          };
-          target.addEventListener("pointermove", onMove);
-          target.addEventListener("pointerup", clearDragListeners);
-          target.addEventListener("pointercancel", clearDragListeners);
-        }}
+        onPointerDown={handleResizerPointerDown}
         onDoubleClick={() => {
           actions.setRightSidebarWidth(getResetRightInspectorWidth());
         }}

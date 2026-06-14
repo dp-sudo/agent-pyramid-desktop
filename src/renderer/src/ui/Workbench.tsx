@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
   getActiveThreadInFlightTurn,
@@ -56,6 +56,12 @@ import {
 import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
 import { CodeWorkbenchStage } from "./components/workbench/CodeWorkbenchStage";
 import { WriteWorkbenchStage } from "./components/workbench/WriteWorkbenchStage";
+import { usePanelResizer } from "./hooks/usePanelResizer";
+import {
+  createNewThread,
+  ensureThreadForSend,
+  runThreadMutation,
+} from "./workbench-thread-service";
 import { usePendingApprovalResponses } from "./hooks/usePendingApprovalResponses";
 export {
   beginPendingApprovalResponse,
@@ -88,7 +94,6 @@ export function Workbench(): ReactElement {
   const toolProgressFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestItemUpdateByItemIdRef = useRef(new Map<string, Item>());
   const itemUpdateFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [leftSidebarDragging, setLeftSidebarDragging] = useState(false);
   const activeThreadArchived = state.activeThread?.status === "archived";
   const activeThreadInFlightTurn = getActiveThreadInFlightTurn(state);
   const codeThreads = filterThreadsForWorkbench(state.threads, "code");
@@ -98,6 +103,15 @@ export function Workbench(): ReactElement {
     beginApprovalResponse,
     clearApprovalResponse,
   } = usePendingApprovalResponses(state.items);
+  const {
+    dragging: leftSidebarDragging,
+    handlePointerDown: handleLeftSidebarPointerDown,
+  } = usePanelResizer({
+    width: state.leftSidebarWidth,
+    onWidthChange: actions.setLeftSidebarWidth,
+    applyDragDelta: (startWidth, clientX, startX) =>
+      clampLeftSidebarWidth(startWidth + (clientX - startX)),
+  });
 
   useEffect(() => {
     activeThreadIdRef.current = state.activeThreadId;
@@ -424,103 +438,59 @@ export function Workbench(): ReactElement {
   const onNewChat = useCallback(async () => {
     const workspace = await ensureWorkspaceRoot();
     if (!workspace) return;
-    const result = await runWorkbenchIpc(() =>
-      window.agentApi.threads.create({
-        title: DEFAULT_THREAD_TITLE,
-        workspace,
-        mode: "code",
-      }),
-    );
-    if (!result.ok) {
-      actions.setError(result.message);
-      return;
-    }
-    activeThreadIdRef.current = result.value.id;
-    if (!await subscribeThreadEvents(result.value.id)) return;
-    actions.selectThread(result.value, []);
-    actions.setError(null);
-    void refreshThreads();
+    await createNewThread(actions, workspace, "code", {
+      setActiveThreadId: (id) => { activeThreadIdRef.current = id; },
+      subscribeThreadEvents,
+      refreshThreads,
+    });
   }, [actions, ensureWorkspaceRoot, refreshThreads, subscribeThreadEvents]);
 
   const onNewWriteThread = useCallback(async () => {
     const workspace = await ensureWorkspaceRoot();
     if (!workspace) return;
-    const result = await runWorkbenchIpc(() =>
-      window.agentApi.threads.create({
-        title: DEFAULT_THREAD_TITLE,
-        workspace,
-        mode: "write",
-      }),
-    );
-    if (!result.ok) {
-      actions.setError(result.message);
-      return;
-    }
-    activeThreadIdRef.current = result.value.id;
-    if (!await subscribeThreadEvents(result.value.id)) return;
-    actions.selectThread(result.value, []);
-    actions.setError(null);
-    void refreshThreads();
+    await createNewThread(actions, workspace, "write", {
+      setActiveThreadId: (id) => { activeThreadIdRef.current = id; },
+      subscribeThreadEvents,
+      refreshThreads,
+    });
   }, [actions, ensureWorkspaceRoot, refreshThreads, subscribeThreadEvents]);
 
   const onDeleteThread = useCallback(
     async (id: string) => {
-      const busyMessage = t(threadMutationBusyMessageKey("delete"));
-      if (getThreadInFlightTurn(state, id)) {
-        actions.setError(busyMessage);
-        return;
-      }
-
-      const result = await runWorkbenchIpc(() => window.agentApi.threads.delete(id));
-      if (!result.ok) {
-        actions.setError(
-          isThreadMutationBusyError("delete", result.code)
-            ? busyMessage
-            : result.message,
-        );
-        return;
-      }
-
-      const wasActiveThread = state.activeThreadId === id;
-      if (wasActiveThread) {
-        activeThreadIdRef.current = null;
-      }
-      const unsubscribed = await unsubscribeThreadEvents(id);
-      actions.removeThread(id);
-      if (unsubscribed) actions.setError(null);
-      await refreshThreads();
+      await runThreadMutation(
+        state,
+        actions,
+        id,
+        "delete",
+        t,
+        (threadId) => runWorkbenchIpc(() => window.agentApi.threads.delete(threadId)),
+        {
+          setActiveThreadId: (newId) => { activeThreadIdRef.current = newId; },
+          unsubscribeThreadEvents,
+          refreshThreads,
+        },
+      );
     },
     [actions, refreshThreads, state, t, unsubscribeThreadEvents],
   );
 
   const onArchiveThread = useCallback(
     async (id: string) => {
-      const busyMessage = t(threadMutationBusyMessageKey("archive"));
-      if (getThreadInFlightTurn(state, id)) {
-        actions.setError(busyMessage);
-        return;
-      }
-
-      const result = await runWorkbenchIpc(() =>
-        window.agentApi.threads.update(id, { status: "archived" }),
+      await runThreadMutation(
+        state,
+        actions,
+        id,
+        "archive",
+        t,
+        (threadId) => runWorkbenchIpc(() =>
+          window.agentApi.threads.update(threadId, { status: "archived" }),
+        ),
+        {
+          setActiveThreadId: (newId) => { activeThreadIdRef.current = newId; },
+          unsubscribeThreadEvents,
+          refreshThreads,
+        },
       );
-      if (!result.ok) {
-        actions.setError(
-          isThreadMutationBusyError("archive", result.code)
-            ? busyMessage
-            : result.message,
-        );
-        return;
-      }
-
-      const wasActiveThread = state.activeThreadId === id;
-      if (wasActiveThread) {
-        activeThreadIdRef.current = null;
-        actions.deselectThread();
-      }
-      const unsubscribed = await unsubscribeThreadEvents(id);
-      if (unsubscribed) actions.setError(null);
-      await refreshThreads();
     },
     [actions, refreshThreads, state, t, unsubscribeThreadEvents],
   );
@@ -823,27 +793,7 @@ export function Workbench(): ReactElement {
             event.preventDefault();
             actions.setLeftSidebarWidth(next);
           }}
-          onPointerDown={(event) => {
-            const startX = event.clientX;
-            const startWidth = state.leftSidebarWidth;
-            const target = event.currentTarget;
-            setLeftSidebarDragging(true);
-            target.setPointerCapture(event.pointerId);
-            const onMove = (ev: PointerEvent): void => {
-              const dx = ev.clientX - startX;
-              const next = clampLeftSidebarWidth(startWidth + dx);
-              actions.setLeftSidebarWidth(next);
-            };
-            const clearDragListeners = (): void => {
-              setLeftSidebarDragging(false);
-              target.removeEventListener("pointermove", onMove);
-              target.removeEventListener("pointerup", clearDragListeners);
-              target.removeEventListener("pointercancel", clearDragListeners);
-            };
-            target.addEventListener("pointermove", onMove);
-            target.addEventListener("pointerup", clearDragListeners);
-            target.addEventListener("pointercancel", clearDragListeners);
-          }}
+          onPointerDown={handleLeftSidebarPointerDown}
           onDoubleClick={() => {
             actions.setLeftSidebarWidth(getResetLeftSidebarWidth());
           }}

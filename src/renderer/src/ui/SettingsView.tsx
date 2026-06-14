@@ -44,11 +44,9 @@ import {
   type McpServerStatusRecord,
   type McpServerTransport,
   type AgentAutonomyLevel,
-  type LlmProtocol,
   type ModelConfig,
   type ModelConfigProfile,
   type ModelConfigProfilesState,
-  type ModelConfigUpdate,
   type ModelReasoningEffort,
   type RuntimeCompactionStrategy,
   type RuntimePermissionRule,
@@ -75,6 +73,14 @@ import {
   Toggle,
 } from "./components/settings/SettingsControls";
 import {
+  DEFAULT_INSPECTOR_MODES,
+  STARTUP_VIEWS,
+  isDefaultStartupViewSetting,
+  toDefaultInspectorMode,
+  toDefaultInspectorModeValue,
+  validateCodeBlockCollapseLineThreshold,
+} from "./settings-basic-preferences-model";
+import {
   SettingsSidebar,
   type SettingsCategory,
   type SettingsSidebarItem,
@@ -93,7 +99,15 @@ import {
   type SettingsSectionItem,
 } from "./settings-navigation-model";
 import {
-  cloneMcpServerConfig,
+  createCustomModelConfig,
+  findActiveProfile,
+  isLlmProtocolSetting,
+  toFormState,
+  toUpdatePayload,
+  validateModelSettingsForm,
+  type SettingsFormState,
+} from "./settings-model-config-model";
+import {
   createDefaultMcpServer,
   createUniqueMcpServerName,
   formatMcpStartupStats,
@@ -101,7 +115,6 @@ import {
   updateMcpServerConfigs,
 } from "./settings-mcp-model";
 import {
-  createRuntimePreferenceId,
   parseMcpServerEnvDraft,
   parseMcpServerStringRecordDraft,
   parseRuntimeSkillsExtraRootsDraft,
@@ -113,55 +126,46 @@ import {
   type RuntimeSkillsDraftField,
   type SettingsTranslator,
 } from "./settings-runtime-model";
+import {
+  arraysEqual,
+  clearDeletedDefaultProfileReferences,
+  createDefaultPermissionRule,
+  formatRuntimeSkillsExtraRoots,
+  mergeRuntimePreferencesUpdates,
+  resolveRuntimePreferencesAfterProfileActivationRefreshFailure,
+  shouldDisableRuntimePreferenceControls,
+  toPermissionRulePatternDrafts,
+  toRuntimeCommandDraft,
+  toRuntimeSkillsDraft,
+  type RuntimeCommandDraft,
+  type RuntimeSaveState,
+  type RuntimeSkillsDraft,
+} from "./settings-runtime-preferences-model";
+import {
+  emptyStringToNullableProfileId,
+  hasUnsavedProfileChanges,
+  isProfileDeletePending,
+  prunePendingProfileDeleteId,
+  shouldAllowSettingsCategorySelection,
+  shouldBlockSettingsNavigation,
+  shouldDisableModelProfileControls,
+  type SaveState,
+} from "./settings-view-state-model";
 import { i18n, persistLocale, setFollowSystemTheme, setTheme } from "../i18n";
 import {
   CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
   CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX,
   CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN,
-  type DefaultInspectorMode,
-  type DefaultStartupView,
   type ThemePreference,
 } from "./preferences";
 
-export interface SettingsFormState {
-  model_provide: string;
-  model: string;
-  protocol: LlmProtocol;
-  base_url: string;
-  OPENAI_API_KEY: string;
-  model_context_window: string;
-  model_auto_compact_token_limit: string;
-  max_tokens: string;
-  thinking: boolean;
-  model_reasoning_effort: ModelReasoningEffort;
-  agent_autonomy: AgentAutonomyLevel;
-}
-
-export type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
-type RuntimeSaveState = Exclude<SaveState, "dirty">;
 type SettingsSseApi = {
   subscribeGlobal(): Promise<IpcResult<SseSubscribeGlobalResponse>>;
   unsubscribeGlobal(): Promise<IpcResult<SseUnsubscribeGlobalResponse>>;
   onEvent(listener: (event: RuntimeEvent) => void): () => void;
 };
-interface RuntimeCommandDraft {
-  timeoutMs: string;
-  maxOutputBytes: string;
-}
-interface RuntimeSkillsDraft {
-  activeLimit: string;
-  instructionBudgetBytes: string;
-  extraRoots: string;
-}
 type RuntimePermissionRuleEditableField = "tool" | "pattern" | "effect";
 const THEME_PREFERENCES: readonly ThemePreference[] = ["light", "dark"];
-const STARTUP_VIEWS: readonly DefaultStartupView[] = ["code", "write"];
-const DEFAULT_INSPECTOR_MODES: readonly DefaultInspectorMode[] = [
-  null,
-  "changes",
-  "todo",
-  "plan",
-];
 
 export function SettingsView(): ReactElement {
   const { t } = useTranslation();
@@ -2642,137 +2646,6 @@ export function SettingsView(): ReactElement {
   );
 }
 
-function toFormState(config: ModelConfig): SettingsFormState {
-  return {
-    model_provide: config.model_provide,
-    model: config.model,
-    protocol: config.protocol,
-    base_url: config.base_url,
-    OPENAI_API_KEY: config.OPENAI_API_KEY,
-    model_context_window: String(config.model_context_window),
-    model_auto_compact_token_limit: String(config.model_auto_compact_token_limit),
-    max_tokens: String(config.max_tokens),
-    thinking: config.thinking,
-    model_reasoning_effort: config.model_reasoning_effort,
-    agent_autonomy: config.agent_autonomy,
-  };
-}
-
-function toRuntimeCommandDraft(
-  command: RuntimePreferences["command"],
-): RuntimeCommandDraft {
-  return {
-    timeoutMs: String(command.timeoutMs),
-    maxOutputBytes: String(command.maxOutputBytes),
-  };
-}
-
-function toRuntimeSkillsDraft(
-  skills: RuntimePreferences["skills"],
-): RuntimeSkillsDraft {
-  return {
-    activeLimit: String(skills.activeLimit),
-    instructionBudgetBytes: String(skills.instructionBudgetBytes),
-    extraRoots: formatRuntimeSkillsExtraRoots(skills.extraRoots),
-  };
-}
-
-function formatRuntimeSkillsExtraRoots(roots: readonly string[]): string {
-  return roots.join("\n");
-}
-
-function toPermissionRulePatternDrafts(
-  rules: readonly RuntimePermissionRule[],
-): Record<string, string> {
-  return Object.fromEntries(rules.map((rule) => [rule.id, rule.pattern]));
-}
-
-export function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
-  const contextWindow = parseOptionalInteger(
-    form.model_context_window,
-    "model_context_window",
-  );
-  const compactLimit = parseOptionalInteger(
-    form.model_auto_compact_token_limit,
-    "model_auto_compact_token_limit",
-  );
-  const maxTokens = parseOptionalInteger(form.max_tokens, "max_tokens");
-  return {
-    model_provide: form.model_provide,
-    model: form.model,
-    protocol: form.protocol,
-    base_url: form.base_url,
-    OPENAI_API_KEY: form.OPENAI_API_KEY,
-    ...(contextWindow !== undefined ? { model_context_window: contextWindow } : {}),
-    ...(compactLimit !== undefined
-      ? { model_auto_compact_token_limit: compactLimit }
-      : {}),
-    ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
-    thinking: form.thinking,
-    model_reasoning_effort: form.model_reasoning_effort,
-    agent_autonomy: form.agent_autonomy,
-  };
-}
-
-export function validateModelSettingsForm(
-  form: SettingsFormState,
-  currentConfig: ModelConfig,
-  t: SettingsTranslator,
-): string | null {
-  const contextWindow = parseOptionalPositiveIntegerForValidation(
-    form.model_context_window,
-    t("settings.fields.contextWindow"),
-    t,
-  );
-  if (!contextWindow.ok) return contextWindow.message;
-
-  const compactLimit = parseOptionalPositiveIntegerForValidation(
-    form.model_auto_compact_token_limit,
-    t("settings.fields.compactLimit"),
-    t,
-  );
-  if (!compactLimit.ok) return compactLimit.message;
-
-  const maxTokens = parseOptionalPositiveIntegerForValidation(
-    form.max_tokens,
-    t("settings.fields.maxTokens"),
-    t,
-  );
-  if (!maxTokens.ok) return maxTokens.message;
-
-  const effectiveContextWindow =
-    contextWindow.value ?? currentConfig.model_context_window;
-  const effectiveCompactLimit =
-    compactLimit.value ?? currentConfig.model_auto_compact_token_limit;
-  const effectiveMaxTokens = maxTokens.value ?? currentConfig.max_tokens;
-
-  if (effectiveCompactLimit > effectiveContextWindow) {
-    return t("settings.errors.compactLimitTooLarge");
-  }
-  if (effectiveMaxTokens >= effectiveContextWindow) {
-    return t("settings.errors.maxTokensTooLarge");
-  }
-  return null;
-}
-
-function parseOptionalInteger(raw: string, field: string): number | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`${field} must be a positive integer.`);
-  }
-  return parsed;
-}
-
-type IntegerValidationResult =
-  | { ok: true; value: number | undefined }
-  | { ok: false; message: string };
-
-type BasicPreferenceDraftValidationResult =
-  | { ok: true; value: number }
-  | { ok: false; message: string };
-
 export function formatSkillTriggerSummary(
   skill: RuntimeSkillCatalogEntry,
   t: SettingsTranslator,
@@ -2802,128 +2675,6 @@ export function formatSkillTriggerSummary(
     }));
   }
   return parts.length > 0 ? parts.join(" · ") : t("settings.skills.noTriggers");
-}
-
-export function validateCodeBlockCollapseLineThreshold(
-  raw: string,
-  t: SettingsTranslator,
-): BasicPreferenceDraftValidationResult {
-  const label = t("settings.fields.codeBlockCollapseLineThreshold");
-  const trimmed = raw.trim();
-  const parsed = Number(trimmed);
-  if (!trimmed || !Number.isInteger(parsed) || parsed < 1) {
-    return {
-      ok: false,
-      message: t("settings.errors.positiveInteger", { field: label }),
-    };
-  }
-  if (
-    parsed < CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN ||
-    parsed > CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX
-  ) {
-    return {
-      ok: false,
-      message: t("settings.errors.integerRange", {
-        field: label,
-        min: CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MIN,
-        max: CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_MAX,
-      }),
-    };
-  }
-  return { ok: true, value: parsed };
-}
-
-export function shouldDisableRuntimePreferenceControls(
-  hasAgentApi: boolean,
-  runtimeSaveState: RuntimeSaveState,
-): boolean {
-  return !hasAgentApi || runtimeSaveState === "loading" || runtimeSaveState === "saving";
-}
-
-export function mergeRuntimePreferencesUpdates(
-  current: RuntimePreferencesUpdate | null,
-  update: RuntimePreferencesUpdate,
-): RuntimePreferencesUpdate {
-  if (!current) {
-    return cloneRuntimePreferencesUpdate(update);
-  }
-  return {
-    ...current,
-    ...update,
-    ...(current.toolAvailability || update.toolAvailability
-      ? {
-          toolAvailability: {
-            ...current.toolAvailability,
-            ...update.toolAvailability,
-            code: {
-              ...current.toolAvailability?.code,
-              ...update.toolAvailability?.code,
-            },
-            write: {
-              ...current.toolAvailability?.write,
-              ...update.toolAvailability?.write,
-            },
-          },
-        }
-      : {}),
-    ...(current.approvalExperience || update.approvalExperience
-      ? {
-          approvalExperience: {
-            ...current.approvalExperience,
-            ...update.approvalExperience,
-          },
-        }
-      : {}),
-    ...(current.command || update.command
-      ? { command: { ...current.command, ...update.command } }
-      : {}),
-    ...(current.compaction || update.compaction
-      ? { compaction: { ...current.compaction, ...update.compaction } }
-      : {}),
-    ...(current.skills || update.skills
-      ? {
-          skills: {
-            ...current.skills,
-            ...update.skills,
-            ...(update.skills?.extraRoots
-              ? { extraRoots: [...update.skills.extraRoots] }
-              : current.skills?.extraRoots
-                ? { extraRoots: [...current.skills.extraRoots] }
-                : {}),
-          },
-        }
-      : {}),
-    ...(update.permissionRules !== undefined
-      ? { permissionRules: clonePermissionRules(update.permissionRules) }
-      : current.permissionRules !== undefined
-        ? { permissionRules: clonePermissionRules(current.permissionRules) }
-        : {}),
-    ...(update.mcpServers !== undefined
-      ? { mcpServers: update.mcpServers.map(cloneMcpServerConfig) }
-      : current.mcpServers !== undefined
-        ? { mcpServers: current.mcpServers.map(cloneMcpServerConfig) }
-        : {}),
-  };
-}
-
-function cloneRuntimePreferencesUpdate(
-  update: RuntimePreferencesUpdate,
-): RuntimePreferencesUpdate {
-  return mergeRuntimePreferencesUpdates({}, update);
-}
-
-function createDefaultPermissionRule(): RuntimePermissionRule {
-  return {
-    id: createRuntimePreferenceId(),
-    tool: "command",
-    pattern: "npm test*",
-    effect: "ask",
-  };
-}
-
-function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length &&
-    left.every((value, index) => value === right[index]);
 }
 
 function McpServerSurfaceSummary({
@@ -2990,12 +2741,6 @@ function McpSurfaceList({
   );
 }
 
-function clonePermissionRules(
-  rules: readonly RuntimePermissionRule[],
-): RuntimePermissionRule[] {
-  return rules.map((rule) => ({ ...rule }));
-}
-
 export function messageOfUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -3046,166 +2791,6 @@ export function subscribeSettingsGlobalRuntimeEvents(
   };
 }
 
-function parseOptionalPositiveIntegerForValidation(
-  raw: string,
-  fieldLabel: string,
-  t: SettingsTranslator,
-): IntegerValidationResult {
-  const trimmed = raw.trim();
-  if (!trimmed) return { ok: true, value: undefined };
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    return {
-      ok: false,
-      message: t("settings.errors.positiveInteger", { field: fieldLabel }),
-    };
-  }
-  return { ok: true, value: parsed };
-}
-
-function findActiveProfile(
-  state: ModelConfigProfilesState,
-): ModelConfigProfile | null {
-  return (
-    state.profiles.find((profile) => profile.id === state.activeProfileId) ??
-    state.profiles[0] ??
-    null
-  );
-}
-
-function createCustomModelConfig(): ModelConfig {
-  return {
-    ...DEFAULT_MODEL_CONFIG,
-    model_provide: "Custom",
-    model: "gpt-4.1",
-    base_url: "https://api.openai.com/v1",
-    thinking: false,
-  };
-}
-
 function isSettingsLocale(value: string): value is LocaleCode {
   return SUPPORTED_LOCALES.includes(value as LocaleCode);
-}
-
-function isLlmProtocolSetting(value: string): value is LlmProtocol {
-  return LLM_PROTOCOLS.includes(value as LlmProtocol);
-}
-
-function isDefaultStartupViewSetting(value: string): value is DefaultStartupView {
-  return STARTUP_VIEWS.includes(value as DefaultStartupView);
-}
-
-function emptyStringToNullableProfileId(value: string): string | null {
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-
-export function toDefaultInspectorModeValue(mode: DefaultInspectorMode): string {
-  return mode ?? "closed";
-}
-
-export function toDefaultInspectorMode(value: string): DefaultInspectorMode {
-  if (value === "changes" || value === "todo" || value === "plan") return value;
-  return null;
-}
-
-export function isProfileDeletePending(
-  pendingDeleteProfileId: string | null,
-  profileId: string,
-): boolean {
-  return pendingDeleteProfileId === profileId;
-}
-
-export function prunePendingProfileDeleteId(
-  pendingDeleteProfileId: string | null,
-  profiles: readonly Pick<ModelConfigProfile, "id">[],
-): string | null {
-  if (!pendingDeleteProfileId) return null;
-  return profiles.some((profile) => profile.id === pendingDeleteProfileId)
-    ? pendingDeleteProfileId
-    : null;
-}
-
-export function shouldBlockSettingsNavigation(
-  saveState: SaveState,
-  hasUnsavedChanges = false,
-): boolean {
-  return saveState === "dirty" || (saveState === "error" && hasUnsavedChanges);
-}
-
-export function shouldAllowSettingsCategorySelection(
-  currentCategory: SettingsCategory,
-  nextCategory: SettingsCategory,
-  saveState: SaveState,
-  hasUnsavedChanges = false,
-): boolean {
-  return (
-    currentCategory === nextCategory ||
-    !shouldBlockSettingsNavigation(saveState, hasUnsavedChanges)
-  );
-}
-
-export function shouldDisableModelProfileControls(
-  hasAgentApi: boolean,
-  saveState: SaveState,
-  profileBusy: string,
-): boolean {
-  return !hasAgentApi ||
-    saveState === "loading" ||
-    saveState === "saving" ||
-    Boolean(profileBusy);
-}
-
-export function clearDeletedDefaultProfileReferences(
-  preferences: RuntimePreferences,
-  deletedProfileId: string,
-): RuntimePreferences {
-  const codeDefaultModelProfileId =
-    preferences.codeDefaultModelProfileId === deletedProfileId
-      ? null
-      : preferences.codeDefaultModelProfileId;
-  const writeDefaultModelProfileId =
-    preferences.writeDefaultModelProfileId === deletedProfileId
-      ? null
-      : preferences.writeDefaultModelProfileId;
-  if (
-    codeDefaultModelProfileId === preferences.codeDefaultModelProfileId &&
-    writeDefaultModelProfileId === preferences.writeDefaultModelProfileId
-  ) {
-    return preferences;
-  }
-  return {
-    ...preferences,
-    codeDefaultModelProfileId,
-    writeDefaultModelProfileId,
-  };
-}
-
-export function resolveRuntimePreferencesAfterProfileActivationRefreshFailure(
-  preferences: RuntimePreferences,
-): RuntimePreferences {
-  return preferences;
-}
-
-function hasUnsavedProfileChanges(
-  activeProfile: ModelConfigProfile | null,
-  profileName: string,
-  form: SettingsFormState,
-): boolean {
-  if (!activeProfile) return false;
-  return (
-    profileName !== activeProfile.name ||
-    form.model_provide !== activeProfile.config.model_provide ||
-    form.model !== activeProfile.config.model ||
-    form.protocol !== activeProfile.config.protocol ||
-    form.base_url !== activeProfile.config.base_url ||
-    form.OPENAI_API_KEY !== activeProfile.config.OPENAI_API_KEY ||
-    form.model_context_window !== String(activeProfile.config.model_context_window) ||
-    form.model_auto_compact_token_limit !==
-      String(activeProfile.config.model_auto_compact_token_limit) ||
-    form.max_tokens !== String(activeProfile.config.max_tokens) ||
-    form.thinking !== activeProfile.config.thinking ||
-    form.model_reasoning_effort !== activeProfile.config.model_reasoning_effort ||
-    form.agent_autonomy !== activeProfile.config.agent_autonomy
-  );
 }
