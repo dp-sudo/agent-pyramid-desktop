@@ -12,11 +12,11 @@ Read in this order before making a non-trivial change:
 4. `docs/ipc-contracts.md` before touching IPC, preload or renderer API calls.
 5. `docs/data-model.md` before touching shared contracts, JSONL persistence, attachments, model config or migrations.
 6. `docs/ui-design.md` and `docs/ui-layout-reference.md` before touching UI layout, styles, tokens or page structure.
-7. `openspec/changes/<change-id>/{proposal.md, design.md, tasks.md, specs/}` if the task belongs to an OpenSpec change.
+7. `openspec/changes/<change-id>/{proposal.md, design.md, tasks.md, specs/}` only when the task explicitly belongs to an OpenSpec change and that directory exists.
 
-`docs/architecture.md` is the diagram-first architecture reference. `docs/agent-development.md` is the long-running development log and must be updated when Agent framework capabilities change.
+`docs/architecture.md` is the diagram-first architecture reference. `docs/agent-development.md` is the concise Agent maintenance entry point; update it only when the development workflow, document ownership, or cross-module maintenance guidance changes.
 
-If a task belongs to an OpenSpec change, inspect `openspec/changes/<change-id>/proposal.md`, `design.md`, `tasks.md` and `specs/` before editing. Keep `tasks.md` checked off as implementation work lands. The OpenSpec workflow is also exposed as installed skills in `.claude/skills/` (`openspec-propose`, `openspec-explore`, `openspec-apply-change`, `openspec-archive-change`); use them to drive the change end-to-end.
+If a task belongs to an OpenSpec change and the matching directory exists, inspect `openspec/changes/<change-id>/proposal.md`, `design.md`, `tasks.md` and `specs/` before editing. Keep `tasks.md` checked off as implementation work lands. If the directory is absent, do not invent OpenSpec paths unless the user explicitly asks to start that workflow.
 
 ## External Reference Boundary
 
@@ -113,7 +113,7 @@ Renderer:
 
 Cross-process contracts:
 
-- `src/shared/agent-contracts.ts` defines `ModelConfig`, `RuntimePreferences`, `ThreadRecord`, `TurnRecord`, `Item`, `RuntimeEvent`, approvals, goals, attachments, usage, checkpoints, skills, MCP, write-mode requests and `IpcResult<T>`.
+- `src/shared/agent-contracts.ts` is the unified export for cross-process contracts. Focused submodules such as `src/shared/model-config-contracts.ts` and `src/shared/contract-primitives.ts` may own lower-level definitions before re-export.
 - `src/shared/ipc.ts` defines all channel names and `RENDERER_TO_MAIN_CHANNELS`.
 - `src/shared/ipc-errors.ts` defines stable IPC error codes.
 - `src/shared/locale.ts` defines supported locales.
@@ -153,12 +153,12 @@ Turn terminal states: `in-flight`, `completed`, `failed`, `interrupted`, `needs_
 
 Interrupt path: `runtime.interruptTurn()` calls `pool.cancel(threadId)`, aborts every active tool `AbortController`, denies all pending approvals and writes an "Interrupted by user" system item. The background loop notices `turn.status !== "in-flight"` after each await, persists any truncated stream output and finalizes — never preempt the foreground write path.
 
-Three-layer tool policy in `AgentRuntime.resolveToolPolicy()`:
+Three-layer tool policy in `ToolPolicyService.resolve()`:
 1. Hard denials: tool missing, `sandboxMode: "read-only"`, `approvalPolicy: "never"`.
 2. `RuntimePreferences.permissionRules` allow/ask/deny matching `command`/`write`/`mcp` candidates with deny > ask > allow priority.
 3. `approvalPolicy: "auto"` + non-destructive tool → allow; otherwise → ask.
 
-Catalog filtering happens earlier via `isToolAllowedByAccessPolicy`: default Write threads deny all Code-only coding/command tools, MCP `mcp__*` tools are Code-only, `create_plan` is plan-mode-only and `update_goal` is goal-mode/active-goal-only.
+Catalog filtering happens earlier in `ToolCatalogService`: default Write threads deny all Code-only coding/command tools, MCP `mcp__*` tools are Code-only, `create_plan` is plan-mode-only and `update_goal` is goal-mode/active-goal-only.
 
 Tool rules:
 

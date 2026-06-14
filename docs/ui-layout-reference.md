@@ -9,6 +9,7 @@ Primary implementation files:
 - `src/renderer/src/ui/Workbench.tsx`
 - `src/renderer/src/ui/SettingsView.tsx`
 - `src/renderer/src/ui/store/WorkbenchContext.tsx`
+- `src/renderer/src/ui/hooks/**`
 - `src/renderer/src/ui/components/**`
 - `src/renderer/src/ui/preferences.ts`
 - `src/renderer/src/ui/styles/tokens.css`
@@ -335,7 +336,9 @@ Approval behavior:
 - Pending decision is shared by `approvalId` across the timeline block and the
   composer-adjacent pending panel. Failed IPC responses release the pending
   state; successful responses stay disabled until the resolved `ApprovalItem`
-  update reaches renderer state.
+  update reaches renderer state. The local submitting map is owned by
+  `usePendingApprovalResponses()` in `src/renderer/src/ui/hooks/`; durable
+  decisions remain `Item` data in `WorkbenchContext`.
 - File diff previews follow `showDiffByDefault` until the user manually opens or
   closes a preview; later re-renders do not overwrite that manual state.
 - Unresolved approvals for the active thread also appear in a composer-adjacent
@@ -932,7 +935,7 @@ Category ownership:
 | --- | --- | --- |
 | `basic` | `appearance` | Renderer `basicPreferences` localStorage, i18n and theme helpers. |
 | `model` | `profiles`, `connection`, `context`, `reasoning` | Main `ModelConfigStore` through `modelConfig.*` IPC. |
-| `agent` | `compaction`, `skills` | Config-backed `RuntimePreferencesStore`; consumed by `AgentRuntime.prepareMessagesForRequest()` and `SkillService` turn resolution. |
+| `agent` | `compaction`, `skills` | Config-backed `RuntimePreferencesStore`; consumed by `context-compaction.prepareMessagesForRequest()` via `AgentRuntime` and `SkillService` turn resolution. |
 | `tools` | `permissions`, `mcpServers`, `toolAccess`, `commandLimits` | Config-backed `RuntimePreferencesStore`; consumed by thread creation, MCP host configuration, tool catalog filtering and command-backed tools. |
 | `workbench` | `startup`, `layout`, `session`, `modelDefaults`, `attachments` | Renderer `basicPreferences` for UI-only fields and composer attachment entry points; config-backed `RuntimePreferencesStore` for Code/Write default model profile ids. |
 | `visibility` | `approvalPresentation` | Config-backed `RuntimePreferencesStore`; consumed by approval/timeline/toast presentation in renderer. |

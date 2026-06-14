@@ -27,7 +27,8 @@ renderer React
 核心事实：
 
 - 桌面进程边界是 `main / preload / renderer / worker` 四层。
-- 跨进程契约权威来源是 `src/shared/agent-contracts.ts`。
+- 跨进程契约统一出口是 `src/shared/agent-contracts.ts`；低层分组可拆在
+  `src/shared/*-contracts.ts` 后由统一出口 re-export。
 - IPC channel 权威来源是 `src/shared/ipc.ts`。
 - Agent 运行时唯一主入口是 `src/main/application/agent-runtime.ts`。
 - Electron 组合根是 `src/main/index.ts`。
@@ -67,7 +68,6 @@ flowchart TB
 
 - `/mnt/f/cc_src/DeepSeek` 不是本项目源码、依赖或构建输入；仅在任务明确要求参考 DeepSeek GUI 时可只读查看。
 - `docs/external-references/` 及其子目录不是本项目源码或项目文档，不纳入普通搜索、审计、构建、测试或文档维护范围。
-- `docs/minimax/` 是本地协议资料，不是运行时代码。
 - `out/`、`dist/`、`node_modules/` 是生成物或依赖目录，不应作为实现权威来源。
 
 ## Process Map
@@ -115,9 +115,10 @@ flowchart LR
 | Persistence | `src/main/persistence/*` | 线程 JSONL、附件、模型配置 profiles、runtime preferences 的 userData 持久化。 |
 | IPC handlers | `src/main/ipc/*-handlers.ts` | 将 renderer 调用映射到 runtime、stores 和文件服务，统一返回 `IpcResult<T>`。 |
 | Preload bridge | `src/preload/index.ts` | 暴露 `window.agentApi`，隐藏 Electron IPC 细节。 |
-| Shared contracts | `src/shared/agent-contracts.ts`、`src/shared/ipc.ts`、`src/shared/ipc-errors.ts`、`src/shared/locale.ts` | 跨进程类型、IPC channel 常量、IPC error code 和语言列表权威来源。 |
+| Shared contracts | `src/shared/agent-contracts.ts`、`src/shared/model-config-contracts.ts`、`src/shared/contract-primitives.ts`、`src/shared/ipc.ts`、`src/shared/ipc-errors.ts`、`src/shared/locale.ts` | 跨进程类型统一出口、模型配置契约、基础 UUID/ISO guard、IPC channel 常量、IPC error code 和语言列表权威来源。 |
 | Renderer shell | `src/renderer/src/ui/AppShell.tsx`、`src/renderer/src/ui/Workbench.tsx`、`src/renderer/src/ui/SettingsView.tsx` | 路由、工作台、设置页和主要交互流程。 |
 | Renderer state | `src/renderer/src/ui/store/WorkbenchContext.tsx` | `useReducer` 状态中心，不使用外部状态库。 |
+| Renderer hooks | `src/renderer/src/ui/hooks/*`、`src/renderer/src/ui/components/composer/use*.ts` | Workbench 局部状态副作用和 composer 交互状态 hooks。 |
 | UI components | `src/renderer/src/ui/components/**` | sidebar、topbar、composer、timeline、inspector、write、settings 和 primitives。 |
 | UI styles | `src/renderer/src/ui/styles/tokens.css`、`src/renderer/src/ui/styles/shell.css` | `--ds-*` design token 与 shell layout 样式入口。 |
 | i18n | `src/renderer/src/i18n/**`、`src/shared/locale.ts` | 中英文资源、语言初始化和可选语言列表。 |
@@ -169,14 +170,14 @@ flowchart TD
 
 | Feature | Start Here | Then Check |
 | --- | --- | --- |
-| Start a turn | `src/renderer/src/ui/Workbench.tsx` | `src/preload/index.ts`、`src/main/ipc/turns-handlers.ts`、`src/main/application/agent-runtime.ts` |
+| Start a turn | `src/renderer/src/ui/Workbench.tsx` | `src/preload/index.ts`、`src/main/ipc/turns-handlers.ts`、`src/main/application/agent-runtime.ts`、`ApprovalCoordinator` |
 | Stream runtime events | `src/main/event-bus.ts` | `src/main/ipc/sse-handlers.ts`、`src/preload/index.ts`、`Workbench.tsx` |
 | Add or change IPC | `src/shared/ipc.ts`、`src/shared/ipc-errors.ts` | `src/shared/agent-contracts.ts`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts` |
-| Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、`AgentRuntime.listToolDefinitionsForTurn()`、`AgentRuntime` tool access policy、`AgentRuntime.resolveToolPolicy()` |
+| Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、choose the narrowest `Agent*Capability` context、`ToolCatalogService`、`ToolPolicyService` |
 | Change skills | `src/shared/skills/*` | `src/main/skills/skill-service.ts`、`src/main/application/tools/skill-tools.ts`、`src/main/ipc/skills-handlers.ts`、`src/main/application/agent-runtime.ts`、`RuntimePreferences.skills`、Settings UI、runtime/IPC/renderer tests |
 | Change MCP | `src/main/infrastructure/mcp/*` | `src/shared/agent-contracts.ts`、`src/shared/ipc.ts`、`src/main/ipc/mcp-handlers.ts`、`src/preload/index.ts`、`SettingsView.tsx`、`src/renderer/src/ui/mcp-input.ts` |
 | Change thread data | `src/shared/agent-contracts.ts` | `src/main/persistence/index.ts`、IPC handlers、renderer state and tests |
-| Change model config | `src/shared/agent-contracts.ts` | `src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`SettingsView.tsx` |
+| Change model config | `src/shared/model-config-contracts.ts` via `src/shared/agent-contracts.ts` | `src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`SettingsView.tsx` |
 | Change runtime preferences | `src/shared/agent-contracts.ts` | `src/main/persistence/runtime-preferences-store.ts`、`src/main/ipc/runtime-preferences-handlers.ts`、`src/preload/index.ts`、`AgentRuntime` |
 | Change attachments | `src/shared/agent-contracts.ts` | `src/main/persistence/attachment-store.ts`、`src/main/ipc/attachments-handlers.ts`、composer/runtime attachment injection |
 | Change write mode | `src/main/ipc/write-handlers.ts` | `src/renderer/src/ui/components/write/WriteWorkspaceView.tsx`、write IPC contracts |
@@ -194,6 +195,9 @@ flowchart TD
   persisted separately from the final `ToolItem.result`.
 - Tools are exposed to the model through `ToolRegistry.listDefinitions()`.
 - Tool execution goes through `ToolRegistry.execute()`; direct tool bypass is not part of the architecture.
+- `AgentToolContext` remains the registry execution boundary, but tool
+  implementations should depend on the narrowest read/write/command/skill
+  capability context that covers their inputs.
 - Skills are discovered from workspace convention roots (`.agent/skills`,
   `.agents/skills`, `.claude/skills`, `.codex/skills`, `.reasonix/skills`,
   `skills`) and configured `RuntimePreferences.skills.extraRoots`.
@@ -227,13 +231,13 @@ flowchart TD
 - `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through
   command execution and therefore requires approval; `diagnose_file` uses
   TypeScript Language Service for file-level diagnostics and remains read-only.
-- Write threads use `AgentRuntime` tool access policy and persisted
+- Write threads use `ToolCatalogService` tool access policy and persisted
   `RuntimePreferences.toolAvailability` to hide and reject Code-only
   coding/command tools by default; policy overrides can allow or deny
   individual tool names per thread mode before approval/sandbox checks run.
 - Per-call command/write/MCP permission rules live in
   `RuntimePreferences.permissionRules` and are evaluated by
-  `src/main/application/permission-policy.ts` inside `AgentRuntime.resolveToolPolicy()`;
+  `src/main/application/permission-policy.ts` inside `ToolPolicyService`;
   hard read-only sandbox and `approvalPolicy: never` denials still run before
   rule-based allow/ask/deny decisions.
 - `create_plan` is only available in plan mode.
@@ -253,7 +257,7 @@ flowchart TD
 | Runtime events | `src/shared/agent-contracts.ts` | `JsonlThreadStore.events.jsonl` |
 | Attachment metadata | `src/shared/agent-contracts.ts` | `AttachmentStore.index.json` |
 | Attachment bytes | `AttachmentStore` | `attachments/<id>.bin` |
-| Model config profiles | `src/shared/agent-contracts.ts` | `ModelConfigStore` via `userData/config` |
+| Model config profiles | `src/shared/model-config-contracts.ts` via `src/shared/agent-contracts.ts` | `ModelConfigStore` via `userData/config` |
 | Runtime preferences | `src/shared/agent-contracts.ts` | `RuntimePreferencesStore` via `userData/config` |
 | IPC channel names | `src/shared/ipc.ts` | Not persisted |
 | Renderer basic preferences | `src/renderer/src/ui/preferences.ts` | `localStorage` |

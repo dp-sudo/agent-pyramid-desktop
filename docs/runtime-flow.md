@@ -21,7 +21,7 @@
 
 - 本文不定义新的 runtime 行为。
 - 本文不描述外部参考项目。
-- Provider HTTP 细节只保留 runtime 相关概览，详细协议见 `docs/minimax/` 和 gateway 代码。
+- Provider HTTP 细节只保留 runtime 相关概览，详细协议以 gateway 代码、gateway 测试和任务提供的 provider 文档为准。
 
 ## Runtime Actors
 
@@ -170,7 +170,7 @@ flowchart TD
   User["buildUserContent(text + attachments)"]
   Loop["for round <= maxToolRounds"]
   BuildReq["buildLlmRequest"]
-  Compact["prepareMessagesForRequest"]
+  Compact["context-compaction.prepareMessagesForRequest"]
   Chat["LlmWorkerPool.chat"]
   Stream["applyStreamChunk -> item_updated"]
   Persist["persistModelOutput -> item_appended"]
@@ -227,7 +227,7 @@ LLM request construction:
   `MiniMaxGateway` owns request body and SSE parsing differences.
 - Tool definitions are filtered by turn mode, goal/plan mode and
   `RuntimePreferences.toolAvailability` before they are passed to
-  `prepareMessagesForRequest()` and the worker pool.
+  `context-compaction.prepareMessagesForRequest()` and the worker pool.
 - Context budget inputs still come from the selected model profile
   (`model_context_window`, `model_auto_compact_token_limit`, `max_tokens`),
   while automatic compaction enablement and strategy come from
@@ -342,7 +342,7 @@ Tool availability:
   allowed read-only tools exposed; child messages and tool calls are not written
   to parent JSONL, and only the final answer returns as the parent `run_skill`
   result.
-- Other registered tools pass through `AgentRuntime` tool access policy and
+- Other registered tools pass through `ToolCatalogService` tool access policy and
   persisted `RuntimePreferences.toolAvailability` before they are sent to the
   model or executed from a forced model tool call.
 - MCP tools are registered dynamically by `McpHost` using the
@@ -370,7 +370,7 @@ Tool availability:
   built-in `metadata.isReadOnly` tools so UI presentation cannot drift from
   runtime approval metadata.
 
-Approval policy currently implemented in runtime:
+Approval policy resolved by `ToolPolicyService`:
 
 - Tools marked `metadata.isReadOnly` skip approval.
 - Enabled `create_plan` and `update_goal` skip approval.
@@ -389,11 +389,18 @@ Approval policy currently implemented in runtime:
 - All remaining non-read-only tools require approval.
 
 When a tool call is approved for execution, `AgentRuntime.executeToolCall()`
-injects `AgentToolContext.reportProgress`. Tools may call it with live
-stdout/stderr chunks; runtime converts those calls into live-only
-`tool_progress` events on `RuntimeEventBus`. Progress emit failures are logged
-and do not fail the tool call. Final tool success/failure still arrives as the
-normal `item_updated` event with the completed `ToolItem.result`.
+still passes the full `AgentToolContext` through `ToolRegistry.execute()`, but
+that context is now composed from narrower capability interfaces. Tool
+implementations should depend on the smallest context they need:
+`AgentReadWorkspaceToolContext` for read-only workspace tools,
+`AgentWriteWorkspaceToolContext` for coding writes,
+`AgentCommandToolContext` for command execution/progress, and
+`AgentSkillToolContext` for skill catalog access. Runtime injects
+`AgentCommandToolContext.reportProgress` for tools that stream live
+stdout/stderr chunks; those calls become live-only `tool_progress` events on
+`RuntimeEventBus`. Progress emit failures are logged and do not fail the tool
+call. Final tool success/failure still arrives as the normal `item_updated`
+event with the completed `ToolItem.result`.
 
 Workspace tools require an absolute thread workspace path before resolving file paths. The shared workspace policy trims the workspace root once, then uses that same normalized string for absolute-path validation and path resolution. `list_files.path` and `search_files.path` reject non-string values instead of treating them as omitted root-path requests, and workspace string parameters reject NUL bytes before path resolution or search execution. `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, and `search_files.max_results` are strict integer ranges; invalid or out-of-range values fail instead of being silently clamped to defaults. `read_file`, `search_files`, `rg_search`, `edit_file`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. Final UTF-8 file writes for coding tools, Write IPC saves/creates, and checkpoint code restore use a no-follow open where supported, so a target replaced with a symbolic link after validation is rejected rather than followed; editable coding-tool reads and Write IPC Markdown reads/rename sources use the same no-follow final-component boundary before decoding source text. Single-file coding tools restore the original file content if post-write metadata collection fails before file history and read state are updated. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write or post-write metadata step fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the history entry belongs to another thread or the file no longer matches the latest agent-written content. Checkpoint code rewind builds a restore plan first, then re-checks the workspace path policy and symbolic-link boundary again immediately before each delete/write commit, including after parent directory creation. Session rewind first verifies the selected turn still exists in the current transcript before restoring code, then truncates messages/events and checkpoint records after code restore succeeds. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
 
@@ -480,23 +487,27 @@ If the model keeps requesting tools after the budget:
 ```mermaid
 sequenceDiagram
   participant RT as AgentRuntime
+  participant AC as ApprovalCoordinator
   participant Store as JsonlThreadStore
   participant Bus as RuntimeEventBus
   participant UI as Renderer
   participant IPC as approvals-handlers
 
-  RT->>Store: appendItem(ApprovalItem pending)
-  RT->>Bus: item_appended
-  RT->>Bus: approval_requested
+  RT->>AC: requestApproval(call)
+  AC->>Store: appendItem(ApprovalItem pending)
+  AC->>Bus: item_appended
+  AC->>Bus: approval_requested
   Bus-->>UI: SSE push
   UI->>IPC: approvals.respond({ approvalId, decision })
   IPC->>RT: respondApproval()
-  RT->>Store: appendItem(ApprovalItem with decision)
-  RT->>Bus: item_updated
+  RT->>AC: respond(decision)
+  AC->>Store: appendItem(ApprovalItem with decision)
+  AC->>Bus: item_updated
   RT-->>RT: continue or deny tool result
 ```
 
-Pending approvals are held in memory in `AgentRuntime.pendingApprovals`. They are not resumed across app restart.
+Pending approvals are held in memory by `ApprovalCoordinator`. They are not
+resumed across app restart.
 
 Approval items remain in the timeline for auditability. Renderer also shows
 the active thread's unresolved approvals in a composer-adjacent pending

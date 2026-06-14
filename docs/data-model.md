@@ -6,7 +6,7 @@
 
 | Concern | Authority |
 | --- | --- |
-| Cross-process data contracts | `src/shared/agent-contracts.ts` |
+| Cross-process data contracts | `src/shared/agent-contracts.ts` unified export, with focused submodules such as `src/shared/model-config-contracts.ts` and `src/shared/contract-primitives.ts` |
 | IPC channel names | `src/shared/ipc.ts` |
 | Thread persistence | `src/main/persistence/index.ts` |
 | Attachment persistence | `src/main/persistence/attachment-store.ts` |
@@ -19,7 +19,9 @@
 
 Rule of thumb:
 
-If a field crosses process boundaries, start from `src/shared/agent-contracts.ts`, then update main handler/store/runtime, preload, renderer and tests.
+If a field crosses process boundaries, start from the `src/shared/agent-contracts.ts`
+unified export and its focused submodule for that concern, then update main
+handler/store/runtime, preload, renderer and tests.
 
 ## Storage Overview
 
@@ -505,7 +507,8 @@ Key semantics:
 - `OPENAI_API_KEY` is a generic field name; provider fallback may use
   environment variables in the gateway/runtime path.
 
-Default configs are defined in `src/shared/agent-contracts.ts`:
+Default configs are defined in `src/shared/model-config-contracts.ts` and
+re-exported from `src/shared/agent-contracts.ts`:
 
 - `DEFAULT_MODEL_CONFIG`
 - `DEFAULT_DEEPSEEK_MODEL_CONFIG`
@@ -594,7 +597,8 @@ Key semantics:
   and `diagnose_workspace` when a tool call does not provide a stricter
   override.
 - `compaction.enabled` and `compaction.strategy` are consumed by
-  `AgentRuntime.prepareMessagesForRequest()` before every model request.
+  `context-compaction.prepareMessagesForRequest()` via `AgentRuntime` before
+  every model request.
 - `skills.enabled`, `skills.activeLimit`, `skills.instructionBudgetBytes`, and
   `skills.extraRoots` control project skill discovery and injection. When
   enabled, `SkillService` scans workspace convention roots plus configured extra
@@ -679,7 +683,7 @@ If a preference must influence Agent runtime behavior, do not hide it in rendere
 
 When adding, removing or renaming a cross-process field:
 
-1. Update `src/shared/agent-contracts.ts`.
+1. Update the `src/shared/agent-contracts.ts` unified export and the focused submodule for the field's domain, when one exists.
 2. Update type guards or normalization code if present.
 3. Update persistence store normalization and migration behavior.
 4. Update IPC request/response types and handlers.

@@ -547,7 +547,7 @@ When adding a runtime event, update:
 
 Required sequence:
 
-1. Define request/response types in `src/shared/agent-contracts.ts` when a typed payload is needed.
+1. Define request/response types in the `src/shared/agent-contracts.ts` unified export and any focused shared submodule for that domain when a typed payload is needed.
 2. Add channel constant to `src/shared/ipc.ts`.
 3. Add the constant to `RENDERER_TO_MAIN_CHANNELS`.
 4. Add any new error-code value to `src/shared/ipc-errors.ts`.
