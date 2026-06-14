@@ -21,6 +21,7 @@ import {
   DEFAULT_THREAD_RELATION,
   DEFAULT_THREAD_SANDBOX_MODE,
   DEFAULT_THREAD_STATUS,
+  DEFAULT_THREAD_TITLE,
   THREAD_APPROVAL_POLICIES,
   THREAD_GOAL_STATUSES,
   THREAD_MODES,
@@ -78,7 +79,7 @@ export class JsonlThreadStore {
   /** 2.3 createThread */
   async createThread(input: ThreadCreateInput): Promise<ThreadRecord> {
     await this.init();
-    const title = optionalTrimmedString(input.title, "title") || "New thread";
+    const title = optionalTrimmedString(input.title, "title") || DEFAULT_THREAD_TITLE;
     const workspace = requiredAbsolutePath(input.workspace, "workspace");
     const mode = assertEnum(input.mode, THREAD_MODES, "mode");
     const relation =
@@ -715,7 +716,7 @@ function normalizeThreadPatch(patch: ThreadUpdatePatch): ThreadUpdatePatch {
   }
   const normalized: ThreadUpdatePatch = {
     ...(patch.title !== undefined
-      ? { title: optionalTrimmedString(patch.title, "title") || "New thread" }
+      ? { title: optionalTrimmedString(patch.title, "title") || DEFAULT_THREAD_TITLE }
       : {}),
     ...(patch.approvalPolicy !== undefined
       ? {

@@ -1,11 +1,8 @@
-import { constants as fsConstants, existsSync, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
-import { StringDecoder } from "node:string_decoder";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import ts from "typescript";
 import type {
-  AgentCommandToolContext,
   AgentTool,
   AgentToolContext,
   AgentToolResult,
@@ -18,7 +15,53 @@ import {
   toWorkspaceRelative,
 } from "./workspace-policy.js";
 import { assertUtf8TextBuffer, decodeUtf8TextBuffer } from "./text-file.js";
-import { isPathInsideOrEqual, isSamePath } from "../path-utils.js";
+import { isSamePath } from "../path-utils.js";
+import {
+  canExecute,
+  createPackageManagerInvocation,
+  createSelectedShellInvocation,
+  createShellInvocation,
+  createWslInvocation,
+  findExecutableOnPath,
+  getPathEntries,
+  resolveDefaultPowerShellShell,
+  toWslPath,
+  type PackageManagerName,
+  type ShellInvocation,
+  type ShellKind,
+} from "./command-invocation.js";
+import {
+  collectLanguageServiceDiagnostics,
+  parseTypeScriptDiagnostics,
+  type WorkspaceDiagnostic,
+} from "./command-diagnostics.js";
+import {
+  detectPackageManager,
+  normalizePackageScripts,
+  optionalPackageManager,
+  optionalPackageScriptName,
+  packageInstallArgs,
+  packageRunScriptArgs,
+  readPackageJson,
+} from "./command-package.js";
+import {
+  assertPlainGitPathspec,
+  gitPathspecArgs,
+  optionalGitLogRef,
+  parseGitStatusLine,
+} from "./command-git.js";
+import {
+  createSessionCapture,
+  type SessionCapture,
+} from "./command-session-capture.js";
+import {
+  createOutputCollector,
+  type StreamCapture,
+} from "./command-output-capture.js";
+import {
+  createCommandProgressReporter,
+  type ToolProgressCallback,
+} from "./command-progress-reporter.js";
 import {
   COMMAND_KILL_GRACE_MS,
   COMMAND_SESSION_SPAWN_TIMEOUT_MS,
@@ -30,7 +73,6 @@ import {
   MAX_COMMAND_SESSION_BUFFER_BYTES,
   MAX_COMMAND_SESSION_COUNT,
   MAX_GIT_LOG_COUNT,
-  MAX_PACKAGE_SCRIPT_NAME_BYTES,
   MAX_REGEX_PATTERN_BYTES,
   MAX_SEARCH_FILE_BYTES,
 } from "../constants.js";
@@ -49,36 +91,17 @@ const MAX_COMMAND_TIMEOUT_MS = MAX_RUNTIME_COMMAND_TIMEOUT_MS;
 const DEFAULT_COMMAND_MAX_OUTPUT_BYTES = DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MIN_COMMAND_MAX_OUTPUT_BYTES = MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MAX_COMMAND_MAX_OUTPUT_BYTES = MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
-const TOOL_PROGRESS_FLUSH_INTERVAL_MS = 100;
-const TOOL_PROGRESS_FLUSH_THRESHOLD_BYTES = 8 * 1024;
-const TOOL_PROGRESS_MAX_CHUNK_CHARS = 16 * 1024;
 const COMMAND_TIMEOUT_DESCRIPTION =
   `Maximum runtime in milliseconds. Defaults to the runtime command preference ` +
   `(${DEFAULT_COMMAND_TIMEOUT_MS}). Overrides must be between ${MIN_COMMAND_TIMEOUT_MS} ` +
   `and the current runtime command preference, which cannot exceed ${MAX_COMMAND_TIMEOUT_MS}.`;
 
-type ShellKind =
-  | "default"
-  | "cmd"
-  | "sh"
-  | "bash"
-  | "git_bash"
-  | "powershell"
-  | "pwsh";
-
-type PackageManagerName = "npm" | "pnpm" | "yarn" | "bun";
-type ToolProgressCallback = NonNullable<AgentCommandToolContext["reportProgress"]>;
-type CommandProgressStream = Parameters<ToolProgressCallback>[1];
-
-interface CommandProgressReporter {
-  collect(data: Buffer | string, stream: CommandProgressStream): void;
-  flush(): void;
-}
-
-interface PackageJsonShape {
-  packageManager?: unknown;
-  scripts?: Record<string, unknown>;
-}
+export {
+  createPackageManagerInvocation,
+  createShellInvocation,
+  resolveDefaultPowerShellShell,
+  toWslPath,
+} from "./command-invocation.js";
 
 interface CommandRunResult {
   command: string;
@@ -93,16 +116,6 @@ interface CommandRunResult {
   stderrBytes: number;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
-}
-
-interface WorkspaceDiagnostic {
-  path: string;
-  line: number;
-  column: number;
-  code: string;
-  severity: "error" | "warning" | "suggestion" | "message";
-  message: string;
-  source: "typecheck" | "language_service";
 }
 
 interface DiagnoseWorkspaceResult {
@@ -1632,23 +1645,12 @@ async function resolveDiagnosticCommand(cwdPath: string): Promise<string> {
   return "npx --no-install tsc --noEmit";
 }
 
-interface StreamCapture {
-  text: string;
-  bytes: number;
-  truncated: boolean;
-}
-
 interface CommandOutput {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
   stdout: StreamCapture;
   stderr: StreamCapture;
-}
-
-interface ShellInvocation {
-  file: string;
-  args: string[];
 }
 
 async function spawnWorkspaceCommand(
@@ -1824,250 +1826,6 @@ function killDirectChild(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
-export function createShellInvocation(command: string): ShellInvocation {
-  if (process.platform === "win32") {
-    return {
-      file: process.env.ComSpec || "cmd.exe",
-      args: ["/d", "/s", "/c", command],
-    };
-  }
-  return {
-    file: process.env.SHELL || "/bin/sh",
-    args: ["-c", command],
-  };
-}
-
-async function createSelectedShellInvocation(
-  command: string,
-  options: {
-    shell: ShellKind;
-    shellPath?: string;
-    shellArgs?: string[];
-  },
-): Promise<ShellInvocation> {
-  if (options.shellPath) {
-    return {
-      file: options.shellPath,
-      args: applyShellArgs(options.shellArgs ?? ["-lc", "{command}"], command),
-    };
-  }
-  switch (options.shell) {
-    case "default":
-      return createShellInvocation(command);
-    case "cmd":
-      return {
-        file: process.env.ComSpec || "cmd.exe",
-        args: ["/d", "/s", "/c", command],
-      };
-    case "sh":
-      return { file: process.platform === "win32" ? "sh.exe" : "/bin/sh", args: ["-c", command] };
-    case "bash":
-      return { file: "bash", args: ["-lc", command] };
-    case "git_bash":
-      return { file: await resolveGitBashExecutable(), args: ["-lc", command] };
-    case "powershell":
-      return createPowerShellInvocation(command, "powershell");
-    case "pwsh":
-      return createPowerShellInvocation(command, "pwsh");
-    default:
-      return assertNever(options.shell);
-  }
-}
-
-function createPowerShellInvocation(
-  command: string,
-  executable: "pwsh" | "powershell",
-): ShellInvocation {
-  return {
-    file: executable,
-    args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
-  };
-}
-
-/**
- * `powershell_command` promises a PowerShell 7 preference while preserving
- * Windows hosts that only ship Windows PowerShell, so the default executable
- * is resolved from PATH before falling back to the previous `pwsh` behavior.
- */
-export async function resolveDefaultPowerShellShell(): Promise<"pwsh" | "powershell"> {
-  if (process.platform !== "win32") {
-    return "pwsh";
-  }
-  const pwsh = await findExecutableOnPath(["pwsh.exe", "pwsh"]);
-  if (pwsh.found) {
-    return "pwsh";
-  }
-  const powershell = await findExecutableOnPath(["powershell.exe", "powershell"]);
-  return powershell.found ? "powershell" : "pwsh";
-}
-
-function createWslInvocation(
-  command: string,
-  wslCwd: string,
-  distro?: string,
-): ShellInvocation {
-  const linuxCommand = `cd ${quotePosix(wslCwd)} && ${command}`;
-  return {
-    file: "wsl.exe",
-    args: [
-      ...(distro ? ["-d", distro] : []),
-      "--",
-      "sh",
-      "-lc",
-      linuxCommand,
-    ],
-  };
-}
-
-function applyShellArgs(args: string[], command: string): string[] {
-  if (args.some((arg) => arg.includes("{command}"))) {
-    return args.map((arg) => arg.replaceAll("{command}", command));
-  }
-  return [...args, command];
-}
-
-async function resolveGitBashExecutable(): Promise<string> {
-  if (process.platform !== "win32") {
-    return "bash";
-  }
-  const explicit = process.env.GIT_BASH_PATH;
-  const candidates = [
-    explicit,
-    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, "Git", "bin", "bash.exe") : undefined,
-    process.env["ProgramFiles(x86)"]
-      ? path.join(process.env["ProgramFiles(x86)"], "Git", "bin", "bash.exe")
-      : undefined,
-    process.env.LOCALAPPDATA
-      ? path.join(process.env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe")
-      : undefined,
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  for (const candidate of candidates) {
-    if (await canExecute(candidate)) return candidate;
-  }
-  return "bash.exe";
-}
-
-function createOutputCollector(maxOutputBytes: number): {
-  collect(data: Buffer | string): void;
-  finish(): StreamCapture;
-} {
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  let storedBytes = 0;
-  let truncated = false;
-
-  return {
-    collect(data) {
-      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      bytes += buffer.length;
-      const remaining = maxOutputBytes - storedBytes;
-      if (remaining <= 0) {
-        truncated = true;
-        return;
-      }
-      if (buffer.length > remaining) {
-        chunks.push(buffer.subarray(0, remaining));
-        storedBytes += remaining;
-        truncated = true;
-        return;
-      }
-      chunks.push(buffer);
-      storedBytes += buffer.length;
-    },
-    finish() {
-      const decoder = new StringDecoder("utf8");
-      const buffer = Buffer.concat(chunks, storedBytes);
-      const text = decoder.write(buffer) + (truncated ? "" : decoder.end());
-      return {
-        text,
-        bytes,
-        truncated,
-      };
-    },
-  };
-}
-
-function createCommandProgressReporter(
-  reportProgress: ToolProgressCallback | undefined,
-): CommandProgressReporter | undefined {
-  if (!reportProgress) return undefined;
-  const pending: Record<CommandProgressStream, string> = {
-    stdout: "",
-    stderr: "",
-  };
-  const pendingBytes: Record<CommandProgressStream, number> = {
-    stdout: 0,
-    stderr: 0,
-  };
-  const decoders: Record<CommandProgressStream, StringDecoder> = {
-    stdout: new StringDecoder("utf8"),
-    stderr: new StringDecoder("utf8"),
-  };
-  let flushTimer: NodeJS.Timeout | undefined;
-  let warned = false;
-
-  const clearFlushTimer = (): void => {
-    if (!flushTimer) return;
-    clearTimeout(flushTimer);
-    flushTimer = undefined;
-  };
-
-  const reportChunk = (chunk: string, stream: CommandProgressStream): void => {
-    for (let index = 0; index < chunk.length; index += TOOL_PROGRESS_MAX_CHUNK_CHARS) {
-      const slice = chunk.slice(index, index + TOOL_PROGRESS_MAX_CHUNK_CHARS);
-      if (!slice) continue;
-      try {
-        reportProgress(slice, stream);
-      } catch (error) {
-        if (!warned) {
-          warned = true;
-          console.warn("[command-tools] failed to report command progress:", error);
-        }
-      }
-    }
-  };
-
-  const flushStream = (stream: CommandProgressStream, final: boolean): void => {
-    const text = pending[stream] + (final ? decoders[stream].end() : "");
-    pending[stream] = "";
-    pendingBytes[stream] = 0;
-    if (text) {
-      reportChunk(text, stream);
-    }
-  };
-
-  const flushPending = (final = false): void => {
-    clearFlushTimer();
-    flushStream("stdout", final);
-    flushStream("stderr", final);
-  };
-
-  const scheduleFlush = (): void => {
-    if (flushTimer) return;
-    flushTimer = setTimeout(() => {
-      flushPending();
-    }, TOOL_PROGRESS_FLUSH_INTERVAL_MS);
-  };
-
-  return {
-    collect(data, stream) {
-      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      const text = decoders[stream].write(buffer);
-      if (!text) return;
-      pending[stream] += text;
-      pendingBytes[stream] += buffer.length;
-      if (pendingBytes[stream] >= TOOL_PROGRESS_FLUSH_THRESHOLD_BYTES) {
-        flushPending();
-        return;
-      }
-      scheduleFlush();
-    },
-    flush() {
-      flushPending(true);
-    },
-  };
-}
-
 function commandMaxOutputBytes(context: AgentToolContext): number {
   const value = context.commandDefaults?.maxOutputBytes ?? DEFAULT_COMMAND_MAX_OUTPUT_BYTES;
   if (!Number.isFinite(value)) {
@@ -2171,24 +1929,6 @@ async function executeGitCommand(
   );
 }
 
-function parseGitStatusLine(line: string): { xy: string; path: string; originalPath?: string } {
-  const xy = line.slice(0, 2);
-  const payload = line.slice(3);
-  const renameSeparator = " -> ";
-  if (payload.includes(renameSeparator)) {
-    const [originalPath = "", nextPath = ""] = payload.split(renameSeparator);
-    return {
-      xy,
-      path: nextPath,
-      originalPath,
-    };
-  }
-  return {
-    xy,
-    path: payload,
-  };
-}
-
 async function resolvePathspecs(
   value: unknown,
   workspace: string,
@@ -2203,174 +1943,6 @@ async function resolvePathspecs(
     }
   }
   return pathspecs;
-}
-
-function assertPlainGitPathspec(pathspec: string, toolName: string): void {
-  if (pathspec.startsWith(":")) {
-    throw new Error(`${toolName} pathspec must be a plain workspace-relative path, not Git pathspec magic: ${pathspec}`);
-  }
-  if (/[*?\[]/.test(pathspec)) {
-    throw new Error(`${toolName} pathspec must be a plain workspace-relative path, not a glob: ${pathspec}`);
-  }
-}
-
-function gitPathspecArgs(pathspecs: string[]): string[] {
-  return pathspecs.length > 0 ? ["--", ...pathspecs] : [];
-}
-
-function optionalGitLogRef(value: unknown): string | undefined {
-  const ref = optionalString(value);
-  if (!ref) return undefined;
-  if (Buffer.byteLength(ref, "utf8") > 256) {
-    throw new Error("git_log ref must be 256 bytes or less.");
-  }
-  if (ref.includes("\0")) {
-    throw new Error("git_log ref cannot contain NUL bytes.");
-  }
-  if (/[\x01-\x1f\x7f\s]/.test(ref)) {
-    throw new Error("git_log ref cannot contain whitespace or control characters.");
-  }
-  if (ref.startsWith("-")) {
-    throw new Error(`git_log ref must be a revision, not a Git option: ${ref}`);
-  }
-  if (ref.startsWith(":")) {
-    throw new Error(`git_log ref must be a revision, not Git pathspec magic: ${ref}`);
-  }
-  return ref;
-}
-
-async function readPackageJson(cwdPath: string): Promise<PackageJsonShape> {
-  const packageJsonPath = path.join(cwdPath, "package.json");
-  try {
-    const parsed = JSON.parse(await fs.readFile(packageJsonPath, "utf8")) as unknown;
-    if (!isRecord(parsed)) {
-      throw new Error("package.json must contain a JSON object.");
-    }
-    return parsed;
-  } catch (error) {
-    if (hasNodeErrorCode(error, "ENOENT")) {
-      throw new Error(`package.json not found in ${cwdPath}.`);
-    }
-    throw error;
-  }
-}
-
-function normalizePackageScripts(value: unknown): Record<string, string> {
-  if (!isRecord(value)) return {};
-  const scripts: Record<string, string> = {};
-  for (const [name, command] of Object.entries(value)) {
-    if (typeof command === "string") {
-      scripts[name] = command;
-    }
-  }
-  return scripts;
-}
-
-async function detectPackageManager(
-  cwdPath: string,
-  packageJson: PackageJsonShape,
-): Promise<PackageManagerName> {
-  if (typeof packageJson.packageManager === "string") {
-    const [manager] = packageJson.packageManager.split("@");
-    if (isPackageManagerName(manager)) return manager;
-  }
-  const lockfiles: Array<[string, PackageManagerName]> = [
-    ["pnpm-lock.yaml", "pnpm"],
-    ["yarn.lock", "yarn"],
-    ["bun.lockb", "bun"],
-    ["bun.lock", "bun"],
-    ["package-lock.json", "npm"],
-    ["npm-shrinkwrap.json", "npm"],
-  ];
-  for (const [fileName, manager] of lockfiles) {
-    if (await pathExists(path.join(cwdPath, fileName))) return manager;
-  }
-  return "npm";
-}
-
-function packageRunScriptArgs(manager: PackageManagerName, script: string): string[] {
-  switch (manager) {
-    case "npm":
-    case "pnpm":
-    case "bun":
-      return ["run", script];
-    case "yarn":
-      return ["run", script];
-    default:
-      return assertNever(manager);
-  }
-}
-
-function packageInstallArgs(
-  manager: PackageManagerName,
-  frozenLockfile: boolean,
-  cwdPath: string,
-): string[] {
-  switch (manager) {
-    case "npm":
-      if (!frozenLockfile) return ["install"];
-      if (
-        pathExistsSync(path.join(cwdPath, "package-lock.json")) ||
-        pathExistsSync(path.join(cwdPath, "npm-shrinkwrap.json"))
-      ) {
-        return ["ci"];
-      }
-      throw new Error("package_install frozen_lockfile requires package-lock.json or npm-shrinkwrap.json for npm.");
-    case "pnpm":
-      return ["install", ...(frozenLockfile ? ["--frozen-lockfile"] : [])];
-    case "yarn":
-      return ["install", ...(frozenLockfile ? ["--frozen-lockfile"] : [])];
-    case "bun":
-      return ["install", ...(frozenLockfile ? ["--frozen-lockfile"] : [])];
-    default:
-      return assertNever(manager);
-  }
-}
-
-export function createPackageManagerInvocation(
-  manager: PackageManagerName,
-  args: string[],
-): ShellInvocation {
-  if (process.platform === "win32") {
-    return createShellInvocation([manager, ...args].map(quoteCmdArg).join(" "));
-  }
-  return { file: manager, args };
-}
-
-function quoteCmdArg(value: string): string {
-  if (/^[A-Za-z0-9_./:=@+-]+$/.test(value)) return value;
-  return `"${value.replaceAll('"', '\\"')}"`;
-}
-
-function optionalPackageManager(value: unknown): PackageManagerName | undefined {
-  if (value === undefined) return undefined;
-  if (!isPackageManagerName(value)) {
-    throw new Error("manager must be npm, pnpm, yarn, or bun.");
-  }
-  return value;
-}
-
-function isPackageManagerName(value: unknown): value is PackageManagerName {
-  return value === "npm" || value === "pnpm" || value === "yarn" || value === "bun";
-}
-
-function optionalPackageScriptName(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  const script = requiredLimitedString(
-    value,
-    "script must be a non-empty string.",
-    MAX_PACKAGE_SCRIPT_NAME_BYTES,
-  );
-  if (/[\x01-\x1f\x7f\s]/.test(script)) {
-    throw new Error("script cannot contain whitespace or control characters.");
-  }
-  if (script.startsWith("-")) {
-    throw new Error(`script must be a package script name, not a package-manager option: ${script}`);
-  }
-  if (!/^[A-Za-z0-9_./:=@+-]+$/.test(script)) {
-    throw new Error(`script contains unsupported characters: ${script}`);
-  }
-  return script;
 }
 
 async function detectShellEnvironment(
@@ -2425,44 +1997,6 @@ function gitBashDetectionCandidates(): string[] {
       ? path.join(process.env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe")
       : undefined,
   ].filter((candidate): candidate is string => Boolean(candidate));
-}
-
-async function findExecutableOnPath(
-  names: string[],
-): Promise<{ found: boolean; path?: string }> {
-  const pathEntries = getPathEntries();
-  const extensions = process.platform === "win32"
-    ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM")
-        .split(";")
-        .filter(Boolean)
-    : [""];
-  for (const entry of pathEntries) {
-    for (const name of names) {
-      const hasExt = path.extname(name).length > 0;
-      const candidateNames = hasExt ? [name] : extensions.map((ext) => `${name}${ext.toLowerCase()}`);
-      for (const candidateName of candidateNames) {
-        const candidate = path.join(entry, candidateName);
-        if (await canExecute(candidate)) {
-          return { found: true, path: candidate };
-        }
-      }
-    }
-  }
-  return { found: false };
-}
-
-function getPathEntries(): string[] {
-  const rawPath = process.env.PATH ?? process.env.Path ?? "";
-  return rawPath.split(path.delimiter).filter((entry) => entry.length > 0);
-}
-
-export function toWslPath(value: string): string {
-  const normalized = value.replaceAll("\\", "/");
-  const driveMatch = /^([A-Za-z]):\/(.*)$/.exec(normalized);
-  if (driveMatch) {
-    return `/mnt/${driveMatch[1].toLowerCase()}/${driveMatch[2]}`;
-  }
-  return normalized;
 }
 
 class CommandSessionManager {
@@ -2835,234 +2369,7 @@ interface CommandSessionSnapshot {
   stderr: StreamCapture;
 }
 
-interface SessionCapture {
-  collect(data: Buffer | string): void;
-  snapshot(tailBytes: number): StreamCapture;
-}
-
-function createSessionCapture(maxOutputBytes: number): SessionCapture {
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  let storedBytes = 0;
-  let truncated = false;
-  return {
-    collect(data) {
-      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      bytes += buffer.length;
-      chunks.push(buffer);
-      storedBytes += buffer.length;
-      // Long-running sessions are read by tail, so the bounded buffer keeps the
-      // newest bytes instead of freezing at the first max_buffer_bytes output.
-      while (storedBytes > maxOutputBytes && chunks.length > 0) {
-        truncated = true;
-        const overflow = storedBytes - maxOutputBytes;
-        const first = chunks[0];
-        if (overflow >= first.length) {
-          chunks.shift();
-          storedBytes -= first.length;
-          continue;
-        }
-        chunks[0] = first.subarray(overflow);
-        storedBytes -= overflow;
-      }
-    },
-    snapshot(tailBytes) {
-      const fullBuffer = Buffer.concat(chunks, storedBytes);
-      const start = Math.max(0, fullBuffer.byteLength - tailBytes);
-      const buffer = dropLeadingUtf8ContinuationBytes(fullBuffer.subarray(start));
-      const decoder = new StringDecoder("utf8");
-      return {
-        text: decoder.write(buffer),
-        bytes,
-        truncated: truncated || start > 0,
-      };
-    },
-  };
-}
-
-function dropLeadingUtf8ContinuationBytes(buffer: Buffer): Buffer {
-  // tail_bytes can start inside a multi-byte UTF-8 sequence; discard only the
-  // orphaned continuation bytes so snapshots stay valid without widening output.
-  let index = 0;
-  while (index < buffer.length && (buffer[index] & 0b1100_0000) === 0b1000_0000) {
-    index += 1;
-  }
-  return index === 0 ? buffer : buffer.subarray(index);
-}
-
 const commandSessionManager = new CommandSessionManager();
-
-function parseTypeScriptDiagnostics(
-  output: string,
-  workspace: string,
-  diagnosticBasePath: string,
-): WorkspaceDiagnostic[] {
-  const diagnostics: WorkspaceDiagnostic[] = [];
-  const pattern = /^(.+?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$/;
-  for (const line of output.split(/\r?\n/)) {
-    const match = pattern.exec(line.trim());
-    if (!match) continue;
-    const fullPath = path.resolve(diagnosticBasePath, match[1]);
-    const relativePath = workspaceRelativeDiagnosticPath(workspace, fullPath);
-    if (!relativePath) continue;
-    diagnostics.push({
-      path: relativePath,
-      line: Number(match[2]),
-      column: Number(match[3]),
-      code: match[4],
-      severity: "error",
-      message: match[5],
-      source: "typecheck",
-    });
-  }
-  return diagnostics;
-}
-
-async function collectLanguageServiceDiagnostics(
-  workspace: string,
-  filePath: string,
-): Promise<WorkspaceDiagnostic[]> {
-  const configPath = findTsConfig(workspace, filePath);
-  const parsed = configPath
-    ? parseTsConfig(configPath)
-    : {
-        fileNames: [filePath],
-        options: {
-          strict: true,
-          noEmit: true,
-          allowJs: true,
-          checkJs: true,
-        } satisfies ts.CompilerOptions,
-      };
-  const rootFileNames = uniqueStrings([...parsed.fileNames, filePath]);
-  const versions = new Map<string, string>();
-  const host: ts.LanguageServiceHost = {
-    getCompilationSettings: () => parsed.options,
-    getScriptFileNames: () => rootFileNames,
-    getScriptVersion: (scriptName) => {
-      const normalized = path.resolve(scriptName);
-      const cached = versions.get(normalized);
-      if (cached) return cached;
-      const modified = ts.sys.getModifiedTime?.(normalized)?.getTime() ?? 0;
-      const version = String(modified);
-      versions.set(normalized, version);
-      return version;
-    },
-    getScriptSnapshot: (scriptName) => {
-      if (!ts.sys.fileExists(scriptName)) return undefined;
-      return ts.ScriptSnapshot.fromString(ts.sys.readFile(scriptName) ?? "");
-    },
-    getCurrentDirectory: () => workspace,
-    getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
-    fileExists: ts.sys.fileExists,
-    readFile: ts.sys.readFile,
-    readDirectory: ts.sys.readDirectory,
-    directoryExists: ts.sys.directoryExists,
-    getDirectories: ts.sys.getDirectories,
-    realpath: ts.sys.realpath,
-    useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
-  };
-  const service = ts.createLanguageService(host, ts.createDocumentRegistry());
-  const diagnostics = [
-    ...service.getSyntacticDiagnostics(filePath),
-    ...service.getSemanticDiagnostics(filePath),
-    ...service.getSuggestionDiagnostics(filePath),
-  ];
-  service.dispose();
-  return diagnostics.flatMap((diagnostic) => {
-    const workspaceDiagnostic = toWorkspaceDiagnostic(diagnostic, workspace, filePath);
-    return workspaceDiagnostic ? [workspaceDiagnostic] : [];
-  });
-}
-
-function findTsConfig(workspace: string, filePath: string): string | undefined {
-  let current = path.dirname(filePath);
-  const root = path.resolve(workspace);
-  while (isPathInsideOrEqual(root, current)) {
-    const candidate = path.join(current, "tsconfig.json");
-    if (ts.sys.fileExists(candidate)) return candidate;
-    if (isSamePath(current, root)) break;
-    current = path.dirname(current);
-  }
-  const rootCandidate = path.join(root, "tsconfig.json");
-  return ts.sys.fileExists(rootCandidate) ? rootCandidate : undefined;
-}
-
-function parseTsConfig(configPath: string): {
-  fileNames: string[];
-  options: ts.CompilerOptions;
-} {
-  const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
-  if (configFile.error) {
-    throw new Error(formatTsDiagnosticMessage(configFile.error));
-  }
-  const parsed = ts.parseJsonConfigFileContent(
-    configFile.config,
-    ts.sys,
-    path.dirname(configPath),
-  );
-  if (parsed.errors.length > 0) {
-    throw new Error(parsed.errors.map(formatTsDiagnosticMessage).join("\n"));
-  }
-  return {
-    fileNames: parsed.fileNames,
-    options: parsed.options,
-  };
-}
-
-function toWorkspaceDiagnostic(
-  diagnostic: ts.Diagnostic,
-  workspace: string,
-  fallbackFilePath: string,
-): WorkspaceDiagnostic | undefined {
-  const file = diagnostic.file;
-  const sourceFilePath = file?.fileName ?? fallbackFilePath;
-  const relativePath = workspaceRelativeDiagnosticPath(workspace, sourceFilePath);
-  if (!relativePath) return undefined;
-  const start = diagnostic.start ?? 0;
-  const position = file
-    ? file.getLineAndCharacterOfPosition(start)
-    : { line: 0, character: 0 };
-  return {
-    path: relativePath,
-    line: position.line + 1,
-    column: position.character + 1,
-    code: `TS${diagnostic.code}`,
-    severity: diagnosticCategoryToSeverity(diagnostic.category),
-    message: formatTsDiagnosticMessage(diagnostic),
-    source: "language_service",
-  };
-}
-
-function workspaceRelativeDiagnosticPath(workspace: string, fullPath: string): string | undefined {
-  const root = path.resolve(workspace);
-  const resolved = path.resolve(fullPath);
-  if (!isPathInsideOrEqual(root, resolved)) return undefined;
-  return toWorkspaceRelative(root, resolved);
-}
-
-function diagnosticCategoryToSeverity(category: ts.DiagnosticCategory): WorkspaceDiagnostic["severity"] {
-  switch (category) {
-    case ts.DiagnosticCategory.Error:
-      return "error";
-    case ts.DiagnosticCategory.Warning:
-      return "warning";
-    case ts.DiagnosticCategory.Suggestion:
-      return "suggestion";
-    case ts.DiagnosticCategory.Message:
-      return "message";
-    default:
-      return "message";
-  }
-}
-
-function formatTsDiagnosticMessage(diagnostic: ts.Diagnostic): string {
-  return ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values.map((value) => path.resolve(value)))];
-}
 
 function joinCommandOutput(stdout: string, stderr: string): string {
   return [stdout, stderr].filter((value) => value.length > 0).join(stdout && stderr ? "\n" : "");
@@ -3258,49 +2565,6 @@ function looksTextFile(name: string): boolean {
     ".yaml",
     ".yml",
   ].includes(ext);
-}
-
-async function canExecute(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(
-      filePath,
-      process.platform === "win32" ? fsConstants.F_OK : fsConstants.F_OK | fsConstants.X_OK,
-    );
-    return true;
-  } catch (error) {
-    if (
-      hasNodeErrorCode(error, "ENOENT") ||
-      hasNodeErrorCode(error, "EACCES") ||
-      hasNodeErrorCode(error, "ENOTDIR")
-    ) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath, fsConstants.F_OK);
-    return true;
-  } catch (error) {
-    if (hasNodeErrorCode(error, "ENOENT") || hasNodeErrorCode(error, "ENOTDIR")) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-function pathExistsSync(filePath: string): boolean {
-  return existsSync(filePath);
-}
-
-function quotePosix(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function assertNever(value: never): never {

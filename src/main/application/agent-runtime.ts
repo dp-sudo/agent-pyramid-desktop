@@ -34,6 +34,12 @@ import { ToolCatalogService, isCommandToolName } from "./tool-catalog.js";
 import type { ToolAccessPolicy } from "./tool-catalog.js";
 import { ToolPolicyService } from "./tool-policy.js";
 import { ApprovalCoordinator } from "./approval-coordinator.js";
+import { normalizeTurnStartRequest } from "./turn-start-request.js";
+import { parsePlanToolContent } from "./plan-item-parser.js";
+import {
+  normalizeThreadGoalUpdate,
+  type ThreadGoalUpdate,
+} from "./thread-goal-update.js";
 import type {
   ApprovalItem,
   ApprovalRespondRequest,
@@ -50,9 +56,7 @@ import type {
   ToolItem,
   TurnRecord,
   TurnStartRequest,
-  TurnMode,
   PlanItem,
-  PlanStep,
   RuntimePreferences,
   RuntimeErrorEvent,
   TerminalTurnStatus,
@@ -64,7 +68,6 @@ import {
   DEFAULT_RUNTIME_PREFERENCES,
   isNonNegativeInteger,
   isModelReasoningEffort,
-  isThreadGoalStatus,
 } from "../../shared/agent-contracts.js";
 
 export {
@@ -99,10 +102,6 @@ interface ActiveToolExecution {
   finalizedByInterrupt: boolean;
   settled?: Promise<void>;
 }
-
-type NormalizedTurnStartRequest = Omit<TurnStartRequest, "attachmentIds"> & {
-  attachmentIds: string[];
-};
 
 const SYSTEM_PROMPT = [
   "You are the runtime assistant in the Agent Pyramid desktop app.",
@@ -303,11 +302,7 @@ export class AgentRuntime {
 
   async updateThreadGoal(
     threadId: string,
-    update: {
-      goal?: string | null;
-      status?: ThreadGoal["status"];
-      summary?: string;
-    },
+    update: ThreadGoalUpdate,
   ): Promise<ThreadRecord> {
     const normalizedUpdate = normalizeThreadGoalUpdate(update);
     const thread = await this.deps.store.getThread(threadId);
@@ -1627,87 +1622,6 @@ export class AgentRuntime {
   }
 }
 
-function normalizeThreadGoalUpdate(update: {
-  goal?: string | null;
-  status?: ThreadGoal["status"];
-  summary?: string;
-}): {
-  goal?: string | null;
-  status?: ThreadGoal["status"];
-  summary?: string;
-} {
-  const normalized: {
-    goal?: string | null;
-    status?: ThreadGoal["status"];
-    summary?: string;
-  } = {};
-  if (update.goal !== undefined) {
-    if (update.goal === null) {
-      if (update.status !== undefined || update.summary !== undefined) {
-        throw new Error("Goal clear cannot be combined with status or summary.");
-      }
-      normalized.goal = null;
-    } else {
-      if (typeof update.goal !== "string" || !update.goal.trim()) {
-        throw new Error("Goal text is required.");
-      }
-      normalized.goal = update.goal.trim();
-    }
-  }
-  if (update.status !== undefined) {
-    if (!isThreadGoalStatus(update.status)) {
-      throw new Error("Goal status must be active, complete, or blocked.");
-    }
-    normalized.status = update.status;
-  }
-  if (update.summary !== undefined) {
-    if (typeof update.summary !== "string" || !update.summary.trim()) {
-      throw new Error("Goal summary must be a non-empty string.");
-    }
-    normalized.summary = update.summary.trim();
-  }
-  if (Object.keys(normalized).length === 0) {
-    throw new Error("Goal update must include at least one of goal, status, or summary.");
-  }
-  return normalized;
-}
-
-function parsePlanToolContent(rawContent: string): { title?: string; steps: PlanStep[] } {
-  const parsed = JSON.parse(rawContent) as unknown;
-  if (!parsed || typeof parsed !== "object") {
-    throw new Error("create_plan returned invalid JSON.");
-  }
-  const value = parsed as { title?: unknown; steps?: unknown };
-  if (!Array.isArray(value.steps) || value.steps.length === 0) {
-    throw new Error("create_plan returned no steps.");
-  }
-  return {
-    ...(typeof value.title === "string" && value.title.trim()
-      ? { title: value.title.trim() }
-      : {}),
-    steps: value.steps.map((step, index) => parsePlanStep(step, index)),
-  };
-}
-
-function parsePlanStep(value: unknown, index: number): PlanStep {
-  if (!value || typeof value !== "object") {
-    throw new Error(`Plan step ${index + 1} must be an object.`);
-  }
-  const raw = value as Record<string, unknown>;
-  if (typeof raw.title !== "string" || !raw.title.trim()) {
-    throw new Error(`Plan step ${index + 1} requires title.`);
-  }
-  const status =
-    raw.status === "in_progress" || raw.status === "completed" || raw.status === "pending"
-      ? raw.status
-      : "pending";
-  return {
-    id: randomUUID(),
-    title: raw.title.trim(),
-    status,
-  };
-}
-
 function interruptedToolMessage(toolName: string): string {
   if (isCommandToolName(toolName)) {
     return "Command was interrupted.";
@@ -1759,76 +1673,6 @@ async function waitForInterruptedToolExecutions(
     }),
   ]);
   return !timedOut;
-}
-
-function normalizeTurnStartRequest(request: unknown): NormalizedTurnStartRequest {
-  if (!request || typeof request !== "object" || Array.isArray(request)) {
-    throw new Error("Turn start request must be an object.");
-  }
-  const value = request as Record<string, unknown>;
-  const threadId = requiredString(value.threadId, "Turn threadId is required.");
-  const text = requiredString(value.text, "Turn text is required.");
-  const displayText = optionalString(value.displayText, "Turn displayText must be a string.");
-  const model = optionalString(value.model, "Turn model must be a string.");
-  const modelProfileId = optionalString(
-    value.modelProfileId,
-    "Turn modelProfileId must be a string.",
-  );
-  const reasoningEffort = resolveTurnReasoningEffort(value.reasoningEffort);
-  const mode = resolveTurnMode(value.mode);
-  const goalMode = resolveTurnGoalMode(value.goalMode);
-  return {
-    threadId,
-    text,
-    ...(displayText !== undefined ? { displayText } : {}),
-    ...(model !== undefined ? { model } : {}),
-    ...(modelProfileId !== undefined ? { modelProfileId } : {}),
-    ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
-    attachmentIds: resolveTurnAttachmentIds(value.attachmentIds),
-    ...(mode !== undefined ? { mode } : {}),
-    ...(goalMode !== undefined ? { goalMode } : {}),
-  };
-}
-
-function requiredString(value: unknown, message: string): string {
-  if (typeof value !== "string") throw new Error(message);
-  const trimmed = value.trim();
-  if (!trimmed) throw new Error(message);
-  return trimmed;
-}
-
-function optionalString(value: unknown, message: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(message);
-  return value;
-}
-
-function resolveTurnReasoningEffort(
-  value: unknown,
-): TurnRecord["reasoningEffort"] | undefined {
-  if (value === undefined) return undefined;
-  if (isModelReasoningEffort(value)) return value;
-  throw new Error("Turn reasoningEffort is invalid.");
-}
-
-function resolveTurnMode(value: unknown): TurnMode | undefined {
-  if (value === undefined) return undefined;
-  if (value === "agent" || value === "plan") return value;
-  throw new Error("Turn mode must be agent or plan.");
-}
-
-function resolveTurnGoalMode(value: unknown): boolean | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value === "boolean") return value;
-  throw new Error("Turn goalMode must be a boolean.");
-}
-
-function resolveTurnAttachmentIds(value: unknown): string[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-    throw new Error("Turn attachmentIds must be a string array.");
-  }
-  return value;
 }
 
 function isApprovalPreview(value: unknown): value is ApprovalItem["preview"] {
