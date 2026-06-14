@@ -13,6 +13,7 @@ import {
   MCP_SERVERS_LIST_CHANNEL,
   MCP_SURFACE_REFRESH_CHANNEL,
 } from "../../../src/shared/ipc";
+import { IPC_ERROR_CODES } from "../../../src/shared/ipc-errors";
 import type { McpHost } from "../../../src/main/infrastructure/mcp/host";
 
 type IpcHandler = (_event: unknown, request?: unknown) => Promise<unknown>;
@@ -97,6 +98,12 @@ describe("mcp handlers", () => {
       .resolves.toEqual({
         ok: true,
         value: { messages: [] },
+      });
+    await expect(getPrompt({}, { serverId: "", name: "review" }))
+      .resolves.toEqual({
+        ok: false,
+        code: IPC_ERROR_CODES.MCP_PROMPT_GET_FAILED,
+        message: "MCP serverId is required.",
       });
     await expect(readResource({}, { serverId: "server-1", uri: "file:///README.md" }))
       .resolves.toEqual({

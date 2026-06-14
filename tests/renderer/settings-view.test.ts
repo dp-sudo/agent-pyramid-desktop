@@ -1,24 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  clearDeletedDefaultProfileReferences,
   formatSkillTriggerSummary,
-  isProfileDeletePending,
-  mergeRuntimePreferencesUpdates,
   messageOfUnknownError,
-  prunePendingProfileDeleteId,
-  resolveRuntimePreferencesAfterProfileActivationRefreshFailure,
-  shouldAllowSettingsCategorySelection,
-  shouldBlockSettingsNavigation,
-  shouldDisableModelProfileControls,
-  shouldDisableRuntimePreferenceControls,
   subscribeSettingsGlobalRuntimeEvents,
+} from "../../src/renderer/src/ui/SettingsView";
+import {
+  isDefaultStartupViewSetting,
   toDefaultInspectorMode,
   toDefaultInspectorModeValue,
-  toUpdatePayload,
   validateCodeBlockCollapseLineThreshold,
-  validateModelSettingsForm,
-  type SettingsFormState,
-} from "../../src/renderer/src/ui/SettingsView";
+} from "../../src/renderer/src/ui/settings-basic-preferences-model";
 import {
   canSubmitModelSettingsSection,
   getDefaultCategoryForSection,
@@ -26,6 +17,15 @@ import {
   getSettingsSectionItems,
   isSettingsCategoryInSection,
 } from "../../src/renderer/src/ui/settings-navigation-model";
+import {
+  createCustomModelConfig,
+  findActiveProfile,
+  isLlmProtocolSetting,
+  toFormState,
+  toUpdatePayload,
+  validateModelSettingsForm,
+  type SettingsFormState,
+} from "../../src/renderer/src/ui/settings-model-config-model";
 import {
   cloneMcpServerConfig,
   createDefaultMcpServer,
@@ -43,12 +43,33 @@ import {
   validateRuntimeSkillsNumericDraft,
 } from "../../src/renderer/src/ui/settings-runtime-model";
 import {
+  clearDeletedDefaultProfileReferences,
+  createDefaultPermissionRule,
+  formatRuntimeSkillsExtraRoots,
+  mergeRuntimePreferencesUpdates,
+  resolveRuntimePreferencesAfterProfileActivationRefreshFailure,
+  shouldDisableRuntimePreferenceControls,
+  toPermissionRulePatternDrafts,
+  toRuntimeCommandDraft,
+  toRuntimeSkillsDraft,
+} from "../../src/renderer/src/ui/settings-runtime-preferences-model";
+import {
+  emptyStringToNullableProfileId,
+  hasUnsavedProfileChanges,
+  isProfileDeletePending,
+  prunePendingProfileDeleteId,
+  shouldAllowSettingsCategorySelection,
+  shouldBlockSettingsNavigation,
+  shouldDisableModelProfileControls,
+} from "../../src/renderer/src/ui/settings-view-state-model";
+import {
   filterSettingsSidebarItems,
   getSettingsCategorySearchKeywords,
   isSettingsCategoryAdvanced,
 } from "../../src/renderer/src/ui/components/settings/settings-search";
 import {
   DEFAULT_MODEL_CONFIG,
+  DEFAULT_DEEPSEEK_MODEL_CONFIG,
   DEFAULT_RUNTIME_PREFERENCES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
   MAX_RUNTIME_SKILLS_ACTIVE_LIMIT,
@@ -65,6 +86,8 @@ describe("SettingsView helpers", () => {
     expect(isProfileDeletePending("profile-1", "profile-1")).toBe(true);
     expect(isProfileDeletePending("profile-1", "profile-2")).toBe(false);
     expect(isProfileDeletePending(null, "profile-1")).toBe(false);
+    expect(emptyStringToNullableProfileId("")).toBeNull();
+    expect(emptyStringToNullableProfileId(" profile-1 ")).toBe("profile-1");
   });
 
   it("clears stale profile delete confirmation when the profile disappears", () => {
@@ -142,6 +165,8 @@ describe("SettingsView helpers", () => {
   });
 
   it("serializes the closed Inspector default as a select value", () => {
+    expect(isDefaultStartupViewSetting("code")).toBe(true);
+    expect(isDefaultStartupViewSetting("settings")).toBe(false);
     expect(toDefaultInspectorModeValue(null)).toBe("closed");
     expect(toDefaultInspectorModeValue("changes")).toBe("changes");
     expect(toDefaultInspectorMode("closed")).toBeNull();
@@ -231,9 +256,68 @@ describe("SettingsView helpers", () => {
     )).toBe("Max output tokens must stay below context.");
   });
 
+  it("maps model config profiles to editable form state", () => {
+    expect(toFormState(DEFAULT_DEEPSEEK_MODEL_CONFIG)).toMatchObject({
+      model_provide: "DeepSeek",
+      model: "deepseek-v4-flash",
+      protocol: DEFAULT_DEEPSEEK_MODEL_CONFIG.protocol,
+      base_url: "https://api.deepseek.com",
+      model_context_window: String(DEFAULT_DEEPSEEK_MODEL_CONFIG.model_context_window),
+      model_auto_compact_token_limit: String(
+        DEFAULT_DEEPSEEK_MODEL_CONFIG.model_auto_compact_token_limit,
+      ),
+      max_tokens: String(DEFAULT_DEEPSEEK_MODEL_CONFIG.max_tokens),
+      thinking: DEFAULT_DEEPSEEK_MODEL_CONFIG.thinking,
+      model_reasoning_effort: DEFAULT_DEEPSEEK_MODEL_CONFIG.model_reasoning_effort,
+      agent_autonomy: DEFAULT_DEEPSEEK_MODEL_CONFIG.agent_autonomy,
+    });
+  });
+
   it("includes the selected protocol in model profile update payloads", () => {
     expect(toUpdatePayload(modelForm({ protocol: "anthropic-compatible" })))
       .toMatchObject({ protocol: "anthropic-compatible" });
+  });
+
+  it("selects active model profiles with the first profile as a fallback", () => {
+    const first = {
+      id: "first",
+      name: "First",
+      config: DEFAULT_MODEL_CONFIG,
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+    };
+    const second = {
+      ...first,
+      id: "second",
+      name: "Second",
+      config: DEFAULT_DEEPSEEK_MODEL_CONFIG,
+    };
+
+    expect(findActiveProfile({
+      activeProfileId: "second",
+      profiles: [first, second],
+    })).toBe(second);
+    expect(findActiveProfile({
+      activeProfileId: "missing",
+      profiles: [first, second],
+    })).toBe(first);
+    expect(findActiveProfile({
+      activeProfileId: "missing",
+      profiles: [],
+    })).toBeNull();
+  });
+
+  it("keeps custom model defaults and protocol guards in the model settings model", () => {
+    expect(createCustomModelConfig()).toMatchObject({
+      ...DEFAULT_MODEL_CONFIG,
+      model_provide: "Custom",
+      model: "gpt-4.1",
+      base_url: "https://api.openai.com/v1",
+      thinking: false,
+    });
+    expect(isLlmProtocolSetting("openai-compatible")).toBe(true);
+    expect(isLlmProtocolSetting("anthropic-compatible")).toBe(true);
+    expect(isLlmProtocolSetting("unsupported")).toBe(false);
   });
 
   it("submits only model configuration categories through the Settings form", () => {
@@ -351,6 +435,35 @@ describe("SettingsView helpers", () => {
     expect(shouldDisableRuntimePreferenceControls(true, "idle")).toBe(false);
     expect(shouldDisableRuntimePreferenceControls(true, "saved")).toBe(false);
     expect(shouldDisableRuntimePreferenceControls(true, "error")).toBe(false);
+  });
+
+  it("maps runtime preferences to editable drafts without mutating persisted state", () => {
+    expect(toRuntimeCommandDraft({
+      timeoutMs: 45_000,
+      maxOutputBytes: 65_536,
+    })).toEqual({
+      timeoutMs: "45000",
+      maxOutputBytes: "65536",
+    });
+    expect(toRuntimeSkillsDraft({
+      enabled: true,
+      activeLimit: 2,
+      instructionBudgetBytes: 48_000,
+      extraRoots: ["project-skills", "shared-skills"],
+    })).toEqual({
+      activeLimit: "2",
+      instructionBudgetBytes: "48000",
+      extraRoots: "project-skills\nshared-skills",
+    });
+    expect(formatRuntimeSkillsExtraRoots([])).toBe("");
+    expect(toPermissionRulePatternDrafts([
+      { id: "ask-tests", tool: "command", pattern: "npm test*", effect: "ask" },
+    ])).toEqual({ "ask-tests": "npm test*" });
+    expect(createDefaultPermissionRule()).toMatchObject({
+      tool: "command",
+      pattern: "npm test*",
+      effect: "ask",
+    });
   });
 
   it("merges queued runtime preference updates without dropping nested controls", () => {
@@ -602,6 +715,27 @@ describe("SettingsView helpers", () => {
     expect(shouldDisableModelProfileControls(true, "idle", "profile-1")).toBe(true);
     expect(shouldDisableModelProfileControls(true, "dirty", "")).toBe(false);
     expect(shouldDisableModelProfileControls(true, "error", "")).toBe(false);
+  });
+
+  it("detects unsaved model profile edits against the active profile", () => {
+    const activeProfile = {
+      id: "profile-1",
+      name: "MiniMax",
+      config: DEFAULT_MODEL_CONFIG,
+      createdAt: "2026-06-08T00:00:00.000Z",
+      updatedAt: "2026-06-08T00:00:00.000Z",
+    };
+
+    expect(hasUnsavedProfileChanges(null, "MiniMax", modelForm())).toBe(false);
+    expect(hasUnsavedProfileChanges(activeProfile, "MiniMax", toFormState(DEFAULT_MODEL_CONFIG)))
+      .toBe(false);
+    expect(hasUnsavedProfileChanges(activeProfile, "Renamed", toFormState(DEFAULT_MODEL_CONFIG)))
+      .toBe(true);
+    expect(hasUnsavedProfileChanges(
+      activeProfile,
+      "MiniMax",
+      modelForm({ max_tokens: String(DEFAULT_MODEL_CONFIG.max_tokens + 1) }),
+    )).toBe(true);
   });
 
   it("keeps rejected runtime preference IPC errors traceable", () => {
