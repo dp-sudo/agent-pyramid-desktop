@@ -24,6 +24,7 @@ import type {
   WriteDeleteRequest,
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 import {
   decodeUtf8TextBuffer,
   openTextFileNoFollow,
@@ -450,8 +451,4 @@ function assertMarkdownFilePath(relativePath: string): void {
 
 function emptyCompletion(): WriteCompleteResponse {
   return { completion: "", score: 0, truncated: false };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -16,6 +16,7 @@ import type {
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
 import { RuntimeEventBus } from "../event-bus.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 interface Subscription {
   threadId: string;
@@ -214,9 +215,6 @@ function parseThreadId(request: unknown, field: string): string {
   return value.trim();
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 export function __resetSseSubscriptionsForTests(): void {
   for (const webContentsId of subscriptions.keys()) {

@@ -13,6 +13,7 @@ import {
   USAGE_CACHE_TTL_MS,
 } from "../application/constants.js";
 import type { JsonlThreadStore } from "../persistence/index.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 interface UsageCacheEntry {
   expiresAt: number;
@@ -160,8 +161,4 @@ function formatLocalDate(timestamp: number): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day}`;
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

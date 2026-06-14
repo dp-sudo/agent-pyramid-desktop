@@ -4,6 +4,7 @@ import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type { GoalUpdateRequest, ThreadGoalStatus } from "../../shared/agent-contracts.js";
 import { err, isThreadGoalStatus, ok } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 export function registerGoalHandlers(runtime: AgentRuntime): void {
   ipcMain.handle(GOAL_UPDATE_CHANNEL, async (_event, request: GoalUpdateRequest) => {
@@ -70,8 +71,4 @@ export function parseGoalUpdateRequest(request: unknown): {
     threadId: value.threadId.trim(),
     update,
   };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

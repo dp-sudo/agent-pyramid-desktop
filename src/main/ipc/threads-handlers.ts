@@ -27,6 +27,7 @@ import {
 import type { AgentRuntime } from "../application/agent-runtime.js";
 import type { JsonlThreadStore } from "../persistence/index.js";
 import type { RuntimePreferencesStore } from "../persistence/runtime-preferences-store.js";
+import { messageOfIpcError as messageOf, rejectIfThreadBusy, requestObject } from "./ipc-result-handler.js";
 
 export function registerThreadHandlers(
   store: JsonlThreadStore,
@@ -72,9 +73,8 @@ export function registerThreadHandlers(
         if (!thread) {
           return err(IPC_ERROR_CODES.THREAD_NOT_FOUND, `No thread with id ${id}`);
         }
-        if (patch.status === "archived" && runtime?.isThreadInFlight(id)) {
-          return err(IPC_ERROR_CODES.THREAD_ARCHIVE_BUSY, "Cannot archive a thread while a turn is running.");
-        }
+        const archiveBusy = rejectIfThreadBusy(runtime, id, IPC_ERROR_CODES.THREAD_ARCHIVE_BUSY, "Cannot archive a thread while a turn is running.");
+        if (patch.status === "archived" && archiveBusy) return archiveBusy;
         return ok(await store.updateThread(id, patch));
       } catch (error) {
         const message = messageOf(error);
@@ -95,9 +95,8 @@ export function registerThreadHandlers(
       if (!thread) {
         return err(IPC_ERROR_CODES.THREAD_NOT_FOUND, `No thread with id ${id}`);
       }
-      if (runtime?.isThreadInFlight(id)) {
-        return err(IPC_ERROR_CODES.THREAD_DELETE_BUSY, "Cannot delete a thread while a turn is running.");
-      }
+      const deleteBusy = rejectIfThreadBusy(runtime, id, IPC_ERROR_CODES.THREAD_DELETE_BUSY, "Cannot delete a thread while a turn is running.");
+      if (deleteBusy) return deleteBusy;
       await store.deleteThread(id);
       return ok({ id });
     } catch (error) {
@@ -236,13 +235,6 @@ export function parseThreadId(request: unknown, label: string): string {
   return request.trim();
 }
 
-function requestObject(value: unknown, name: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${name} must be an object.`);
-  }
-  return value as Record<string, unknown>;
-}
-
 function requiredString(value: unknown, message: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(message);
@@ -296,8 +288,4 @@ function optionalBooleanField(
     throw new Error(message);
   }
   return { [field]: raw };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

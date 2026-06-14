@@ -1,4 +1,4 @@
-import type { AgentDesktopApi } from "../../preload";
+import type { AgentDesktopApi } from "../../shared/agent-api";
 
 declare global {
   interface Window {

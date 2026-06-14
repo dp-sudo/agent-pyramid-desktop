@@ -1,4 +1,3 @@
-import { ipcMain } from "electron";
 import {
   MCP_SERVERS_CONNECT_CHANNEL,
   MCP_SERVERS_DISCONNECT_CHANNEL,
@@ -22,98 +21,94 @@ import type {
   McpServerRefreshToolsRequest,
   McpServerToolsRequest,
 } from "../../shared/agent-contracts.js";
-import { err, ok } from "../../shared/agent-contracts.js";
 import type { McpHost } from "../infrastructure/mcp/host.js";
+import { registerIpcResultHandler, requestObject } from "./ipc-result-handler.js";
 
 export function registerMcpHandlers(host: McpHost): void {
-  ipcMain.handle(MCP_SERVERS_LIST_CHANNEL, async () => {
-    try {
-      return ok({ servers: host.listServers() });
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_SERVER_LIST_FAILED, messageOf(error));
-    }
-  });
+  registerIpcResultHandler(MCP_SERVERS_LIST_CHANNEL, IPC_ERROR_CODES.MCP_SERVER_LIST_FAILED, () => ({
+    servers: host.listServers(),
+  }));
 
-  ipcMain.handle(MCP_SERVERS_CONNECT_CHANNEL, async (_event, input: unknown) => {
-    try {
+  registerIpcResultHandler(
+    MCP_SERVERS_CONNECT_CHANNEL,
+    IPC_ERROR_CODES.MCP_SERVER_CONNECT_FAILED,
+    async (_event, input: unknown) => {
       const request = parseServerConnectRequest(input);
-      return ok(await host.connect(request.serverId));
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_SERVER_CONNECT_FAILED, messageOf(error));
-    }
-  });
+      return await host.connect(request.serverId);
+    },
+  );
 
-  ipcMain.handle(MCP_SERVERS_DISCONNECT_CHANNEL, async (_event, input: unknown) => {
-    try {
+  registerIpcResultHandler(
+    MCP_SERVERS_DISCONNECT_CHANNEL,
+    IPC_ERROR_CODES.MCP_SERVER_DISCONNECT_FAILED,
+    async (_event, input: unknown) => {
       const request = parseServerDisconnectRequest(input);
-      return ok(await host.disconnect(request.serverId));
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_SERVER_DISCONNECT_FAILED, messageOf(error));
-    }
-  });
+      return await host.disconnect(request.serverId);
+    },
+  );
 
-  ipcMain.handle(MCP_TOOLS_LIST_CHANNEL, async (_event, input: unknown) => {
-    try {
+  registerIpcResultHandler(
+    MCP_TOOLS_LIST_CHANNEL,
+    IPC_ERROR_CODES.MCP_TOOL_LIST_FAILED,
+    (_event, input: unknown) => {
       const request = parseServerToolsRequest(input);
-      return ok({ servers: host.listTools(request.serverId) });
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_TOOL_LIST_FAILED, messageOf(error));
-    }
-  });
+      return { servers: host.listTools(request.serverId) };
+    },
+  );
 
-  ipcMain.handle(MCP_TOOLS_REFRESH_CHANNEL, async (_event, input: unknown) => {
-    try {
+  registerIpcResultHandler(
+    MCP_TOOLS_REFRESH_CHANNEL,
+    IPC_ERROR_CODES.MCP_TOOL_REFRESH_FAILED,
+    async (_event, input: unknown) => {
       const request = parseServerRefreshToolsRequest(input);
-      return ok(await host.refreshTools(request.serverId));
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_TOOL_REFRESH_FAILED, messageOf(error));
-    }
-  });
+      return await host.refreshTools(request.serverId);
+    },
+  );
 
-  ipcMain.handle(MCP_SURFACE_REFRESH_CHANNEL, async (_event, input: unknown) => {
-    try {
+  registerIpcResultHandler(
+    MCP_SURFACE_REFRESH_CHANNEL,
+    IPC_ERROR_CODES.MCP_SURFACE_REFRESH_FAILED,
+    async (_event, input: unknown) => {
       const request = parseServerRefreshToolsRequest(input);
-      return ok(await host.refreshSurface(request.serverId));
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_SURFACE_REFRESH_FAILED, messageOf(error));
-    }
-  });
+      return await host.refreshSurface(request.serverId);
+    },
+  );
 
-  ipcMain.handle(MCP_PROMPTS_LIST_CHANNEL, async (_event, input: unknown) => {
-    try {
+  registerIpcResultHandler(
+    MCP_PROMPTS_LIST_CHANNEL,
+    IPC_ERROR_CODES.MCP_PROMPT_LIST_FAILED,
+    (_event, input: unknown) => {
       const request = parseServerPromptsRequest(input);
-      return ok({ servers: host.listPrompts(request.serverId) });
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_PROMPT_LIST_FAILED, messageOf(error));
-    }
-  });
+      return { servers: host.listPrompts(request.serverId) };
+    },
+  );
 
-  ipcMain.handle(MCP_PROMPTS_GET_CHANNEL, async (_event, input: unknown) => {
-    try {
+  registerIpcResultHandler(
+    MCP_PROMPTS_GET_CHANNEL,
+    IPC_ERROR_CODES.MCP_PROMPT_GET_FAILED,
+    async (_event, input: unknown) => {
       const request = parsePromptGetRequest(input);
-      return ok(await host.getPrompt(request.serverId, request.name, request.arguments ?? {}));
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_PROMPT_GET_FAILED, messageOf(error));
-    }
-  });
+      return await host.getPrompt(request.serverId, request.name, request.arguments ?? {});
+    },
+  );
 
-  ipcMain.handle(MCP_RESOURCES_LIST_CHANNEL, async (_event, input: unknown) => {
-    try {
+  registerIpcResultHandler(
+    MCP_RESOURCES_LIST_CHANNEL,
+    IPC_ERROR_CODES.MCP_RESOURCE_LIST_FAILED,
+    (_event, input: unknown) => {
       const request = parseServerResourcesRequest(input);
-      return ok({ servers: host.listResources(request.serverId) });
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_RESOURCE_LIST_FAILED, messageOf(error));
-    }
-  });
+      return { servers: host.listResources(request.serverId) };
+    },
+  );
 
-  ipcMain.handle(MCP_RESOURCES_READ_CHANNEL, async (_event, input: unknown) => {
-    try {
+  registerIpcResultHandler(
+    MCP_RESOURCES_READ_CHANNEL,
+    IPC_ERROR_CODES.MCP_RESOURCE_READ_FAILED,
+    async (_event, input: unknown) => {
       const request = parseResourceReadRequest(input);
-      return ok(await host.readResource(request.serverId, request.uri));
-    } catch (error) {
-      return err(IPC_ERROR_CODES.MCP_RESOURCE_READ_FAILED, messageOf(error));
-    }
-  });
+      return await host.readResource(request.serverId, request.uri);
+    },
+  );
 }
 
 export function parseServerConnectRequest(input: unknown): McpServerConnectRequest {
@@ -174,13 +169,6 @@ export function parseResourceReadRequest(input: unknown): McpResourceReadRequest
   };
 }
 
-function requestObject(value: unknown, name: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${name} must be an object.`);
-  }
-  return value as Record<string, unknown>;
-}
-
 function requiredString(value: unknown, message: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(message);
@@ -208,8 +196,4 @@ function optionalStringRecord(value: unknown, name: string): Record<string, stri
     parsed[parsedKey] = entry;
   }
   return parsed;
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

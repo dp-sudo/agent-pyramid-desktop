@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { isRuntimeEvent } from "../shared/agent-contracts";
 import type {
+  AgentDesktopApi,
+  AgentDesktopRuntimeEventListener,
+} from "../shared/agent-api";
+import type {
   AttachmentCreateRequest,
   AttachmentDeleteResponse,
   AttachmentRecord,
@@ -26,7 +30,6 @@ import type {
   McpServerStatusRecord,
   McpServerToolsRequest,
   McpServerToolsResponse,
-  RuntimeEvent,
   RuntimePreferences,
   RuntimePreferencesUpdate,
   SkillListRequest,
@@ -166,8 +169,7 @@ const turns = {
   },
 };
 
-type SseListener = (event: RuntimeEvent) => void;
-const sseListeners = new Set<SseListener>();
+const sseListeners = new Set<AgentDesktopRuntimeEventListener>();
 
 ipcRenderer.on(SSE_PUSH_CHANNEL, (_event: IpcRendererEvent, payload: unknown) => {
   if (!isRuntimeEvent(payload)) {
@@ -202,7 +204,7 @@ const sse = {
       IpcResult<SseUnsubscribeGlobalResponse>
     >;
   },
-  onEvent(listener: SseListener): () => void {
+  onEvent(listener: AgentDesktopRuntimeEventListener): () => void {
     sseListeners.add(listener);
     return () => {
       sseListeners.delete(listener);
@@ -474,8 +476,6 @@ export const agentApi = {
   modelConfig,
   runtimePreferences,
   skills,
-};
+} satisfies AgentDesktopApi;
 
 contextBridge.exposeInMainWorld("agentApi", agentApi);
-
-export type AgentDesktopApi = typeof agentApi;

@@ -13,6 +13,7 @@ import { SKILL_LIST_CHANNEL } from "../../shared/ipc.js";
 import type { Skill } from "../../shared/skills/index.js";
 import type { RuntimePreferencesStore } from "../persistence/runtime-preferences-store.js";
 import type { SkillService } from "../skills/skill-service.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 export function registerSkillHandlers(
   skillService: SkillService,
@@ -84,8 +85,4 @@ function toCatalogEntry(skill: Skill): RuntimeSkillCatalogEntry {
     referenceCount: skill.references.length,
     referenceNames: skill.references.map((reference) => reference.name),
   };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

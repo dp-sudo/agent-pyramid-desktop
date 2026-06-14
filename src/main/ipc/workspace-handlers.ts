@@ -1,6 +1,7 @@
 import { BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "electron";
 import { WORKSPACE_PICK_DIRECTORY_CHANNEL } from "../../shared/ipc.js";
 import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 import {
   err,
   ok,
@@ -36,8 +37,4 @@ export function normalizeWorkspacePickResult(result: {
     throw new Error("Workspace picker returned no selected directory.");
   }
   return { canceled: false, path: selectedPath };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

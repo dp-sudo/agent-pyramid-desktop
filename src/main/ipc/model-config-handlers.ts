@@ -24,6 +24,7 @@ import {
   ok,
 } from "../../shared/agent-contracts.js";
 import type { ModelConfigStore } from "../persistence/model-config-store.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 export function registerModelConfigHandlers(store: ModelConfigStore): void {
   ipcMain.handle(MODEL_CONFIG_GET_CHANNEL, async () => {
@@ -244,8 +245,4 @@ function requiredPositiveInteger(value: unknown, field: string): number {
     throw new Error(`${field} must be a positive integer.`);
   }
   return Number(value);
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

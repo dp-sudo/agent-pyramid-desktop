@@ -11,6 +11,7 @@ import type {
 } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
 import type { AttachmentStore } from "../persistence/attachment-store.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 export function registerAttachmentHandlers(store: AttachmentStore): void {
   ipcMain.handle(
@@ -87,8 +88,4 @@ function requiredString(value: unknown, message: string): string {
     throw new Error(message);
   }
   return value;
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

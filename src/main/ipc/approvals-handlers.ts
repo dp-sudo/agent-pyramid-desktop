@@ -4,6 +4,7 @@ import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type { ApprovalRespondRequest } from "../../shared/agent-contracts.js";
 import { err, ok } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 export function registerApprovalHandlers(runtime: AgentRuntime): void {
   ipcMain.handle(APPROVAL_RESPOND_CHANNEL, async (_event, request: unknown) => {
@@ -34,8 +35,4 @@ export function parseApprovalRespondRequest(request: unknown): ApprovalRespondRe
     approvalId: value.approvalId.trim(),
     decision: value.decision,
   };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -12,6 +12,7 @@ import type {
 import { err, ok } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
 import type { JsonlThreadStore } from "../persistence/index.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 export function registerTurnHandlers(
   runtime: AgentRuntime,
@@ -71,8 +72,4 @@ export function parseTurnGetRequest(request: unknown): string {
     throw new Error("Turn get requires a threadId string.");
   }
   return request.trim();
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

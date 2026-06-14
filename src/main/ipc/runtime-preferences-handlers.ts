@@ -10,6 +10,7 @@ import {
   type RuntimePreferencesStore,
 } from "../persistence/runtime-preferences-store.js";
 import type { RuntimePreferences } from "../../shared/agent-contracts.js";
+import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 export interface RuntimePreferencesHandlerOptions {
   afterUpdate?(preferences: RuntimePreferences): void | Promise<void>;
@@ -36,8 +37,4 @@ export function registerRuntimePreferencesHandlers(
       return err(IPC_ERROR_CODES.RUNTIME_PREFERENCES_UPDATE_FAILED, messageOf(error));
     }
   });
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

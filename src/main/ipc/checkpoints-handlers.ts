@@ -12,6 +12,7 @@ import { err, ok } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
 import type { CheckpointStore } from "../persistence/checkpoint-store.js";
 import type { JsonlThreadStore } from "../persistence/index.js";
+import { messageOfIpcError as messageOf, rejectIfThreadBusy, requestObject } from "./ipc-result-handler.js";
 
 export function registerCheckpointHandlers(
   checkpointStore: CheckpointStore,
@@ -42,12 +43,8 @@ export function registerCheckpointHandlers(
   ipcMain.handle(CHECKPOINT_REWIND_CHANNEL, async (_event, input: unknown) => {
     try {
       const request = parseCheckpointRewindRequest(input);
-      if (runtime?.isThreadInFlight(request.threadId)) {
-        return err(
-          IPC_ERROR_CODES.CHECKPOINT_REWIND_BUSY,
-          "Cannot rewind a thread while a turn is running.",
-        );
-      }
+      const rewindBusy = rejectIfThreadBusy(runtime, request.threadId, IPC_ERROR_CODES.CHECKPOINT_REWIND_BUSY, "Cannot rewind a thread while a turn is running.");
+      if (rewindBusy) return rewindBusy;
       const thread = await threadStore.getThread(request.threadId);
       if (!thread) {
         return err(IPC_ERROR_CODES.THREAD_NOT_FOUND, `No thread with id ${request.threadId}`);
@@ -138,13 +135,6 @@ export function parseCheckpointRewindRequest(input: unknown): CheckpointRewindRe
   };
 }
 
-function requestObject(value: unknown, name: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${name} must be an object.`);
-  }
-  return value as Record<string, unknown>;
-}
-
 function requiredString(value: unknown, message: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(message);
@@ -157,8 +147,4 @@ function requiredBoolean(value: unknown, message: string): boolean {
     throw new Error(message);
   }
   return value;
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
