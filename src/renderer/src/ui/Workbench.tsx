@@ -13,12 +13,12 @@ import { Sidebar } from "./components/sidebar/Sidebar";
 import {
   type FloatingComposerRequestPayload,
 } from "./components/composer";
-import type { ApprovalPendingDecision } from "./components/chat/ChatBlock";
 import {
   type WriteAssistantPromptPayload,
 } from "./components/write/WriteWorkspaceView";
 import { CodeWorkbenchStage } from "./components/workbench/CodeWorkbenchStage";
 import { WriteWorkbenchStage } from "./components/workbench/WriteWorkbenchStage";
+import { usePendingApprovalResponses } from "./hooks/usePendingApprovalResponses";
 import {
   LEFT_SIDEBAR_DEFAULT_WIDTH,
   LEFT_SIDEBAR_MAX_WIDTH,
@@ -36,6 +36,10 @@ import {
 } from "../../../shared/agent-contracts";
 import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
 import { resolveMcpInputReferences } from "./mcp-input";
+export {
+  beginPendingApprovalResponse,
+  clearResolvedApprovalResponses,
+} from "./hooks/usePendingApprovalResponses";
 export {
   copyWorkbenchErrorMessage,
   shouldShowWorkbenchErrorToast,
@@ -68,15 +72,16 @@ export function Workbench(): ReactElement {
   const toolProgressFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestItemUpdateByItemIdRef = useRef(new Map<string, Item>());
   const itemUpdateFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingApprovalResponsesRef = useRef<Record<string, ApprovalPendingDecision>>({});
   const [leftSidebarDragging, setLeftSidebarDragging] = useState(false);
-  const [pendingApprovalResponses, setPendingApprovalResponses] = useState<
-    Record<string, ApprovalPendingDecision>
-  >({});
   const activeThreadArchived = state.activeThread?.status === "archived";
   const activeThreadInFlightTurn = getActiveThreadInFlightTurn(state);
   const codeThreads = filterThreadsForWorkbench(state.threads, "code");
   const writeThreads = filterThreadsForWorkbench(state.threads, "write");
+  const {
+    pendingApprovalResponses,
+    beginApprovalResponse,
+    clearApprovalResponse,
+  } = usePendingApprovalResponses(state.items);
 
   useEffect(() => {
     activeThreadIdRef.current = state.activeThreadId;
@@ -85,16 +90,6 @@ export function Workbench(): ReactElement {
   useEffect(() => {
     workspaceRootRef.current = state.workspaceRoot;
   }, [state.workspaceRoot]);
-
-  useEffect(() => {
-    const nextPending = clearResolvedApprovalResponses(
-      pendingApprovalResponsesRef.current,
-      state.items,
-    );
-    if (nextPending === pendingApprovalResponsesRef.current) return;
-    pendingApprovalResponsesRef.current = nextPending;
-    setPendingApprovalResponses(nextPending);
-  }, [state.items]);
 
   // Load thread list on mount.
   useEffect(() => {
@@ -765,14 +760,7 @@ export function Workbench(): ReactElement {
 
   const onApprove = useCallback(
     async (approvalId: string, decision: "allow" | "deny") => {
-      const nextPending = beginPendingApprovalResponse(
-        pendingApprovalResponsesRef.current,
-        approvalId,
-        decision,
-      );
-      if (!nextPending) return;
-      pendingApprovalResponsesRef.current = nextPending;
-      setPendingApprovalResponses(nextPending);
+      if (!beginApprovalResponse(approvalId, decision)) return;
       const result = await runWorkbenchIpc(() =>
         window.agentApi.approvals.respond({ approvalId, decision }),
       );
@@ -780,13 +768,10 @@ export function Workbench(): ReactElement {
         actions.setError(null);
       } else {
         actions.setError(result.message);
-        const next = { ...pendingApprovalResponsesRef.current };
-        delete next[approvalId];
-        pendingApprovalResponsesRef.current = next;
-        setPendingApprovalResponses(next);
+        clearApprovalResponse(approvalId);
       }
     },
-    [actions],
+    [actions, beginApprovalResponse, clearApprovalResponse],
   );
 
   const onOpenSettings = useCallback(() => {
@@ -918,39 +903,6 @@ export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): str
     .filter((result) => !result.ok)
     .map((result) => result.message);
   return messages.length > 0 ? messages.join("\n") : null;
-}
-
-export function beginPendingApprovalResponse(
-  current: Record<string, ApprovalPendingDecision>,
-  approvalId: string,
-  decision: Exclude<ApprovalPendingDecision, null>,
-): Record<string, ApprovalPendingDecision> | null {
-  if (current[approvalId]) return null;
-  return {
-    ...current,
-    [approvalId]: decision,
-  };
-}
-
-export function clearResolvedApprovalResponses(
-  current: Record<string, ApprovalPendingDecision>,
-  items: readonly Item[],
-): Record<string, ApprovalPendingDecision> {
-  let next: Record<string, ApprovalPendingDecision> | null = null;
-  for (const item of items) {
-    if (
-      item.kind !== "approval" ||
-      item.decision === undefined ||
-      current[item.approvalId] === undefined
-    ) {
-      continue;
-    }
-    const source: Record<string, ApprovalPendingDecision> = next ?? current;
-    const remaining: Record<string, ApprovalPendingDecision> = { ...source };
-    delete remaining[item.approvalId];
-    next = remaining;
-  }
-  return next ?? current;
 }
 
 export async function runWorkbenchIpc<T>(
