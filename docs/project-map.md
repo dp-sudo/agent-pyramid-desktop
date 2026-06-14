@@ -116,8 +116,8 @@ flowchart LR
 | IPC handlers | `src/main/ipc/*-handlers.ts` | 将 renderer 调用映射到 runtime、stores 和文件服务，统一返回 `IpcResult<T>`。 |
 | Preload bridge | `src/preload/index.ts` | 暴露 `window.agentApi`，隐藏 Electron IPC 细节。 |
 | Shared contracts | `src/shared/agent-contracts.ts`、`src/shared/model-config-contracts.ts`、`src/shared/contract-primitives.ts`、`src/shared/ipc.ts`、`src/shared/ipc-errors.ts`、`src/shared/locale.ts` | 跨进程类型统一出口、模型配置契约、基础 UUID/ISO guard、IPC channel 常量、IPC error code 和语言列表权威来源。 |
-| Renderer shell | `src/renderer/src/ui/AppShell.tsx`、`src/renderer/src/ui/Workbench.tsx`、`src/renderer/src/ui/SettingsView.tsx` | 路由、工作台、设置页和主要交互流程。 |
-| Renderer state | `src/renderer/src/ui/store/WorkbenchContext.tsx` | `useReducer` 状态中心，不使用外部状态库。 |
+| Renderer shell | `src/renderer/src/ui/AppShell.tsx`、`src/renderer/src/ui/Workbench.tsx`、`src/renderer/src/ui/sidebar-resize-model.ts`、`src/renderer/src/ui/workbench-composer-payload.ts`、`src/renderer/src/ui/workbench-ipc.ts`、`src/renderer/src/ui/workbench-runtime-events.ts`、`src/renderer/src/ui/workbench-thread-model.ts`、`src/renderer/src/ui/settings-navigation-model.ts`、`src/renderer/src/ui/settings-runtime-model.ts`、`src/renderer/src/ui/SettingsView.tsx` | 路由、工作台、左侧栏 resize 规则、composer payload 规则、IPC 错误边界、RuntimeEvent 分发规则、线程选择规则、设置页导航与 runtime/MCP 表单规则和主要交互流程。 |
+| Renderer state | `src/renderer/src/ui/store/WorkbenchContext.tsx`、`src/renderer/src/ui/store/tool-progress-model.ts`、`src/renderer/src/ui/store/composer-model-model.ts`、`src/renderer/src/ui/store/basic-preferences-state.ts` | `useReducer` 状态中心、live tool progress 合并/截断规则、composer 模型/profile 选择规则和 basic preferences 持久化状态补丁，不使用外部状态库。 |
 | Renderer hooks | `src/renderer/src/ui/hooks/*`、`src/renderer/src/ui/components/composer/use*.ts` | Workbench 局部状态副作用和 composer 交互状态 hooks。 |
 | UI components | `src/renderer/src/ui/components/**` | sidebar、topbar、composer、timeline、inspector、write、settings 和 primitives。 |
 | UI styles | `src/renderer/src/ui/styles/tokens.css`、`src/renderer/src/ui/styles/shell.css` | `--ds-*` design token 与 shell layout 样式入口。 |
@@ -170,7 +170,7 @@ flowchart TD
 
 | Feature | Start Here | Then Check |
 | --- | --- | --- |
-| Start a turn | `src/renderer/src/ui/Workbench.tsx` | `src/preload/index.ts`、`src/main/ipc/turns-handlers.ts`、`src/main/application/agent-runtime.ts`、`ApprovalCoordinator` |
+| Start a turn | `src/renderer/src/ui/Workbench.tsx` | `src/preload/index.ts`、`src/main/ipc/turns-handlers.ts`、`src/main/application/turn-start-request.ts`、`src/main/application/plan-item-parser.ts`、`src/main/application/thread-goal-update.ts`、`src/main/application/agent-runtime.ts`、`ApprovalCoordinator` |
 | Stream runtime events | `src/main/event-bus.ts` | `src/main/ipc/sse-handlers.ts`、`src/preload/index.ts`、`Workbench.tsx` |
 | Add or change IPC | `src/shared/ipc.ts`、`src/shared/ipc-errors.ts` | `src/shared/agent-contracts.ts`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts` |
 | Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、choose the narrowest `Agent*Capability` context、`ToolCatalogService`、`ToolPolicyService` |
@@ -180,7 +180,7 @@ flowchart TD
 | Change model config | `src/shared/model-config-contracts.ts` via `src/shared/agent-contracts.ts` | `src/main/persistence/model-config-store.ts`、`src/main/ipc/model-config-handlers.ts`、`SettingsView.tsx` |
 | Change runtime preferences | `src/shared/agent-contracts.ts` | `src/main/persistence/runtime-preferences-store.ts`、`src/main/ipc/runtime-preferences-handlers.ts`、`src/preload/index.ts`、`AgentRuntime` |
 | Change attachments | `src/shared/agent-contracts.ts` | `src/main/persistence/attachment-store.ts`、`src/main/ipc/attachments-handlers.ts`、composer/runtime attachment injection |
-| Change write mode | `src/main/ipc/write-handlers.ts` | `src/renderer/src/ui/components/write/WriteWorkspaceView.tsx`、write IPC contracts |
+| Change write mode | `src/main/ipc/write-handlers.ts` | `src/renderer/src/ui/components/write/WriteWorkspaceView.tsx`、`src/renderer/src/ui/components/write/write-workspace-model.ts`、write IPC contracts |
 | Change base UI layout | `docs/ui-design.md` | `docs/ui-layout-reference.md`、`tokens.css`、`shell.css`、component tests |
 | Add i18n text | `src/renderer/src/i18n/locales/zh-CN/translation.json` | English translation file and any consuming component |
 
@@ -191,8 +191,9 @@ flowchart TD
 - Completion, failure, streamed text and tool updates arrive through `RuntimeEvent`.
 - `RuntimeEvent` values are emitted by `RuntimeEventBus` and forwarded through `SSE_PUSH_CHANNEL`.
 - Live command stdout/stderr progress uses `RuntimeEvent.kind === "tool_progress"`;
-  it is merged into the active running tool card in renderer state and is not
-  persisted separately from the final `ToolItem.result`.
+  renderer state calls `src/renderer/src/ui/store/tool-progress-model.ts` to
+  merge it into the active running tool card, and it is not persisted separately
+  from the final `ToolItem.result`.
 - Tools are exposed to the model through `ToolRegistry.listDefinitions()`.
 - Tool execution goes through `ToolRegistry.execute()`; direct tool bypass is not part of the architecture.
 - `AgentToolContext` remains the registry execution boundary, but tool
@@ -225,12 +226,29 @@ flowchart TD
 - `run_command`, `shell_command`, `git_bash_command`, `powershell_command`,
   `wsl_command`, package/task wrappers, Git commit, and command session write /
   stop tools run through the command approval boundary.
+- Shell and package-manager invocation construction lives in
+  `src/main/application/tools/command-invocation.ts`; process execution,
+  command sessions, diagnostics and tool definitions remain in
+  `src/main/application/tools/command-tools.ts`.
+- Package manager detection, package.json script normalization, install/script
+  argument construction and package script validation live in
+  `src/main/application/tools/command-package.ts`.
+- Git short-status parsing, plain pathspec argument construction and `git_log`
+  revision validation live in `src/main/application/tools/command-git.ts`.
+- Command session output buffering, newest-byte retention and UTF-8-safe tail
+  snapshots live in `src/main/application/tools/command-session-capture.ts`.
+- One-shot command stdout/stderr capture and truncation live in
+  `src/main/application/tools/command-output-capture.ts`.
+- Live command progress batching and UTF-8 stream decoding live in
+  `src/main/application/tools/command-progress-reporter.ts`.
 - Read-only developer tools include `rg_search`, `git_status`, `git_diff`,
   `git_log`, `git_branch`, `package_scripts`, `read_command_session`,
   `detect_shell_environment`, and `diagnose_file`.
 - `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through
   command execution and therefore requires approval; `diagnose_file` uses
   TypeScript Language Service for file-level diagnostics and remains read-only.
+  TypeScript diagnostic parsing and Language Service result shaping live in
+  `src/main/application/tools/command-diagnostics.ts`.
 - Write threads use `ToolCatalogService` tool access policy and persisted
   `RuntimePreferences.toolAvailability` to hide and reject Code-only
   coding/command tools by default; policy overrides can allow or deny
@@ -260,7 +278,7 @@ flowchart TD
 | Model config profiles | `src/shared/model-config-contracts.ts` via `src/shared/agent-contracts.ts` | `ModelConfigStore` via `userData/config` |
 | Runtime preferences | `src/shared/agent-contracts.ts` | `RuntimePreferencesStore` via `userData/config` |
 | IPC channel names | `src/shared/ipc.ts` | Not persisted |
-| Renderer basic preferences | `src/renderer/src/ui/preferences.ts` | `localStorage` |
+| Renderer basic preferences | `src/renderer/src/ui/preferences.ts` + `src/renderer/src/ui/store/basic-preferences-state.ts` | `localStorage` |
 | Supported locales | `src/shared/locale.ts` | Not persisted |
 
 ## Test Map
