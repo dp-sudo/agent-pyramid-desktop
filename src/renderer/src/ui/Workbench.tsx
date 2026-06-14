@@ -5,37 +5,58 @@ import {
   getThreadInFlightTurn,
   useWorkbench,
   type ToolProgressUpdate,
-  type WorkbenchActions,
-  type WorkbenchRoute,
   type WorkbenchState,
 } from "./store/WorkbenchContext";
+import {
+  mergeToolProgressBufferEvent,
+  toolProgressBufferKey,
+} from "./store/tool-progress-model";
+import { explicitComposerModelProfileId } from "./store/composer-model-model";
+import {
+  applyWorkbenchRuntimeEvent,
+  shouldBufferLiveTextItemUpdate,
+  shouldFlushBufferedItemUpdatesBeforeEvent,
+} from "./workbench-runtime-events";
+import {
+  filterThreadsForWorkbench,
+  findLatestThreadForWorkspace,
+  isThreadMutationBusyError,
+  shouldUnsubscribeRemovedThread,
+  threadMutationBusyMessageKey,
+  workbenchThreadModeForRoute,
+} from "./workbench-thread-model";
+import {
+  formatInitialLoadErrors,
+  runWorkbenchIpc,
+} from "./workbench-ipc";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import {
-  type FloatingComposerRequestPayload,
-} from "./components/composer";
+  buildWorkbenchThreadTitle,
+  buildComposerSendPayload,
+  normalizeWriteAssistantSendPayload,
+  resolveCodeMcpInputReferences,
+  type WorkbenchComposerSendPayload,
+} from "./workbench-composer-payload";
 import {
-  type WriteAssistantPromptPayload,
-} from "./components/write/WriteWorkspaceView";
-import { CodeWorkbenchStage } from "./components/workbench/CodeWorkbenchStage";
-import { WriteWorkbenchStage } from "./components/workbench/WriteWorkbenchStage";
-import { usePendingApprovalResponses } from "./hooks/usePendingApprovalResponses";
-import {
-  LEFT_SIDEBAR_DEFAULT_WIDTH,
   LEFT_SIDEBAR_MAX_WIDTH,
   LEFT_SIDEBAR_MIN_WIDTH,
 } from "./preferences";
 import {
-  err,
+  clampLeftSidebarWidth,
+  getNextLeftSidebarWidth,
+  getResetLeftSidebarWidth,
+  getSidebarDividerClassName,
+} from "./sidebar-resize-model";
+import {
+  DEFAULT_THREAD_TITLE,
   type Item,
-  type IpcResult,
   type RuntimeEvent,
-  type RuntimeErrorEvent,
   type ThreadRecord,
-  type ThreadSummary,
-  type ToolProgressEvent,
 } from "../../../shared/agent-contracts";
 import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
-import { resolveMcpInputReferences } from "./mcp-input";
+import { CodeWorkbenchStage } from "./components/workbench/CodeWorkbenchStage";
+import { WriteWorkbenchStage } from "./components/workbench/WriteWorkbenchStage";
+import { usePendingApprovalResponses } from "./hooks/usePendingApprovalResponses";
 export {
   beginPendingApprovalResponse,
   clearResolvedApprovalResponses,
@@ -47,7 +68,6 @@ export {
   type WorkbenchErrorCopyResult,
 } from "./components/workbench/WorkbenchErrorToast";
 
-const SIDEBAR_KEYBOARD_STEP = 16;
 const TOOL_PROGRESS_RENDER_FLUSH_MS = 100;
 // Assistant text and reasoning arrive as high-frequency item_updated deltas
 // (one per model token). Coalescing them into a single store dispatch per
@@ -55,10 +75,6 @@ const TOOL_PROGRESS_RENDER_FLUSH_MS = 100;
 // keeping the cadence fast enough to feel live. Tool/approval item_updated
 // events are low-frequency and stay immediate.
 const TEXT_DELTA_RENDER_FLUSH_MS = 60;
-
-type WorkbenchComposerSendPayload = Pick<FloatingComposerRequestPayload, "text"> &
-  Partial<Omit<FloatingComposerRequestPayload, "text">> &
-  Partial<Pick<WriteAssistantPromptPayload, "displayText" | "threadTitle">>;
 
 export function Workbench(): ReactElement {
   const { t } = useTranslation();
@@ -149,21 +165,10 @@ export function Workbench(): ReactElement {
   }, [actions]);
 
   const queueToolProgress = useCallback(
-    (event: ToolProgressEvent): void => {
-      const key = `${event.threadId}:${event.turnId}:${event.toolCallId}`;
+    (event: Extract<RuntimeEvent, { kind: "tool_progress" }>): void => {
+      const key = toolProgressBufferKey(event);
       const current = toolProgressBuffersRef.current.get(key);
-      toolProgressBuffersRef.current.set(key, {
-        threadId: event.threadId,
-        turnId: event.turnId,
-        toolCallId: event.toolCallId,
-        seq: event.seq,
-        stdout: event.stream === "stdout"
-          ? `${current?.stdout ?? ""}${event.chunk}`
-          : current?.stdout,
-        stderr: event.stream === "stderr"
-          ? `${current?.stderr ?? ""}${event.chunk}`
-          : current?.stderr,
-      });
+      toolProgressBuffersRef.current.set(key, mergeToolProgressBufferEvent(current, event));
       if (toolProgressFlushTimerRef.current) return;
       toolProgressFlushTimerRef.current = setTimeout(
         flushToolProgressBuffers,
@@ -221,20 +226,13 @@ export function Workbench(): ReactElement {
       // Coalesce high-frequency assistant/reasoning text deltas so the live
       // turn re-renders at most once per window; tool/approval item_updated
       // and all other events stay immediate via the normal apply path.
-      if (
-        event.kind === "item_updated" &&
-        (event.item.kind === "assistant" || event.item.kind === "reasoning") &&
-        event.threadId === activeThreadIdRef.current
-      ) {
+      if (shouldBufferLiveTextItemUpdate(event, activeThreadIdRef.current)) {
         queueItemUpdate(event.item);
         return;
       }
       // Flush any buffered text deltas before terminal turn events so the
       // final streamed content is committed before the turn status flips.
-      if (
-        event.kind === "turn_completed" ||
-        event.kind === "turn_failed"
-      ) {
+      if (shouldFlushBufferedItemUpdatesBeforeEvent(event)) {
         flushItemUpdates();
       }
       applyWorkbenchRuntimeEvent(
@@ -291,7 +289,7 @@ export function Workbench(): ReactElement {
       const result = await runWorkbenchIpc(() =>
         window.agentApi.sse.unsubscribe({ threadId }),
       );
-      if (!result.ok && result.code !== "SSE_NOT_SUBSCRIBED") {
+      if (!result.ok && result.code !== IPC_ERROR_CODES.SSE_NOT_SUBSCRIBED) {
         actions.setError(result.message);
         subscribedThreadIdsRef.current.delete(threadId);
         return false;
@@ -382,7 +380,7 @@ export function Workbench(): ReactElement {
 
       const created = await runWorkbenchIpc(() =>
         window.agentApi.threads.create({
-          title: "New thread",
+          title: DEFAULT_THREAD_TITLE,
           workspace,
           mode,
         }),
@@ -428,7 +426,7 @@ export function Workbench(): ReactElement {
     if (!workspace) return;
     const result = await runWorkbenchIpc(() =>
       window.agentApi.threads.create({
-        title: "New thread",
+        title: DEFAULT_THREAD_TITLE,
         workspace,
         mode: "code",
       }),
@@ -449,7 +447,7 @@ export function Workbench(): ReactElement {
     if (!workspace) return;
     const result = await runWorkbenchIpc(() =>
       window.agentApi.threads.create({
-        title: "New thread",
+        title: DEFAULT_THREAD_TITLE,
         workspace,
         mode: "write",
       }),
@@ -467,16 +465,17 @@ export function Workbench(): ReactElement {
 
   const onDeleteThread = useCallback(
     async (id: string) => {
+      const busyMessage = t(threadMutationBusyMessageKey("delete"));
       if (getThreadInFlightTurn(state, id)) {
-        actions.setError(t("threads.deleteBlockedRunning"));
+        actions.setError(busyMessage);
         return;
       }
 
       const result = await runWorkbenchIpc(() => window.agentApi.threads.delete(id));
       if (!result.ok) {
         actions.setError(
-          result.code === IPC_ERROR_CODES.THREAD_DELETE_BUSY
-            ? t("threads.deleteBlockedRunning")
+          isThreadMutationBusyError("delete", result.code)
+            ? busyMessage
             : result.message,
         );
         return;
@@ -496,8 +495,9 @@ export function Workbench(): ReactElement {
 
   const onArchiveThread = useCallback(
     async (id: string) => {
+      const busyMessage = t(threadMutationBusyMessageKey("archive"));
       if (getThreadInFlightTurn(state, id)) {
-        actions.setError(t("threads.archiveBlockedRunning"));
+        actions.setError(busyMessage);
         return;
       }
 
@@ -506,8 +506,8 @@ export function Workbench(): ReactElement {
       );
       if (!result.ok) {
         actions.setError(
-          result.code === IPC_ERROR_CODES.THREAD_ARCHIVE_BUSY
-            ? t("threads.archiveBlockedRunning")
+          isThreadMutationBusyError("archive", result.code)
+            ? busyMessage
             : result.message,
         );
         return;
@@ -571,10 +571,7 @@ export function Workbench(): ReactElement {
       if (!threadId) {
         const workspace = await ensureWorkspaceRoot();
         if (!workspace) return false;
-        const title =
-          turnPayload.threadTitle.length > 60
-            ? `${turnPayload.threadTitle.slice(0, 57)}...`
-            : turnPayload.threadTitle;
+        const title = buildWorkbenchThreadTitle(turnPayload.threadTitle);
         const threadResult = await runWorkbenchIpc(() =>
           window.agentApi.threads.create({
             title,
@@ -673,10 +670,7 @@ export function Workbench(): ReactElement {
         if (!threadId) {
           const workspace = await ensureWorkspaceRoot();
           if (!workspace) return false;
-          const title =
-            sendPayload.threadTitle.length > 60
-              ? `${sendPayload.threadTitle.slice(0, 57)}...`
-              : sendPayload.threadTitle;
+          const title = buildWorkbenchThreadTitle(sendPayload.threadTitle);
           const threadResult = await runWorkbenchIpc(() =>
             window.agentApi.threads.create({
               title,
@@ -812,7 +806,7 @@ export function Workbench(): ReactElement {
       ) : null}
       {state.route === "code" ? (
         <div
-          className={getWorkbenchDividerClassName(leftSidebarDragging)}
+          className={getSidebarDividerClassName(leftSidebarDragging)}
           role="separator"
           aria-orientation="vertical"
           aria-label={t("common.resizeLeftSidebar")}
@@ -821,10 +815,9 @@ export function Workbench(): ReactElement {
           aria-valuenow={state.leftSidebarWidth}
           tabIndex={0}
           onKeyDown={(event) => {
-            const next = getNextSidebarWidth(
+            const next = getNextLeftSidebarWidth(
               state.leftSidebarWidth,
               event.key,
-              SIDEBAR_KEYBOARD_STEP,
             );
             if (next === state.leftSidebarWidth) return;
             event.preventDefault();
@@ -838,7 +831,7 @@ export function Workbench(): ReactElement {
             target.setPointerCapture(event.pointerId);
             const onMove = (ev: PointerEvent): void => {
               const dx = ev.clientX - startX;
-              const next = clampSidebarWidth(startWidth + dx);
+              const next = clampLeftSidebarWidth(startWidth + dx);
               actions.setLeftSidebarWidth(next);
             };
             const clearDragListeners = (): void => {
@@ -852,7 +845,7 @@ export function Workbench(): ReactElement {
             target.addEventListener("pointercancel", clearDragListeners);
           }}
           onDoubleClick={() => {
-            actions.setLeftSidebarWidth(getResetSidebarWidth());
+            actions.setLeftSidebarWidth(getResetLeftSidebarWidth());
           }}
         />
       ) : null}
@@ -896,232 +889,4 @@ export function Workbench(): ReactElement {
       </main>
     </>
   );
-}
-
-export function formatInitialLoadErrors(results: Array<IpcResult<unknown>>): string | null {
-  const messages = results
-    .filter((result) => !result.ok)
-    .map((result) => result.message);
-  return messages.length > 0 ? messages.join("\n") : null;
-}
-
-export async function runWorkbenchIpc<T>(
-  invoke: () => Promise<IpcResult<T>>,
-): Promise<IpcResult<T>> {
-  try {
-    return await invoke();
-  } catch (error) {
-    return err(IPC_ERROR_CODES.RENDERER_IPC_REJECTED, messageOfWorkbenchError(error));
-  }
-}
-
-export function messageOfWorkbenchError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-export function shouldUnsubscribeRemovedThread(
-  subscribedThreadIds: ReadonlySet<string>,
-  threadId: string,
-): boolean {
-  return subscribedThreadIds.has(threadId);
-}
-
-export function isGlobalRuntimeErrorEvent(event: RuntimeErrorEvent): boolean {
-  return event.kind === "runtime_error" && !event.threadId;
-}
-
-type WorkbenchRuntimeEventActions = Pick<
-  WorkbenchActions,
-  | "appendToolProgress"
-  | "appendItem"
-  | "setError"
-  | "turnEnded"
-  | "turnStarted"
-  | "updateActiveThread"
-  | "updateItem"
->;
-
-export function applyWorkbenchRuntimeEvent(
-  event: RuntimeEvent,
-  context: {
-    activeThread: ThreadRecord | null;
-    activeThreadId: string | null;
-  },
-  actions: WorkbenchRuntimeEventActions,
-): void {
-  // Retained SSE subscriptions may deliver background turn lifecycle events
-  // after route switches clear the active thread; keep in-flight state correct
-  // while limiting timeline mutations to the active thread.
-  const activeThreadId = context.activeThreadId;
-  if (event.kind === "runtime_error") {
-    if (isGlobalRuntimeErrorEvent(event) || event.threadId === activeThreadId) {
-      actions.setError(event.message);
-    }
-    return;
-  }
-  if (
-    event.kind === "mcp_server_connection" ||
-    event.kind === "mcp_tool_list_changed" ||
-    event.kind === "mcp_surface_changed"
-  ) {
-    return;
-  }
-
-  const isActiveThreadEvent = event.threadId === activeThreadId;
-  if (event.kind === "turn_started") {
-    actions.turnStarted(event.turn);
-  } else if (event.kind === "item_appended" && isActiveThreadEvent) {
-    actions.appendItem(event.item);
-  } else if (event.kind === "item_updated" && isActiveThreadEvent) {
-    actions.updateItem(event.item);
-  } else if (event.kind === "tool_progress" && isActiveThreadEvent) {
-    actions.appendToolProgress({
-      threadId: event.threadId,
-      turnId: event.turnId,
-      toolCallId: event.toolCallId,
-      seq: event.seq,
-      ...(event.stream === "stdout" ? { stdout: event.chunk } : {}),
-      ...(event.stream === "stderr" ? { stderr: event.chunk } : {}),
-    });
-  } else if (event.kind === "turn_completed") {
-    actions.turnEnded(event.threadId, event.status);
-  } else if (event.kind === "tool_budget_reached") {
-    // The timeline receives the persisted warning item; continuation status is not a UI error.
-  } else if (event.kind === "turn_failed") {
-    actions.turnEnded(event.threadId, "failed");
-    if (isActiveThreadEvent) actions.setError(event.message);
-  } else if (
-    event.kind === "goal_updated" &&
-    context.activeThread &&
-    event.threadId === context.activeThread.id
-  ) {
-    actions.updateActiveThread({
-      ...context.activeThread,
-      ...(event.goal ? { goal: event.goal } : { goal: undefined }),
-    });
-  }
-}
-
-export function workbenchThreadModeForRoute(route: WorkbenchRoute): ThreadRecord["mode"] {
-  return route === "write" ? "write" : "code";
-}
-
-export function explicitComposerModelProfileId(
-  composer: WorkbenchState["composer"],
-): string | undefined {
-  return composer.modelProfileSelection === "explicit"
-    ? composer.modelProfileId
-    : undefined;
-}
-
-export function findLatestThreadForWorkspace(
-  threads: readonly ThreadSummary[],
-  workspace: string,
-  mode: ThreadRecord["mode"],
-): ThreadSummary | null {
-  let latest: ThreadSummary | null = null;
-  for (const thread of threads) {
-    if (
-      thread.mode !== mode ||
-      thread.workspace !== workspace ||
-      thread.status === "archived"
-    ) {
-      continue;
-    }
-    if (!latest || Date.parse(thread.updatedAt) > Date.parse(latest.updatedAt)) {
-      latest = thread;
-    }
-  }
-  return latest;
-}
-
-export function filterThreadsForWorkbench(
-  threads: readonly ThreadSummary[],
-  mode: ThreadRecord["mode"],
-): ThreadSummary[] {
-  return threads.filter((thread) => thread.mode === mode);
-}
-
-export function clampSidebarWidth(width: number): number {
-  return Math.min(LEFT_SIDEBAR_MAX_WIDTH, Math.max(LEFT_SIDEBAR_MIN_WIDTH, width));
-}
-
-export function getNextSidebarWidth(
-  currentWidth: number,
-  key: string,
-  step = SIDEBAR_KEYBOARD_STEP,
-): number {
-  if (key === "ArrowLeft") return clampSidebarWidth(currentWidth - step);
-  if (key === "ArrowRight") return clampSidebarWidth(currentWidth + step);
-  if (key === "Home") return LEFT_SIDEBAR_MIN_WIDTH;
-  if (key === "End") return LEFT_SIDEBAR_MAX_WIDTH;
-  return currentWidth;
-}
-
-export function getResetSidebarWidth(): number {
-  return LEFT_SIDEBAR_DEFAULT_WIDTH;
-}
-
-export function getWorkbenchDividerClassName(isDragging: boolean): string {
-  return isDragging ? "ds-workbench-divider is-dragging" : "ds-workbench-divider";
-}
-
-export function buildComposerSendPayload(
-  draftText: string,
-  attachmentCount: number,
-  t: (key: string, options?: Record<string, unknown>) => string,
-): { text: string; displayText?: string; threadTitle: string } | null {
-  const text = draftText.trim();
-  if (text.length > 0) {
-    return { text, threadTitle: text };
-  }
-  if (attachmentCount <= 0) return null;
-
-  const attachmentOnlyText = t(
-    attachmentCount === 1
-      ? "composer.attachmentOnlyMessageSingle"
-      : "composer.attachmentOnlyMessageMultiple",
-  );
-  return {
-    text: attachmentOnlyText,
-    displayText: attachmentOnlyText,
-    threadTitle: attachmentOnlyText,
-  };
-}
-
-export async function resolveCodeMcpInputReferences(
-  payload: {
-    text: string;
-    displayText?: string;
-    threadTitle: string;
-  },
-  t: (key: string, options?: Record<string, unknown>) => string,
-): Promise<{
-  ok: true;
-  value: { text: string; displayText?: string; threadTitle: string };
-} | { ok: false; message: string }> {
-  if (!window.agentApi?.mcp) {
-    return { ok: true, value: payload };
-  }
-  if (!payload.text.includes("/mcp__") && !payload.text.includes("@")) {
-    return { ok: true, value: payload };
-  }
-  return resolveMcpInputReferences(payload, window.agentApi.mcp, t);
-}
-
-export function normalizeWriteAssistantSendPayload(
-  payload: WorkbenchComposerSendPayload,
-): WriteAssistantPromptPayload | null {
-  const text = payload.text.trim();
-  const displayText = payload.displayText?.trim() ?? "";
-  const threadTitle = payload.threadTitle?.trim() ?? "";
-  if (!text || !displayText || !threadTitle) return null;
-  return {
-    text,
-    displayText,
-    threadTitle,
-    attachmentIds: payload.attachmentIds ?? [],
-    mode: payload.mode ?? "agent",
-    goalMode: payload.goalMode ?? false,
-  };
 }

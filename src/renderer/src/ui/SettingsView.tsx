@@ -66,7 +66,6 @@ import {
   type ThreadSandboxMode,
 } from "../../../shared/agent-contracts";
 import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
-import { toMcpNameSegment } from "../../../shared/mcp-names";
 import { useWorkbench } from "./store/WorkbenchContext";
 import {
   SecretInput,
@@ -82,9 +81,38 @@ import {
 } from "./components/settings/SettingsSidebar";
 import {
   filterSettingsSidebarItems,
-  getSettingsCategorySearchKeywords,
   isSettingsCategoryAdvanced,
 } from "./components/settings/settings-search";
+import {
+  canSubmitModelSettingsSection,
+  getDefaultCategoryForSection,
+  getFirstVisibleSettingsCategoryForSection,
+  getSettingsNavItems,
+  getSettingsSectionItems,
+  type SettingsSection,
+  type SettingsSectionItem,
+} from "./settings-navigation-model";
+import {
+  cloneMcpServerConfig,
+  createDefaultMcpServer,
+  createUniqueMcpServerName,
+  formatMcpStartupStats,
+  mcpServerConnectionLabel,
+  updateMcpServerConfigs,
+} from "./settings-mcp-model";
+import {
+  createRuntimePreferenceId,
+  parseMcpServerEnvDraft,
+  parseMcpServerStringRecordDraft,
+  parseRuntimeSkillsExtraRootsDraft,
+  splitCommaList,
+  splitWhitespaceList,
+  validateRuntimeCommandDraft,
+  validateRuntimeSkillsNumericDraft,
+  type RuntimeCommandDraftField,
+  type RuntimeSkillsDraftField,
+  type SettingsTranslator,
+} from "./settings-runtime-model";
 import { i18n, persistLocale, setFollowSystemTheme, setTheme } from "../i18n";
 import {
   CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
@@ -111,8 +139,6 @@ export interface SettingsFormState {
 
 export type SaveState = "idle" | "dirty" | "loading" | "saving" | "saved" | "error";
 type RuntimeSaveState = Exclude<SaveState, "dirty">;
-type RuntimeCommandDraftField = "timeoutMs" | "maxOutputBytes";
-type RuntimeSkillsDraftField = "activeLimit" | "instructionBudgetBytes";
 type SettingsSseApi = {
   subscribeGlobal(): Promise<IpcResult<SseSubscribeGlobalResponse>>;
   unsubscribeGlobal(): Promise<IpcResult<SseUnsubscribeGlobalResponse>>;
@@ -128,45 +154,6 @@ interface RuntimeSkillsDraft {
   extraRoots: string;
 }
 type RuntimePermissionRuleEditableField = "tool" | "pattern" | "effect";
-type SettingsSection =
-  | "basic"
-  | "model"
-  | "agent"
-  | "tools"
-  | "workbench"
-  | "visibility";
-type SettingsTranslator = (key: string, options?: Record<string, unknown>) => string;
-
-interface SettingsSectionItem {
-  id: SettingsSection;
-  label: string;
-  description: string;
-}
-
-const MODEL_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
-  "profiles",
-  "connection",
-  "context",
-  "reasoning",
-];
-const BASIC_SETTINGS_CATEGORIES: readonly SettingsCategory[] = ["appearance"];
-const AGENT_SETTINGS_CATEGORIES: readonly SettingsCategory[] = ["compaction", "skills"];
-const TOOLS_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
-  "permissions",
-  "mcpServers",
-  "toolAccess",
-  "commandLimits",
-];
-const WORKBENCH_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
-  "startup",
-  "layout",
-  "session",
-  "modelDefaults",
-  "attachments",
-];
-const VISIBILITY_SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
-  "approvalPresentation",
-];
 const THEME_PREFERENCES: readonly ThemePreference[] = ["light", "dark"];
 const STARTUP_VIEWS: readonly DefaultStartupView[] = ["code", "write"];
 const DEFAULT_INSPECTOR_MODES: readonly DefaultInspectorMode[] = [
@@ -235,38 +222,7 @@ export function SettingsView(): ReactElement {
     form,
   );
   const settingsSectionItems = useMemo<SettingsSectionItem[]>(
-    () => [
-      {
-        id: "basic",
-        label: t("settings.sectionTabs.basic"),
-        description: t("settings.sectionTabs.basicDesc"),
-      },
-      {
-        id: "model",
-        label: t("settings.sectionTabs.model"),
-        description: t("settings.sectionTabs.modelDesc"),
-      },
-      {
-        id: "agent",
-        label: t("settings.sectionTabs.agent"),
-        description: t("settings.sectionTabs.agentDesc"),
-      },
-      {
-        id: "tools",
-        label: t("settings.sectionTabs.tools"),
-        description: t("settings.sectionTabs.toolsDesc"),
-      },
-      {
-        id: "workbench",
-        label: t("settings.sectionTabs.workbench"),
-        description: t("settings.sectionTabs.workbenchDesc"),
-      },
-      {
-        id: "visibility",
-        label: t("settings.sectionTabs.visibility"),
-        description: t("settings.sectionTabs.visibilityDesc"),
-      },
-    ],
+    () => getSettingsSectionItems(t),
     [t],
   );
   const settingsNavItems = useMemo<SettingsSidebarItem[]>(
@@ -2813,103 +2769,9 @@ type IntegerValidationResult =
   | { ok: true; value: number | undefined }
   | { ok: false; message: string };
 
-type RuntimeCommandDraftValidationResult =
-  | { ok: true; value: number | null }
-  | { ok: false; message: string };
-
-type RuntimeSkillsNumericDraftValidationResult =
-  | { ok: true; value: number | null }
-  | { ok: false; message: string };
-
-type RuntimeSkillsExtraRootsDraftValidationResult =
-  | { ok: true; value: string[] }
-  | { ok: false; message: string };
-
 type BasicPreferenceDraftValidationResult =
   | { ok: true; value: number }
   | { ok: false; message: string };
-
-export function validateRuntimeCommandDraft(
-  field: RuntimeCommandDraftField,
-  raw: string,
-  t: SettingsTranslator,
-): RuntimeCommandDraftValidationResult {
-  const label = field === "timeoutMs"
-    ? t("settings.fields.commandTimeout")
-    : t("settings.fields.commandMaxOutput");
-  const min = field === "timeoutMs"
-    ? MIN_RUNTIME_COMMAND_TIMEOUT_MS
-    : MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
-  const max = field === "timeoutMs"
-    ? MAX_RUNTIME_COMMAND_TIMEOUT_MS
-    : MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
-  const trimmed = raw.trim();
-  if (!trimmed) return { ok: true, value: null };
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    return {
-      ok: false,
-      message: t("settings.errors.positiveInteger", { field: label }),
-    };
-  }
-  if (parsed < min || parsed > max) {
-    return {
-      ok: false,
-      message: t("settings.errors.integerRange", { field: label, min, max }),
-    };
-  }
-  return { ok: true, value: parsed };
-}
-
-export function validateRuntimeSkillsNumericDraft(
-  field: RuntimeSkillsDraftField,
-  raw: string,
-  t: SettingsTranslator,
-): RuntimeSkillsNumericDraftValidationResult {
-  const label = field === "activeLimit"
-    ? t("settings.fields.skillsActiveLimit")
-    : t("settings.fields.skillsInstructionBudgetBytes");
-  const min = field === "activeLimit"
-    ? MIN_RUNTIME_SKILLS_ACTIVE_LIMIT
-    : MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES;
-  const max = field === "activeLimit"
-    ? MAX_RUNTIME_SKILLS_ACTIVE_LIMIT
-    : MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES;
-  const trimmed = raw.trim();
-  if (!trimmed) return { ok: true, value: null };
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    return {
-      ok: false,
-      message: t("settings.errors.nonNegativeInteger", { field: label }),
-    };
-  }
-  if (parsed < min || parsed > max) {
-    return {
-      ok: false,
-      message: t("settings.errors.integerRange", { field: label, min, max }),
-    };
-  }
-  return { ok: true, value: parsed };
-}
-
-export function parseRuntimeSkillsExtraRootsDraft(
-  raw: string,
-  t: SettingsTranslator,
-): RuntimeSkillsExtraRootsDraftValidationResult {
-  const roots = raw
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const invalidIndex = roots.findIndex((root) => root.includes("\0"));
-  if (invalidIndex >= 0) {
-    return {
-      ok: false,
-      message: t("settings.errors.skillsExtraRootNul", { index: invalidIndex + 1 }),
-    };
-  }
-  return { ok: true, value: Array.from(new Set(roots)) };
-}
 
 export function formatSkillTriggerSummary(
   skill: RuntimeSkillCatalogEntry,
@@ -3059,168 +2921,9 @@ function createDefaultPermissionRule(): RuntimePermissionRule {
   };
 }
 
-function cloneMcpServerConfig(server: McpServerConfig): McpServerConfig {
-  return {
-    ...server,
-    args: [...server.args],
-    env: { ...server.env },
-    headers: { ...server.headers },
-    readOnlyTools: [...server.readOnlyTools],
-  };
-}
-
 function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length &&
     left.every((value, index) => value === right[index]);
-}
-
-export function createDefaultMcpServer(name: string): McpServerConfig {
-  const now = new Date().toISOString();
-  return {
-    id: createRuntimePreferenceId(),
-    name,
-    transport: "stdio",
-    command: "node",
-    args: [],
-    env: {},
-    headers: {},
-    enabled: false,
-    readOnlyTools: [],
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
-export function createUniqueMcpServerName(
-  baseName: string,
-  servers: readonly Pick<McpServerConfig, "name">[],
-): string {
-  const trimmedBaseName = baseName.trim() || "local-mcp";
-  const usedNames = new Set<string>();
-  const usedNameSegments = new Set<string>();
-  for (const server of servers) {
-    const trimmedName = server.name.trim();
-    if (trimmedName) {
-      usedNames.add(trimmedName);
-      usedNameSegments.add(toMcpNameSegment(trimmedName));
-    }
-  }
-  if (
-    !usedNames.has(trimmedBaseName) &&
-    !usedNameSegments.has(toMcpNameSegment(trimmedBaseName))
-  ) {
-    return trimmedBaseName;
-  }
-  for (let suffix = 2; ; suffix += 1) {
-    const candidate = `${trimmedBaseName}-${suffix}`;
-    if (
-      !usedNames.has(candidate) &&
-      !usedNameSegments.has(toMcpNameSegment(candidate))
-    ) {
-      return candidate;
-    }
-  }
-}
-
-export function updateMcpServerConfigs(
-  servers: readonly McpServerConfig[],
-  id: string,
-  update: McpServerConfigUpdate,
-): McpServerConfig[] {
-  const updatedAt = new Date().toISOString();
-  return servers.map((server) =>
-    server.id === id
-      ? {
-          ...server,
-          ...update,
-          args: update.args ? [...update.args] : server.args,
-          env: update.env ? { ...update.env } : server.env,
-          headers: update.headers ? { ...update.headers } : server.headers,
-          readOnlyTools: update.readOnlyTools
-            ? [...update.readOnlyTools]
-            : server.readOnlyTools,
-          updatedAt,
-        }
-      : server,
-  );
-}
-
-type McpServerEnvDraftResult =
-  | { ok: true; value: Record<string, string> }
-  | { ok: false; message: string };
-
-export function parseMcpServerEnvDraft(
-  raw: string,
-  t: SettingsTranslator,
-): McpServerEnvDraftResult {
-  return parseMcpServerStringRecordDraft(raw, t, "env");
-}
-
-export function parseMcpServerStringRecordDraft(
-  raw: string,
-  t: SettingsTranslator,
-  kind: "env" | "headers",
-): McpServerEnvDraftResult {
-  const trimmed = raw.trim();
-  if (!trimmed) return { ok: true, value: {} };
-  const objectError = kind === "headers"
-    ? t("settings.errors.mcpHeadersObject")
-    : t("settings.errors.mcpEnvObject");
-  const jsonError = kind === "headers"
-    ? t("settings.errors.mcpHeadersJson")
-    : t("settings.errors.mcpEnvJson");
-  const duplicateKeyError = kind === "headers"
-    ? t("settings.errors.mcpHeadersDuplicateKey")
-    : t("settings.errors.mcpEnvDuplicateKey");
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { ok: false, message: objectError };
-    }
-    const env: Record<string, string> = {};
-    const keys = new Set<string>();
-    for (const [key, value] of Object.entries(parsed)) {
-      if (!key.trim() || key.includes("\0") || typeof value !== "string" || value.includes("\0")) {
-        return { ok: false, message: objectError };
-      }
-      const parsedKey = key.trim();
-      if (keys.has(parsedKey)) {
-        return { ok: false, message: duplicateKeyError };
-      }
-      keys.add(parsedKey);
-      env[parsedKey] = value;
-    }
-    return { ok: true, value: env };
-  } catch (error) {
-    void error;
-    return { ok: false, message: jsonError };
-  }
-}
-
-export function splitWhitespaceList(value: string): string[] {
-  return value.split(/\s+/).map((entry) => entry.trim()).filter(Boolean);
-}
-
-export function splitCommaList(value: string): string[] {
-  return value.split(",").map((entry) => entry.trim()).filter(Boolean);
-}
-
-function mcpServerConnectionLabel(
-  server: McpServerConfig,
-  status: McpServerStatusRecord | undefined,
-  t: SettingsTranslator,
-): string {
-  if (!status) {
-    return server.transport === "stdio"
-      ? server.command ?? t("settings.mcpServers.unconfigured")
-      : server.url ?? t("settings.mcpServers.unconfigured");
-  }
-  return t("settings.mcpServers.statusSummary", {
-    status: t(`settings.mcpStatuses.${status.status}`),
-    tools: status.toolCount,
-    prompts: status.promptCount,
-    resources: status.resourceCount,
-  });
 }
 
 function McpServerSurfaceSummary({
@@ -3271,22 +2974,6 @@ function McpServerSurfaceSummary({
   );
 }
 
-export function formatMcpStartupStats(
-  status: McpServerStatusRecord,
-  t: SettingsTranslator,
-): string | null {
-  if (status.lastStartupDurationMs === undefined &&
-    status.startupSuccessCount === undefined &&
-    status.startupFailureCount === undefined) {
-    return null;
-  }
-  return t("settings.mcpServers.startupStats", {
-    duration: status.lastStartupDurationMs ?? 0,
-    successes: status.startupSuccessCount ?? 0,
-    failures: status.startupFailureCount ?? 0,
-  });
-}
-
 function McpSurfaceList({
   label,
   values,
@@ -3301,13 +2988,6 @@ function McpSurfaceList({
       <span>{values.slice(0, 6).join(", ")}</span>
     </div>
   );
-}
-
-function createRuntimePreferenceId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function clonePermissionRules(
@@ -3476,13 +3156,6 @@ export function shouldDisableModelProfileControls(
     Boolean(profileBusy);
 }
 
-export function canSubmitModelSettingsSection(
-  section: SettingsSection,
-  category: SettingsCategory,
-): boolean {
-  return section === "model" && category !== "profiles";
-}
-
 export function clearDeletedDefaultProfileReferences(
   preferences: RuntimePreferences,
   deletedProfileId: string,
@@ -3535,71 +3208,4 @@ function hasUnsavedProfileChanges(
     form.model_reasoning_effort !== activeProfile.config.model_reasoning_effort ||
     form.agent_autonomy !== activeProfile.config.agent_autonomy
   );
-}
-
-export function getDefaultCategoryForSection(
-  section: SettingsSection,
-): SettingsCategory {
-  switch (section) {
-    case "basic":
-      return "appearance";
-    case "model":
-      return "profiles";
-    case "agent":
-      return "compaction";
-    case "tools":
-      return "permissions";
-    case "workbench":
-      return "startup";
-    case "visibility":
-      return "approvalPresentation";
-  }
-}
-
-export function isSettingsCategoryInSection(
-  section: SettingsSection,
-  category: SettingsCategory,
-): boolean {
-  return getSettingsCategoriesForSection(section).includes(category);
-}
-
-export function getFirstVisibleSettingsCategoryForSection(
-  section: SettingsSection,
-  showAdvanced: boolean,
-): SettingsCategory | null {
-  return getSettingsCategoriesForSection(section)
-    .find((category) => showAdvanced || !isSettingsCategoryAdvanced(category)) ?? null;
-}
-
-function getSettingsCategoriesForSection(
-  section: SettingsSection,
-): readonly SettingsCategory[] {
-  switch (section) {
-    case "basic":
-      return BASIC_SETTINGS_CATEGORIES;
-    case "model":
-      return MODEL_SETTINGS_CATEGORIES;
-    case "agent":
-      return AGENT_SETTINGS_CATEGORIES;
-    case "tools":
-      return TOOLS_SETTINGS_CATEGORIES;
-    case "workbench":
-      return WORKBENCH_SETTINGS_CATEGORIES;
-    case "visibility":
-      return VISIBILITY_SETTINGS_CATEGORIES;
-  }
-}
-
-function getSettingsNavItems(
-  section: SettingsSection,
-  t: SettingsTranslator,
-): SettingsSidebarItem[] {
-  return getSettingsCategoriesForSection(section).map((category, index) => ({
-    id: category,
-    label: t(`settings.nav.${category}`),
-    description: t(`settings.nav.${category}Desc`),
-    marker: String(index + 1).padStart(2, "0"),
-    advanced: isSettingsCategoryAdvanced(category),
-    searchKeywords: getSettingsCategorySearchKeywords(category, t),
-  }));
 }

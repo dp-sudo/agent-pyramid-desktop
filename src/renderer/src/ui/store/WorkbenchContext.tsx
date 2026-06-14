@@ -11,13 +11,10 @@ import {
   DEFAULT_RUNTIME_PREFERENCES,
 } from "../../../../shared/agent-contracts";
 import {
-  DEFAULT_BASIC_PREFERENCES,
   LEFT_SIDEBAR_DEFAULT_WIDTH,
   RIGHT_INSPECTOR_DEFAULT_WIDTH,
   loadBasicPreferences,
   loadLastWorkspaceRoot,
-  saveBasicPreferences,
-  saveLastWorkspaceRoot,
   type WorkbenchBasicPreferences,
 } from "../preferences";
 import type {
@@ -30,29 +27,30 @@ import type {
   TerminalTurnStatus,
   ThreadRecord,
   ThreadSummary,
-  ToolProgressEvent,
   TurnRecord,
 } from "../../../../shared/agent-contracts";
+import {
+  appendToolProgressToItems,
+  type ToolProgressUpdate,
+} from "./tool-progress-model";
+import {
+  applyModelConfigToComposer,
+  applyModelProfilesToComposer,
+  selectComposerModel,
+} from "./composer-model-model";
+import {
+  applyBasicPreferenceUpdate,
+  persistWorkspaceRootWhenRestored,
+  setLeftSidebarWidthPreference,
+  setRightSidebarWidthPreference,
+  setShowArchivedThreadsPreference,
+  type BasicPreferenceAction,
+} from "./basic-preferences-state";
+
+export type { ToolProgressUpdate } from "./tool-progress-model";
 
 export type WorkbenchRoute = "code" | "write" | "settings";
 export type RightPanelMode = "changes" | "checkpoints" | "todo" | "plan" | null;
-const TOOL_PROGRESS_DISPLAY_MAX_CHARS = 12_000;
-
-export interface ToolProgressDisplayResult {
-  kind: "tool_progress";
-  stdout?: string;
-  stderr?: string;
-  stdoutTruncated?: boolean;
-  stderrTruncated?: boolean;
-}
-
-export type ToolProgressUpdate = Pick<
-  ToolProgressEvent,
-  "threadId" | "turnId" | "toolCallId" | "seq"
-> & {
-  stdout?: string;
-  stderr?: string;
-};
 
 export interface ComposerAttachment extends AttachmentRecord {
   previewUrl?: string;
@@ -140,68 +138,6 @@ function upsertItem(items: Item[], item: Item): Item[] {
   return next;
 }
 
-export function appendToolProgressToItems(
-  items: Item[],
-  progress: ToolProgressUpdate,
-): Item[] {
-  const index = items.findIndex(
-    (item) => item.kind === "tool" && item.toolCallId === progress.toolCallId,
-  );
-  if (index < 0) return items;
-  const item = items[index];
-  if (item.kind !== "tool" || item.status !== "running") return items;
-  const current = readToolProgressDisplayResult(item.result);
-  const nextResult: ToolProgressDisplayResult = {
-    kind: "tool_progress",
-    ...appendProgressStream(current, "stdout", progress.stdout),
-    ...appendProgressStream(current, "stderr", progress.stderr),
-  };
-  const next = [...items];
-  next[index] = { ...item, result: nextResult };
-  return next;
-}
-
-function readToolProgressDisplayResult(result: unknown): ToolProgressDisplayResult {
-  if (!result || typeof result !== "object") {
-    return { kind: "tool_progress" };
-  }
-  const record = result as Record<string, unknown>;
-  if (record.kind !== "tool_progress") {
-    return { kind: "tool_progress" };
-  }
-  return {
-    kind: "tool_progress",
-    ...(typeof record.stdout === "string" ? { stdout: record.stdout } : {}),
-    ...(typeof record.stderr === "string" ? { stderr: record.stderr } : {}),
-    ...(record.stdoutTruncated === true ? { stdoutTruncated: true } : {}),
-    ...(record.stderrTruncated === true ? { stderrTruncated: true } : {}),
-  };
-}
-
-function appendProgressStream(
-  current: ToolProgressDisplayResult,
-  stream: "stdout" | "stderr",
-  chunk: string | undefined,
-): Partial<ToolProgressDisplayResult> {
-  const previous = current[stream] ?? "";
-  const wasTruncated = stream === "stdout"
-    ? current.stdoutTruncated === true
-    : current.stderrTruncated === true;
-  if (!chunk) {
-    return stream === "stdout"
-      ? { stdout: previous, stdoutTruncated: wasTruncated }
-      : { stderr: previous, stderrTruncated: wasTruncated };
-  }
-  const combined = previous + chunk;
-  const truncated = wasTruncated || combined.length > TOOL_PROGRESS_DISPLAY_MAX_CHARS;
-  const text = truncated
-    ? combined.slice(-TOOL_PROGRESS_DISPLAY_MAX_CHARS)
-    : combined;
-  return stream === "stdout"
-    ? { stdout: text, stdoutTruncated: truncated }
-    : { stderr: text, stderrTruncated: truncated };
-}
-
 function updateThreadActivity(
   thread: ThreadRecord,
   timestamp: string,
@@ -275,14 +211,6 @@ export type Action =
   | { type: "setRightSidebarWidth"; width: number }
   | BasicPreferenceAction;
 
-type BasicPreferenceAction = {
-  [K in keyof WorkbenchBasicPreferences]: {
-    type: "updateBasicPreference";
-    key: K;
-    value: WorkbenchBasicPreferences[K];
-  };
-}[keyof WorkbenchBasicPreferences];
-
 export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
   switch (action.type) {
     case "setRoute":
@@ -312,59 +240,26 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       return {
         ...state,
         modelConfig: action.config,
-        composer: {
-          ...state.composer,
-          model: action.config.model,
-          reasoningEffort: action.config.model_reasoning_effort,
-        },
+        composer: applyModelConfigToComposer(state.composer, action.config),
       };
-    case "setModelProfiles": {
-      const currentExplicitProfile = state.composer.modelProfileId &&
-        state.composer.modelProfileSelection === "explicit"
-        ? action.profiles.profiles.find(
-            (profile) => profile.id === state.composer.modelProfileId,
-          )
-        : undefined;
-      const activeProfile =
-        action.profiles.profiles.find(
-          (profile) => profile.id === action.profiles.activeProfileId,
-        ) ?? action.profiles.profiles[0];
-      const selectedProfile = currentExplicitProfile ?? activeProfile;
+    case "setModelProfiles":
       return {
         ...state,
         modelProfiles: action.profiles,
-        ...(selectedProfile
-          ? {
-              composer: {
-                ...state.composer,
-                model: selectedProfile.config.model,
-                modelProfileId: selectedProfile.id,
-                modelProfileSelection: currentExplicitProfile ? "explicit" : "auto",
-                reasoningEffort: selectedProfile.config.model_reasoning_effort,
-              },
-            }
-          : {}),
+        composer: applyModelProfilesToComposer(state.composer, action.profiles),
       };
-    }
     case "setRuntimePreferences":
       return {
         ...state,
         runtimePreferences: action.preferences,
       };
     case "setWorkspaceRoot":
-      if (state.basicPreferences.restoreLastWorkspaceOnStartup) {
-        saveLastWorkspaceRoot(action.workspaceRoot);
-      }
+      persistWorkspaceRootWhenRestored(state.basicPreferences, action.workspaceRoot);
       return { ...state, workspaceRoot: action.workspaceRoot };
     case "setShowArchivedThreads": {
-      const nextPreferences = saveBasicPreferences({
-        ...state.basicPreferences,
-        showArchivedThreadsByDefault: action.show,
-      });
       return {
         ...state,
-        showArchivedThreads: action.show,
-        basicPreferences: nextPreferences,
+        ...setShowArchivedThreadsPreference(state.basicPreferences, action.show),
       };
     }
     case "setThreads":
@@ -391,9 +286,10 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       };
     }
     case "selectThread":
-      if (state.basicPreferences.restoreLastWorkspaceOnStartup) {
-        saveLastWorkspaceRoot(action.thread.workspace || state.workspaceRoot);
-      }
+      persistWorkspaceRootWhenRestored(
+        state.basicPreferences,
+        action.thread.workspace || state.workspaceRoot,
+      );
       return {
         ...state,
         activeThread: action.thread,
@@ -457,14 +353,12 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
     case "setComposerModel":
       return {
         ...state,
-        composer: {
-          ...state.composer,
-          model: action.model,
-          modelProfileId: action.modelProfileId,
-          modelProfileSelection:
-            action.modelProfileSelection ??
-            (action.modelProfileId ? "explicit" : "auto"),
-        },
+        composer: selectComposerModel(
+          state.composer,
+          action.model,
+          action.modelProfileId,
+          action.modelProfileSelection,
+        ),
       };
     case "setComposerReasoningEffort":
       return {
@@ -520,71 +414,18 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
     case "setLeftSidebarWidth":
       return {
         ...state,
-        leftSidebarWidth: action.width,
-        basicPreferences: state.basicPreferences.rememberLeftSidebarWidth
-          ? saveBasicPreferences({
-              ...state.basicPreferences,
-              leftSidebarWidth: action.width,
-            })
-          : state.basicPreferences,
+        ...setLeftSidebarWidthPreference(state.basicPreferences, action.width),
       };
     case "setRightSidebarWidth":
       return {
         ...state,
-        rightSidebarWidth: action.width,
-        basicPreferences: state.basicPreferences.rememberRightSidebarWidth
-          ? saveBasicPreferences({
-              ...state.basicPreferences,
-              rightSidebarWidth: action.width,
-            })
-          : state.basicPreferences,
+        ...setRightSidebarWidthPreference(state.basicPreferences, action.width),
       };
-    case "updateBasicPreference": {
-      const draftPreferences = {
-        ...state.basicPreferences,
-        [action.key]: action.value,
-      };
-      if (action.key === "rememberLeftSidebarWidth") {
-        draftPreferences.leftSidebarWidth = action.value
-          ? state.leftSidebarWidth
-          : DEFAULT_BASIC_PREFERENCES.leftSidebarWidth;
-      }
-      if (action.key === "rememberRightSidebarWidth") {
-        draftPreferences.rightSidebarWidth = action.value
-          ? state.rightSidebarWidth
-          : DEFAULT_BASIC_PREFERENCES.rightSidebarWidth;
-      }
-      if (
-        action.key === "restoreLastWorkspaceOnStartup" &&
-        action.value &&
-        state.workspaceRoot
-      ) {
-        saveLastWorkspaceRoot(state.workspaceRoot);
-      }
-      const nextPreferences = saveBasicPreferences(draftPreferences);
+    case "updateBasicPreference":
       return {
         ...state,
-        basicPreferences: nextPreferences,
-        ...(action.key === "showArchivedThreadsByDefault"
-          ? { showArchivedThreads: nextPreferences.showArchivedThreadsByDefault }
-          : {}),
-        ...(action.key === "rememberLeftSidebarWidth" &&
-        !nextPreferences.rememberLeftSidebarWidth
-          ? { leftSidebarWidth: DEFAULT_BASIC_PREFERENCES.leftSidebarWidth }
-          : {}),
-        ...(action.key === "rememberRightSidebarWidth" &&
-        !nextPreferences.rememberRightSidebarWidth
-          ? { rightSidebarWidth: DEFAULT_BASIC_PREFERENCES.rightSidebarWidth }
-          : {}),
-        ...(action.key === "defaultInspectorMode"
-          ? { rightPanelMode: nextPreferences.defaultInspectorMode }
-          : {}),
-        ...(action.key === "restoreLastWorkspaceOnStartup" &&
-        nextPreferences.restoreLastWorkspaceOnStartup
-          ? { workspaceRoot: state.workspaceRoot || loadLastWorkspaceRoot() }
-          : {}),
+        ...applyBasicPreferenceUpdate(state, action),
       };
-    }
     default: {
       const exhaustive: never = action;
       void exhaustive;

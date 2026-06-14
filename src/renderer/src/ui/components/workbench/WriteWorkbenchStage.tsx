@@ -1,8 +1,6 @@
 import type { ReactElement } from "react";
-import {
-  WriteWorkspaceView,
-  type WriteAssistantPromptPayload,
-} from "../write/WriteWorkspaceView";
+import { WriteWorkspaceView } from "../write/WriteWorkspaceView";
+import type { WriteAssistantPromptPayload } from "../write/write-workspace-model";
 import type { ApprovalPendingDecision } from "../chat/ChatBlock";
 import { WorkbenchErrorToast } from "./WorkbenchErrorToast";
 import type { ThreadSummary } from "../../../../../shared/agent-contracts";

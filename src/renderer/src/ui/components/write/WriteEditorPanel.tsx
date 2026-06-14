@@ -11,8 +11,11 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { AssistantMarkdown } from "../chat/AssistantMarkdown";
+import type {
+  WriteEditorSelectionState,
+  WriteStatus,
+} from "./write-workspace-model";
 
-export type WriteStatus = "idle" | "loading" | "saving" | "saved" | "error";
 export type WritePreviewMode = "live" | "debounced" | "manual";
 export type WritePreviewStatus = "live" | "updating" | "paused";
 export type WriteSourceMode = "standard" | "large-document";
@@ -21,11 +24,6 @@ const WRITE_PREVIEW_LIVE_MAX_CHARS = 24000;
 const WRITE_PREVIEW_MANUAL_MIN_CHARS = 120000;
 const WRITE_PREVIEW_DEBOUNCE_MS = 450;
 const WRITE_SOURCE_LARGE_DOCUMENT_MIN_CHARS = 60000;
-
-export interface WriteEditorSelectionState {
-  selectionStart: number;
-  selectionEnd: number;
-}
 
 export interface WriteEditorPanelProps {
   content: string;
