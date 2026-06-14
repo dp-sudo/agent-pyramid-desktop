@@ -75,13 +75,14 @@ export function resolveWorkspacePathLexically(
 }
 
 export function resolveWorkspaceRoot(workspace: string): string {
-  if (!workspace.trim()) {
+  const normalized = workspace.trim();
+  if (!normalized) {
     throw new Error("Workspace path is required.");
   }
-  if (!path.isAbsolute(workspace.trim())) {
+  if (!path.isAbsolute(normalized)) {
     throw new Error("Workspace path must be absolute.");
   }
-  return path.resolve(workspace);
+  return path.resolve(normalized);
 }
 
 function resolveWorkspacePathFromRoot(

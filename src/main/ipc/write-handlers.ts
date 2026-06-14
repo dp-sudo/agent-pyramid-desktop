@@ -337,7 +337,30 @@ export async function renameMarkdownFile(
     label: "Write rename",
     relativePath: nextRelativePath,
   });
-  await fs.rm(currentFullPath, { force: false });
+  try {
+    await fs.rm(currentFullPath, { force: false });
+  } catch (error) {
+    try {
+      // Rename is implemented as copy-then-delete to preserve the no-follow
+      // source read and exclusive target write boundaries. If deleting the
+      // source fails, remove the target created by this attempt so callers do
+      // not observe a failed rename as a duplicate document.
+      const rollbackTarget = await resolveWritePathForAccess(
+        workspace,
+        nextRelativePath,
+        "write",
+      );
+      if (path.resolve(rollbackTarget) !== path.resolve(nextFullPath)) {
+        throw new Error(`Path changed before rename rollback: ${nextRelativePath}`);
+      }
+      await fs.rm(rollbackTarget, { force: true });
+    } catch (rollbackError) {
+      throw new Error(
+        `Write rename failed: ${messageOf(error)}; rollback failed: ${messageOf(rollbackError)}`,
+      );
+    }
+    throw error;
+  }
 }
 
 export async function deleteMarkdownFile(

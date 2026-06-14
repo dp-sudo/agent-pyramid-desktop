@@ -10,6 +10,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   isAttachmentRecord,
   isUuidString,
+  normalizeAttachmentName,
   normalizeSupportedAttachmentMimeType,
 } from "../../shared/agent-contracts.js";
 
@@ -160,11 +161,11 @@ function assertSafeId(value: string, label: string): string {
 }
 
 function assertSafeName(value: unknown): string {
-  if (typeof value !== "string" || !value.trim()) {
+  if (typeof value !== "string") {
     throw new Error("Attachment name is required.");
   }
-  const name = path.basename(value.trim()).slice(0, 180);
-  if (!name || name === "." || name === "..") {
+  const name = normalizeAttachmentName(value);
+  if (!name) {
     throw new Error("Attachment name is required.");
   }
   return name;

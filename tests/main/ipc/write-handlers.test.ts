@@ -385,6 +385,44 @@ describe("write handlers helpers", () => {
     }
   });
 
+  it("removes the created rename target if deleting the source fails", async () => {
+    const workspace = await makeTempDir("write-rename-source-delete-fails-");
+    try {
+      await fs.mkdir(path.join(workspace, "docs"), { recursive: true });
+      const sourcePath = path.join(workspace, "docs", "source.md");
+      const targetPath = path.join(workspace, "docs", "renamed.md");
+      await fs.writeFile(sourcePath, "# Source\n", "utf8");
+      const realRm = fs.rm.bind(fs);
+      let failNextSourceDelete = true;
+      const rmSpy = vi.spyOn(fs, "rm").mockImplementation((async (
+        ...args: Parameters<typeof fs.rm>
+      ) => {
+        const target = args[0];
+        if (
+          failNextSourceDelete &&
+          typeof target === "string" &&
+          path.resolve(target) === sourcePath
+        ) {
+          failNextSourceDelete = false;
+          throw new Error("simulated source delete failure");
+        }
+        return realRm(...args);
+      }) as typeof fs.rm);
+
+      try {
+        await expect(renameMarkdownFile(workspace, "docs/source.md", "docs/renamed.md"))
+          .rejects.toThrow("simulated source delete failure");
+      } finally {
+        rmSpy.mockRestore();
+      }
+
+      await expect(fs.readFile(sourcePath, "utf8")).resolves.toBe("# Source\n");
+      await expect(fs.access(targetPath)).rejects.toThrow();
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("rejects renames when the source is replaced with a symlink before read", async () => {
     const workspace = await makeTempDir("write-rename-source-symlink-race-");
     const outside = await makeTempDir("write-rename-source-symlink-race-outside-");

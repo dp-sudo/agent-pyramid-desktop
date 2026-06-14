@@ -1450,3 +1450,54 @@
 - `ModelConfigStore.createProfile()` now validates the outer create payload shape before reading fields, matching the IPC boundary and keeping malformed direct calls traceable.
 - Stored config recovery remains normalization-oriented; the stricter path applies to new mutation payloads only.
 - Focused verification: `npm test -- tests/main/persistence/model-config-store.test.ts tests/main/ipc/model-config-handlers.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Checkpoint session rewind transcript guard
+- `checkpoint:list` now derives `canRewindSession` from the current thread transcript turn ids, so orphaned checkpoint records can remain code-rewindable without enabling session rewind in the inspector.
+- `checkpoint:rewind` now verifies the selected transcript turn exists before calling `CheckpointStore.restoreCode()` when `rewindSession` is true, preventing a partial code restore followed by a failed session truncation.
+- Focused verification: `npm test -- tests/main/ipc/checkpoints-handlers.test.ts tests/main/persistence/checkpoint-store.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Write rename source-delete rollback
+- `write.rename` now removes the newly created target if deleting the source fails after the target write succeeds, so a failed rename does not leave a duplicate Markdown document behind.
+- Added Write IPC regression coverage that simulates source deletion failure and verifies the original source remains while the created target is cleaned up.
+- Focused verification: `npm test -- tests/main/ipc/write-handlers.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Worker cancel post failure guard
+- `LlmWorkerPool.cancel()` now treats cancel `postMessage` failures as best-effort: it logs the failed cancel, clears the current cancel handle, and does not throw into `AgentRuntime.interruptTurn()`.
+- Added worker-pool regression coverage for a closed worker port during cancel so interrupted turn cleanup can continue even when the cancel message cannot be posted.
+- Focused verification: `npm test -- tests/main/infrastructure/worker-pool.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP disconnect close-failure cleanup
+- `McpHost.disconnect()` now clears local client/tool/prompt/resource state and emits `disconnected` before surfacing transport close failures, leaving `lastError` for status inspection instead of reporting a half-connected server with unregistered tools.
+- Added MCP host regression coverage with a Streamable HTTP server whose session DELETE returns 500, verifying the disconnect error remains traceable while registry tools and server surface are cleared.
+- Focused verification: `npm test -- tests/main/infrastructure/mcp-host.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - MCP reconfigure close-failure guard
+- `McpHost.configure()` now treats runtime preferences as authoritative even when a stale server transport fails during close: local server state is cleared, the close failure is logged, removed servers are deleted from the host map, and updated servers can connect with the new config.
+- Reconnect cleanup now detaches the previous client and unregisters live tools before awaiting transport close, so a close failure cannot leave a new connection attempt stuck with old surface metadata or missing registry entries.
+- Added MCP host regression coverage that reconfigures a connected Streamable HTTP server whose DELETE returns 500 into a stdio server, verifying the old namespaced tool is removed and the new tool is registered.
+- Focused verification: `npm test -- tests/main/infrastructure/mcp-host.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Code composer MCP pre-thread guard
+- Code composer now resolves `/mcp__<server>__<prompt>` and `@server:uri` references before auto-creating a new thread, so MCP parser/lookup failures surface as composer errors without leaving an empty session behind.
+- Added renderer regression coverage that fixes the `sendCodeComposerPayload` ordering before `threads.create()`.
+- Focused verification: `npm test -- tests/renderer/workbench.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Skill trigger token boundary
+- Skill slash-command triggers and explicit `$skill` / `@skill` / `/skill:id` mentions now require token boundaries, so same-prefix longer tokens such as `/reviewer` or `@reviewer` no longer activate `/review` / `@review`.
+- Added SkillService regression coverage for command and mention prefix false positives while preserving punctuation-delimited positive matches.
+- Focused verification: `npm test -- tests/main/skills/skill-service.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Workspace root trim normalization
+- `resolveWorkspaceRoot()` now uses the same trimmed workspace string for absolute-path validation and `path.resolve()`, avoiding the gap where a padded absolute path passed validation but resolved under the current process directory.
+- Added focused workspace-policy coverage for padded absolute roots and relative-root rejection.
+- Focused verification: `npm test -- tests/main/application/workspace-policy.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Attachment metadata name contract
+- Attachment display-name normalization now lives in shared `normalizeAttachmentName()` with the 180-character limit as `MAX_ATTACHMENT_NAME_LENGTH`; `AttachmentStore.create()` and `isAttachmentRecord()` both use that contract.
+- Persisted/replayed attachment metadata with path separators or names longer than the store can produce is filtered instead of reaching runtime or renderer state.
+- Focused verification: `npm test -- tests/main/persistence/attachment-store.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.
+
+### 2026-06-14 - Attachment positive-size metadata guard
+- Shared `isAttachmentRecord()` now rejects `size: 0`, matching `AttachmentStore.create()` which already rejects empty decoded payloads before writing metadata.
+- Attachment index replay coverage now filters zero-byte metadata records, preventing damaged persisted attachment metadata from reaching runtime or renderer state.
+- Focused verification: `npm test -- tests/main/persistence/attachment-store.test.ts tests/shared/agent-contracts.test.ts`; full `typecheck/test/build` verification is run before handoff.

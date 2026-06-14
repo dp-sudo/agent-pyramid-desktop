@@ -108,6 +108,32 @@ describe("checkpoint handlers", () => {
     });
   });
 
+  it("marks session rewind unavailable when the checkpoint turn is absent from the transcript", async () => {
+    const thread = await threadStore.createThread({
+      workspace,
+      mode: "code",
+    });
+    await createCheckpointWithoutTranscript(checkpointStore, thread.id, workspace);
+    registerCheckpointHandlers(checkpointStore, threadStore);
+    const handler = getHandler(CHECKPOINT_LIST_CHANNEL);
+
+    const result = await handler({}, { threadId: thread.id });
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        threadId: thread.id,
+        checkpoints: [
+          expect.objectContaining({
+            turnId: "turn-orphan",
+            canRewindCode: true,
+            canRewindSession: false,
+          }),
+        ],
+      },
+    });
+  });
+
   it("rejects rewind while a thread is running", async () => {
     const thread = await threadStore.createThread({
       workspace,
@@ -130,6 +156,29 @@ describe("checkpoint handlers", () => {
       code: "CHECKPOINT_REWIND_BUSY",
       message: "Cannot rewind a thread while a turn is running.",
     });
+  });
+
+  it("rejects session rewind before restoring code when the transcript turn is absent", async () => {
+    const thread = await threadStore.createThread({
+      workspace,
+      mode: "code",
+    });
+    await createCheckpointWithoutTranscript(checkpointStore, thread.id, workspace);
+
+    registerCheckpointHandlers(checkpointStore, threadStore);
+    const handler = getHandler(CHECKPOINT_REWIND_CHANNEL);
+    const result = await handler({}, {
+      threadId: thread.id,
+      turnId: "turn-orphan",
+      rewindSession: true,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "CHECKPOINT_REWIND_FAILED",
+      message: `Turn turn-orphan was not found in thread ${thread.id}.`,
+    });
+    expect(await fs.readFile(path.join(workspace, "a.txt"), "utf8")).toBe("v1\n");
   });
 
   it("rewinds code and truncates session history", async () => {
@@ -223,6 +272,34 @@ function getHandler(channel: string): IpcHandler {
   const handler = electronMock.handlers.get(channel);
   if (!handler) throw new Error(`Expected handler for ${channel}.`);
   return handler;
+}
+
+async function createCheckpointWithoutTranscript(
+  checkpointStore: CheckpointStore,
+  threadId: string,
+  workspace: string,
+): Promise<void> {
+  await fs.writeFile(path.join(workspace, "a.txt"), "v0\n", "utf8");
+  await checkpointStore.beginTurn({
+    threadId,
+    turnId: "turn-orphan",
+    workspace,
+    prompt: "orphan",
+    createdAt: "2026-06-12T01:00:00.000Z",
+  });
+  await checkpointStore.recordFileSnapshot({
+    threadId,
+    turnId: "turn-orphan",
+    workspace,
+    toolName: "edit_file",
+    relativePath: "a.txt",
+    operation: "update",
+    beforeContent: "v0\n",
+    afterContent: "v1\n",
+    beforeSha256: sha256("v0\n"),
+    afterSha256: sha256("v1\n"),
+  });
+  await fs.writeFile(path.join(workspace, "a.txt"), "v1\n", "utf8");
 }
 
 function userItem(threadId: string, turnId: string, id: string, text: string): Item {

@@ -52,6 +52,17 @@ describe("AttachmentStore", () => {
     expect(record.mimeType).toBe("image/png");
   });
 
+  it("normalizes path-like attachment names with the shared name contract", async () => {
+    const record = await store.create({
+      name: "C:\\Users\\dev\\avatar.png",
+      mimeType: "image/png",
+      dataBase64: ONE_PIXEL_PNG_BASE64,
+    });
+
+    expect(record.name).toBe("avatar.png");
+    expect(await store.list()).toEqual([record]);
+  });
+
   it("rejects attachment names that collapse to empty or directory markers", async () => {
     for (const name of ["/", "///", ".", "./", "../"]) {
       await expect(
@@ -137,6 +148,8 @@ describe("AttachmentStore", () => {
         { ...valid, id: "bad-id" },
         { ...valid, id: "bad-mime", mimeType: "image/svg+xml" },
         { ...valid, id: "bad-size", size: MAX_ATTACHMENT_BYTES + 1 },
+        { ...valid, id: "bad-empty", size: 0 },
+        { ...valid, id: "bad-name", name: "nested/avatar.png" },
       ], null, 2),
       "utf8",
     );

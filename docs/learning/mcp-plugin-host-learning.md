@@ -1,33 +1,33 @@
 # MCP 外部插件 Host 机制学习笔记（阶段 1）
 
-本文只做机制学习与本项目现状对照，不包含实现方案、代码或伪代码。所有结论均附文件路径和行号证据。
+本文只做机制学习与本项目现状对照，不包含实现方案、代码或伪代码。所有结论均附文件路径证据。
 
-> 后续状态说明：本文第 4、5 节记录的是阶段 1 实施前的仓库现状。阶段 2 已在本仓库独立实现 MCP stdio / Streamable HTTP、tools 动态注册、prompts/resources IPC surface、Settings MCP Servers 面板、Code composer 的 `/mcp__server__prompt` 与 `@server:uri` 输入注入、schema cache、startup stats、lazy reconnect placeholder 和 HTTP auth 诊断。当前状态以 `docs/ipc-contracts.md`、`docs/runtime-flow.md`、`docs/data-model.md` 和源码为准；本文保留为学习证据记录。
+> 后续状态说明：本文第 1-3 节保留阶段 1 的外部机制学习证据；第 4、5 节已按阶段 2 后的本项目实现刷新。当前 MCP 状态以 `docs/ipc-contracts.md`、`docs/runtime-flow.md`、`docs/data-model.md` 和源码为准。
 
 ## 0. Pre-Flight Manifest
 
 ```yaml
 [Pre-Flight Manifest]
-Task_Goal: "学习 MCP host 机制设计与逻辑构成，对照本项目现有 MCP 雏形，产出阶段 2 可消费的学习笔记。"
+Task_Goal: "学习 MCP host 机制设计与逻辑构成，对照本项目阶段 1 MCP 雏形，产出阶段 2 可消费的学习笔记。"
 Pre_Conditions:
   - "Reasonix 端已确认存在：docs/external-references/Reasonix/internal/plugin、internal/mcpdiag、internal/agent、internal/control、internal/permission、internal/sandbox、internal/event、internal/tool。"
   - "Reasonix 文档已确认存在：docs/external-references/Reasonix/docs/GUIDE.md、docs/external-references/Reasonix/docs/SPEC.md、docs/external-references/Reasonix/REASONIX.md。"
   - "Claude Code 样本已确认存在：docs/external-references/claude code/.claude/skills/interview/SKILL.md、docs/external-references/claude code/.claude/skills/teach-me/SKILL.md、docs/external-references/claude code/.claude/skills/teach-me/references/pedagogy.md、docs/external-references/claude code/.claude/agents/hello-agent.md。"
   - "Claude Code commands 样本未在 docs/external-references/claude code 下发现；本文只记录未发现，不构造路径。"
-  - "本项目端已确认存在：src/main/infrastructure/mcp/{client.ts,host.ts,protocol.ts,stdio-transport.ts}、src/main/ipc/mcp-handlers.ts、src/main/index.ts、src/shared/agent-contracts.ts、src/shared/ipc.ts、src/preload/index.ts、src/renderer/src/global.d.ts、src/main/application/agent-runtime.ts、src/main/application/permission-policy.ts、src/main/persistence/、src/renderer/src/ui/。"
-  - "本项目 tests/main/{ipc,infrastructure}/mcp-* 未发现；本文标注为未落地/未发现。"
+  - "本项目阶段 1 端已确认存在：src/main/infrastructure/mcp/{client.ts,host.ts,protocol.ts,stdio-transport.ts}、src/main/ipc/mcp-handlers.ts、src/main/index.ts、src/shared/agent-contracts.ts、src/shared/ipc.ts、src/preload/index.ts、src/renderer/src/global.d.ts、src/main/application/agent-runtime.ts、src/main/application/permission-policy.ts、src/main/persistence/、src/renderer/src/ui/。"
+  - "本项目阶段 1 时的 MCP 对照仅用于形成阶段 2 差距清单；当前状态需以后续刷新后的第 4、5 节和权威文档为准。"
 Core_Assumptions:
   - "假设A：Reasonix 的 MCP/plugin host 学习主线应以 internal/plugin 为核心，因为该目录定义 Spec、transport、Host、Client、remoteTool、cache/lazy 与 transport 实现。"
   - "假设B：Reasonix 的 MCP 诊断范围集中在 auth 诊断，internal/mcpdiag/auth.go 只处理远程传输鉴权状态、鉴权材料检测与清理。"
-  - "假设C：本项目 MCP 雏形是 tools-only，src/main/infrastructure/mcp/client.ts 明确 prompts/resources/roots/sampling 不在第一版 host 内。"
+  - "假设C：阶段 1 的本项目 MCP 雏形用于差距分析；阶段 2 后已刷新为当前 stdio / Streamable HTTP、tools、prompts、resources、cache 与 lazy reconnect 实现。"
   - "假设D：阶段 1 交付物只允许写入 docs/learning/mcp-plugin-host-learning.md，不修改 src、tests、配置或参考源码。"
 Uncertainties:
   - "Claude Code .claude/commands/** 在给定样本根下未发现，无法做文件样本级细节对比。"
-  - "本项目英文 i18n 中 MCP 设置文案未通过搜索命中，可能存在 UI 文案不完整；本文只记录现状，不修复。"
+  - "阶段 1 曾记录本项目英文 MCP 设置文案搜索不完整；当前状态已在第 4、5 节刷新。"
 Alternative_Paths:
   - "路径 A：按用户给定顺序深读 Reasonix plugin -> mcpdiag/agent/control/permission/sandbox/event/tool -> 文档 -> Claude 样本 -> 本项目对照。优点是覆盖顺序严格、证据链完整；缺点是耗时较长。本文采用此路径。"
   - "路径 B：先从本项目 MCP 雏形倒推缺口，再定向查 Reasonix。优点是更快形成差距清单；缺点是可能遗漏 Reasonix host 机制的上游设计意图。"
-Verification_Strategy: "三档证据：Reasonix 证据使用 docs/external-references/Reasonix 下文件路径+行号；Claude 样本证据使用 docs/external-references/claude code/.claude 下文件路径+行号，并明确 commands 未发现；本项目对照证据使用 src/tests/docs 下文件路径+行号，逐项标注 已落地/部分落地/未落地/不适用。完成后校验只写目标文档、无代码片段超限、无无证据事实。"
+Verification_Strategy: "三档证据：Reasonix 证据使用 docs/external-references/Reasonix 下文件路径+行号；Claude 样本证据使用 docs/external-references/claude code/.claude 下文件路径+行号，并明确 commands 未发现；本项目对照证据使用 src/tests/docs 下文件路径。完成后校验只写目标文档、无代码片段超限、无无证据事实。"
 ```
 
 ## 1. Reasonix 源码学习
@@ -133,103 +133,53 @@ Verification_Strategy: "三档证据：Reasonix 证据使用 docs/external-refer
 - MCP 插件发现不是单纯读取 prompt 文件，而是配置声明 server 后启动外部进程或远程连接，并通过 initialize/tools/list/prompts/list/resources/list 动态发现工具和 surface。证据：`docs/external-references/Reasonix/docs/SPEC.md:116-148`、`docs/external-references/Reasonix/internal/plugin/plugin.go:178-213`、`docs/external-references/Reasonix/internal/plugin/plugin.go:805-838`。
 - Skill/command 的主要产物是 prompt 文本或操作说明；MCP host 的主要产物是 live tool adapter、server status、connection failure、prompts/resources surface 与可执行 tool calls。证据：Claude skill frontmatter/body 位于 `docs/external-references/claude code/.claude/skills/teach-me/SKILL.md:1-65`；Reasonix host/tool/status 结构位于 `docs/external-references/Reasonix/internal/plugin/plugin.go:75-99`、`docs/external-references/Reasonix/internal/plugin/plugin.go:481-502`、`docs/external-references/Reasonix/internal/plugin/plugin.go:904-970`。
 
-## 4. 本项目现状对照
+## 4. 本项目当前 MCP 状态对照
 
-### 4.1 `src/main/infrastructure/mcp/`：部分落地
+### 4.1 跨进程契约与传输
 
-- 已落地：本项目已有 `protocol.ts`，定义 JSON-RPC request/notification/response、MCP protocol version、tools/list result normalization、tools/call result normalization 与 text serialization。证据：`src/main/infrastructure/mcp/protocol.ts:3-34`、`src/main/infrastructure/mcp/protocol.ts:72-111`。
-- 已落地：`McpClient` 实现 tools-only MCP lifecycle：initialize、initialized notification、tools/list、tools/call。它明确把 prompts/resources/roots/sampling 排除在 first host 之外。证据：`src/main/infrastructure/mcp/client.ts:30-34`、`src/main/infrastructure/mcp/client.ts:54-87`、`src/main/infrastructure/mcp/client.ts:101-124`。
-- 已落地：工具命名空间为 `mcp__server__tool`，并支持从 toolName 转 permission value。证据：`src/main/infrastructure/mcp/client.ts:142-155`。
-- 已落地：stdio transport 使用 Node child_process spawn，newline JSON-RPC，pending map，notification listener，stderr tail，message size cap 和 abort handling。证据：`src/main/infrastructure/mcp/stdio-transport.ts:30-72`、`src/main/infrastructure/mcp/stdio-transport.ts:75-110`、`src/main/infrastructure/mcp/stdio-transport.ts:155-225`。
-- 已落地：`McpHost` 管理 server config、连接状态、工具注册/注销、失败隔离和 runtime event。证据：`src/main/infrastructure/mcp/host.ts:26-38`、`src/main/infrastructure/mcp/host.ts:40-83`、`src/main/infrastructure/mcp/host.ts:148-174`、`src/main/infrastructure/mcp/host.ts:185-237`。
-- 未落地：本项目 MCP transport 只支持 `stdio`，shared contract 的 transport enum 只有 `["stdio"]`。证据：`src/shared/agent-contracts.ts:348-349`。
-- 未落地：HTTP/Streamable HTTP、legacy SSE、OAuth/auth diagnostic、schema cache、lazy/background placeholder、prompts/resources surface 在当前 MCP infrastructure 中未见实现；`McpClient` 注释明确 prompts/resources/roots/sampling 不在第一版。证据：`src/main/infrastructure/mcp/client.ts:30-34`。
+- `MCP_SERVER_TRANSPORTS` 当前包含 `stdio` 与 `streamable-http`，MCP status 包含 `cached` 和 `lazy`，运行时事件包含 `mcp_server_connection`、`mcp_tool_list_changed`、`mcp_surface_changed`。证据：`src/shared/agent-contracts.ts`。
+- MCP IPC surface 覆盖 server list/connect/disconnect、tools list/refresh、surface refresh、prompts get/list、resources read/list，并全部走 `IpcResult<T>` envelope。证据：`src/shared/ipc.ts`、`src/main/ipc/mcp-handlers.ts`、`src/preload/index.ts`。
+- `McpClient` 支持 stdio 与 Streamable HTTP transport，并在一次 lifecycle 内刷新 tools、prompts 和 resources；prompts/resources 读取失败可降级为 surface error，不阻断 tools 主路径。证据：`src/main/infrastructure/mcp/client.ts`、`src/main/infrastructure/mcp/http-transport.ts`、`src/main/infrastructure/mcp/stdio-transport.ts`。
 
-### 4.2 `src/main/ipc/mcp-handlers.ts`：已落地（tools/status IPC）
+### 4.2 Host、cache 与 registry
 
-- 已落地：MCP IPC handlers 覆盖 list servers、connect、disconnect、list tools、refresh tools，并全部返回 `ok/err` envelope 与 MCP error codes。证据：`src/main/ipc/mcp-handlers.ts:1-18`、`src/main/ipc/mcp-handlers.ts:19-63`、`src/shared/ipc-errors.ts:14-18`。
-- 已落地：handler 对 request object、serverId 和可选 serverId 做解析，NUL 字符会被拒绝。证据：`src/main/ipc/mcp-handlers.ts:65-112`。
+- `McpHost` 以 `RuntimePreferences.mcpServers` 为配置权威来源，按 server 管理连接状态、工具注册/注销、surface cache、startup stats、lazy reconnect 和失败隔离。证据：`src/main/infrastructure/mcp/host.ts`、`src/main/infrastructure/mcp/cache-store.ts`、`src/main/index.ts`。
+- Cached tools 会以 lazy `mcp__<server>__<tool>` adapter 注册进同一个 `ToolRegistry`；首次执行会触发 live reconnect，失败时保留可重试的 cached/lazy 状态和 `lastError`。证据：`src/main/infrastructure/mcp/host.ts`、`tests/main/infrastructure/mcp-host.test.ts`。
+- MCP cache 只保存公开 schema surface 和启动统计；fingerprint mismatch 或损坏 cache 会退回 live handshake，不覆盖用户配置。证据：`src/main/infrastructure/mcp/cache-store.ts`、`tests/main/infrastructure/mcp-cache-store.test.ts`。
 
-### 4.3 `src/main/index.ts`：已落地（组合根接线）
+### 4.3 Runtime、权限与 UI
 
-- 已落地：main 组合根创建 `InMemoryToolRegistry` 和 `McpHost`，并把同一个 registry 注入 `AgentRuntime`。证据：`src/main/index.ts:48-62`。
-- 已落地：启动时读取 runtime preferences，`mcpHost.configure(preferences.mcpServers)` 后后台 `connectEnabled()`；runtime preferences update 后重新 configure 并 connect enabled。证据：`src/main/index.ts:192-198`、`src/main/index.ts:212-217`。
-- 已落地：main 注册 MCP IPC handlers，并在 before-quit 关闭 MCP host。证据：`src/main/index.ts:200-209`、`src/main/index.ts:226-228`。
+- MCP tools 通过 `mcp__<server>__<tool>` 命名空间进入 runtime tool catalog，继续复用 Code/Write tool availability、approval gate、sandbox policy 和 `permissionRules`。证据：`src/main/application/agent-runtime.ts`、`src/main/application/permission-policy.ts`、`src/main/infrastructure/mcp/host.ts`。
+- Code composer 会在发送 turn 前解析 `/mcp__<server>__<prompt>` 与 `@server:uri`，通过 preload MCP API 注入 prompt/resource 内容；错误会返回可见消息，不静默吞掉。证据：`src/renderer/src/ui/mcp-input.ts`、`src/renderer/src/ui/Workbench.tsx`。
+- Settings MCP 面板消费 process-level SSE 事件刷新 server status、tools、prompts 和 resources；英文与中文 i18n 均包含 MCP server、transport、status 和 surface 文案。证据：`src/renderer/src/ui/SettingsView.tsx`、`src/renderer/src/i18n/locales/en/translation.json`、`src/renderer/src/i18n/locales/zh-CN/translation.json`。
 
-### 4.4 `src/shared/agent-contracts.ts`：部分落地
+### 4.4 测试覆盖
 
-- 已落地：定义 McpServerConfig、McpToolInfo、McpServerStatusRecord、MCP status/event/request/response 类型。证据：`src/shared/agent-contracts.ts:348-396`、`src/shared/agent-contracts.ts:909-925`、`src/shared/agent-contracts.ts:1183-1212`。
-- 已落地：`RuntimePreferences` 包含 `mcpServers`，默认值为空数组。证据：`src/shared/agent-contracts.ts:411-422`、`src/shared/agent-contracts.ts:536-545`。
-- 已落地：runtime event union 和 kind list 已包含 `mcp_server_connection` 与 `mcp_tool_list_changed`，事件 guard 做字段校验。证据：`src/shared/agent-contracts.ts:962-989`、`src/shared/agent-contracts.ts:1358-1378`。
-- 部分落地：permission rule tool enum 已包含 `"mcp"`，但文档 `docs/data-model.md` 仍写 `command | write`，与当前 shared contract 不一致。证据：`src/shared/agent-contracts.ts:398-399`、`docs/data-model.md:555-565`。
+- MCP client、host、cache store、HTTP transport、IPC handlers、SSE event forwarding 和 runtime preference parsing 均已有 Vitest 覆盖。证据：`tests/main/infrastructure/mcp-client.test.ts`、`tests/main/infrastructure/mcp-host.test.ts`、`tests/main/infrastructure/mcp-cache-store.test.ts`、`tests/main/infrastructure/mcp-http-transport.test.ts`、`tests/main/ipc/mcp-handlers.test.ts`、`tests/main/ipc/sse-handlers.test.ts`、`tests/main/persistence/runtime-preferences-store.test.ts`。
+- 当前维护重点不再是补齐最初的 MCP host 骨架，而是保持跨进程契约、cache/lazy 状态、prompt/resource 注入和权限路径同步演进。
 
-### 4.5 `src/shared/ipc.ts`：已落地
+## 5. 当前可消费的维护要点
 
-- 已落地：定义 MCP servers/tools channels，并加入 `RENDERER_TO_MAIN_CHANNELS`。证据：`src/shared/ipc.ts:63-68`、`src/shared/ipc.ts:70-113`。
+1. Host 仍需保持失败隔离和动态 registry 边界。
+   Reasonix `StartAvailable()` 的核心是不让坏 server 阻塞好 server；本项目 `McpHost.connectEnabled()` 也逐 server 捕获失败并记录 status。后续新增 transport 或 auth flow 时，失败仍应暴露在 status/lastError 和 IPC envelope 中。
 
-### 4.6 `src/preload/index.ts` 与 `src/renderer/src/global.d.ts`：已落地
+2. MCP 命名空间是 permission、prompt/resource 输入和 registry 的共同契约。
+   `mcp__<server>__<tool>`、`/mcp__<server>__<prompt>` 与 `@server:uri` 都依赖稳定 server segment；修改 `toMcpNameSegment()`、namespace 或 duplicate 处理时，必须同步 shared contract、host/cache、renderer input 和 permission tests。
 
-- 已落地：preload import MCP request/response 类型和 channel 常量。证据：`src/preload/index.ts:14-20`、`src/preload/index.ts:91-95`。
-- 已落地：preload 暴露 `agentApi.mcp.listServers/connect/disconnect/listTools/refreshTools`。证据：`src/preload/index.ts:244-274`、`src/preload/index.ts:393-407`。
-- 已落地：renderer global type 通过 `AgentDesktopApi` 继承 preload 暴露面。证据：`src/renderer/src/global.d.ts:1-7`、`src/preload/index.ts:409-411`。
+3. readOnlyHint 不能默认信任缺失值。
+   远端工具缺失 `annotations.readOnlyHint` 时仍按 writer 路径进入 approval/sandbox；只有 MCP readOnlyHint 或用户配置的 read-only override 才能进入 reader-default。
 
-### 4.7 `src/main/application/agent-runtime.ts`：部分落地
+4. Cache/lazy 只能是优化，不能成为配置权威来源。
+   `McpCacheStore` 保存 public schema surface 和 startup stats；runtime preferences 仍是 server 配置权威来源，fingerprint mismatch 必须回退 live handshake。
 
-- 已落地：runtime 把 `mcp__` 前缀工具只暴露给 code thread，write thread 默认不暴露。证据：`src/main/application/agent-runtime.ts:193-200`、`src/main/application/agent-runtime.ts:1188-1201`。
-- 已落地：MCP tool 注册为 `AgentTool` 后复用现有 tool catalog、approval/sandbox/permission policy 路径；runtime 对 readOnly metadata 直接 allow，非 readOnly 继续经过 sandbox、approvalPolicy、permissionRules 和 destructive metadata 判断。证据：`src/main/infrastructure/mcp/host.ts:202-237`、`src/main/application/agent-runtime.ts:1204-1244`。
-- 未落地：runtime 未见对 MCP prompts/resources 的 slash 或 @ref 处理；本项目 MCP client 也明确未实现 prompts/resources。证据：`src/main/infrastructure/mcp/client.ts:30-34`。
-
-### 4.8 `src/main/application/permission-policy.ts`：部分落地
-
-- 已落地：permission evaluator 可把 `mcp__server__tool` 转为 `{ tool: "mcp", value: "server/tool" }`，用于 per-call 规则匹配。证据：`src/main/application/permission-policy.ts:66-96`。
-- 已落地：权限规则优先级 deny > ask > allow，由纯函数实现。证据：`src/main/application/permission-policy.ts:8-12`、`src/main/application/permission-policy.ts:37-64`。
-- 部分落地：注释仍称规则只 refine command/write calls，但代码实际也处理 mcp。证据：`src/main/application/agent-runtime.ts:1230-1238`、`src/main/application/permission-policy.ts:75-96`。
-
-### 4.9 `src/main/persistence/`：已落地（配置持久化），但无 host cache/stats
-
-- 已落地：runtime preferences schema parse/normalize/merge/clone 都包含 `mcpServers`。证据：`src/main/persistence/runtime-preferences-schema.ts:78-80`、`src/main/persistence/runtime-preferences-schema.ts:87-106`、`src/main/persistence/runtime-preferences-schema.ts:137-155`。
-- 已落地：`parseMcpServerConfigs()` 校验数组、唯一 id/name、transport、command、createdAt/updatedAt、args/env/cwd/enabled/readOnlyTools。证据：`src/main/persistence/runtime-preferences-schema.ts:412-455`。
-- 未落地：未见 Reasonix 式 MCP schema cache、startup stats、lazy demote 持久化；本项目相关持久化仅覆盖配置。证据：`src/main/persistence/runtime-preferences-schema.ts:412-464` 与 Reasonix cache/stats 机制对比：`docs/external-references/Reasonix/internal/plugin/cache.go:1-9`、`docs/external-references/Reasonix/internal/plugin/stats.go:1-10`。
-
-### 4.10 `src/renderer/src/ui/`：部分落地
-
-- 已落地：设置页工具分类包含 `mcpServers`。证据：`src/renderer/src/ui/SettingsView.tsx:120-132`。
-- 已落地：设置页支持新增、更新、删除 MCP server config，连接、断开、刷新 tools 会调用 `window.agentApi.mcp.*`。证据：`src/renderer/src/ui/SettingsView.tsx:588-652`。
-- 已落地：设置页 UI 展示 MCP server name/command/args/cwd/readOnlyTools/env，并提供 connect/disconnect/refresh/delete/add 操作。证据：`src/renderer/src/ui/SettingsView.tsx:1903-2041`。
-- 已落地：zh-CN i18n 包含 MCP servers 与 MCP actions 文案。证据：`src/renderer/src/i18n/locales/zh-CN/translation.json:344-345`、`src/renderer/src/i18n/locales/zh-CN/translation.json:467-491`。
-- 部分落地：英文 i18n 搜索未命中 MCP servers/actions 文案；`settings-search.ts` 已加入 mcpServers 搜索 key，但英文资源中对应 key 未命中。证据：`src/renderer/src/ui/components/settings/settings-search.ts:134-144`、`src/renderer/src/i18n/locales/en/translation.json:511-522`。
-- 未落地：renderer 侧未见对 `mcp_server_connection` / `mcp_tool_list_changed` 的消费，除 SettingsView 手动按钮外没有状态面板刷新证据。证据：项目内搜索只命中 shared/main SSE 转发和 SettingsView API 调用，`src/main/ipc/sse-handlers.ts:110-117`、`src/renderer/src/ui/SettingsView.tsx:619-652`。
-
-### 4.11 `tests/main/{ipc,infrastructure}/mcp-*`：未落地/未发现
-
-- 未落地/未发现：`tests/main/ipc` 与 `tests/main/infrastructure` 下未发现 `mcp-*` 测试文件。证据：当前只读搜索 `find tests/main/ipc tests/main/infrastructure -maxdepth 2 -type f -name 'mcp-*'` 无输出。
-- 风险含义：当前 MCP host 的 stdio handshake、失败隔离、tools/list changed refresh、IPC request validation 与 permission mcp pattern 需要阶段 2 优先补测试。该风险由“实现文件存在但 mcp-* 测试未发现”推导，证据见 `src/main/infrastructure/mcp/host.ts:148-174`、`src/main/ipc/mcp-handlers.ts:19-63` 以及上一条测试搜索。
-
-## 5. 阶段 2 可消费的设计要点
-
-1. 最小可交付不要越过 tools-only 边界。
-   本项目当前 MCP host 已明确 tools-only，且已有 stdio transport、McpClient、McpHost、IPC、preferences 和 SettingsView 基础。阶段 2 如果继续实现，应先补齐 tests 与文档一致性，再考虑 HTTP/prompts/resources。证据：`src/main/infrastructure/mcp/client.ts:30-34`、`src/main/infrastructure/mcp/host.ts:26-38`、`src/main/ipc/mcp-handlers.ts:19-63`。
-
-2. Host 应保持失败隔离和动态 registry 边界。
-   Reasonix `StartAvailable()` 的核心是不让坏 server 阻塞好 server；本项目 `McpHost.connectEnabled()` 已逐 server catch 并记录 failed status。证据：`docs/external-references/Reasonix/internal/plugin/plugin.go:191-202`、`src/main/infrastructure/mcp/host.ts:68-83`、`src/main/infrastructure/mcp/host.ts:239-251`。
-
-3. MCP tool 命名空间是后续 permission/UI/registry 的共同契约。
-   Reasonix 与本项目都使用 `mcp__<server>__<tool>`；本项目 permission rule 进一步把它映射为 `server/tool`。证据：`docs/external-references/Reasonix/internal/plugin/plugin.go:840-850`、`src/main/infrastructure/mcp/client.ts:142-149`、`src/main/application/permission-policy.ts:90-96`。
-
-4. readOnlyHint 不能默认信任缺失值。
-   Reasonix 规定远端工具默认非 readOnly，只有 MCP readOnlyHint 或可信 Spec override 才进入 reader-default；本项目也将 annotations.readOnlyHint 与 config.readOnlyTools 合并。证据：`docs/external-references/Reasonix/docs/SPEC.md:142-145`、`src/main/infrastructure/mcp/protocol.ts:120-127`、`src/main/infrastructure/mcp/client.ts:82-86`。
-
-5. 需要区分“状态事件已转发”和“UI 已消费”。
-   本项目 SSE handler 已全局转发 MCP connection/tool list events，但 renderer 搜索未发现消费这些事件的 UI 状态更新。证据：`src/main/ipc/sse-handlers.ts:100-117`、`src/shared/agent-contracts.ts:909-925`、`src/renderer/src/ui/SettingsView.tsx:619-652`。
-
-6. 当前文档需要同步修正，但本阶段不改。
-   shared contract 已包含 `mcp` permission rule tool，docs/data-model 仍写 `command | write`；docs/开发路线图仍有“未发现当前实现”的旧描述。证据：`src/shared/agent-contracts.ts:398-399`、`docs/data-model.md:555-565`、`docs/开发路线图.md:133-187`。
+5. Surface 事件与 UI 消费必须成对维护。
+   新增 MCP status 或 surface 字段时，需要同步 `RuntimeEvent` guard、SSE forwarding、preload API、Settings 面板和 i18n，避免 main 已发事件但 renderer 不刷新的半链路。
 
 ## 6. 自查清单
 
 - [x] 本次改动只写入 `docs/learning/mcp-plugin-host-learning.md`。
-- [x] 未 import、link、copy 参考源码；本文只有机制总结和路径行号证据。
+- [x] 未 import、link、copy 参考源码；本文只有机制总结和路径证据。
 - [x] 未改 `src/`、`tests/`、配置文件或 `docs/external-references/`。
 - [x] 未写代码或伪代码；未复制超过 10 行代码片段。
-- [x] 每条事实性结论均附带路径+行号证据，无法证明的条目明确标注“未发现”或“推导”。
+- [x] 每条事实性结论均附带路径证据，无法证明的条目明确标注“未发现”或“推导”。
 - [x] 本阶段为文档学习任务，未运行 `npm run typecheck`、`npm run test`、`npm run build`；原因是未修改代码，验证以文档范围、证据完整性和禁止项检查为主。

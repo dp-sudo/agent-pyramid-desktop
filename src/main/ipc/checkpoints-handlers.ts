@@ -25,9 +25,14 @@ export function registerCheckpointHandlers(
       if (!thread) {
         return err(IPC_ERROR_CODES.THREAD_NOT_FOUND, `No thread with id ${request.threadId}`);
       }
+      const sessionTurnIds = await collectSessionTurnIds(threadStore, request.threadId);
+      const checkpoints = await checkpointStore.list(request.threadId);
       return ok({
         threadId: request.threadId,
-        checkpoints: await checkpointStore.list(request.threadId),
+        checkpoints: checkpoints.map((checkpoint) => ({
+          ...checkpoint,
+          canRewindSession: sessionTurnIds.has(checkpoint.turnId),
+        })),
       });
     } catch (error) {
       return err(IPC_ERROR_CODES.CHECKPOINT_LIST_FAILED, messageOf(error));
@@ -46,6 +51,9 @@ export function registerCheckpointHandlers(
       const thread = await threadStore.getThread(request.threadId);
       if (!thread) {
         return err(IPC_ERROR_CODES.THREAD_NOT_FOUND, `No thread with id ${request.threadId}`);
+      }
+      if (request.rewindSession === true) {
+        await assertSessionTurnExists(threadStore, request.threadId, request.turnId);
       }
 
       const restored = await checkpointStore.restoreCode(thread, request.turnId);
@@ -79,6 +87,34 @@ export function registerCheckpointHandlers(
       return err(IPC_ERROR_CODES.CHECKPOINT_REWIND_FAILED, messageOf(error));
     }
   });
+}
+
+// Session rewind trims messages/events and therefore depends on a live transcript
+// turn boundary. Code-only rewind can still use checkpoint snapshots after the
+// transcript boundary is gone, but session rewind must fail before restoring code.
+async function collectSessionTurnIds(
+  threadStore: JsonlThreadStore,
+  threadId: string,
+): Promise<Set<string>> {
+  const turnIds = new Set<string>();
+  for await (const item of threadStore.replayItems(threadId)) {
+    const turnId = "turnId" in item ? item.turnId : undefined;
+    if (typeof turnId === "string") {
+      turnIds.add(turnId);
+    }
+  }
+  return turnIds;
+}
+
+async function assertSessionTurnExists(
+  threadStore: JsonlThreadStore,
+  threadId: string,
+  turnId: string,
+): Promise<void> {
+  const turnIds = await collectSessionTurnIds(threadStore, threadId);
+  if (!turnIds.has(turnId)) {
+    throw new Error(`Turn ${turnId} was not found in thread ${threadId}.`);
+  }
 }
 
 // Checkpoint IPC accepts renderer-controlled identifiers. Keep validation at

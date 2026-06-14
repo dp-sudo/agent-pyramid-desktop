@@ -231,6 +231,39 @@ describe("LlmWorkerPool", () => {
     await expect(promise).rejects.toThrow("cancelled");
   });
 
+  it("keeps cancellation best-effort when posting the cancel message fails", async () => {
+    const worker = new FakeWorker();
+    const pool = createPoolWithWorker(worker);
+    await pool.start();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const promise = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+      const chat = worker.posted[0];
+      if (chat.type !== "chat") throw new Error("Expected chat message.");
+      worker.failNextPostMessage = new Error("worker port is closed");
+
+      expect(() => pool.cancel("thread-1")).not.toThrow();
+      pool.cancel("thread-1");
+
+      expect(worker.posted).toEqual([chat]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[llm-worker] failed to post cancel for thread thread-1:",
+        expect.any(Error),
+      );
+
+      worker.emit("message", {
+        kind: "error",
+        requestId: chat.requestId,
+        message: "worker eventually failed",
+        code: "internal",
+      } satisfies WorkerOutbound);
+      await expect(promise).rejects.toThrow("worker eventually failed");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("preserves worker protocol error codes on rejected chats", async () => {
     const worker = new FakeWorker();
     const pool = createPoolWithWorker(worker);

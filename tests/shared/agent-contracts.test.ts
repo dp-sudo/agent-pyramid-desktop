@@ -28,6 +28,7 @@ import {
   ITEM_KINDS,
   LLM_PROTOCOLS,
   MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_NAME_LENGTH,
   MCP_SERVER_TRANSPORTS,
   PLAN_STEP_STATUSES,
   RUNTIME_COMPACTION_STRATEGIES,
@@ -66,6 +67,7 @@ import {
   isThreadSandboxMode,
   isThreadStatus,
   isUuidString,
+  normalizeAttachmentName,
   normalizeSupportedAttachmentMimeType,
   ok,
   type WritePutRequest,
@@ -479,6 +481,10 @@ describe("shared agent contracts", () => {
     ]);
     expect(normalizeSupportedAttachmentMimeType(" IMAGE/PNG ")).toBe("image/png");
     expect(normalizeSupportedAttachmentMimeType("image/svg+xml")).toBeNull();
+    expect(MAX_ATTACHMENT_NAME_LENGTH).toBe(180);
+    expect(normalizeAttachmentName(" ../avatar.png ")).toBe("avatar.png");
+    expect(normalizeAttachmentName("C:\\Users\\dev\\avatar.png")).toBe("avatar.png");
+    expect(normalizeAttachmentName("/")).toBeNull();
     expect(isAttachmentRecord({
       id: "00000000-0000-4000-8000-000000000001",
       name: "avatar.png",
@@ -519,6 +525,27 @@ describe("shared agent contracts", () => {
       name: "..",
       mimeType: "image/png",
       size: 128,
+      createdAt: "2026-06-08T00:00:00.000Z",
+    })).toBe(false);
+    expect(isAttachmentRecord({
+      id: "00000000-0000-4000-8000-000000000006",
+      name: "nested/avatar.png",
+      mimeType: "image/png",
+      size: 128,
+      createdAt: "2026-06-08T00:00:00.000Z",
+    })).toBe(false);
+    expect(isAttachmentRecord({
+      id: "00000000-0000-4000-8000-000000000007",
+      name: "a".repeat(MAX_ATTACHMENT_NAME_LENGTH + 1),
+      mimeType: "image/png",
+      size: 128,
+      createdAt: "2026-06-08T00:00:00.000Z",
+    })).toBe(false);
+    expect(isAttachmentRecord({
+      id: "00000000-0000-4000-8000-000000000008",
+      name: "empty.png",
+      mimeType: "image/png",
+      size: 0,
       createdAt: "2026-06-08T00:00:00.000Z",
     })).toBe(false);
   });

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "../../src/shared/agent-contracts";
 import { IPC_ERROR_CODES } from "../../src/shared/ipc-errors";
@@ -258,6 +259,23 @@ describe("Workbench", () => {
       attachmentIds: [],
       attachments: [],
     })).toBe("selected-profile");
+  });
+
+  it("resolves Code MCP input before creating a new thread", () => {
+    const source = readFileSync(
+      new URL("../../src/renderer/src/ui/Workbench.tsx", import.meta.url),
+      "utf8",
+    );
+    const sendStart = source.indexOf("const sendCodeComposerPayload");
+    const sendEnd = source.indexOf("const sendWriteComposerPayload", sendStart);
+    const sendCodeSource = source.slice(sendStart, sendEnd);
+
+    expect(sendStart).toBeGreaterThanOrEqual(0);
+    expect(sendEnd).toBeGreaterThan(sendStart);
+    expect(sendCodeSource.indexOf("resolveCodeMcpInputReferences(sendPayload, t)"))
+      .toBeGreaterThanOrEqual(0);
+    expect(sendCodeSource.indexOf("resolveCodeMcpInputReferences(sendPayload, t)"))
+      .toBeLessThan(sendCodeSource.indexOf("window.agentApi.threads.create"));
   });
 
   it("prefers the latest active thread that matches workspace and route mode", () => {

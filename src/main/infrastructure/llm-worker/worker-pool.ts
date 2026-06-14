@@ -155,7 +155,14 @@ export class LlmWorkerPool {
     if (!entry) return;
     const cancelMsg = this.threadToCancel.get(threadId);
     if (cancelMsg) {
-      entry.worker.postMessage(cancelMsg);
+      try {
+        entry.worker.postMessage(cancelMsg);
+      } catch (error) {
+        if (this.threadToCancel.get(threadId) === cancelMsg) {
+          this.threadToCancel.delete(threadId);
+        }
+        console.warn(`[llm-worker] failed to post cancel for thread ${threadId}:`, error);
+      }
     }
   }
 

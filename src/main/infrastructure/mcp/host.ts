@@ -60,7 +60,8 @@ export class McpHost {
     const nextIds = new Set(configs.map((config) => config.id));
     for (const id of this.servers.keys()) {
       if (!nextIds.has(id)) {
-        await this.disconnect(id);
+        const server = this.requireServer(id);
+        await this.disconnectForReconfigure(server);
         this.servers.delete(id);
       }
     }
@@ -88,10 +89,10 @@ export class McpHost {
         continue;
       }
       const requiresReconnect = !isSameServerRuntimeConfig(existing.config, config);
-      existing.config = config;
       if (!config.enabled || requiresReconnect) {
-        await this.disconnect(config.id);
+        await this.disconnectForReconfigure(existing);
       }
+      existing.config = config;
     }
   }
 
@@ -132,16 +133,27 @@ export class McpHost {
     server.generation += 1;
     server.inFlight = undefined;
     this.unregisterServerTools(server);
+    let closeError: unknown;
     if (server.client) {
-      await server.client.close();
+      const client = server.client;
       server.client = null;
+      try {
+        await client.close();
+      } catch (error) {
+        closeError = error;
+      }
     }
     server.status = "disconnected";
     server.tools = [];
     server.prompts = [];
     server.resources = [];
-    server.lastError = undefined;
+    server.lastError = closeError
+      ? `MCP disconnect close failed: ${messageOf(closeError)}`
+      : undefined;
     this.emitConnection(server);
+    if (closeError) {
+      throw new Error(`MCP server disconnected locally but close failed: ${messageOf(closeError)}`);
+    }
     return this.toStatus(server);
   }
 
@@ -325,17 +337,38 @@ export class McpHost {
   }
 
   private async disconnectIfConnected(server: ManagedMcpServer): Promise<void> {
-    if (server.client || server.registeredToolMode === "live") {
+    const client = server.client;
+    const wasLazy = server.registeredToolMode === "lazy";
+    if (client || server.registeredToolMode === "live") {
       this.unregisterServerTools(server);
     }
-    if (server.client) {
-      await server.client.close();
-      server.client = null;
-    }
-    if (server.registeredToolMode !== "lazy") {
+    server.client = null;
+    if (!wasLazy) {
       server.tools = [];
       server.prompts = [];
       server.resources = [];
+    }
+    if (!client) {
+      return;
+    }
+    try {
+      await client.close();
+    } catch (error) {
+      console.warn("[mcp-host] failed to close previous MCP client before reconnect:", error);
+    }
+  }
+
+  // Runtime preferences are the config authority. A stale server may fail its
+  // protocol close after local state has been cleared; keep that failure
+  // traceable without leaving removed or updated configs stuck behind old tools.
+  private async disconnectForReconfigure(server: ManagedMcpServer): Promise<void> {
+    try {
+      await this.disconnect(server.config.id);
+    } catch (error) {
+      console.warn(
+        "[mcp-host] MCP server disconnected locally during reconfigure but close failed:",
+        error,
+      );
     }
   }
 

@@ -460,9 +460,11 @@ Send behavior:
   after draft changes; CSS min/max height keeps the control bounded.
 - Empty text is blocked unless attachments are present through the composer
   payload builder.
-- New thread is created automatically when no active thread exists.
+- New thread is created automatically when no active thread exists, after any
+  Code MCP prompt/resource references have resolved successfully.
 - Goal mode can create/update thread goal before starting a turn.
-- Code sends resolve MCP inputs before `turn:start`: a leading
+- Code sends resolve MCP inputs before automatic thread creation and
+  `turn:start`: a leading
   `/mcp__<server>__<prompt>` is expanded through `agentApi.mcp.getPrompt()`,
   and `@<server>:<uri>` references append resource text through
   `agentApi.mcp.readResource()`. Resource URIs are parsed as non-whitespace

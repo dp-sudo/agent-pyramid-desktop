@@ -321,6 +321,8 @@ Worker rules:
 
 - Same thread routes to the same worker while alive.
 - `cancel(threadId)` posts a request-specific cancel message.
+- Cancel post failures are logged and treated as best-effort so interruption can
+  continue to persist the interrupted state.
 - Request cleanup only clears the cancel handle it installed, so a settling old
   request cannot remove a newer same-thread cancel mapping.
 - Worker exit clears stale thread affinity and creates a replacement worker.
@@ -391,7 +393,8 @@ Persistence invariants:
 - Same-thread writes are serialized with a per-thread mutex.
 - Malformed JSONL lines are warned and skipped during replay.
 - Thread and attachment ids must be UUIDs before path construction.
-- Attachment names are reduced with `path.basename()`.
+- Attachment names are reduced with the shared basename/length contract before
+  metadata is written or replayed.
 - Model config keeps at least one profile and normalizes legacy single-config
   files into profile state.
 - `userData/config` is the shared authority for model profiles and runtime

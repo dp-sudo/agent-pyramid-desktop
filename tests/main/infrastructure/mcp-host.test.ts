@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
@@ -182,6 +183,91 @@ describe("McpHost", () => {
     });
     expect(registry.getTool("mcp__local-mcp__echo")).toBeDefined();
     await host.close();
+  });
+
+  it("clears local server state before surfacing streamable HTTP close failures", async () => {
+    const registry = new InMemoryToolRegistry([builtInTool]);
+    const host = new McpHost(registry, new RuntimeEventBus());
+    const server = await listenStreamableMcpServerWithFailingClose();
+    try {
+      await host.configure([
+        config({
+          id: "server-1",
+          name: "remote-mcp",
+          transport: "streamable-http",
+          url: server.url,
+        }),
+      ]);
+      await expect(host.connect("server-1")).resolves.toMatchObject({
+        status: "connected",
+        toolCount: 1,
+      });
+      expect(registry.getTool("mcp__remote-mcp__echo")).toBeDefined();
+
+      await expect(host.disconnect("server-1")).rejects.toThrow(
+        "MCP server disconnected locally but close failed: MCP HTTP session close failed with status 500.",
+      );
+
+      expect(host.listServers()[0]).toMatchObject({
+        status: "disconnected",
+        toolCount: 0,
+        promptCount: 0,
+        resourceCount: 0,
+        lastError: "MCP disconnect close failed: MCP HTTP session close failed with status 500.",
+      });
+      expect(registry.getTool("mcp__remote-mcp__echo")).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("keeps reconfigure authoritative when the old streamable HTTP close fails", async () => {
+    const registry = new InMemoryToolRegistry([builtInTool]);
+    const host = new McpHost(registry, new RuntimeEventBus());
+    const oldServer = await listenStreamableMcpServerWithFailingClose("old");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await host.configure([
+        config({
+          id: "server-1",
+          name: "remote-mcp",
+          transport: "streamable-http",
+          url: oldServer.url,
+        }),
+      ]);
+      await expect(host.connect("server-1")).resolves.toMatchObject({
+        status: "connected",
+        toolCount: 1,
+      });
+      expect(registry.getTool("mcp__remote-mcp__old")).toBeDefined();
+
+      await expect(host.configure([
+        config({
+          id: "server-1",
+          name: "remote-mcp",
+          args: ["-e", mcpServerScriptWithEchoTool()],
+        }),
+      ])).resolves.toBeUndefined();
+      await expect(host.connect("server-1")).resolves.toMatchObject({
+        status: "connected",
+        toolCount: 1,
+      });
+
+      expect(host.listServers()[0]).toMatchObject({
+        status: "connected",
+        toolCount: 1,
+      });
+      expect(registry.getTool("mcp__remote-mcp__old")).toBeUndefined();
+      expect(registry.getTool("mcp__remote-mcp__echo")).toBeDefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[mcp-host] MCP server disconnected locally during reconfigure but close failed:",
+        expect.any(Error),
+      );
+    } finally {
+      await host.close();
+      await oldServer.close();
+      warnSpy.mockRestore();
+    }
   });
 
   it("keeps connected servers when record key order changes without runtime changes", async () => {
@@ -704,6 +790,86 @@ function isProcessRunning(pid: number): boolean {
 
 function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
+}
+
+async function listenStreamableMcpServerWithFailingClose(toolName = "echo"): Promise<{
+  url: string;
+  close(): Promise<void>;
+}> {
+  const server = createServer((request, response) => {
+    void handleStreamableMcpRequestWithFailingClose(request, response, toolName)
+      .catch((error: unknown) => {
+        response.statusCode = 500;
+        response.end(error instanceof Error ? error.message : String(error));
+      });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected MCP HTTP test server address.");
+  }
+  return {
+    url: `http://127.0.0.1:${address.port}/mcp`,
+    close: () => new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    }),
+  };
+}
+
+async function handleStreamableMcpRequestWithFailingClose(
+  request: IncomingMessage,
+  response: ServerResponse,
+  toolName: string,
+): Promise<void> {
+  if (request.method === "DELETE") {
+    response.statusCode = 500;
+    response.end("close failed");
+    return;
+  }
+  const body = await readHttpBody(request);
+  const payload = JSON.parse(body) as { id?: number; method: string };
+  response.setHeader("Content-Type", "application/json");
+  if (payload.method === "initialize") {
+    response.setHeader("Mcp-Session-Id", "session-1");
+    response.end(JSON.stringify({
+      jsonrpc: "2.0",
+      id: payload.id,
+      result: { capabilities: { tools: {} } },
+    }));
+    return;
+  }
+  if (payload.method === "tools/list") {
+    response.end(JSON.stringify({
+      jsonrpc: "2.0",
+      id: payload.id,
+      result: {
+        tools: [
+          {
+            name: toolName,
+            inputSchema: { type: "object" },
+            annotations: { readOnlyHint: true },
+          },
+        ],
+      },
+    }));
+    return;
+  }
+  response.end(JSON.stringify({
+    jsonrpc: "2.0",
+    id: payload.id,
+    result: {},
+  }));
+}
+
+async function readHttpBody(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function mcpServerScriptWithPromptAndResource(): string {

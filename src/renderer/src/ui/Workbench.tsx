@@ -508,14 +508,21 @@ export function Workbench(): ReactElement {
     sendInProgressRef.current = true;
     actions.setError(null);
     try {
+      const resolvedMcpInput = await resolveCodeMcpInputReferences(sendPayload, t);
+      if (!resolvedMcpInput.ok) {
+        actions.setError(resolvedMcpInput.message);
+        return false;
+      }
+      const turnPayload = resolvedMcpInput.value;
+
       let threadId = state.activeThreadId;
       if (!threadId) {
         const workspace = await ensureWorkspaceRoot();
         if (!workspace) return false;
         const title =
-          sendPayload.threadTitle.length > 60
-            ? `${sendPayload.threadTitle.slice(0, 57)}...`
-            : sendPayload.threadTitle;
+          turnPayload.threadTitle.length > 60
+            ? `${turnPayload.threadTitle.slice(0, 57)}...`
+            : turnPayload.threadTitle;
         const threadResult = await runWorkbenchIpc(() =>
           window.agentApi.threads.create({
             title,
@@ -537,12 +544,6 @@ export function Workbench(): ReactElement {
       const goalMode = payload.goalMode ?? false;
       const mode = payload.mode ?? "agent";
       const attachmentIds = payload.attachmentIds ?? [];
-      const resolvedMcpInput = await resolveCodeMcpInputReferences(sendPayload, t);
-      if (!resolvedMcpInput.ok) {
-        actions.setError(resolvedMcpInput.message);
-        return false;
-      }
-      const turnPayload = resolvedMcpInput.value;
 
       if (goalMode && threadId && !state.activeThread?.goal) {
         const goalResult = await runWorkbenchIpc(() =>

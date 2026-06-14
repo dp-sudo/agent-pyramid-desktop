@@ -203,6 +203,35 @@ describe("SkillService", () => {
       .toEqual(["example-skill"]);
   });
 
+  it("does not match skill command or mention prefixes inside longer tokens", async () => {
+    await writeSkill(".agent/skills/example-skill", {
+      frontmatter: [
+        "id: example-skill",
+        "name: Example Skill",
+        "description: Demonstrates matching.",
+        "commands: /example",
+      ],
+      body: "Use this skill.",
+    });
+    const service = new SkillService();
+    await service.loadWorkspaceSkills(workspace, DEFAULT_RUNTIME_PREFERENCES.skills);
+
+    expect(service.matchSkill({ text: "/example: now" }).map((skill) => skill.id))
+      .toEqual(["example-skill"]);
+    expect(service.matchSkill({ text: "/example，马上" }).map((skill) => skill.id))
+      .toEqual(["example-skill"]);
+    expect(service.matchSkill({ text: "please use @example-skill, now" }).map((skill) => skill.id))
+      .toEqual(["example-skill"]);
+    expect(service.matchSkill({ text: "请使用 @example-skill，马上" }).map((skill) => skill.id))
+      .toEqual(["example-skill"]);
+    expect(service.matchSkill({ text: "/example-plus now" }).map((skill) => skill.id))
+      .toEqual([]);
+    expect(service.matchSkill({ text: "please use @example-skillful now" }).map((skill) => skill.id))
+      .toEqual([]);
+    expect(service.matchSkill({ text: "mail dev@example-skill.test" }).map((skill) => skill.id))
+      .toEqual([]);
+  });
+
   it("resolves active turn instructions within the configured budget", async () => {
     await writeSkill(".agent/skills/example-skill", {
       frontmatter: [
