@@ -45,6 +45,12 @@ export {
 
 const SIDEBAR_KEYBOARD_STEP = 16;
 const TOOL_PROGRESS_RENDER_FLUSH_MS = 100;
+// Assistant text and reasoning arrive as high-frequency item_updated deltas
+// (one per model token). Coalescing them into a single store dispatch per
+// window avoids re-rendering the whole visible timeline on every token while
+// keeping the cadence fast enough to feel live. Tool/approval item_updated
+// events are low-frequency and stay immediate.
+const TEXT_DELTA_RENDER_FLUSH_MS = 60;
 
 type WorkbenchComposerSendPayload = Pick<FloatingComposerRequestPayload, "text"> &
   Partial<Omit<FloatingComposerRequestPayload, "text">> &
@@ -60,6 +66,8 @@ export function Workbench(): ReactElement {
   const subscribedThreadIdsRef = useRef(new Set<string>());
   const toolProgressBuffersRef = useRef(new Map<string, ToolProgressUpdate>());
   const toolProgressFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestItemUpdateByItemIdRef = useRef(new Map<string, Item>());
+  const itemUpdateFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingApprovalResponsesRef = useRef<Record<string, ApprovalPendingDecision>>({});
   const [leftSidebarDragging, setLeftSidebarDragging] = useState(false);
   const [pendingApprovalResponses, setPendingApprovalResponses] = useState<
@@ -170,12 +178,42 @@ export function Workbench(): ReactElement {
     [flushToolProgressBuffers],
   );
 
+  const flushItemUpdates = useCallback((): void => {
+    if (itemUpdateFlushTimerRef.current) {
+      clearTimeout(itemUpdateFlushTimerRef.current);
+      itemUpdateFlushTimerRef.current = null;
+    }
+    const updates = [...latestItemUpdateByItemIdRef.current.values()];
+    latestItemUpdateByItemIdRef.current.clear();
+    for (const item of updates) {
+      actions.updateItem(item);
+    }
+  }, [actions]);
+
+  const queueItemUpdate = useCallback(
+    (item: Item): void => {
+      // Keep only the freshest snapshot per item id; the last delta in the
+      // window is the one that lands in the store, so no content is lost.
+      latestItemUpdateByItemIdRef.current.set(item.id, item);
+      if (itemUpdateFlushTimerRef.current) return;
+      itemUpdateFlushTimerRef.current = setTimeout(
+        flushItemUpdates,
+        TEXT_DELTA_RENDER_FLUSH_MS,
+      );
+    },
+    [flushItemUpdates],
+  );
+
   useEffect(() => {
     return () => {
       if (toolProgressFlushTimerRef.current) {
         clearTimeout(toolProgressFlushTimerRef.current);
       }
+      if (itemUpdateFlushTimerRef.current) {
+        clearTimeout(itemUpdateFlushTimerRef.current);
+      }
       toolProgressBuffersRef.current.clear();
+      latestItemUpdateByItemIdRef.current.clear();
     };
   }, []);
 
@@ -184,6 +222,25 @@ export function Workbench(): ReactElement {
       if (event.kind === "tool_progress") {
         queueToolProgress(event);
         return;
+      }
+      // Coalesce high-frequency assistant/reasoning text deltas so the live
+      // turn re-renders at most once per window; tool/approval item_updated
+      // and all other events stay immediate via the normal apply path.
+      if (
+        event.kind === "item_updated" &&
+        (event.item.kind === "assistant" || event.item.kind === "reasoning") &&
+        event.threadId === activeThreadIdRef.current
+      ) {
+        queueItemUpdate(event.item);
+        return;
+      }
+      // Flush any buffered text deltas before terminal turn events so the
+      // final streamed content is committed before the turn status flips.
+      if (
+        event.kind === "turn_completed" ||
+        event.kind === "turn_failed"
+      ) {
+        flushItemUpdates();
       }
       applyWorkbenchRuntimeEvent(
         event,
@@ -194,7 +251,7 @@ export function Workbench(): ReactElement {
         actions,
       );
     },
-    [actions, queueToolProgress, state.activeThread],
+    [actions, queueToolProgress, queueItemUpdate, flushItemUpdates, state.activeThread],
   );
 
   useEffect(() => {

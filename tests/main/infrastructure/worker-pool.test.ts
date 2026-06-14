@@ -30,6 +30,8 @@ type FakeWorkerListener<K extends FakeWorkerEvent> = (
 
 class FakeWorker {
   readonly posted: WorkerInbound[] = [];
+  terminateCalls = 0;
+  terminatePromise: Promise<number> | null = null;
   failNextPostMessage: Error | null = null;
   private readonly messageListeners = new Set<FakeWorkerListener<"message">>();
   private readonly errorListeners = new Set<FakeWorkerListener<"error">>();
@@ -55,6 +57,8 @@ class FakeWorker {
   }
 
   async terminate(): Promise<number> {
+    this.terminateCalls += 1;
+    if (this.terminatePromise) return this.terminatePromise;
     this.emit("exit", 0);
     return 0;
   }
@@ -96,6 +100,33 @@ describe("LlmWorkerPool", () => {
     await pool.start();
 
     expect(workerFilename.endsWith("llm-worker.js")).toBe(true);
+  });
+
+  it("coalesces concurrent and repeated destroy calls", async () => {
+    const worker = new FakeWorker();
+    let resolveTerminate: (code: number) => void = () => undefined;
+    worker.terminatePromise = new Promise((resolve) => {
+      resolveTerminate = (code) => {
+        worker.emit("exit", code);
+        resolve(code);
+      };
+    });
+    const pool = createPoolWithWorker(worker);
+    await pool.start();
+
+    const firstDestroy = pool.destroy();
+    const secondDestroy = pool.destroy();
+
+    expect(worker.terminateCalls).toBe(1);
+    resolveTerminate(0);
+    await expect(firstDestroy).resolves.toBeUndefined();
+    await expect(secondDestroy).resolves.toBeUndefined();
+
+    await expect(pool.destroy()).resolves.toBeUndefined();
+    expect(worker.terminateCalls).toBe(1);
+    await expect(pool.chat({ id: "thread-1" }, baseRequest, vi.fn())).rejects.toThrow(
+      "Worker pool is destroyed",
+    );
   });
 
   it("resolves chat responses and cleans request listeners", async () => {

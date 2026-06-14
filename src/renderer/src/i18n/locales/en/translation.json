@@ -26,6 +26,7 @@
     "workProcessOne": "Work process · 1 item",
     "workProcessMany": "Work process · {{count}} items",
     "reasoningLabel": "Reasoning",
+    "thinking": "Thinking",
     "userInputLabel": "User input needed",
     "compactedItems": "Compacted {{count}} context items",
     "codeBlock": "code",

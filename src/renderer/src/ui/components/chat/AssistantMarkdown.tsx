@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import { CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT } from "../../preferences";
 
 const COLLAPSED_CODE_BLOCK_PREVIEW_LINES = 12;
@@ -37,7 +38,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   );
   return (
     <div className={`ds-markdown ${streaming ? "ds-shiny-markdown" : ""}`}>
-      <ReactMarkdown components={components} remarkPlugins={[remarkGfm]}>
+      <ReactMarkdown components={components} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
         {renderText}
       </ReactMarkdown>
     </div>
@@ -104,6 +105,7 @@ function createMarkdownComponents(codeBlockCollapseLineThreshold: number): Compo
         <CodeBlock
           language={language}
           code={code}
+          highlightedChildren={children}
           preProps={props}
           collapseLineThreshold={codeBlockCollapseLineThreshold}
         />
@@ -127,11 +129,16 @@ function CodeBlock({
   code,
   collapseLineThreshold,
   language,
+  highlightedChildren,
   preProps,
 }: {
   code: string;
   collapseLineThreshold: number;
   language: string | null;
+  // rehype-highlight transforms the fenced code body into token <span> elements;
+  // preserve that highlighted node tree for the expanded view so syntax colors
+  // survive the custom CodeBlock shell. Collapsed preview falls back to raw text.
+  highlightedChildren: ReactNode;
   preProps: ComponentPropsWithoutRef<"pre">;
 }): ReactElement {
   const { t } = useTranslation();
@@ -223,9 +230,13 @@ function CodeBlock({
         </div>
       ) : null}
       <pre {...preProps} id={codeContentId}>
-        <code className={language ? `language-${language}` : undefined}>
-          {collapsed ? collapsedCodePreview.text : code}
-        </code>
+        {collapsed ? (
+          <code className={language ? `language-${language}` : undefined}>
+            {collapsedCodePreview.text}
+          </code>
+        ) : (
+          highlightedChildren
+        )}
       </pre>
     </div>
   );

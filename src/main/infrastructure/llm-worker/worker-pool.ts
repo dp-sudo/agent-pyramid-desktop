@@ -60,6 +60,7 @@ export class LlmWorkerPool {
   private readonly threadToWorker = new Map<string, PoolEntry>();
   private readonly threadToCancel = new Map<string, WorkerInbound>();
   private destroyed = false;
+  private destroyPromise: Promise<void> | null = null;
 
   constructor(
     private readonly size = 1,
@@ -166,16 +167,21 @@ export class LlmWorkerPool {
     }
   }
 
+  /** Electron can reach shutdown from multiple lifecycle events; terminate each worker once. */
   async destroy(): Promise<void> {
+    if (this.destroyPromise) return this.destroyPromise;
     this.destroyed = true;
-    await Promise.all(
-      this.workers.map(async (entry) => {
+    const entries = [...this.workers];
+    this.destroyPromise = Promise.all(
+      entries.map(async (entry) => {
         await entry.worker.terminate();
       }),
-    );
-    this.workers.length = 0;
-    this.threadToWorker.clear();
-    this.threadToCancel.clear();
+    ).then(() => undefined).finally(() => {
+      this.workers.length = 0;
+      this.threadToWorker.clear();
+      this.threadToCancel.clear();
+    });
+    return this.destroyPromise;
   }
 
   private acquireEntry(threadId: string): PoolEntry {

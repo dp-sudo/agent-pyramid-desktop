@@ -470,6 +470,8 @@ export class McpHost {
   }
 
   private async markFailed(server: ManagedMcpServer, error: unknown): Promise<void> {
+    const hadTools = server.tools.length > 0 || server.registeredToolNames.length > 0;
+    const hadSurface = server.prompts.length > 0 || server.resources.length > 0;
     if (server.client) {
       await this.closeClientAfterFailure(server.client, "failed");
       server.client = null;
@@ -485,6 +487,17 @@ export class McpHost {
       server.resources = [];
     }
     this.emitConnection(server);
+    if (server.status === "failed") {
+      // A failed live refresh can remove registry tools without a successful
+      // replacement surface; emit the empty surface so renderer/tool consumers
+      // do not keep stale MCP descriptors.
+      if (hadTools) {
+        this.emitToolListChanged(server);
+      }
+      if (hadSurface) {
+        this.emitSurfaceChanged(server);
+      }
+    }
   }
 
   private async closeClientAfterFailure(client: McpClient, reason: string): Promise<void> {

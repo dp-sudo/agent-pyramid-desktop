@@ -142,6 +142,35 @@ describe("ChatBlock approval helpers", () => {
     expect(html).toContain("is-nested");
     expect(html).toContain("open=\"\"");
     expect(html).toContain("chat.reasoningLabel");
+    // Live + open reasoning shows the rotating chevron affordance and the
+    // active "thinking" indicator label.
+    expect(html).toContain("ds-process-reasoning-chevron");
+    expect(html).toContain("chat.thinking");
+  });
+
+  it("renders folded reasoning with a chevron but no thinking indicator or body", () => {
+    const reasoningItem: Extract<Item, { kind: "reasoning" }> = {
+      kind: "reasoning",
+      id: "reasoning-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      text: "Need to inspect files.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, { item: reasoningItem, nested: true }),
+      ),
+    );
+
+    // Chevron is present in both states; the thinking indicator and body are
+    // absent once the live stream ends and the block collapses.
+    expect(html).toContain("ds-process-reasoning-chevron");
+    expect(html).not.toContain("ds-thinking-indicator");
+    expect(html).not.toContain("ds-process-entry-detail ds-process-reasoning");
   });
 
   it("renders completed folded reasoning as a light preview without markdown body", () => {

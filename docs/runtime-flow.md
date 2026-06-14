@@ -288,6 +288,8 @@ Worker invariants:
 - Worker replacement clears thread affinity for dead workers.
 - If the initial `postMessage(chat)` to a worker fails, the request listeners and
   cancel handle are cleaned immediately and runtime sees `worker_crashed`.
+- `LlmWorkerPool.destroy()` coalesces concurrent/repeated shutdown calls and
+  clears worker affinity/cancel maps after the shared shutdown settles.
 - Worker errors preserve protocol categories through the pool: provider HTTP
   failures become `provider_http`, provider SSE `event: error` frames become
   `provider_error`, provider/schema parse failures become `schema_invalid`,
@@ -637,8 +639,9 @@ Lifecycle rules:
 - Streamable HTTP 401/403 failures are rewritten as non-sensitive auth
   diagnostics that indicate whether auth material exists in headers, env or
   URL, without logging credential values or response bodies.
-- `notifications/tools/list_changed` triggers a server-local tools refresh and
-  `mcp_tool_list_changed`.
+- `notifications/tools/list_changed` triggers a server-local tools refresh.
+  Successful refreshes emit `mcp_tool_list_changed`; failures that clear live
+  tools also emit `mcp_tool_list_changed` with the now-empty tool list.
 - Prompts/resources are auxiliary surface. `connect()` refreshes them
   best-effort after tools connect, and manual `refreshSurface()` failures keep
   existing tools registered while reporting `lastError` and

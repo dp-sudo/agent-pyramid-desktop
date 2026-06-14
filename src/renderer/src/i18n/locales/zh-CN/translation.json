@@ -26,6 +26,7 @@
     "workProcessOne": "工作过程 · 1 项",
     "workProcessMany": "工作过程 · {{count}} 项",
     "reasoningLabel": "推理思考",
+    "thinking": "思考中",
     "userInputLabel": "需要用户输入",
     "compactedItems": "已压缩 {{count}} 条上下文",
     "codeBlock": "代码",

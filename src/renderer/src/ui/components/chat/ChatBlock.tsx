@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactElement } from "react";
+import { useEffect, useId, useState, memo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { ApprovalPreview, FileDiffLine, Item } from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
@@ -19,7 +19,12 @@ interface ChatBlockProps {
 
 export type ApprovalPendingDecision = "allow" | "deny" | null;
 
-export function ChatBlock({
+// Memoized so streaming text deltas on the live turn do not re-render the
+// entire visible timeline. `item` is replaced immutably per store tick (so the
+// live block still updates), while historical blocks keep a stable `item`
+// reference and short-circuit. `onApprove` is a stable useCallback from the
+// caller, so approval blocks are not needlessly re-rendered either.
+export const ChatBlock = memo(function ChatBlock({
   item,
   isLive,
   nested,
@@ -114,7 +119,7 @@ export function ChatBlock({
       return renderUnknownItemKind(item);
     }
   }
-}
+});
 
 function ReasoningBlock({
   item,
@@ -159,7 +164,13 @@ function ReasoningBlock({
       }}
     >
       <summary className="ds-process-entry-summary">
-        <span className="ds-process-entry-title">{t("chat.reasoningLabel")}</span>
+        <span className="ds-process-reasoning-heading">
+          <span className="ds-process-reasoning-chevron" aria-hidden="true" />
+          <span className="ds-process-entry-title">{t("chat.reasoningLabel")}</span>
+          {isLive && open ? (
+            <span className="ds-thinking-indicator">{t("chat.thinking")}</span>
+          ) : null}
+        </span>
         {!open ? (
           <span className="ds-process-reasoning-preview">
             {getReasoningCollapsedPreview(item.text)}

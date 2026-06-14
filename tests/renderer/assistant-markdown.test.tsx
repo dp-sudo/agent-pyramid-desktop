@@ -65,9 +65,29 @@ describe("AssistantMarkdown", () => {
 
     expect(html).toContain("class=\"ds-code-block\"");
     expect(html).toContain("<span>ts</span>");
-    expect(html).toContain("<code class=\"language-ts\">const value = 1;");
-    expect(html).toContain("console.log(value);");
+    // rehype-highlight wraps the body in a single hljs code element carrying
+    // the language class, with token spans inside; the raw code text survives
+    // across those spans.
+    expect(html).toContain("class=\"hljs language-ts\"");
+    expect(html).toContain("hljs-keyword");
+    expect(html).toContain("console");
+    expect(html).toContain("value");
     expect(html).not.toContain("is-collapsed");
+  });
+
+  it("applies rehype-highlight syntax tokens inside fenced code blocks", () => {
+    const html = renderToStaticMarkup(
+      <AssistantMarkdown
+        text={["```ts", "const value = 1;", "```"].join("\n")}
+      />,
+    );
+
+    // rehype-highlight wraps tokens in hljs-* spans; the keyword (const) and
+    // number (1) tokens confirm the highlighter ran while the outer code
+    // shell language label is preserved as a single hljs code element.
+    expect(html).toContain("class=\"hljs-keyword\"");
+    expect(html).toContain("class=\"hljs-number\"");
+    expect(html).toContain("class=\"hljs language-ts\"");
   });
 
   it("collapses long code blocks by default without hiding the copy control", () => {
@@ -173,7 +193,10 @@ describe("AssistantMarkdown", () => {
     expect(closeDanglingCodeFence(text)).toBe(`${text}\n\`\`\``);
     expect(html).toContain("class=\"ds-code-block\"");
     expect(html).toContain("<span>tsx</span>");
-    expect(html).toContain("return null;");
+    // The dangling fence is closed before parsing, so the body is highlighted
+    // and tokens render as spans rather than raw text.
+    expect(html).toContain("hljs-keyword");
+    expect(html).toContain("hljs-literal");
   });
 
   it("normalizes markdown links to the same safe navigation surface as Electron", () => {

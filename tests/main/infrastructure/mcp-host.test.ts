@@ -95,6 +95,42 @@ describe("McpHost", () => {
     warn.mockRestore();
   });
 
+  it("emits tool-list changes when refresh failure clears live MCP tools", async () => {
+    const registry = new InMemoryToolRegistry([builtInTool]);
+    const bus = new RuntimeEventBus();
+    const host = new McpHost(registry, bus);
+    const toolCounts: number[] = [];
+    const unsubscribe = bus.onKind("mcp_tool_list_changed", (event) => {
+      if (event.kind !== "mcp_tool_list_changed") return;
+      toolCounts.push(event.toolCount);
+    });
+    await host.configure([
+      config({
+        id: "server-1",
+        name: "local-mcp",
+        args: ["-e", mcpServerScriptWithToolListFailingAfterFirstSuccess()],
+      }),
+    ]);
+
+    await expect(host.connect("server-1")).resolves.toMatchObject({
+      status: "connected",
+      toolCount: 1,
+    });
+    expect(registry.getTool("mcp__local-mcp__echo")).toBeDefined();
+
+    const refreshed = await host.refreshTools("server-1");
+
+    expect(refreshed).toMatchObject({
+      status: "failed",
+      toolCount: 0,
+      tools: [],
+    });
+    expect(registry.getTool("mcp__local-mcp__echo")).toBeUndefined();
+    expect(toolCounts).toEqual([1, 0]);
+    unsubscribe();
+    await host.close();
+  });
+
   it("registers cached MCP tools as lazy placeholders and replaces them on first call", async () => {
     const registry = new InMemoryToolRegistry([builtInTool]);
     const cacheStore = new McpCacheStore(userDataDir);
@@ -624,6 +660,52 @@ rl.on("line", (line) => {
       result: {
         content: [{ type: "text", text: "echo: " + request.params.arguments.text }],
       },
+    });
+    return;
+  }
+  send({ jsonrpc: "2.0", id: request.id, result: {} });
+});
+`;
+}
+
+function mcpServerScriptWithToolListFailingAfterFirstSuccess(): string {
+  return `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+let toolsListed = false;
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  if (request.method === "initialize") {
+    send({ jsonrpc: "2.0", id: request.id, result: { capabilities: { tools: {} } } });
+    return;
+  }
+  if (request.method === "tools/list") {
+    if (!toolsListed) {
+      toolsListed = true;
+      send({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          tools: [
+            {
+              name: "echo",
+              description: "Echo",
+              inputSchema: { type: "object", properties: {} },
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        },
+      });
+      return;
+    }
+    send({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: { code: -32000, message: "tools unavailable" },
     });
     return;
   }

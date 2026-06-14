@@ -292,6 +292,8 @@ Tool availability is decided at the runtime boundary:
   Write threads by the default tool access policy. Matching cached schema can
   register lazy placeholders before a live server is ready; the first call
   forces reconnect and then continues through the same ToolRegistry path.
+  Refresh failures that clear live tools emit an empty `mcp_tool_list_changed`
+  event so renderer and runtime consumers do not retain stale descriptors.
 - Unknown or unavailable tool calls produce a visible `runtime_error` with
   `code: "tool_not_found"`.
 
@@ -328,6 +330,8 @@ Worker rules:
 - Worker exit clears stale thread affinity and creates a replacement worker.
 - Initial worker `postMessage(chat)` failures clean request listeners and cancel
   state before surfacing `worker_crashed` to runtime.
+- `destroy()` is idempotent while shutdown is in progress or already complete,
+  so Electron shutdown paths cannot terminate the same worker entry twice.
 - Worker stream chunks become `LlmStreamChunk` events for runtime consumption.
 - Worker protocol errors keep their category through the pool and are mapped to
   runtime errors such as `provider_http`, `provider_error`, `schema_invalid`,

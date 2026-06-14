@@ -67,14 +67,22 @@ export function assertUtf8TextBuffer(
 /**
  * Read-side endpoints need the same final-component symlink protection as
  * writes: the workspace realpath policy verifies the path before access, and
- * O_NOFOLLOW binds the last component to the actual open operation.
+ * O_NOFOLLOW binds the last component to the actual open operation. On
+ * platforms where O_NOFOLLOW is unavailable (Windows), an attacker can still
+ * swap the final component to a symlink between validation and the open call;
+ * the post-open lstat recheck closes that window by detecting the swap.
  */
 export async function openTextFileNoFollow(
   filePath: string,
   options: OpenTextFileNoFollowOptions,
 ): Promise<TextFileHandle> {
+  const useNoFollowFlag = noFollowFlag();
   try {
-    return await fs.open(filePath, fsConstants.O_RDONLY | noFollowFlag());
+    const handle = await fs.open(filePath, fsConstants.O_RDONLY | useNoFollowFlag);
+    if (useNoFollowFlag === 0) {
+      await assertOpenedTargetNotSymlink(filePath, options);
+    }
+    return handle;
   } catch (error) {
     if (getNodeErrorCode(error) === "ELOOP") {
       throw new Error(`${options.label} target is a symbolic link: ${options.relativePath}`);
@@ -86,21 +94,25 @@ export async function openTextFileNoFollow(
 /**
  * Final write commits must not follow a target symlink that appears after the
  * workspace realpath/lstat checks. O_NOFOLLOW binds the last path component to
- * the open operation on supporting platforms; existing path-policy checks still
- * protect parent components and platforms with weaker flag support.
+ * the open operation on supporting platforms; on platforms without it the
+ * post-open lstat recheck still detects a swap that happened during the open.
  */
 export async function writeUtf8TextFileNoFollow(
   filePath: string,
   content: string,
   options: WriteUtf8TextFileNoFollowOptions,
 ): Promise<void> {
+  const useNoFollowFlag = noFollowFlag();
   const flags = fsConstants.O_WRONLY |
     fsConstants.O_CREAT |
-    noFollowFlag() |
+    useNoFollowFlag |
     (options.exclusive ? fsConstants.O_EXCL : fsConstants.O_TRUNC);
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
     handle = await fs.open(filePath, flags, 0o666);
+    if (useNoFollowFlag === 0) {
+      await assertOpenedTargetNotSymlink(filePath, options);
+    }
     await handle.writeFile(content, "utf8");
   } catch (error) {
     if (getNodeErrorCode(error) === "ELOOP") {
@@ -109,6 +121,33 @@ export async function writeUtf8TextFileNoFollow(
     throw error;
   } finally {
     await handle?.close();
+  }
+}
+
+/**
+ * Fallback symlink guard for platforms where O_NOFOLLOW is unavailable (e.g.
+ * Windows, where fsConstants.O_NOFOLLOW is undefined). fs.open follows the
+ * symlink silently in that case, so after a successful open we re-stat the path
+ * without following: if the final component is now a symlink, the target was
+ * swapped between workspace validation and the open, and the operation must be
+ * rejected with the same traceable error as the O_NOFOLLOW path. lstat is a
+ * no-op cost on POSIX (useNoFollowFlag is non-zero there, so this is skipped).
+ */
+async function assertOpenedTargetNotSymlink(
+  filePath: string,
+  options: { label: string; relativePath: string },
+): Promise<void> {
+  let stat: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    stat = await fs.lstat(filePath);
+  } catch (error) {
+    // ENOENT between open and lstat is a benign race for a removed entry; any
+    // other failure must surface rather than be hidden as a safe access.
+    if (getNodeErrorCode(error) === "ENOENT") return;
+    throw error;
+  }
+  if (stat.isSymbolicLink()) {
+    throw new Error(`${options.label} target is a symbolic link: ${options.relativePath}`);
   }
 }
 

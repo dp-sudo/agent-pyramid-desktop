@@ -1234,6 +1234,67 @@ textarea:focus-visible {
   word-break: normal;
 }
 
+/* Syntax highlighting from rehype-highlight (lowlight/highlight.js token spans).
+   Bound to the four-color family via --ds-* tokens; the dark theme overrides
+   those tokens so no separate dark theme block is needed here. */
+.ds-markdown .hljs {
+  color: var(--ds-text);
+}
+
+.ds-markdown .hljs-comment,
+.ds-markdown .hljs-quote {
+  color: var(--ds-text-faint);
+  font-style: italic;
+}
+
+.ds-markdown .hljs-keyword,
+.ds-markdown .hljs-selector-tag,
+.ds-markdown .hljs-built_in,
+.ds-markdown .hljs-name,
+.ds-markdown .hljs-tag {
+  color: var(--ds-skill);
+}
+
+.ds-markdown .hljs-string,
+.ds-markdown .hljs-attr,
+.ds-markdown .hljs-template-tag,
+.ds-markdown .hljs-addition {
+  color: var(--ds-success);
+}
+
+.ds-markdown .hljs-number,
+.ds-markdown .hljs-literal,
+.ds-markdown .hljs-type,
+.ds-markdown .hljs-link {
+  color: var(--ds-accent);
+}
+
+.ds-markdown .hljs-title,
+.ds-markdown .hljs-section,
+.ds-markdown .hljs-selector-id,
+.ds-markdown .hljs-selector-class {
+  color: var(--ds-text);
+  font-weight: 600;
+}
+
+.ds-markdown .hljs-variable,
+.ds-markdown .hljs-attribute,
+.ds-markdown .hljs-regexp,
+.ds-markdown .hljs-deletion {
+  color: var(--ds-danger);
+}
+
+.ds-markdown .hljs-meta {
+  color: var(--ds-text-muted);
+}
+
+/* Streaming markdown body: a subtle surface tint while the model is still
+   emitting, so live output reads as in-progress. Only applied while
+   `streaming` is true, so finalized content is unaffected. */
+.ds-shiny-markdown {
+  border-radius: var(--ds-radius-md);
+}
+
 .ds-markdown-table-wrap {
   display: block;
   max-width: 100%;
@@ -1415,6 +1476,16 @@ textarea:focus-visible {
 
 .ds-process-reasoning {
   font-family: var(--ds-font-sans);
+  animation: ds-reasoning-reveal var(--ds-motion-standard) var(--ds-motion-ease);
+}
+
+/* Expand reveal only: the folded body is unmounted (ui-design.md requires
+   collapsed process blocks to stay unmounted), so there is nothing to
+   transition on collapse. The fade gives the expand a smooth entrance without
+   paying the cost of keeping markdown parsed while hidden. */
+@keyframes ds-reasoning-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .ds-process-reasoning-preview {
@@ -1425,6 +1496,83 @@ textarea:focus-visible {
   font-weight: 450;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Reasoning entry affordances: a rotating chevron (mirrors the outer work-process
+   disclosure), a border to separate it from sibling entries, and a hover hint on
+   the summary so the whole row reads as clickable. */
+.ds-process-reasoning-entry {
+  border: 1px solid var(--ds-border-muted);
+}
+
+.ds-process-reasoning-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  color: var(--ds-text-faint);
+}
+
+/* Group the chevron, title and live indicator on the leading edge of the
+   summary so the trailing collapsed preview stays right-aligned by the
+   summary's space-between layout. */
+.ds-process-reasoning-heading {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.ds-process-reasoning-chevron::before {
+  content: "\25B8";
+  font-size: 10px;
+  line-height: 1;
+  transition: transform var(--ds-motion-micro) var(--ds-motion-ease);
+}
+
+.ds-process-reasoning-entry[open] .ds-process-reasoning-chevron::before {
+  transform: rotate(90deg);
+}
+
+.ds-process-reasoning-entry .ds-process-entry-summary {
+  border-radius: var(--ds-radius-md);
+  transition: background var(--ds-motion-micro) var(--ds-motion-ease);
+}
+
+.ds-process-reasoning-entry .ds-process-entry-summary:hover {
+  background: var(--ds-surface-hover);
+}
+
+/* Live "thinking" indicator: the i18n label is followed by three dots that
+   step through opacity to signal active streaming. Falls back to a static
+   label under prefers-reduced-motion (tokens.css zeroes the animation). */
+.ds-thinking-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  color: var(--ds-accent);
+  font-size: var(--ds-size-caption);
+  font-weight: 500;
+}
+
+.ds-thinking-indicator::after {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-left: 4px;
+  border-radius: var(--ds-radius-pill);
+  background: currentColor;
+  animation: ds-thinking-pulse 1.2s steps(1, end) infinite;
+}
+
+@keyframes ds-thinking-pulse {
+  0% { opacity: 0.25; }
+  33% { opacity: 0.6; }
+  66% { opacity: 1; }
+  100% { opacity: 0.25; }
 }
 
 .ds-process-tool.is-running {
