@@ -19,7 +19,11 @@ import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-mem
 import { createSkillTools } from "../../../src/main/application/tools/skill-tools";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
 import { SkillService } from "../../../src/main/skills/skill-service";
-import type { AgentTool, AgentToolContext } from "../../../src/main/domain/agent/types";
+import type {
+  AgentCheckpointCapability,
+  AgentTool,
+  AgentToolContext,
+} from "../../../src/main/domain/agent/types";
 import {
   RUNTIME_READ_ONLY_TOOL_NAMES,
   RUNTIME_TOOL_NAMES,
@@ -855,7 +859,8 @@ describe("application tools", () => {
 
   it("records checkpoint snapshots before coding tools write files", async () => {
     const workspace = await makeTempDir("coding-tools-checkpoint-");
-    type CheckpointRecorder = NonNullable<AgentToolContext["checkpoint"]>["recordFileSnapshot"];
+    type CheckpointRecorder =
+      NonNullable<AgentCheckpointCapability["checkpoint"]>["recordFileSnapshot"];
     type CheckpointEntry = Parameters<CheckpointRecorder>[0];
     const captured: Array<{ entry: CheckpointEntry; contentAtCapture: string | null }> = [];
     const recordFileSnapshot = vi.fn<CheckpointRecorder>(async (entry) => {
