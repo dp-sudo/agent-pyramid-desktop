@@ -148,6 +148,8 @@ export const RUNTIME_TOOL_NAMES = [
   "search_files",
   "rg_search",
   "list_symbols",
+  "search_symbols",
+  "create_edit_plan",
   "edit_file",
   "multi_edit",
   "write_file",
@@ -193,6 +195,8 @@ export const RUNTIME_READ_ONLY_TOOL_NAMES = [
   "search_files",
   "rg_search",
   "list_symbols",
+  "search_symbols",
+  "create_edit_plan",
   "git_status",
   "git_diff",
   "git_log",
@@ -410,11 +414,15 @@ export type RuntimePermissionRuleTool = (typeof RUNTIME_PERMISSION_RULE_TOOLS)[n
 export const RUNTIME_PERMISSION_RULE_EFFECTS = ["allow", "ask", "deny"] as const;
 export type RuntimePermissionRuleEffect = (typeof RUNTIME_PERMISSION_RULE_EFFECTS)[number];
 
+export const RUNTIME_PERMISSION_RULE_MATCHES = ["glob", "exact"] as const;
+export type RuntimePermissionRuleMatch = (typeof RUNTIME_PERMISSION_RULE_MATCHES)[number];
+
 export interface RuntimePermissionRule {
   id: string;
   tool: RuntimePermissionRuleTool;
   pattern: string;
   effect: RuntimePermissionRuleEffect;
+  match?: RuntimePermissionRuleMatch;
 }
 
 export interface RuntimePreferences {
@@ -465,6 +473,8 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     search_files: true,
     rg_search: true,
     list_symbols: true,
+    search_symbols: true,
+    create_edit_plan: true,
     edit_file: true,
     multi_edit: true,
     write_file: true,
@@ -508,6 +518,8 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     search_files: true,
     rg_search: true,
     list_symbols: false,
+    search_symbols: false,
+    create_edit_plan: false,
     edit_file: false,
     multi_edit: false,
     write_file: false,
@@ -600,6 +612,18 @@ export function isRuntimePermissionRuleEffect(
 ): value is RuntimePermissionRuleEffect {
   return typeof value === "string" &&
     RUNTIME_PERMISSION_RULE_EFFECTS.includes(value as RuntimePermissionRuleEffect);
+}
+
+export function isRuntimePermissionRuleMatch(
+  value: unknown,
+): value is RuntimePermissionRuleMatch {
+  return typeof value === "string" &&
+    RUNTIME_PERMISSION_RULE_MATCHES.includes(value as RuntimePermissionRuleMatch);
+}
+
+export function isApprovalDecisionScope(value: unknown): value is ApprovalDecisionScope {
+  return typeof value === "string" &&
+    APPROVAL_DECISION_SCOPES.includes(value as ApprovalDecisionScope);
 }
 
 export function isMcpServerTransport(value: unknown): value is McpServerTransport {
@@ -887,6 +911,7 @@ export interface ApprovalItem {
   args: Record<string, unknown>;
   preview?: ApprovalPreview;
   decision?: "allow" | "deny";
+  scope?: ApprovalDecisionScope;
   resolvedAt?: string;
   createdAt: string;
 }
@@ -1135,9 +1160,13 @@ export interface TurnStartRequest {
 // Approval
 // ============================================================================
 
+export const APPROVAL_DECISION_SCOPES = ["once", "session", "persist_rule"] as const;
+export type ApprovalDecisionScope = (typeof APPROVAL_DECISION_SCOPES)[number];
+
 export interface ApprovalRespondRequest {
   approvalId: string;
   decision: "allow" | "deny";
+  scope?: ApprovalDecisionScope;
 }
 
 // ============================================================================
@@ -1468,6 +1497,7 @@ export function isItem(value: unknown): value is Item {
         isRecord(v.args) &&
         isOptionalApprovalPreview(v.preview) &&
         isOptionalApprovalDecision(v.decision) &&
+        isOptionalApprovalDecisionScope(v.scope) &&
         isOptionalIsoTimestampString(v.resolvedAt);
     case "user_input":
       return hasString(v, "turnId") &&
@@ -1753,7 +1783,8 @@ function isRuntimePermissionRules(value: unknown): value is RuntimePermissionRul
       typeof pattern !== "string" ||
       !pattern.trim() ||
       pattern.includes("\0") ||
-      !isRuntimePermissionRuleEffect(rule.effect)
+      !isRuntimePermissionRuleEffect(rule.effect) ||
+      (rule.match !== undefined && !isRuntimePermissionRuleMatch(rule.match))
     ) {
       return false;
     }
@@ -1990,6 +2021,10 @@ function isToolStatus(value: unknown): value is ToolItem["status"] {
 
 function isOptionalApprovalDecision(value: unknown): boolean {
   return value === undefined || value === "allow" || value === "deny";
+}
+
+function isOptionalApprovalDecisionScope(value: unknown): boolean {
+  return value === undefined || isApprovalDecisionScope(value);
 }
 
 function isOptionalApprovalPreview(value: unknown): value is ApprovalPreview | undefined {

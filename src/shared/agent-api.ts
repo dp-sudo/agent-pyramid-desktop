@@ -96,7 +96,11 @@ export interface AgentDesktopApi {
   approvals: {
     respond(
       request: ApprovalRespondRequest,
-    ): Promise<IpcResult<{ approvalId: string; decision: ApprovalRespondRequest["decision"] }>>;
+    ): Promise<IpcResult<{
+      approvalId: string;
+      decision: ApprovalRespondRequest["decision"];
+      scope?: ApprovalRespondRequest["scope"];
+    }>>;
   };
   goals: {
     update(request: GoalUpdateRequest): Promise<IpcResult<ThreadRecord>>;
