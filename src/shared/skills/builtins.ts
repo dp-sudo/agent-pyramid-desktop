@@ -7,6 +7,7 @@ const READ_ONLY_CODE_TOOLS = [
   "read_file",
   "search_files",
   "rg_search",
+  "list_symbols",
   "git_status",
   "git_diff",
   "git_log",

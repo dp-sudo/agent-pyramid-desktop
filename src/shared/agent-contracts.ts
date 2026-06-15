@@ -147,6 +147,7 @@ export const RUNTIME_TOOL_NAMES = [
   "read_file",
   "search_files",
   "rg_search",
+  "list_symbols",
   "edit_file",
   "multi_edit",
   "write_file",
@@ -191,6 +192,7 @@ export const RUNTIME_READ_ONLY_TOOL_NAMES = [
   "read_file",
   "search_files",
   "rg_search",
+  "list_symbols",
   "git_status",
   "git_diff",
   "git_log",
@@ -462,6 +464,7 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     read_file: true,
     search_files: true,
     rg_search: true,
+    list_symbols: true,
     edit_file: true,
     multi_edit: true,
     write_file: true,
@@ -504,6 +507,7 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     read_file: true,
     search_files: true,
     rg_search: true,
+    list_symbols: false,
     edit_file: false,
     multi_edit: false,
     write_file: false,
@@ -787,6 +791,44 @@ export interface ReasoningItem {
   turnId: string;
   text: string;
   createdAt: string;
+}
+
+export const TOOL_FAILURE_CODES = [
+  "tool_unavailable",
+  "tool_not_registered",
+  "tool_schema_invalid",
+  "tool_repeat_suppressed",
+  "tool_policy_denied",
+  "tool_approval_denied",
+  "tool_interrupted",
+  "tool_execution_failed",
+  "tool_budget_exhausted",
+] as const;
+export type ToolFailureCode = (typeof TOOL_FAILURE_CODES)[number];
+
+export interface ToolFailureResult {
+  code: ToolFailureCode;
+  message: string;
+  denied?: boolean;
+  suppressed?: boolean;
+  reason?: string;
+  count?: number;
+  threshold?: number;
+}
+
+export function isToolFailureCode(value: unknown): value is ToolFailureCode {
+  return typeof value === "string" && TOOL_FAILURE_CODES.includes(value as ToolFailureCode);
+}
+
+export function isToolFailureResult(value: unknown): value is ToolFailureResult {
+  if (!isRecord(value)) return false;
+  return isToolFailureCode(value.code) &&
+    hasString(value, "message") &&
+    isOptionalBoolean(value.denied) &&
+    isOptionalBoolean(value.suppressed) &&
+    isOptionalString(value.reason) &&
+    isOptionalTokenCount(value.count) &&
+    isOptionalTokenCount(value.threshold);
 }
 
 export interface ToolItem {
