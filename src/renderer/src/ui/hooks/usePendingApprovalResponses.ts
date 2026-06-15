@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Item } from "../../../../shared/agent-contracts";
-import type { ApprovalPendingDecision } from "../components/chat/ChatBlock";
+import type {
+  ApprovalPendingDecision,
+  ApprovalResponseChoice,
+} from "../components/chat/ChatBlock";
 
 interface PendingApprovalResponsesState {
   pendingApprovalResponses: Record<string, ApprovalPendingDecision>;
   beginApprovalResponse(
     approvalId: string,
-    decision: Exclude<ApprovalPendingDecision, null>,
+    response: ApprovalResponseChoice,
   ): boolean;
   clearApprovalResponse(approvalId: string): void;
 }
@@ -30,11 +33,11 @@ export function usePendingApprovalResponses(
   }, [items]);
 
   const beginApprovalResponse = useCallback(
-    (approvalId: string, decision: Exclude<ApprovalPendingDecision, null>): boolean => {
+    (approvalId: string, response: ApprovalResponseChoice): boolean => {
       const nextPending = beginPendingApprovalResponse(
         pendingApprovalResponsesRef.current,
         approvalId,
-        decision,
+        response,
       );
       if (!nextPending) return false;
       pendingApprovalResponsesRef.current = nextPending;
@@ -61,12 +64,12 @@ export function usePendingApprovalResponses(
 export function beginPendingApprovalResponse(
   current: Record<string, ApprovalPendingDecision>,
   approvalId: string,
-  decision: Exclude<ApprovalPendingDecision, null>,
+  response: ApprovalResponseChoice,
 ): Record<string, ApprovalPendingDecision> | null {
   if (current[approvalId]) return null;
   return {
     ...current,
-    [approvalId]: decision,
+    [approvalId]: response,
   };
 }
 

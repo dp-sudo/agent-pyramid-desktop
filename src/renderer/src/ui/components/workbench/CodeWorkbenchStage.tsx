@@ -1,7 +1,10 @@
 import type { ReactElement } from "react";
 import { MessageTimeline } from "../chat/MessageTimeline";
 import { PendingApprovalPanel } from "../chat/PendingApprovalPanel";
-import type { ApprovalPendingDecision } from "../chat/ChatBlock";
+import type {
+  ApprovalPendingDecision,
+  ApprovalResponseChoice,
+} from "../chat/ChatBlock";
 import {
   FloatingComposer,
   type FloatingComposerRequestPayload,
@@ -11,7 +14,7 @@ import { WorkbenchTopBar } from "../topbar/WorkbenchTopBar";
 import { WorkbenchErrorToast } from "./WorkbenchErrorToast";
 
 export interface CodeWorkbenchStageProps {
-  onApprove: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onApprove: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses: Record<string, ApprovalPendingDecision>;
   onComposerRequestSend: (payload: FloatingComposerRequestPayload) => Promise<boolean>;
   onInterrupt: () => void;

@@ -2,10 +2,14 @@ import { useEffect, useRef, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { Item } from "../../../../../shared/agent-contracts";
 import { useWorkbench } from "../../store/WorkbenchContext";
-import { ApprovalCard, type ApprovalPendingDecision } from "./ChatBlock";
+import {
+  ApprovalCard,
+  type ApprovalPendingDecision,
+  type ApprovalResponseChoice,
+} from "./ChatBlock";
 
 interface PendingApprovalPanelProps {
-  onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses?: Record<string, ApprovalPendingDecision>;
 }
 

@@ -2039,10 +2039,13 @@ textarea:focus-visible {
 
 .ds-approval-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
 .ds-approval-allow {
+  min-width: 0;
   background: var(--ds-accent);
   color: var(--ds-bg-canvas);
   border: 0;
@@ -2050,6 +2053,13 @@ textarea:focus-visible {
   border-radius: var(--ds-radius-pill);
   cursor: pointer;
   font-size: var(--ds-size-body);
+  white-space: nowrap;
+}
+
+.ds-approval-allow.is-secondary {
+  background: var(--ds-accent-soft);
+  color: var(--ds-accent);
+  border: 1px solid var(--ds-border-muted);
 }
 
 .ds-approval-allow:disabled,
@@ -2059,6 +2069,7 @@ textarea:focus-visible {
 }
 
 .ds-approval-deny {
+  min-width: 0;
   background: transparent;
   color: var(--ds-danger);
   border: 1px solid var(--ds-danger-soft);
@@ -2066,6 +2077,7 @@ textarea:focus-visible {
   border-radius: var(--ds-radius-pill);
   cursor: pointer;
   font-size: var(--ds-size-body);
+  white-space: nowrap;
 }
 
 /* ---------- Right inspector ---------- */

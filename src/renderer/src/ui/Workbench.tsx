@@ -56,6 +56,7 @@ import {
 import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
 import { CodeWorkbenchStage } from "./components/workbench/CodeWorkbenchStage";
 import { WriteWorkbenchStage } from "./components/workbench/WriteWorkbenchStage";
+import type { ApprovalResponseChoice } from "./components/chat/ChatBlock";
 import { usePanelResizer } from "./hooks/usePanelResizer";
 import {
   createNewThread,
@@ -723,10 +724,14 @@ export function Workbench(): ReactElement {
   }, [actions, activeThreadInFlightTurn]);
 
   const onApprove = useCallback(
-    async (approvalId: string, decision: "allow" | "deny") => {
-      if (!beginApprovalResponse(approvalId, decision)) return;
+    async (approvalId: string, response: ApprovalResponseChoice) => {
+      if (!beginApprovalResponse(approvalId, response)) return;
       const result = await runWorkbenchIpc(() =>
-        window.agentApi.approvals.respond({ approvalId, decision }),
+        window.agentApi.approvals.respond({
+          approvalId,
+          decision: response.decision,
+          ...(response.scope ? { scope: response.scope } : {}),
+        }),
       );
       if (result.ok) {
         actions.setError(null);

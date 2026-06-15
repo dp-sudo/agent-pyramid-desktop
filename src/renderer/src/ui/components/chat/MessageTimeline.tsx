@@ -9,7 +9,11 @@ import {
   type Item,
   type ToolItem,
 } from "../../../../../shared/agent-contracts";
-import { ChatBlock, type ApprovalPendingDecision } from "./ChatBlock";
+import {
+  ChatBlock,
+  type ApprovalPendingDecision,
+  type ApprovalResponseChoice,
+} from "./ChatBlock";
 import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
 import {
   getTimelineItemTurnId,
@@ -19,7 +23,7 @@ import {
 } from "./timeline-model";
 
 interface MessageTimelineProps {
-  onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses?: Record<string, ApprovalPendingDecision>;
 }
 

@@ -1,12 +1,15 @@
 import type { ReactElement } from "react";
 import { WriteWorkspaceView } from "../write/WriteWorkspaceView";
 import type { WriteAssistantPromptPayload } from "../write/write-workspace-model";
-import type { ApprovalPendingDecision } from "../chat/ChatBlock";
+import type {
+  ApprovalPendingDecision,
+  ApprovalResponseChoice,
+} from "../chat/ChatBlock";
 import { WorkbenchErrorToast } from "./WorkbenchErrorToast";
 import type { ThreadSummary } from "../../../../../shared/agent-contracts";
 
 export interface WriteWorkbenchStageProps {
-  onApprove: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onApprove: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses: Record<string, ApprovalPendingDecision>;
   onWorkspaceSelected: (workspace: string) => boolean | void | Promise<boolean | void>;
   onSendAssistantPrompt: (payload: WriteAssistantPromptPayload) => Promise<boolean>;

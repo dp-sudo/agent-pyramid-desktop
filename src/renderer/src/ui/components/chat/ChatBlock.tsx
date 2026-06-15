@@ -1,6 +1,11 @@
 import { useEffect, useId, useState, memo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import type { ApprovalPreview, FileDiffLine, Item } from "../../../../../shared/agent-contracts";
+import type {
+  ApprovalDecisionScope,
+  ApprovalPreview,
+  FileDiffLine,
+  Item,
+} from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { extractToolDiffPreview, summarizeToolAction, summarizeToolItem } from "./timeline-model";
 import { useWorkbench } from "../../store/WorkbenchContext";
@@ -13,11 +18,50 @@ interface ChatBlockProps {
   item: Item;
   isLive?: boolean;
   nested?: boolean;
-  onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   approvalPendingDecision?: ApprovalPendingDecision;
 }
 
-export type ApprovalPendingDecision = "allow" | "deny" | null;
+export type ApprovalDecision = "allow" | "deny";
+
+export interface ApprovalResponseChoice {
+  decision: ApprovalDecision;
+  scope?: ApprovalDecisionScope;
+}
+
+export type ApprovalPendingDecision = ApprovalResponseChoice | null;
+
+interface ApprovalAction {
+  key: string;
+  labelKey: string;
+  titleKey: string;
+  className: string;
+  response: ApprovalResponseChoice;
+}
+
+const APPROVAL_ALLOW_ACTIONS: readonly ApprovalAction[] = [
+  {
+    key: "allow-once",
+    labelKey: "approvals.allowOnce",
+    titleKey: "approvals.allowOnceHint",
+    className: "ds-approval-allow",
+    response: { decision: "allow", scope: "once" },
+  },
+  {
+    key: "allow-session",
+    labelKey: "approvals.allowForSession",
+    titleKey: "approvals.allowForSessionHint",
+    className: "ds-approval-allow is-secondary",
+    response: { decision: "allow", scope: "session" },
+  },
+  {
+    key: "allow-persist",
+    labelKey: "approvals.allowPersistRule",
+    titleKey: "approvals.allowPersistRuleHint",
+    className: "ds-approval-allow is-secondary",
+    response: { decision: "allow", scope: "persist_rule" },
+  },
+];
 
 // Memoized so streaming text deltas on the live turn do not re-render the
 // entire visible timeline. `item` is replaced immutably per store tick (so the
@@ -258,7 +302,7 @@ function ApprovalBlock({
 }: {
   item: Extract<Item, { kind: "approval" }>;
   nested?: boolean;
-  onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingDecision?: ApprovalPendingDecision;
 }): ReactElement {
   return (
@@ -274,19 +318,19 @@ export function ApprovalCard({
   pendingDecision = null,
 }: {
   item: Extract<Item, { kind: "approval" }>;
-  onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingDecision?: ApprovalPendingDecision;
 }): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
   const canRespond = canRespondToApproval(item.decision, pendingDecision, Boolean(onApprove));
-  const statusText = approvalStatusText(item.decision, pendingDecision, t);
+  const statusText = approvalStatusText(item.decision, item.scope, pendingDecision, t);
   const showDiffByDefault =
     state.runtimePreferences.approvalExperience.showDiffByDefault;
 
-  async function respond(decision: "allow" | "deny"): Promise<void> {
+  async function respond(response: ApprovalResponseChoice): Promise<void> {
     if (!canRespond || !onApprove) return;
-    await onApprove(item.approvalId, decision);
+    await onApprove(item.approvalId, response);
   }
 
   return (
@@ -301,21 +345,36 @@ export function ApprovalCard({
       <pre className="ds-approval-args">{JSON.stringify(item.args, null, 2)}</pre>
       {item.decision === undefined && onApprove ? (
         <div className="ds-approval-actions">
-          <button
-            type="button"
-            className="ds-approval-allow"
-            disabled={!canRespond}
-            onClick={() => void respond("allow")}
-          >
-            {pendingDecision === "allow" ? t("approvals.submitting") : t("approvals.allow")}
-          </button>
+          {APPROVAL_ALLOW_ACTIONS.map((action) => (
+            <button
+              key={action.key}
+              type="button"
+              className={action.className}
+              disabled={!canRespond}
+              title={t(action.titleKey)}
+              onClick={() => void respond(action.response)}
+            >
+              {approvalActionLabel(action, pendingDecision, t)}
+            </button>
+          ))}
           <button
             type="button"
             className="ds-approval-deny"
             disabled={!canRespond}
-            onClick={() => void respond("deny")}
+            title={t("approvals.denyHint")}
+            onClick={() => void respond({ decision: "deny" })}
           >
-            {pendingDecision === "deny" ? t("approvals.submitting") : t("approvals.deny")}
+            {approvalActionLabel(
+              {
+                key: "deny",
+                labelKey: "approvals.deny",
+                titleKey: "approvals.denyHint",
+                className: "ds-approval-deny",
+                response: { decision: "deny" },
+              },
+              pendingDecision,
+              t,
+            )}
           </button>
         </div>
       ) : null}
@@ -464,7 +523,7 @@ function DiffLine({ line }: { line: FileDiffLine }): ReactElement {
 
 export function canRespondToApproval(
   decision: "allow" | "deny" | undefined,
-  pendingDecision: "allow" | "deny" | null,
+  pendingDecision: ApprovalPendingDecision,
   hasHandler: boolean,
 ): boolean {
   return decision === undefined && pendingDecision === null && hasHandler;
@@ -472,11 +531,50 @@ export function canRespondToApproval(
 
 export function approvalStatusText(
   decision: "allow" | "deny" | undefined,
-  pendingDecision: "allow" | "deny" | null,
+  scope: ApprovalDecisionScope | undefined,
+  pendingDecision: ApprovalPendingDecision,
   t: (key: string) => string,
 ): string {
   if (pendingDecision) return t("approvals.submitting");
-  return decision ? t(`approvals.${decision}`) : "";
+  if (!decision) return "";
+  if (decision === "allow") return t(approvalAllowedStatusKey(scope));
+  return t("approvals.deny");
+}
+
+export function isSameApprovalResponse(
+  left: ApprovalPendingDecision,
+  right: ApprovalResponseChoice,
+): boolean {
+  if (!left) return false;
+  return left.decision === right.decision &&
+    normalizeApprovalScope(left) === normalizeApprovalScope(right);
+}
+
+function approvalActionLabel(
+  action: ApprovalAction,
+  pendingDecision: ApprovalPendingDecision,
+  t: (key: string) => string,
+): string {
+  return isSameApprovalResponse(pendingDecision, action.response)
+    ? t("approvals.submitting")
+    : t(action.labelKey);
+}
+
+function approvalAllowedStatusKey(scope: ApprovalDecisionScope | undefined): string {
+  switch (scope ?? "once") {
+    case "session":
+      return "approvals.allowedForSession";
+    case "persist_rule":
+      return "approvals.allowedPersistRule";
+    case "once":
+      return "approvals.allowedOnce";
+    default:
+      return "approvals.allowedOnce";
+  }
+}
+
+function normalizeApprovalScope(response: ApprovalResponseChoice): ApprovalDecisionScope {
+  return response.scope ?? "once";
 }
 
 function ToolBlock({

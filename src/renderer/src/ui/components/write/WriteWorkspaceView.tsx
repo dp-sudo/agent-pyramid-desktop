@@ -25,7 +25,10 @@ import {
   getResetLeftSidebarWidth,
   getSidebarDividerClassName,
 } from "../../sidebar-resize-model";
-import type { ApprovalPendingDecision } from "../chat/ChatBlock";
+import type {
+  ApprovalPendingDecision,
+  ApprovalResponseChoice,
+} from "../chat/ChatBlock";
 import { ThreadSessionList } from "../sidebar/Sidebar";
 import { WriteAssistantPanel } from "./WriteAssistantPanel";
 import { WriteEditorPanel } from "./WriteEditorPanel";
@@ -73,7 +76,7 @@ export {
 } from "./write-constants";
 
 export interface WriteWorkspaceViewProps {
-  onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses?: Record<string, ApprovalPendingDecision>;
   onWorkspaceSelected?: (workspace: string) => boolean | void | Promise<boolean | void>;
   onSendAssistantPrompt?: (payload: WriteAssistantPromptPayload) => Promise<boolean>;

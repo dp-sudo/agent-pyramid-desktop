@@ -57,7 +57,11 @@ export function appendToolProgressToItems(
   progress: ToolProgressUpdate,
 ): Item[] {
   const index = items.findIndex(
-    (item) => item.kind === "tool" && item.toolCallId === progress.toolCallId,
+    (item) =>
+      item.kind === "tool" &&
+      item.threadId === progress.threadId &&
+      item.turnId === progress.turnId &&
+      item.toolCallId === progress.toolCallId,
   );
   if (index < 0) return items;
   const item = items[index];

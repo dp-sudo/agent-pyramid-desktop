@@ -1,7 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { Item } from "../../../../../shared/agent-contracts";
-import { ChatBlock, type ApprovalPendingDecision } from "../chat/ChatBlock";
+import {
+  ChatBlock,
+  type ApprovalPendingDecision,
+  type ApprovalResponseChoice,
+} from "../chat/ChatBlock";
 import {
   getApprovalPendingDecision,
   getTimelineBottomScrollTop,
@@ -29,7 +33,7 @@ export interface WriteAssistantPanelProps {
   composerDisabled: boolean;
   onRequestSend: (payload: FloatingComposerRequestPayload) => Promise<boolean>;
   onInterrupt: () => void;
-  onApprove?: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses?: Record<string, ApprovalPendingDecision>;
 }
 

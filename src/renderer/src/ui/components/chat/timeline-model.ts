@@ -198,6 +198,8 @@ const EXPLORATORY_TOOL_NAMES = new Set<string>(["list_files", "search_files", "r
 const READ_TOOL_NAMES = new Set<string>([
   "read_file",
   "list_symbols",
+  "search_symbols",
+  "create_edit_plan",
   "list_command_sessions",
   "diagnose_file",
   "diagnose_workspace",
@@ -377,6 +379,14 @@ function titleForTool(
       return path
         ? t("chat.tools.listSymbolsPath", { path })
         : t("chat.tools.listSymbols");
+    case "search_symbols":
+      return query
+        ? t("chat.tools.searchSymbolsQuery", { query })
+        : path
+          ? t("chat.tools.searchSymbolsPath", { path })
+          : t("chat.tools.searchSymbols");
+    case "create_edit_plan":
+      return t("chat.tools.createEditPlan");
     case "create_plan":
       return t("chat.tools.createPlan");
     case "update_goal":
