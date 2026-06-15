@@ -173,13 +173,17 @@ Notes:
 
 | Channel | Preload Method | Request | Success Value | Error Codes |
 | --- | --- | --- | --- | --- |
-| `approval:respond` | `approvals.respond(request)` | `ApprovalRespondRequest` | `{ approvalId; decision }` | `APPROVAL_RESPOND_FAILED` |
+| `approval:respond` | `approvals.respond(request)` | `ApprovalRespondRequest` | `{ approvalId; decision; scope? }` | `APPROVAL_RESPOND_FAILED` |
 
 Notes:
 
 - Pending approval state is in-memory in `AgentRuntime`.
-- Handler validates that `approvalId` is a non-empty string and `decision` is
-  `allow` or `deny` before touching runtime pending-approval state.
+- Handler validates that `approvalId` is a non-empty string, `decision` is
+  `allow` or `deny`, and optional `scope` is `once`, `session`, or
+  `persist_rule` before touching runtime pending-approval state.
+- Omitted `scope` behaves as `once`. Scoped approvals are interpreted in main
+  process from the pending tool name/arguments; renderer never supplies raw
+  permission-rule patterns.
 - If the approval id is not pending, runtime throws and handler returns `APPROVAL_RESPOND_FAILED`.
 
 ### Goals
@@ -447,7 +451,11 @@ Notes:
   `mcp__<server>__<tool>`, then flow through runtime tool availability,
   sandbox, approval and `permissionRules` like other tools. A live tools/list
   response must not contain two raw tool names that normalize to the same
-  namespaced tool id.
+  namespaced tool id. Large MCP catalogs keep the full IPC tool surface in
+  `mcp:tools:list`, but the model-visible registry uses progressive
+  search/describe/call facade tools instead of registering every remote schema
+  directly. Approval and persisted permission rules for the write-capable call
+  facade resolve to the selected target tool.
 - `McpServerStatusRecord.status` includes `cached` and `lazy` in addition to
   disconnected/connecting/connected/failed. `cached` means matching schema was
   loaded from `McpCacheStore`; `lazy` means a live reconnect failed but cached

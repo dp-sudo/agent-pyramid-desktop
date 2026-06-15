@@ -16,6 +16,7 @@
 - turn 生命周期、工具循环、approval、中断、事件流：`docs/runtime-flow.md`。
 - IPC、preload API、错误码：`docs/ipc-contracts.md`。
 - shared contract、JSONL、附件、模型配置、runtime preferences、checkpoint、MCP cache：`docs/data-model.md`。
+- Claude Code 对标路线和三大能力验收基线：`docs/claude-code-alignment-roadmap.md`。
 - UI token、布局、组件模式：`docs/ui-design.md` 和 `docs/ui-layout-reference.md`。
 
 只把 `src/`、`tests/`、`docs/` 中的项目文档和根目录构建配置作为项目实现依据。`docs/external-references/` 只读参考，不属于普通维护范围。只有当任务明确属于 OpenSpec change 且仓库中存在对应目录时，才把 `openspec/changes/<change-id>/` 纳入本次依据。
@@ -61,6 +62,7 @@ renderer React
 | Runtime 状态机、工具循环、approval、中断、worker stream、runtime event | `docs/runtime-flow.md` |
 | IPC channel、request/response、preload API、handler 错误码 | `docs/ipc-contracts.md` |
 | Thread/Turn/Item/RuntimeEvent、附件、模型配置、runtime preferences、checkpoint、MCP cache、JSONL、迁移规则 | `docs/data-model.md` |
+| Claude Code 对标路线、三大能力验收基线、长期切片编号 | `docs/claude-code-alignment-roadmap.md` |
 | UI token、布局语法、主题、组件模式 | `docs/ui-design.md` |
 | 页面结构、组件布局、交互状态归属 | `docs/ui-layout-reference.md` |
 | 开发流程、文档归属、跨模块维护策略变化 | `docs/agent-development.md` |

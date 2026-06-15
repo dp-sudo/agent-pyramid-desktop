@@ -290,7 +290,7 @@ Workbench runtime failure toasts must keep the full error text visible, provide 
 - 工具过程按路由分两种呈现：Code 路由使用紧凑 `ds-process-tool-row`，summary 由工具类别派生的动作标签（已读取/已探索/已修改/已执行/执行中/执行失败/待执行）加标题摘要组成，无卡片背景；连续完成的只读工具记录聚合为一个可展开的只读步骤摘要，失败、运行中、审批、写入和推理项仍直接可见。失败命令标题只显示短预览，完整参数和结果保留在展开 detail 中。带结构化 diff 的完成写入工具标题显示“已编辑 ... +N -M”，展开后渲染只含修改片段的 diff preview，不铺开原始结果 JSON。Write/settings 路由使用 `ds-process-entry ds-process-tool` 卡片：summary 显示本地化工具动作和状态，detail 展示参数与结果。失败状态使用 danger token，成功状态使用 success token，运行中状态使用 accent-soft 背景。长工具详情在两种路由下均默认显示有界预览，并提供展开完整详情 / 收起为预览的显式控制。
 - Right Inspector 的 Changes 面板只展示最近工具活动，并使用有界详情预览；Todo/Plan 面板查找最新计划时应从后向前扫描，避免为长会话构造无用的完整计划或工具摘要集合。
 - 计划项、系统提示和用户输入请求仍使用原有独立块，不混入 assistant 最终回答。
-- Approval 块使用 `ds-approval-*` 样式；allow/deny 点击后必须进入提交中状态并禁用双按钮，参数 JSON 限高滚动，避免长参数撑开时间线。当前会话未决审批还必须在 composer 上方显示 `ds-pending-approval-*` 浮层，复用同一 diff preview 和审批按钮。
+- Approval 块使用 `ds-approval-*` 样式；允许一次、本会话允许、保存精确允许规则或拒绝点击后必须进入提交中状态并禁用整组动作，参数 JSON 限高滚动，避免长参数撑开时间线。当前会话未决审批还必须在 composer 上方显示 `ds-pending-approval-*` 浮层，复用同一 diff preview 和审批按钮。
 
 ## 7. Sidebar interactions
 
@@ -335,7 +335,7 @@ Workbench runtime failure toasts must keep the full error text visible, provide 
 - 写作侧栏必须提供与 Code 侧栏一致的可访问调宽分隔条，支持 pointer 拖拽和 Arrow/Home/End 键盘调宽，并复用 `left_sidebar_min_px` / `left_sidebar_max_px`。
 - Markdown 编辑区必须提供源码与预览分栏；预览复用 `ds-markdown` 的安全渲染规则，不单独创建第二套 Markdown 解析边界。
 - 写作补全必须贴近当前光标上下文展示，并提供 Tab 接受、Escape 取消的可见反馈；补全请求应使用当前选区/光标拆分 prefix/suffix。
-- Write assistant 必须按 turn 分组展示完整过程项，包括推理、工具、审批、计划、系统提示和最终回复；未决审批必须在输入器上方显示可操作面板，allow/deny 后进入提交中并禁用按钮。
+- Write assistant 必须按 turn 分组展示完整过程项，包括推理、工具、审批、计划、系统提示和最终回复；未决审批必须在输入器上方显示可操作面板，scoped allow/deny 后进入提交中并禁用按钮。
 - Write assistant 滚动只在用户接近底部时自动跟随；用户阅读历史内容时不得强制拉回底部。
 - 写作助手上下文可以携带显式选中文本；无选区时只允许携带有界的光标附近片段，不能默认镜像整篇 Markdown 文档。
 

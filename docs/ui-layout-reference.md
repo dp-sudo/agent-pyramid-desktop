@@ -295,7 +295,7 @@ Item rendering:
 | `assistant` | Markdown assistant bubble. Live output gets shiny styling. |
 | `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning follows `basicPreferences.openReasoningByDefault` until the user explicitly toggles it. Closed completed reasoning shows a light text preview and does not mount the markdown body. |
 | `tool` | Code route: compact `ds-process-tool-row` (action label + title preview) that expands to the same detail frame as the card; consecutive completed read-only rows may be grouped under a read-only summary. Failed command titles use a short preview while full args/results remain in detail. Completed coding tools with `ToolItem.result.diff` show a changed-file compact title and render `ds-tool-diff-preview` with only the changed diff lines instead of raw result JSON. Write/settings route: full `ds-process-entry ds-process-tool` card with status/tone summary. Long non-diff details render as a bounded preview with an explicit full-detail toggle in both routes. Running command-backed tools may show temporary `[stdout]` / `[stderr]` progress details; the final tool result replaces that temporary progress when `item_updated` arrives. |
-| `approval` | Approval block with args JSON and allow/deny buttons. |
+| `approval` | Approval block with args JSON, optional diff preview, scoped allow buttons and deny. |
 | `user_input` | System-style user input prompt. |
 | `plan` | Plan block with ordered steps and per-step status class. |
 | `compaction` | System-style compaction notice. |
@@ -332,7 +332,9 @@ Key classes:
 Approval behavior:
 
 - Buttons only render when `item.decision === undefined` and an approve handler
-  exists.
+  exists. The action group offers allow once, allow for session, save exact
+  allow rule, and deny; final resolved approval status shows the chosen allow
+  scope when the backend returns it on the resolved `ApprovalItem`.
 - Pending decision is shared by `approvalId` across the timeline block and the
   composer-adjacent pending panel. Failed IPC responses release the pending
   state; successful responses stay disabled until the resolved `ApprovalItem`
@@ -802,7 +804,7 @@ Purpose:
   process entries, reasoning, tool records, approvals, plans, system messages
   and assistant responses.
 - Show current pending approvals next to the Write composer, reusing the same
-  approval card, diff preview and allow/deny submission state as the Code route.
+  approval card, diff preview and scoped submission state as the Code route.
 - Include current Markdown file path, save state and explicit local context in
   the prompt. Selected text is sent only when the user selects it; otherwise a
   bounded nearby snippet may be sent. The full document body is not mirrored

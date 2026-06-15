@@ -13,6 +13,7 @@
 | Application config persistence | `src/main/persistence/config-file.ts` |
 | Model config access | `src/main/persistence/model-config-store.ts` |
 | Runtime preferences access | `src/main/persistence/runtime-preferences-store.ts` |
+| Checkpoint persistence | `src/main/persistence/checkpoint-store.ts` |
 | Runtime event emission | `src/main/application/agent-runtime.ts` and `src/main/event-bus.ts` |
 | Renderer state shape | `src/renderer/src/ui/store/WorkbenchContext.tsx` |
 | Renderer local preferences | `src/renderer/src/ui/preferences.ts` |
@@ -38,6 +39,8 @@ userData/
   attachments/
     index.json
     <attachmentId>.bin
+  checkpoints/
+    <threadId>.jsonl
   config
 ```
 
@@ -48,8 +51,10 @@ flowchart TB
   AttachmentStore["AttachmentStore"]
   ConfigStore["ModelConfigStore"]
   RuntimePreferencesStore["RuntimePreferencesStore"]
+  CheckpointStore["CheckpointStore"]
   Threads["userData/threads"]
   Attachments["userData/attachments"]
+  Checkpoints["userData/checkpoints"]
   Config["userData/config"]
   Profiles["ModelConfigProfilesState"]
   RuntimePreferences["RuntimePreferences"]
@@ -59,6 +64,7 @@ flowchart TB
   Contracts --> AttachmentStore --> Attachments
   Contracts --> ConfigStore --> Config
   Contracts --> RuntimePreferencesStore --> Config
+  Contracts --> CheckpointStore --> Checkpoints
   Config --> Profiles
   Config --> RuntimePreferences
   Contracts --> Renderer
@@ -250,6 +256,12 @@ Item kinds:
 - `plan`
 - `system`
 
+Runtime-created `SystemItem` rows carry user-visible operational messages such
+as interrupts, tool-budget warnings, and coding completion evidence. Completion
+evidence is an info-level system item attached to the same `turnId`; it is
+derived from existing `ToolItem.result` payloads and checkpoint metadata rather
+than introducing a separate item kind.
+
 ```mermaid
 classDiagram
   class Item {
@@ -288,6 +300,7 @@ classDiagram
     toolName
     args
     decision
+    scope
     resolvedAt
   }
   class PlanItem {
@@ -324,6 +337,9 @@ Append-only update rule:
   `isIsoTimestampString()`.
 - Streaming assistant/reasoning items emit `item_updated` before final persistence.
 - Tool and approval status updates are appended as a new JSONL row with the same item id.
+- `PlanItem` rows are appended by `create_plan` in plan mode and by
+  `create_edit_plan` when a Code-mode turn asks for visible multi-file edit
+  coordination before separate coding tool calls.
 - Replay consumers dedupe by `item.id` and keep the latest row.
 - Do not rewrite old JSONL rows for normal updates.
 
@@ -337,6 +353,49 @@ Tool failure results:
   interruption, execution failure, and automatic tool-budget exhaustion.
 - Successful tool results remain tool-specific payloads; do not force them into
   the failure result shape.
+
+## Checkpoint Model
+
+Checkpoint data is stored under `userData/checkpoints/<threadId>.jsonl`.
+
+Checkpoint record fields:
+
+- `threadId`
+- `turnId`
+- `workspace`
+- `prompt`
+- `createdAt`
+- `files`
+
+Checkpoint file snapshot fields:
+
+- `path`
+- `operation`: `"create" | "update" | "delete" | "rollback"`
+- `toolName`
+- `beforeContent`
+- `afterContent`
+- `beforeSha256`
+- `afterSha256`
+- `createdAt`
+
+Rules:
+
+- `CheckpointStore.beginTurn()` creates or updates the per-turn record.
+- `CheckpointStore.recordFileSnapshot()` records at most one file snapshot per
+  `turnId + path`; it preserves the earliest snapshot for that file in the
+  selected turn so turn-level code rewind can restore the pre-turn state.
+- `CheckpointStore.restoreCode()` restores a suffix of turn checkpoints by
+  collecting the earliest snapshot for each path from the selected turn forward,
+  then rechecking workspace path and symbolic-link boundaries before every
+  write or delete.
+- `CheckpointStore.latestFileSnapshot()` reads the newest same-thread/workspace
+  snapshot for a single path. `rollback_file` uses it only when in-memory file
+  history is absent and the live file state still matches the snapshot
+  `afterSha256`, so checkpoint fallback cannot overwrite unrelated external
+  edits.
+- Checkpoint records are replay inputs, not authority to bypass workspace
+  policy. Restore and rollback fallback both revalidate path boundaries before
+  touching disk.
 
 ## Attachment Model
 
@@ -582,18 +641,24 @@ Key semantics:
   `ToolCatalogService` after catalog filtering. The resulting
   `TurnRecord.toolCatalog` snapshot is diagnostic only; approval, sandbox and
   permission checks still run immediately before execution.
-- `permissionRules` is an ordered array of `{ id, tool, pattern, effect }`
-  records where `tool` is `command | write | mcp` and `effect` is
-  `allow | ask | deny`. Updates replace the full rule array and must contain
-  unique non-empty ids, non-empty patterns without NUL bytes, and valid enum
-  values. If the persisted field exists but is malformed, config loading fails
-  instead of silently dropping a security rule.
+- `permissionRules` is an ordered array of
+  `{ id, tool, pattern, effect, match? }` records where `tool` is
+  `command | write | mcp`, `effect` is `allow | ask | deny`, and optional
+  `match` is `glob | exact` (default `glob`). Updates replace the full rule
+  array and must contain unique non-empty ids, non-empty patterns without NUL
+  bytes, and valid enum values. If the persisted field exists but is malformed,
+  config loading fails instead of silently dropping a security rule.
 - Runtime evaluates `permissionRules` after hard `read-only` sandbox and
   `approvalPolicy: never` denials. Command rules match raw `command` arguments
   for shell-like command tools; write rules match `path` arguments, including
   `multi_edit`, or `apply_patch` target paths; MCP rules match `server/tool` derived from
   `mcp__<server>__<tool>` names. Matching effects resolve by
-  `deny > ask > allow`; no match falls back to normal approval logic.
+  `deny > ask > allow`; no match falls back to normal approval logic. Glob
+  command patterns ending in `:*` are conservative prefix scopes: ordinary
+  arguments after the prefix still match, but shell control, redirection,
+  substitution, or newline-separated continuations do not. Exact rules compare
+  literal normalized candidates; for multi-value write candidates such as
+  `apply_patch`, every target path must be covered by the exact pattern set.
 - `mcpServers` is an array of external MCP server configs. Each config stores
   `id`, `name`, `transport`, optional stdio fields (`command`, `args`, `env`,
   `cwd`), optional Streamable HTTP fields (`url`, `headers`), `enabled`,

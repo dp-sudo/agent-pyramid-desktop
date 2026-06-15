@@ -22,7 +22,7 @@
 
 | 主题 | 当前归属 |
 | --- | --- |
-| 写作路线审批面板、差异预览、allow/deny 提交中状态 | `docs/ui-layout-reference.md`、`docs/runtime-flow.md` |
+| 写作路线审批面板、差异预览、scoped allow/deny 提交中状态 | `docs/ui-layout-reference.md`、`docs/runtime-flow.md` |
 | 写作助手按 turn 分组展示推理、工具、审批、计划、系统提示和最终回复 | `docs/ui-design.md`、`docs/ui-layout-reference.md` |
 | 写作助手滚动只在接近底部时自动跟随 | `docs/ui-design.md`、`docs/ui-layout-reference.md` |
 | 保存按钮禁用态和长错误状态栏 | `docs/ui-layout-reference.md` |

@@ -178,13 +178,14 @@ flowchart TD
   Budget{"round >= maxToolRounds?"}
   Execute["executeToolCallsForRound\n-> ToolCallExecutor.execute"]
   PushTool["push assistant tool call + tool result into messages"]
+  Evidence["append completion evidence\nfrom ToolItem.result + checkpoints"]
   Complete["markTurnStatus(completed)"]
   NeedsContinuation["append budget warning\nmark needs_continuation"]
   Failed["mark failed / emit runtime_error"]
 
   Start --> History --> Skills --> Context --> User --> Loop
   Loop --> BuildReq --> Compact --> Chat --> Stream --> Persist --> ToolCheck
-  ToolCheck -- "no" --> Complete
+  ToolCheck -- "no" --> Evidence --> Complete
   ToolCheck -- "yes" --> Budget
   Budget -- "yes" --> NeedsContinuation
   Budget -- "no" --> Execute --> PushTool --> Loop
@@ -233,7 +234,10 @@ LLM request construction:
 - `context-compaction.prepareMessagesForRequest()` first repairs the request-only
   model history by dropping orphan tool results, duplicate tool results and
   assistant tool calls that have no matching result. This keeps provider request
-  history protocol-valid without rewriting persisted `messages.jsonl`.
+  history protocol-valid without rewriting persisted `messages.jsonl`. Runtime
+  request-boundary tests cover both forked-thread first requests and resumed
+  compacted requests so persisted/forked history cannot silently introduce
+  malformed tool pairs.
 - Context budget inputs still come from the selected model profile
   (`model_context_window`, `model_auto_compact_token_limit`, `max_tokens`),
   while automatic compaction enablement and strategy come from
@@ -318,7 +322,7 @@ flowchart TD
   Execute["ToolRegistry.execute(call, context)"]
   Complete["ToolItem completed\nemit item_updated"]
   Fail["ToolItem failed\nemit runtime_error when appropriate"]
-  Plan{"call.name == create_plan?"}
+  Plan{"call.name == create_plan\nor create_edit_plan?"}
   AppendPlan["append PlanItem"]
   ReturnResult["Return AgentToolResult to model messages"]
 
@@ -338,6 +342,11 @@ flowchart TD
 Tool availability:
 
 - `create_plan` is only enabled when `turn.mode === "plan"`.
+- `create_edit_plan` is a read-only Code-mode coding tool for visible
+  multi-file coordination before separate edit/write/delete calls. It validates
+  at least two workspace-relative planned files, returns a structured plan
+  payload, and appends a normal `PlanItem`; it does not replace the
+  all-or-nothing write behavior of a single `apply_patch`.
 - `update_goal` is enabled when `turn.goalMode` is true or the thread has an active goal.
 - `list_skills` and `run_skill` are read-only skill tools. They are enabled by
   default in Code and Write threads through `RuntimePreferences.toolAvailability`
@@ -370,7 +379,13 @@ Tool availability:
 - MCP tools are registered dynamically by `McpHost` using the
   `mcp__<server>__<tool>` namespace. Code threads can see them through the same
   catalog path as built-ins; Write threads hide them by default with the
-  mode-aware tool access policy.
+  mode-aware tool access policy. Small MCP catalogs register each remote tool
+  directly. When a server exposes more than the progressive-discovery threshold,
+  the model-visible catalog is reduced to MCP facade tools for searching,
+  describing, read-only calling and write-capable calling; renderer MCP status
+  and `mcp:tools:list` still expose the full remote tool list. The write-capable
+  facade remains non-read-only and permission rules are evaluated against the
+  selected target MCP tool (`server/tool`), not the facade tool name.
 - The default tool access policy denies Code-only tools in Write threads:
   coding write tools, foreground shell tools, WSL / Git Bash / PowerShell
   tools, Git tools, package/task wrappers, command session tools, shell
@@ -407,19 +422,27 @@ Tool availability:
 
 Approval policy resolved by `ToolPolicyService`:
 
-- Tools marked `metadata.isReadOnly` skip approval.
+- Tools marked `metadata.isReadOnly` skip approval, including
+  `create_edit_plan`.
 - Enabled `create_plan` and `update_goal` skip approval.
 - `create_plan` step statuses use shared `PLAN_STEP_STATUSES`; missing status
   defaults to `pending`, while unknown values fail instead of being silently
   downgraded.
 - `sandboxMode: "read-only"` denies non-read-only tools before execution.
 - `approvalPolicy: "never"` denies non-read-only tools before execution.
-- `RuntimePreferences.permissionRules` then evaluates per-call command text or
-  write paths for command/write tool families, and `server/tool` values for MCP
-  tool names. Matching rules resolve by
+- Session-scoped approval grants and `RuntimePreferences.permissionRules` then
+  evaluate per-call command text or write paths for command/write tool families,
+  and `server/tool` values for MCP tool names. Large-catalog MCP call facade
+  tools derive this value from `tool_name`, so a persisted grant targets the
+  selected remote tool rather than the facade. Matching rules resolve by
   `deny > ask > allow`; unmatched calls fall back to the normal metadata-based
-  policy. Hard `read-only` and `never` denials run first, so an allow rule
-  cannot bypass them.
+  policy. Hard `read-only` and `never` denials run first, so scoped approval
+  grants and persisted allow rules cannot bypass them. Glob command rules ending
+  in `:*` are prefix scopes; they match ordinary argument continuations but
+  refuse appended shell control, redirection, substitution, or newline-separated
+  commands so scoped approvals do not widen into unrelated follow-up commands.
+  Exact rules compare literal normalized candidates and require all multi-value
+  write candidates to be covered.
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
 - All remaining non-read-only tools require approval.
 
@@ -437,13 +460,13 @@ stdout/stderr chunks; those calls become live-only `tool_progress` events on
 call. Final tool success/failure still arrives as the normal `item_updated`
 event with the completed `ToolItem.result`.
 
-Workspace tools require an absolute thread workspace path before resolving file paths. The shared workspace policy trims the workspace root once, then uses that same normalized string for absolute-path validation and path resolution. `list_files.path` and `search_files.path` reject non-string values instead of treating them as omitted root-path requests, and workspace string parameters reject NUL bytes before path resolution or search execution. `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, `search_files.max_results`, and `list_symbols.max_results` are strict integer ranges; invalid or out-of-range values fail instead of being silently clamped to defaults. `read_file`, `search_files`, `rg_search`, `list_symbols`, `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. Final UTF-8 file writes for coding tools, Write IPC saves/creates, and checkpoint code restore use a no-follow open where supported, so a target replaced with a symbolic link after validation is rejected rather than followed; editable coding-tool reads and Write IPC Markdown reads/rename sources use the same no-follow final-component boundary before decoding source text. Single-file coding tools restore the original file content if post-write metadata collection fails before file history and read state are updated. `multi_edit` applies ordered exact replacements to one file in memory and writes once only after every step succeeds, so a later missing or ambiguous `old_string` leaves the file unchanged. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write or post-write metadata step fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the history entry belongs to another thread or the file no longer matches the latest agent-written content. Checkpoint code rewind builds a restore plan first, then re-checks the workspace path policy and symbolic-link boundary again immediately before each delete/write commit, including after parent directory creation. Session rewind first verifies the selected turn still exists in the current transcript before restoring code, then truncates messages/events and checkpoint records after code restore succeeds. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
+Workspace tools require an absolute thread workspace path before resolving file paths. The shared workspace policy trims the workspace root once, then uses that same normalized string for absolute-path validation and path resolution. `list_files.path` and `search_files.path` reject non-string values instead of treating them as omitted root-path requests, and workspace string parameters reject NUL bytes before path resolution or search execution. `create_edit_plan` applies the same lexical workspace boundary to each planned file path before it appends a visible `PlanItem` for multi-file coordination. `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, `search_files.max_results`, `list_symbols.max_results`, and `search_symbols.max_results` are strict integer ranges; invalid or out-of-range values fail instead of being silently clamped to defaults. `read_file`, `search_files`, `rg_search`, `list_symbols`, `search_symbols`, `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. Final UTF-8 file writes for coding tools, Write IPC saves/creates, and checkpoint code restore use a no-follow open where supported, so a target replaced with a symbolic link after validation is rejected rather than followed; editable coding-tool reads and Write IPC Markdown reads/rename sources use the same no-follow final-component boundary before decoding source text. Single-file coding tools restore the original file content if post-write metadata collection fails before file history and read state are updated. `multi_edit` applies ordered exact replacements to one file in memory and writes once only after every step succeeds, so a later missing or ambiguous `old_string` leaves the file unchanged. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write or post-write metadata step fails. `rollback_file` uses the current runtime's in-memory file history first; when that history is absent, it can fall back to the newest same-thread/workspace checkpoint file snapshot, but only if the current file state still matches the recorded post-write hash. Checkpoint code rewind builds a restore plan first, then re-checks the workspace path policy and symbolic-link boundary again immediately before each delete/write commit, including after parent directory creation. Session rewind first verifies the selected turn still exists in the current transcript before restoring code, then truncates messages/events and checkpoint records after code restore succeeds. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
 
 `apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written. A patch may include multiple hunks for one file under a single file header, but duplicate file sections for the same resolved target are rejected so successful writes and failure rollback both have one authoritative pre-write snapshot per file. The parser treats `\ No newline at end of file` as part of the neighboring hunk line, so patches cannot silently add or remove the final newline. Existing lines keep their original LF or CRLF endings; added lines use the local file ending around the insertion point, falling back to LF for new files.
 
-File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `rollback_file`; rollback is limited to the thread that produced the latest file history entry, and history is not replayed from JSONL after restart.
+File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `rollback_file`; rollback is limited to the thread that produced the latest file history entry. Because checkpoint JSONL is persisted separately, `rollback_file` may use the latest matching checkpoint file snapshot after restart when no in-memory history entry exists. Checkpoints are turn/file snapshots rather than a full per-write stack, so this fallback is guarded by `afterSha256` and fails if the live file no longer matches the recorded post-write content.
 
-`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. `shell_command`, `git_bash_command`, `powershell_command`, and `wsl_command` use the same foreground execution boundary while selecting an explicit shell. `shell_command` can use a custom `shell_path` and `shell_args`; `powershell_command` defaults to `pwsh` and, on Windows, falls back to Windows PowerShell when `pwsh` is absent from PATH; `wsl_command` converts Windows drive paths to `/mnt/<drive>/...` before entering the WSL shell. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Foreground command-backed tools and long-running command sessions receive an explicit child environment built from the main process environment with credential-like variable names removed (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, provider key prefixes, and related forms) while preserving platform basics such as PATH/Path, PATHEXT, ComSpec, HOME/USERPROFILE, TEMP/TMP, SHELL and SystemRoot so shells, Git and package managers remain usable. Foreground command-backed tools report live stdout/stderr through `tool_progress`, throttled in the command process wrapper by time and byte thresholds before renderer updates. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start or exits unsuccessfully.
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. `shell_command`, `git_bash_command`, `powershell_command`, and `wsl_command` use the same foreground execution boundary while selecting an explicit shell. `shell_command` can use a custom `shell_path` and `shell_args`; `powershell_command` defaults to `pwsh` and, on Windows, falls back to Windows PowerShell when `pwsh` is absent from PATH; `wsl_command` converts Windows drive paths to `/mnt/<drive>/...` before entering the WSL shell. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Tool policy still denies command tools in read-only sandbox before spawn. After approval, foreground command-backed tools and long-running command sessions share `command-sandbox.ts` as the spawn-time enforcement layer: workspace-realpath cwd, an explicit child environment with credential-like variables removed (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, provider key prefixes, and related forms), `shell: false`, non-inherited stdio, hidden windows, and platform-specific process-tree cleanup. Node/Electron has no built-in cross-platform OS command jail, so `detect_shell_environment.sandbox.osJail.enabled` is currently `false` and reports that boundary instead of implying stronger isolation. Foreground command-backed tools report live stdout/stderr through `tool_progress`, throttled in the command process wrapper by time and byte thresholds before renderer updates. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start or exits unsuccessfully.
 
 Structured developer command tools are registered independently from
 `run_command`. `rg_search` performs ripgrep-style regular expression search
@@ -468,15 +491,16 @@ metacharacters are rejected before spawning npm/pnpm/yarn/bun. When
 if `package-lock.json` or `npm-shrinkwrap.json` exists; otherwise it fails
 instead of silently falling back to lockfile-mutating `npm install`.
 `detect_shell_environment` reports PATH-based shell availability, Git Bash
-candidates, PowerShell/pwsh, WSL, and workspace path conversion facts.
+candidates, PowerShell/pwsh, WSL, workspace path conversion facts, and the
+active command sandbox profile.
 
 Long-running command sessions are held in main-process memory by
 `start_command_session`, `list_command_sessions`, `read_command_session`,
-`write_command_session`, and `stop_command_session`. Starting a session returns
-a session id immediately while stdout/stderr are retained in bounded per-stream
-buffers that keep the latest bytes for long-running watcher/dev-server output
-and are emitted as live `tool_progress` events on the original
-`start_command_session` tool call id.
+`write_command_session`, and `stop_command_session`. Starting a session waits
+until the OS accepts the child process before returning a session id, while
+stdout/stderr are retained in bounded per-stream buffers that keep the latest
+bytes for long-running watcher/dev-server output and are emitted as live
+`tool_progress` events on the original `start_command_session` tool call id.
 List, read, write and stop calls are scoped to the same thread and workspace
 that created the session. `list_command_sessions` is read-only and returns the
 visible session ids/statuses, with optional UTF-8-safe stdout/stderr tails for
@@ -488,15 +512,21 @@ to stdin without trimming, waits for stdin to accept it, and surfaces a
 write/closed-stdin error instead of reporting a best-effort success.
 `stop_command_session` waits for the child process to reach a terminal state
 before returning, so callers can safely clean up or reuse the workspace after a
-stop result. `start_command_session` waits for the child process to spawn before
-returning a session id; shell spawn failures are surfaced as tool errors instead
-of successful failed-session snapshots. A pre-aborted or interrupted startup
-kills the child process before the session is registered. Runtime errors after a successful spawn
-keep the session in `failed` state with the captured error message even if the
-child later emits a close event. Session state is not persisted across app
-restarts; callers must stop sessions explicitly.
+stop result. `start_command_session` registers the child in the in-memory
+manager before waiting for spawn, so application shutdown can still terminate a
+process created during the startup window; shell spawn failures remove that
+pending entry and surface as tool errors instead of successful failed-session
+snapshots. A pre-aborted or interrupted startup kills the child process before a
+session id is returned. Runtime errors after a successful spawn keep the session
+in `failed` state with the captured error message even if the child later emits
+a close event. `shutdownCommandSessions()` is a main-process-only lifecycle hook
+registered from Electron `before-quit`; it uses the same process-tree kill path
+as explicit stop, returns bounded diagnostic snapshots, marks shutdown-stopped
+sessions with a traceable error message, and clears the in-memory owner. Session
+state is not persisted across app restarts; callers should still stop sessions
+explicitly during normal runtime.
 
-`diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass and receives the same runtime command defaults as `run_command`. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths; diagnostics that resolve outside the active workspace are omitted instead of being surfaced as `../...` paths. A malformed package manifest is reported as a `diagnose_workspace package.json is invalid` tool error instead of a raw JSON parser failure. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. `list_symbols` uses the same short-lived TypeScript Language Service boundary to return a single-file navigation outline with workspace-relative path, symbol kind, modifiers, start/end positions and nesting level. Language-service diagnostics and symbols are also limited to files inside the active workspace. This is the current TypeScript diagnostics/symbol loop; it does not keep a persistent language server process alive.
+`diagnose_workspace` runs the workspace typecheck command and returns parsed TypeScript diagnostics. Because it can execute `npm run typecheck` or local `npx --no-install tsc`, it uses the command approval boundary instead of the read-only bypass and receives the same runtime command defaults as `run_command`. When `cwd` points at a subproject, relative TypeScript diagnostic paths are resolved from that command cwd and then reported back as workspace-relative paths; diagnostics that resolve outside the active workspace are omitted instead of being surfaced as `../...` paths. A malformed package manifest is reported as a `diagnose_workspace package.json is invalid` tool error instead of a raw JSON parser failure. `diagnose_file` validates one workspace file and uses TypeScript Language Service to return syntactic, semantic, and suggestion diagnostics for that file, so it remains read-only and skips approval. `list_symbols` uses the same short-lived TypeScript Language Service boundary to return a single-file navigation outline with workspace-relative path, symbol kind, modifiers, start/end positions and nesting level. `search_symbols` uses a bounded on-demand Language Service extraction over TypeScript/JavaScript project files to search symbol name/kind/modifiers/path or return a project symbol map when no query is provided; candidates are filtered by the workspace skip policy and capped by file/result limits. Language-service diagnostics and symbols are also limited to files inside the active workspace. This is the current TypeScript diagnostics/symbol loop; it does not keep a persistent language server process alive.
 
 Write-mode Markdown file operations remain renderer-invoked IPC services under
 `window.agentApi.write.*`. They are not exposed to the model as coding tools;
@@ -540,21 +570,31 @@ sequenceDiagram
   AC->>Bus: item_appended
   AC->>Bus: approval_requested
   Bus-->>UI: SSE push
-  UI->>IPC: approvals.respond({ approvalId, decision })
+  UI->>IPC: approvals.respond({ approvalId, decision, scope? })
   IPC->>RT: respondApproval()
-  RT->>AC: respond(decision)
-  AC->>Store: appendItem(ApprovalItem with decision)
+  RT->>AC: respond(decision, scope)
+  AC->>Store: appendItem(ApprovalItem with decision/scope)
   AC->>Bus: item_updated
+  RT->>RT: apply session grant or persist exact permission rule
   RT-->>RT: continue or deny tool result
 ```
 
 Pending approvals are held in memory by `ApprovalCoordinator`. They are not
 resumed across app restart.
 
+Approval response `scope` defaults to `once`. `session` creates an in-memory
+thread/workspace scoped exact permission grant for the current app process;
+`persist_rule` writes an exact `RuntimePreferences.permissionRules` entry using
+the approved command/write/MCP subject. Unsupported scoped subjects and
+persistence failures emit `runtime_error` instead of silently degrading the
+decision. The renderer presents separate allow-once, allow-for-session, persist
+allow-rule, and deny actions, while the backend remains responsible for deriving
+the exact session grant or persisted rule from the pending tool subject.
+
 Approval items remain in the timeline for auditability. Renderer also shows
 the active thread's unresolved approvals in a composer-adjacent pending
-approval panel, reusing the same diff preview and allow/deny controls so users
-do not have to scroll the timeline to unblock a turn.
+approval panel, reusing the same diff preview and scoped decision controls so
+users do not have to scroll the timeline to unblock a turn.
 
 Interrupting a turn denies pending approvals for that turn and aborts active tool controllers. Tool items that were already finalized as interrupted keep that interrupted result when the pending approval resolves to deny, so replay does not rewrite an interrupt as an ordinary user denial. Runtime waits briefly for already-started tool execution promises to settle before emitting the interrupted terminal event; if a tool ignores abort beyond that bounded wait, runtime emits a traceable `runtime_error` and continues the interrupt. Command tools receive the abort signal and terminate the child process/process group before the turn is marked interrupted.
 
@@ -618,6 +658,12 @@ Expected terminal statuses:
 
 Completion persistence:
 
+- For completed turns with coding or development command tools, runtime appends
+  an info `SystemItem` before `turn_completed`. The text is built by
+  `completion-evidence.ts` from the final same-turn `ToolItem.result` values and
+  checkpoint metadata, so it can summarize changed files, commands, checkpoint
+  availability and remaining risk without adding those audit details to future
+  model history.
 - Runtime appends `turn_completed` event to `events.jsonl`.
 - Runtime emits `turn_completed` on `RuntimeEventBus`.
 - Runtime removes the turn from `inFlight`.
@@ -685,7 +731,11 @@ Lifecycle rules:
 - Cache-backed tools are visible to Code threads before the live server
   finishes connecting. Their first execution forces a server connect, swaps the
   placeholder for a live `AgentTool`, then forwards the original call through
-  the normal ToolRegistry and approval path.
+  the normal ToolRegistry and approval path. If the cached or live tool count is
+  above the progressive-discovery threshold, the cache installs the same facade
+  tools instead of one placeholder per remote tool; search/describe use cached
+  descriptors, while call tools force the live connect before invoking the
+  selected target.
 - Cached prompt/resource surfaces can be listed immediately. Live prompt
   refresh rejects duplicate slash-command segments, and `getPrompt()` /
   `readResource()` force the same lazy connect before reading live content.
@@ -725,9 +775,9 @@ Renderer event handling:
   the current window also advances the matching thread summary activity time
 - `item_appended`: append only when the event belongs to the active thread
 - `item_updated`: update only when the event belongs to the active thread
-- `tool_progress`: batch live stdout/stderr by `toolCallId`, merge into the
-  matching running tool card, and let the final `item_updated` result replace
-  the temporary progress display
+- `tool_progress`: batch live stdout/stderr by `threadId` / `turnId` /
+  `toolCallId`, merge into the matching running tool card, and let the final
+  `item_updated` result replace the temporary progress display
 - `turn_completed`: `actions.turnEnded(event.threadId, event.status)`
 - `turn_failed`: `actions.turnEnded(event.threadId, "failed")`; visible error only for the active thread
 - `runtime_error`: visible error only for global errors or the active thread

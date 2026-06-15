@@ -141,8 +141,9 @@ Security invariants:
 Window navigation guards and renderer CSP live in `src/main/infrastructure/`
 platform helpers; `src/main/index.ts` passes the renderer entry file into the
 window helper and keeps lifecycle registration at the composition root. The
-current lifecycle has two independent `app.on("before-quit")` handlers: one
-closes `McpHost`, and one destroys `LlmWorkerPool`.
+current lifecycle has three independent `app.on("before-quit")` handlers: one
+closes `McpHost`, one shuts down in-memory command sessions, and one destroys
+`LlmWorkerPool`.
 
 ```mermaid
 flowchart TD
@@ -237,6 +238,9 @@ Key runtime responsibilities in `src/main/application/agent-runtime.ts`:
 - Applies request history hygiene and context compaction before LLM calls.
 - Executes tool rounds until the model stops or tool budget is reached.
 - Requests approval for non-read-only and non-mode-gated tools.
+- Appends completion evidence for coding/development turns from durable
+  `ToolItem.result` values and checkpoint metadata before the terminal
+  `turn_completed` event.
 - Persists visible items/events and emits `RuntimeEvent` updates.
 - Handles interrupt by cancelling worker request, denying pending approvals, and
   finishing with `interrupted`.
@@ -250,8 +254,8 @@ flowchart LR
   InMemory["InMemoryToolRegistry"]
   Plan["create_plan"]
   Workspace["list_files\nread_file\nsearch_files"]
-  Coding["edit_file\nmulti_edit\nwrite_file\napply_patch\nrollback_file"]
-  Command["run_command\ncommand sessions\ndiagnose_workspace\ndiagnose_file\nlist_symbols"]
+  Coding["create_edit_plan\nedit_file\nmulti_edit\nwrite_file\napply_patch\nrollback_file"]
+  Command["run_command\ncommand sessions\ndiagnose_workspace\ndiagnose_file\nlist_symbols\nsearch_symbols"]
   Mcp["MCP tools\nmcp__server__tool"]
   Goal["update_goal"]
   Approval["Approval gate"]
@@ -279,16 +283,25 @@ Tool availability is decided at the runtime boundary:
 - `update_goal`: exposed in goal mode or active-goal threads.
 - `list_files`, `read_file`, `search_files`: read-only workspace tools and do
   not require approval.
+- `create_edit_plan`: read-only Code-mode coding tool that validates at least
+  two planned workspace-relative files, returns a structured coordination plan,
+  and appends the normal `PlanItem` timeline surface before separate
+  edit/write/delete calls.
 - `edit_file`, `multi_edit`, `write_file`, `apply_patch`, `rollback_file`: workspace write tools that
   require approval, strict UTF-8 text, fresh read-state for existing files, and
   workspace path validation. `multi_edit` applies ordered exact replacements in
   memory and writes once only after every step succeeds. `apply_patch` dry-runs
   all hunks before writing, preserves no-newline-at-end markers, and can show a
   multi-file diff preview. `rollback_file` restores the latest in-memory agent
-  file history entry only when current content still matches that entry.
+  file history entry first, then falls back to the latest same-thread/workspace
+  checkpoint file snapshot only when current content still matches the
+  recorded post-write hash.
 - `run_command`: foreground command tool that runs inside the workspace,
   returns stdout/stderr/exit status, requires approval, and is aborted when the
-  turn is interrupted.
+  turn is interrupted. Foreground commands and long-running command sessions
+  share `command-sandbox.ts` for spawn-time cwd/env/stdio/shell/process cleanup
+  boundaries; OS jail support is reported as unavailable unless a future native
+  platform helper adds it.
 - `diagnose_workspace`: command-backed diagnostics tool that runs workspace
   typecheck and requires approval because package scripts can execute shell
   commands.
@@ -297,12 +310,18 @@ Tool availability is decided at the runtime boundary:
 - `list_symbols`: read-only TypeScript/JavaScript outline tool that uses the
   same short-lived Language Service boundary to return single-file symbols
   before editing unfamiliar code.
+- `search_symbols`: read-only TypeScript/JavaScript project symbol search/map
+  tool that uses bounded on-demand Language Service extraction across
+  workspace-filtered project files without a persistent language server.
 - MCP tools are dynamically registered by `McpHost` from configured stdio or
   Streamable HTTP MCP servers. They use `mcp__<server>__<tool>` names, reuse the
   normal ToolRegistry/approval/sandbox/permission path, and are hidden from
-  Write threads by the default tool access policy. Matching cached schema can
-  register lazy placeholders before a live server is ready; the first call
-  forces reconnect and then continues through the same ToolRegistry path.
+  Write threads by the default tool access policy. Small catalogs register each
+  remote tool directly; large catalogs register progressive search/describe/call
+  facade tools so the model can discover a target before loading that target's
+  full schema. Matching cached schema can register lazy placeholders or facade
+  tools before a live server is ready; the first call forces reconnect and then
+  continues through the same ToolRegistry path.
   Refresh failures that clear live tools emit an empty `mcp_tool_list_changed`
   event so renderer and runtime consumers do not retain stale descriptors.
 - Unknown or unavailable tool calls produce a visible `runtime_error` with
@@ -422,7 +441,10 @@ Persistence invariants:
   `runtimePreferences` section; if the section already exists, it is
   authoritative.
 - Checkpoint JSONL records are keyed by thread and are restore inputs only after
-  workspace path and symlink boundary checks pass again.
+  workspace path and symlink boundary checks pass again. Single-file
+  `rollback_file` can also use the newest same-thread/workspace file snapshot
+  as a restart-safe fallback, but only after the live file hash still matches
+  that snapshot's `afterSha256`.
 - MCP cache stores public schema/surface descriptors and startup observations;
   it is never the user-editable server config authority.
 

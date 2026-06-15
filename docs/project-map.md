@@ -108,7 +108,7 @@ flowchart LR
 | Area | Primary Files | Responsibility |
 | --- | --- | --- |
 | Main composition | `src/main/index.ts` | 创建 stores、event bus、worker pool、tool registry、AgentRuntime，注册 IPC handlers，创建窗口。 |
-| Runtime orchestration | `src/main/application/agent-runtime.ts`、`src/main/application/tool-call-executor.ts`、`src/main/application/runtime-event-persist.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、parent-turn 工具执行生命周期、approval gate、中断、item/event 持久化辅助和事件广播。 |
+| Runtime orchestration | `src/main/application/agent-runtime.ts`、`src/main/application/tool-call-executor.ts`、`src/main/application/completion-evidence.ts`、`src/main/application/runtime-event-persist.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、parent-turn 工具执行生命周期、completion evidence、approval gate、中断、item/event 持久化辅助和事件广播。 |
 | Tool system | `src/main/application/tools/*`、`src/main/application/tool-catalog.ts`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口、内置工具、模型可见工具目录过滤、稳定排序和 catalog fingerprint。 |
 | Skills system | `src/shared/skills/*`、`src/main/skills/skill-service.ts`、`src/main/application/tools/skill-tools.ts`、`src/main/ipc/skills-handlers.ts` | 发现 workspace skills、解析 `SKILL.md`、按 turn 匹配注入 inline 动态上下文，并通过只读 `list_skills` / `run_skill` 工具和 Settings `skills:list` IPC 暴露技能目录摘要、验证警告、inline 技能指令和 isolated read-only subagent 结果。 |
 | MCP host | `src/main/infrastructure/mcp/*`、`src/main/ipc/mcp-handlers.ts` | stdio / Streamable HTTP MCP client lifecycle、动态工具注册、cache/lazy schema、startup stats、auth diagnostics、prompts/resources surface 和 MCP IPC。 |
@@ -116,7 +116,7 @@ flowchart LR
 | Provider gateway | `src/main/infrastructure/minimax/*` | `MiniMaxGateway` 负责 `LlmRequest.protocol` 路由；`openai-compatible-adapter.ts`、`anthropic-compatible-adapter.ts` 和 `gateway-common.ts` 分别承载协议请求体 / SSE 转换与共享 HTTP、endpoint、API key 解析。 |
 | Persistence | `src/main/persistence/*` | 线程 JSONL、附件、模型配置 profiles、runtime preferences 的 userData 持久化。 |
 | IPC handlers | `src/main/ipc/*-handlers.ts`、`src/main/ipc/ipc-result-handler.ts` | 将 renderer 调用映射到 runtime、stores 和文件服务，统一返回 `IpcResult<T>`；通用 handler helper 负责保留 envelope 和可追踪错误消息。 |
-| Electron platform | `src/main/infrastructure/electron-window.ts`、`src/main/infrastructure/content-security-policy.ts`、`src/main/index.ts` | 窗口创建、外部导航拦截、renderer CSP 安装和 Electron app 生命周期注册；当前 `before-quit` 分别独立关闭 MCP host 与 worker pool。 |
+| Electron platform | `src/main/infrastructure/electron-window.ts`、`src/main/infrastructure/content-security-policy.ts`、`src/main/index.ts` | 窗口创建、外部导航拦截、renderer CSP 安装和 Electron app 生命周期注册；当前 `before-quit` 分别独立关闭 MCP host、清理命令会话与销毁 worker pool。 |
 | Preload bridge | `src/preload/index.ts` | 暴露 `window.agentApi`，隐藏 Electron IPC 细节。 |
 | Shared contracts | `src/shared/agent-contracts.ts`、`src/shared/agent-api.ts`、`src/shared/model-config-contracts.ts`、`src/shared/contract-primitives.ts`、`src/shared/ipc.ts`、`src/shared/ipc-errors.ts`、`src/shared/locale.ts` | 跨进程类型统一出口、preload bridge 类型契约、模型配置契约、基础 UUID/ISO guard、IPC channel 常量、IPC error code 和语言列表权威来源。 |
 | Renderer shell | `src/renderer/src/ui/AppShell.tsx`、`src/renderer/src/ui/Workbench.tsx`、`src/renderer/src/ui/sidebar-resize-model.ts`、`src/renderer/src/ui/workbench-composer-payload.ts`、`src/renderer/src/ui/workbench-ipc.ts`、`src/renderer/src/ui/workbench-runtime-events.ts`、`src/renderer/src/ui/workbench-thread-model.ts`、`src/renderer/src/ui/settings-basic-preferences-model.ts`、`src/renderer/src/ui/settings-navigation-model.ts`、`src/renderer/src/ui/settings-model-config-model.ts`、`src/renderer/src/ui/settings-runtime-model.ts`、`src/renderer/src/ui/settings-runtime-preferences-model.ts`、`src/renderer/src/ui/settings-view-state-model.ts`、`src/renderer/src/ui/SettingsView.tsx`、`src/renderer/src/ui/components/settings/SettingsSkillsPanel.tsx`、`src/renderer/src/ui/components/settings/SettingsMcpServersPanel.tsx` | 路由、工作台、左侧栏 resize 规则、composer payload 规则、IPC 错误边界、RuntimeEvent 分发规则、线程选择规则、设置页 basic preferences 规则、设置页导航、模型配置表单规则、runtime preference 数据规则、设置页状态守卫、Skills/MCP 设置面板和主要交互流程。 |
@@ -229,11 +229,18 @@ flowchart TD
   bodies or reference contents to the renderer settings panel.
 - MCP servers are configured in `RuntimePreferences.mcpServers`, connected by
   `McpHost`, and their tools are registered as `mcp__<server>__<tool>` in the
-  same `ToolRegistry`. Matching cached schema can expose lazy placeholders
-  while the live server reconnects.
+  same `ToolRegistry`. Small catalogs use direct registration; large catalogs
+  register progressive search/describe/call facade tools while the renderer MCP
+  surface still lists the full remote catalog. Matching cached schema can expose
+  lazy placeholders or facade tools while the live server reconnects.
 - Read-only workspace tools skip approval.
+- `create_edit_plan` is a read-only Code-mode coding tool that appends a
+  visible `PlanItem` for multi-file coordination before separate sequential
+  edit/write/delete calls.
 - `edit_file` / `multi_edit` / `write_file` / `apply_patch` require approval, strict UTF-8 text, and fresh read-state before writing existing files.
-- `rollback_file` uses in-memory runtime file history to undo the latest agent write when the current file still matches that history entry.
+- `rollback_file` uses in-memory runtime file history first, then falls back to
+  the latest same-thread/workspace checkpoint file snapshot when the current
+  file still matches the recorded post-write hash.
 - `run_command`, `shell_command`, `git_bash_command`, `powershell_command`,
   `wsl_command`, package/task wrappers, Git commit, and command session write /
   stop tools run through the command approval boundary.
@@ -242,7 +249,9 @@ flowchart TD
 - Shell and package-manager invocation construction lives in
   `src/main/application/tools/command-invocation.ts`; foreground process
   execution and shared process-tree kill behavior live in
-  `src/main/application/tools/command-process-runner.ts`; command sessions,
+  `src/main/application/tools/command-process-runner.ts`; spawn-time command
+  sandbox profile generation lives in
+  `src/main/application/tools/command-sandbox.ts`; command sessions,
   diagnostics and tool definitions remain in
   `src/main/application/tools/command-tools.ts`.
 - Command child-process environment construction lives in
@@ -261,13 +270,14 @@ flowchart TD
 - Live command progress batching and UTF-8 stream decoding live in
   `src/main/application/tools/command-progress-reporter.ts`; foreground
   commands and long-running command sessions both use it for `tool_progress`.
-- Read-only developer tools include `rg_search`, `list_symbols`, `git_status`, `git_diff`,
+- Read-only developer tools include `rg_search`, `list_symbols`, `search_symbols`, `git_status`, `git_diff`,
   `git_log`, `git_branch`, `package_scripts`, `read_command_session`,
   `detect_shell_environment`, and `diagnose_file`.
 - `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through
-  command execution and therefore requires approval; `diagnose_file` and
-  `list_symbols` use TypeScript Language Service for file-level diagnostics and
-  symbol outlines, and both remain read-only.
+  command execution and therefore requires approval; `diagnose_file`,
+  `list_symbols`, and `search_symbols` use a short-lived TypeScript Language
+  Service for file-level diagnostics, single-file outlines, and bounded
+  project-level symbol search/map output, and all three remain read-only.
   TypeScript diagnostic parsing and Language Service result shaping live in
   `src/main/application/tools/command-diagnostics.ts`.
 - Write threads use `ToolCatalogService` tool access policy and persisted
@@ -281,7 +291,10 @@ flowchart TD
   `RuntimePreferences.permissionRules` and are evaluated by
   `src/main/application/permission-policy.ts` inside `ToolPolicyService`;
   hard read-only sandbox and `approvalPolicy: never` denials still run before
-  rule-based allow/ask/deny decisions.
+  session-scoped approval grants and rule-based allow/ask/deny decisions.
+  Command `:*` prefix scopes match ordinary argument continuations but refuse
+  appended shell operators or newline-separated follow-up commands; generated
+  approval grants use exact matching so wildcard characters are not widened.
 - `create_plan` is only available in plan mode.
 - `update_goal` is only available in goal mode or when a thread has an active goal.
 - Model configuration profiles are persisted by `ModelConfigStore`; runtime
