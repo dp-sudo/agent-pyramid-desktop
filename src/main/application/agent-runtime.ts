@@ -21,7 +21,6 @@ import type { SkillService } from "../skills/skill-service.js";
 import { FileReadStateStore } from "./tools/file-read-state.js";
 import { FileHistoryStore } from "./tools/file-history-state.js";
 import {
-  ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS,
   AGENT_AUTONOMY_TOOL_ROUNDS,
   DEFAULT_AGENT_AUTONOMY,
   MAX_MAX_TOOL_ROUNDS,
@@ -30,10 +29,9 @@ import {
   TOOL_ROUND_WARNING_THRESHOLD,
 } from "./constants.js";
 import { prepareMessagesForRequest } from "./context-compaction.js";
-import { ToolCatalogService, isCommandToolName } from "./tool-catalog.js";
+import { ToolCatalogService } from "./tool-catalog.js";
 import type { ToolAccessPolicy } from "./tool-catalog.js";
-import { ToolPolicyService } from "./tool-policy.js";
-import { ApprovalCoordinator } from "./approval-coordinator.js";
+import { ToolCallExecutor } from "./tool-call-executor.js";
 import { normalizeTurnStartRequest } from "./turn-start-request.js";
 import { parsePlanToolContent } from "./plan-item-parser.js";
 import {
@@ -45,7 +43,6 @@ import {
   persistEventOrReportError,
 } from "./runtime-event-persist.js";
 import type {
-  ApprovalItem,
   ApprovalRespondRequest,
   AssistantItem,
   AttachmentRecord,
@@ -64,13 +61,11 @@ import type {
   RuntimePreferences,
   RuntimeErrorEvent,
   TerminalTurnStatus,
-  ToolProgressStream,
   UserItem,
 } from "../../shared/agent-contracts.js";
 import { normalizeSkillId, type Skill, type SkillTurnResolution } from "../../shared/skills/index.js";
 import {
   DEFAULT_RUNTIME_PREFERENCES,
-  isNonNegativeInteger,
   isModelReasoningEffort,
 } from "../../shared/agent-contracts.js";
 
@@ -98,13 +93,6 @@ interface RuntimeDeps {
   registry: ToolRegistry;
   skillService?: SkillService;
   toolAccessPolicy?: ToolAccessPolicy;
-}
-
-interface ActiveToolExecution {
-  item: ToolItem;
-  controller?: AbortController;
-  finalizedByInterrupt: boolean;
-  settled?: Promise<void>;
 }
 
 const SYSTEM_PROMPT = [
@@ -136,23 +124,36 @@ const GOAL_MODE_INSTRUCTION = [
  */
 export class AgentRuntime {
   private readonly inFlight = new Map<string, TurnRecord>(); // turnId -> record
-  private readonly activeToolExecutions = new Map<string, Set<ActiveToolExecution>>();
   private readonly readState = new FileReadStateStore();
   private readonly fileHistory = new FileHistoryStore();
   private readonly toolCatalog: ToolCatalogService;
-  private readonly toolPolicy: ToolPolicyService;
-  private readonly approvals: ApprovalCoordinator;
+  private readonly toolExecutor: ToolCallExecutor;
 
   constructor(private readonly deps: RuntimeDeps) {
     this.toolCatalog = new ToolCatalogService({
       registry: deps.registry,
       ...(deps.toolAccessPolicy ? { toolAccessPolicy: deps.toolAccessPolicy } : {}),
     });
-    this.toolPolicy = new ToolPolicyService(deps.registry);
-    this.approvals = new ApprovalCoordinator({
+    this.toolExecutor = new ToolCallExecutor({
       store: deps.store,
+      ...(deps.checkpointStore ? { checkpointStore: deps.checkpointStore } : {}),
       bus: deps.bus,
-      previewProvider: (call, turn, thread) => this.buildApprovalPreview(call, turn, thread),
+      registry: deps.registry,
+      toolCatalog: this.toolCatalog,
+      readState: this.readState,
+      fileHistory: this.fileHistory,
+      executeSubagentSkillCall: (turn, thread, call, runtimePreferences, modelConfig, signal) =>
+        this.executeSubagentSkillCall(
+          turn,
+          thread,
+          call,
+          runtimePreferences,
+          modelConfig,
+          signal,
+        ),
+      appendPlanItem: (turn, rawContent) => this.appendPlanItem(turn, rawContent),
+      reportRuntimeError: (turn, code, message, error) =>
+        this.reportRuntimeError(turn, code, message, error),
     });
   }
 
@@ -280,8 +281,8 @@ export class AgentRuntime {
     }
     if (turn.status === "interrupted") return;
     turn.status = "interrupted";
-    await this.interruptActiveToolExecutionsForTurn(turn);
-    await this.approvals.resolvePendingForTurn(turnId, "deny");
+    await this.toolExecutor.interruptActiveToolExecutionsForTurn(turn);
+    await this.toolExecutor.resolvePendingApprovalsForTurn(turnId, "deny");
     this.deps.pool.cancel(turn.threadId);
     const item: SystemItem = {
       kind: "system",
@@ -310,7 +311,7 @@ export class AgentRuntime {
   }
 
   respondApproval(approval: ApprovalRespondRequest): void {
-    this.approvals.respond(approval);
+    this.toolExecutor.respondApproval(approval);
   }
 
   async updateThreadGoal(
@@ -468,7 +469,7 @@ export class AgentRuntime {
         });
 
         for (const call of response.toolCalls) {
-          const result = await this.executeToolCall(
+          const result = await this.toolExecutor.execute(
             turn,
             thread,
             call,
@@ -808,201 +809,6 @@ export class AgentRuntime {
     }
   }
 
-  private async executeToolCall(
-    turn: TurnRecord,
-    thread: ThreadRecord,
-    call: AgentToolCall,
-    runtimePreferences: RuntimePreferences,
-    modelConfig: ModelConfig,
-  ): Promise<AgentToolResult> {
-    const toolItem: ToolItem = {
-      kind: "tool",
-      id: randomUUID(),
-      threadId: turn.threadId,
-      turnId: turn.id,
-      toolCallId: call.id,
-      name: call.name,
-      args: call.arguments,
-      status: "running",
-      createdAt: new Date().toISOString(),
-    };
-    await this.deps.store.appendItem(turn.threadId, toolItem);
-    const activeExecution = this.registerActiveToolExecution(turn.id, toolItem);
-    this.deps.bus.emit("item_appended", {
-      kind: "item_appended",
-      threadId: turn.threadId,
-      turnId: turn.id,
-      item: toolItem,
-    });
-
-    const isToolAvailable = this.toolCatalog.isToolAvailableForTurn(
-      call.name,
-      turn,
-      thread,
-      runtimePreferences,
-    );
-    if (!isToolAvailable) {
-      toolItem.status = "failed";
-      toolItem.result = { message: `Tool "${call.name}" is not available in this turn.` };
-      await this.deps.store.appendItem(turn.threadId, toolItem);
-      this.emitToolItemUpdated(turn, toolItem);
-      this.unregisterActiveToolExecution(turn.id, activeExecution);
-      this.reportRuntimeError(turn, "tool_not_found", `Tool "${call.name}" is not available in this turn.`);
-      return {
-        toolCallId: call.id,
-        name: call.name,
-        content: JSON.stringify(toolItem.result),
-      };
-    }
-
-    const policyDecision = this.toolPolicy.resolve({
-      call,
-      turn,
-      thread,
-      runtimePreferences,
-      isToolAvailable,
-    });
-    if (policyDecision === "deny") {
-      toolItem.status = "failed";
-      toolItem.result = {
-        denied: true,
-        message: `Tool "${call.name}" is denied by thread policy.`,
-      };
-      await this.deps.store.appendItem(turn.threadId, toolItem);
-      this.emitToolItemUpdated(turn, toolItem);
-      this.unregisterActiveToolExecution(turn.id, activeExecution);
-      return {
-        toolCallId: call.id,
-        name: call.name,
-        content: JSON.stringify(toolItem.result),
-      };
-    }
-
-    try {
-      if (policyDecision === "ask") {
-        const approval = await this.approvals.requestApproval(turn, call, thread);
-        if (approval === "deny") {
-          if (activeExecution.finalizedByInterrupt) {
-            this.unregisterActiveToolExecution(turn.id, activeExecution);
-            return {
-              toolCallId: call.id,
-              name: call.name,
-              content: JSON.stringify(toolItem.result ?? { message: interruptedToolMessage(call.name) }),
-            };
-          }
-          toolItem.status = "failed";
-          toolItem.result = { denied: true };
-          await this.deps.store.appendItem(turn.threadId, toolItem);
-          this.emitToolItemUpdated(turn, toolItem);
-          this.unregisterActiveToolExecution(turn.id, activeExecution);
-          return {
-            toolCallId: call.id,
-            name: call.name,
-            content: JSON.stringify(toolItem.result),
-          };
-        }
-      }
-      if (activeExecution.finalizedByInterrupt || turn.status !== "in-flight") {
-        this.unregisterActiveToolExecution(turn.id, activeExecution);
-        return {
-          toolCallId: call.id,
-          name: call.name,
-          content: JSON.stringify(toolItem.result ?? { message: interruptedToolMessage(call.name) }),
-        };
-      }
-
-      const controller = new AbortController();
-      activeExecution.controller = controller;
-      let progressSeq = 0;
-      const reportProgress = (chunk: string, stream: ToolProgressStream): void => {
-        if (!chunk) return;
-        try {
-          this.deps.bus.emit("tool_progress", {
-            kind: "tool_progress",
-            threadId: turn.threadId,
-            turnId: turn.id,
-            toolCallId: call.id,
-            chunk,
-            stream,
-            seq: ++progressSeq,
-          });
-        } catch (error) {
-          console.warn(
-            `[agent-runtime] failed to emit tool progress for ${call.name}:`,
-            error,
-          );
-        }
-      };
-      const toolContext = {
-        threadId: turn.threadId,
-        turnId: turn.id,
-        workspace: thread.workspace,
-        signal: controller.signal,
-        commandDefaults: runtimePreferences.command,
-        runtimePreferences,
-        reportProgress,
-        readState: this.readState,
-        fileHistory: this.fileHistory,
-        checkpoint: this.deps.checkpointStore,
-      };
-      const executionPromise =
-        this.executeSubagentSkillCall(turn, thread, call, runtimePreferences, modelConfig, controller.signal) ??
-        this.deps.registry.execute(call, toolContext);
-      activeExecution.settled = executionPromise.then(
-        () => undefined,
-        () => undefined,
-      );
-      let content: AgentToolResult;
-      try {
-        content = await executionPromise;
-      } finally {
-        activeExecution.controller = undefined;
-      }
-      if (activeExecution.finalizedByInterrupt) {
-        this.unregisterActiveToolExecution(turn.id, activeExecution);
-        return {
-          toolCallId: call.id,
-          name: call.name,
-          content: JSON.stringify(toolItem.result ?? { message: interruptedToolMessage(call.name) }),
-        };
-      }
-      toolItem.status = "completed";
-      toolItem.result = content.displayResult ?? content;
-      await this.deps.store.appendItem(turn.threadId, toolItem);
-      this.emitToolItemUpdated(turn, toolItem);
-      this.unregisterActiveToolExecution(turn.id, activeExecution);
-      if (call.name === "create_plan") {
-        await this.appendPlanItem(turn, content.content);
-      }
-      return content;
-    } catch (error) {
-      if (activeExecution.finalizedByInterrupt) {
-        this.unregisterActiveToolExecution(turn.id, activeExecution);
-        return {
-          toolCallId: call.id,
-          name: call.name,
-          content: JSON.stringify(toolItem.result ?? { message: interruptedToolMessage(call.name) }),
-        };
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      toolItem.status = "failed";
-      toolItem.result = {
-        message,
-      };
-      await this.deps.store.appendItem(turn.threadId, toolItem);
-      this.emitToolItemUpdated(turn, toolItem);
-      this.unregisterActiveToolExecution(turn.id, activeExecution);
-      if (turn.status !== "interrupted") {
-        this.reportRuntimeError(turn, "tool_failed", `${call.name}: ${message}`, error);
-      }
-      return {
-        toolCallId: call.id,
-        name: call.name,
-        content: JSON.stringify(toolItem.result),
-      };
-    }
-  }
-
   private executeSubagentSkillCall(
     turn: TurnRecord,
     thread: ThreadRecord,
@@ -1229,84 +1035,6 @@ export class AgentRuntime {
       commandDefaults: runtimePreferences.command,
       runtimePreferences,
     });
-  }
-
-  private emitToolItemUpdated(turn: TurnRecord, item: ToolItem): void {
-    this.deps.bus.emit("item_updated", {
-      kind: "item_updated",
-      threadId: turn.threadId,
-      turnId: turn.id,
-      item,
-    });
-  }
-
-  private async buildApprovalPreview(
-    call: AgentToolCall,
-    turn: TurnRecord,
-    thread: ThreadRecord,
-  ): Promise<ApprovalItem["preview"] | undefined> {
-    const tool = this.deps.registry.getTool(call.name);
-    if (!tool?.preview) return undefined;
-    const preview = await tool.preview(call.arguments, {
-      threadId: turn.threadId,
-      turnId: turn.id,
-      workspace: thread.workspace,
-      readState: this.readState,
-      fileHistory: this.fileHistory,
-    });
-    return isApprovalPreview(preview) ? preview : undefined;
-  }
-
-  private registerActiveToolExecution(
-    turnId: string,
-    item: ToolItem,
-  ): ActiveToolExecution {
-    const execution: ActiveToolExecution = {
-      item,
-      finalizedByInterrupt: false,
-    };
-    const executions =
-      this.activeToolExecutions.get(turnId) ?? new Set<ActiveToolExecution>();
-    executions.add(execution);
-    this.activeToolExecutions.set(turnId, executions);
-    return execution;
-  }
-
-  private unregisterActiveToolExecution(
-    turnId: string,
-    execution: ActiveToolExecution,
-  ): void {
-    const executions = this.activeToolExecutions.get(turnId);
-    if (!executions) return;
-    executions.delete(execution);
-    if (executions.size === 0) {
-      this.activeToolExecutions.delete(turnId);
-    }
-  }
-
-  private async interruptActiveToolExecutionsForTurn(turn: TurnRecord): Promise<void> {
-    const executions = this.activeToolExecutions.get(turn.id);
-    if (!executions) return;
-    const settling: Promise<void>[] = [];
-    for (const execution of [...executions]) {
-      execution.controller?.abort();
-      if (execution.settled) {
-        settling.push(execution.settled);
-      }
-      if (execution.item.status !== "running") continue;
-      execution.finalizedByInterrupt = true;
-      execution.item.status = "failed";
-      execution.item.result = { message: interruptedToolMessage(execution.item.name) };
-      try {
-        await this.deps.store.appendItem(turn.threadId, execution.item);
-      } catch (error) {
-        this.reportRuntimeError(turn, "persistence_error", error instanceof Error ? error.message : String(error), error);
-      }
-      this.emitToolItemUpdated(turn, execution.item);
-    }
-    if (!await waitForInterruptedToolExecutions(settling)) {
-      this.reportRuntimeError(turn, "internal", "Timed out waiting for interrupted tools to settle.");
-    }
   }
 
   private async collectHistory(
@@ -1565,13 +1293,6 @@ export class AgentRuntime {
   }
 }
 
-function interruptedToolMessage(toolName: string): string {
-  if (isCommandToolName(toolName)) {
-    return "Command was interrupted.";
-  }
-  return "Tool was interrupted.";
-}
-
 function stripAttachmentPayload(attachment: AttachmentRecord & { dataBase64: string }): AttachmentRecord {
   // Timeline records only carry attachment metadata; the binary payload is
   // rehydrated from the store on demand to keep messages.jsonl small.
@@ -1599,58 +1320,6 @@ function runtimeErrorCodeFromWorkerError(error: unknown): RuntimeErrorEvent["cod
       return exhaustive;
     }
   }
-}
-
-async function waitForInterruptedToolExecutions(
-  executions: Promise<void>[],
-): Promise<boolean> {
-  if (executions.length === 0) return true;
-  let timedOut = false;
-  await Promise.race([
-    Promise.all(executions),
-    new Promise<void>((resolve) => {
-      setTimeout(() => {
-        timedOut = true;
-        resolve();
-      }, ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS);
-    }),
-  ]);
-  return !timedOut;
-}
-
-function isApprovalPreview(value: unknown): value is ApprovalItem["preview"] {
-  if (!value || typeof value !== "object") return false;
-  const preview = value as Record<string, unknown>;
-  if (preview.kind === "multi_file_diff") {
-    return (
-      Array.isArray(preview.files) &&
-      preview.files.every(isFileDiffPreview) &&
-      isNonNegativeInteger(preview.added) &&
-      isNonNegativeInteger(preview.removed)
-    );
-  }
-  return isFileDiffPreview(preview);
-}
-
-function isFileDiffPreview(preview: Record<string, unknown>): boolean {
-  return (
-    preview.kind === "file_diff" &&
-    typeof preview.path === "string" &&
-    (preview.operation === "create" || preview.operation === "update" || preview.operation === "delete") &&
-    isNonNegativeInteger(preview.added) &&
-    isNonNegativeInteger(preview.removed) &&
-    Array.isArray(preview.lines) &&
-    preview.lines.every(isFileDiffLine)
-  );
-}
-
-function isFileDiffLine(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const line = value as Record<string, unknown>;
-  return (
-    (line.type === "context" || line.type === "added" || line.type === "removed") &&
-    typeof line.text === "string"
-  );
 }
 
 function resolveMaxToolRounds(autonomy: ModelConfig["agent_autonomy"]): number {
