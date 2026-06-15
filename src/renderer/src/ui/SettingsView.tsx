@@ -20,18 +20,12 @@ import {
   DEFAULT_MODEL_CONFIG,
   DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
-  DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
   type IpcResult,
   LLM_PROTOCOLS,
   MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MAX_RUNTIME_COMMAND_TIMEOUT_MS,
-  MCP_SERVER_TRANSPORTS,
   MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
-  MAX_RUNTIME_SKILLS_ACTIVE_LIMIT,
-  MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
-  MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
-  MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
   MODEL_REASONING_EFFORTS,
   RUNTIME_COMPACTION_STRATEGIES,
   RUNTIME_PERMISSION_RULE_EFFECTS,
@@ -56,7 +50,6 @@ import {
   type RuntimePreferencesUpdate,
   type RuntimeEvent,
   type RuntimeToolName,
-  type RuntimeSkillCatalogEntry,
   type SkillListResponse,
   type SseSubscribeGlobalResponse,
   type SseUnsubscribeGlobalResponse,
@@ -110,21 +103,16 @@ import {
 import {
   createDefaultMcpServer,
   createUniqueMcpServerName,
-  formatMcpStartupStats,
-  mcpServerConnectionLabel,
   updateMcpServerConfigs,
 } from "./settings-mcp-model";
 import {
   parseMcpServerEnvDraft,
   parseMcpServerStringRecordDraft,
   parseRuntimeSkillsExtraRootsDraft,
-  splitCommaList,
-  splitWhitespaceList,
   validateRuntimeCommandDraft,
   validateRuntimeSkillsNumericDraft,
   type RuntimeCommandDraftField,
   type RuntimeSkillsDraftField,
-  type SettingsTranslator,
 } from "./settings-runtime-model";
 import {
   arraysEqual,
@@ -151,6 +139,8 @@ import {
   shouldDisableModelProfileControls,
   type SaveState,
 } from "./settings-view-state-model";
+import { SettingsMcpServersPanel } from "./components/settings/SettingsMcpServersPanel";
+import { SettingsSkillsPanel } from "./components/settings/SettingsSkillsPanel";
 import { i18n, persistLocale, setFollowSystemTheme, setTheme } from "../i18n";
 import {
   CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
@@ -1946,204 +1936,24 @@ export function SettingsView(): ReactElement {
           ) : null}
 
           {section === "agent" && category === "skills" ? (
-            <SettingsCard
-              title={t("settings.sections.skills")}
-              description={t("settings.sections.skillsDesc")}
-            >
-              <SettingRow
-                title={t("settings.fields.skillsEnabled")}
-                description={t("settings.descriptions.skillsEnabled")}
-                control={
-                  <Toggle
-                    checked={runtimePreferences.skills.enabled}
-                    label={t("settings.fields.skillsEnabled")}
-                    disabled={runtimeControlsDisabled}
-                    onChange={(checked) =>
-                      void updateRuntimePreferences({ skills: { enabled: checked } })
-                    }
-                  />
-                }
-              />
-              <SettingRow
-                title={t("settings.fields.skillsActiveLimit")}
-                description={t("settings.descriptions.skillsActiveLimit")}
-                controlId="skills_active_limit"
-                control={
-                  <input
-                    id="skills_active_limit"
-                    type="number"
-                    min={MIN_RUNTIME_SKILLS_ACTIVE_LIMIT}
-                    max={MAX_RUNTIME_SKILLS_ACTIVE_LIMIT}
-                    step={1}
-                    value={skillsDraft.activeLimit}
-                    disabled={runtimeControlsDisabled || !runtimePreferences.skills.enabled}
-                    onChange={(event) => updateSkillsDraft("activeLimit", event.target.value)}
-                    onBlur={(event) =>
-                      void commitSkillsDraft("activeLimit", event.currentTarget.value)
-                    }
-                    onKeyDown={(event) => handleSkillsDraftKeyDown("activeLimit", event)}
-                  />
-                }
-              />
-              <SettingRow
-                title={t("settings.fields.skillsInstructionBudgetBytes")}
-                description={t("settings.descriptions.skillsInstructionBudgetBytes", {
-                  defaultBytes: DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES,
-                })}
-                controlId="skills_instruction_budget_bytes"
-                control={
-                  <input
-                    id="skills_instruction_budget_bytes"
-                    type="number"
-                    min={MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES}
-                    max={MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES}
-                    step={1024}
-                    value={skillsDraft.instructionBudgetBytes}
-                    disabled={runtimeControlsDisabled || !runtimePreferences.skills.enabled}
-                    onChange={(event) =>
-                      updateSkillsDraft("instructionBudgetBytes", event.target.value)
-                    }
-                    onBlur={(event) =>
-                      void commitSkillsDraft(
-                        "instructionBudgetBytes",
-                        event.currentTarget.value,
-                      )
-                    }
-                    onKeyDown={(event) =>
-                      handleSkillsDraftKeyDown("instructionBudgetBytes", event)
-                    }
-                  />
-                }
-              />
-              <SettingRow
-                title={t("settings.fields.skillsExtraRoots")}
-                description={t("settings.descriptions.skillsExtraRoots")}
-                controlId="skills_extra_roots"
-                wide
-                control={
-                  <textarea
-                    id="skills_extra_roots"
-                    rows={4}
-                    value={skillsDraft.extraRoots}
-                    placeholder={t("settings.placeholders.skillsExtraRoots")}
-                    disabled={runtimeControlsDisabled || !runtimePreferences.skills.enabled}
-                    onChange={(event) => updateSkillsExtraRoots(event.target.value)}
-                    onBlur={(event) => void commitSkillsExtraRoots(event.currentTarget.value)}
-                    onKeyDown={handleSkillsExtraRootsKeyDown}
-                  />
-                }
-              />
-              <SettingRow
-                title={t("settings.fields.skillsCatalog")}
-                description={t("settings.descriptions.skillsCatalog")}
-                wide
-                control={
-                  <div className="ds-settings-skill-catalog">
-                    <div className="ds-settings-skill-catalog-toolbar">
-                      <span>
-                        {state.workspaceRoot || t("settings.skills.noWorkspace")}
-                      </span>
-                      <button
-                        type="button"
-                        className="ds-settings-secondary-action"
-                        disabled={!state.workspaceRoot || skillCatalogLoading}
-                        onClick={() => void refreshSkillCatalog()}
-                      >
-                        {skillCatalogLoading
-                          ? t("settings.skills.loading")
-                          : t("settings.skills.refresh")}
-                      </button>
-                    </div>
-                    {skillCatalogError ? (
-                      <p className="ds-settings-skill-error">{skillCatalogError}</p>
-                    ) : null}
-                    {!state.workspaceRoot ? (
-                      <p className="ds-settings-empty-note">
-                        {t("settings.skills.noWorkspaceDesc")}
-                      </p>
-                    ) : null}
-                    {state.workspaceRoot && skillCatalog && !skillCatalogLoading ? (
-                      <>
-                        <div className="ds-settings-skill-meta">
-                          <span>
-                            {t("settings.skills.catalogSummary", {
-                              count: skillCatalog.skills.length,
-                              roots: skillCatalog.roots.length,
-                            })}
-                          </span>
-                          <span>
-                            {skillCatalog.enabled
-                              ? t("settings.skills.enabled")
-                              : t("settings.skills.disabled")}
-                          </span>
-                        </div>
-                        {skillCatalog.validationErrors.length > 0 ? (
-                          <div className="ds-settings-skill-warnings">
-                            <strong>{t("settings.skills.validationWarnings")}</strong>
-                            {skillCatalog.validationErrors.map((warning) => (
-                              <span key={`${warning.root}:${warning.message}`}>
-                                {warning.root}: {warning.message}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                        {skillCatalog.roots.length > 0 ? (
-                          <div className="ds-settings-skill-roots">
-                            <strong>{t("settings.skills.roots")}</strong>
-                            {skillCatalog.roots.map((root) => (
-                              <span key={`${root.scope}:${root.path}`}>
-                                {t(`settings.skillScopes.${root.scope}`)} · {root.path}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                        {skillCatalog.skills.length === 0 ? (
-                          <p className="ds-settings-empty-note">
-                            {t("settings.skills.empty")}
-                          </p>
-                        ) : (
-                          <div className="ds-settings-skill-list">
-                            {skillCatalog.skills.map((skill) => (
-                              <article className="ds-settings-skill-card" key={skill.id}>
-                                <div className="ds-settings-skill-card-header">
-                                  <div>
-                                    <strong>{skill.name}</strong>
-                                    <span>{skill.id}</span>
-                                  </div>
-                                  <span>
-                                    {t(`settings.skillScopes.${skill.scope}`)} ·{" "}
-                                    {t(`settings.skillRunModes.${skill.runAs}`)}
-                                  </span>
-                                </div>
-                                {skill.description ? <p>{skill.description}</p> : null}
-                                <div className="ds-settings-skill-card-meta">
-                                  <span>{formatSkillTriggerSummary(skill, t)}</span>
-                                  {skill.allowedTools.length > 0 ? (
-                                    <span>
-                                      {t("settings.skills.allowedTools", {
-                                        tools: skill.allowedTools.join(", "),
-                                      })}
-                                    </span>
-                                  ) : null}
-                                  {skill.referenceCount > 0 ? (
-                                    <span>
-                                      {t("settings.skills.references", {
-                                        count: skill.referenceCount,
-                                        names: skill.referenceNames.join(", "),
-                                      })}
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </article>
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    ) : null}
-                  </div>
-                }
-              />
-            </SettingsCard>
+            <SettingsSkillsPanel
+              t={t}
+              runtimePreferences={runtimePreferences}
+              runtimeControlsDisabled={runtimeControlsDisabled}
+              skillsDraft={skillsDraft}
+              workspaceRoot={state.workspaceRoot}
+              skillCatalog={skillCatalog}
+              skillCatalogLoading={skillCatalogLoading}
+              skillCatalogError={skillCatalogError}
+              onUpdateRuntimePreferences={updateRuntimePreferences}
+              onUpdateSkillsDraft={updateSkillsDraft}
+              onCommitSkillsDraft={commitSkillsDraft}
+              onSkillsDraftKeyDown={handleSkillsDraftKeyDown}
+              onUpdateSkillsExtraRoots={updateSkillsExtraRoots}
+              onCommitSkillsExtraRoots={commitSkillsExtraRoots}
+              onSkillsExtraRootsKeyDown={handleSkillsExtraRootsKeyDown}
+              onRefreshSkillCatalog={refreshSkillCatalog}
+            />
           ) : null}
 
           {section === "tools" && category === "permissions" ? (
@@ -2304,210 +2114,22 @@ export function SettingsView(): ReactElement {
           ) : null}
 
           {section === "tools" && category === "mcpServers" ? (
-            <SettingsCard
-              title={t("settings.sections.mcpServers")}
-              description={t("settings.sections.mcpServersDesc")}
-            >
-              <div className="ds-settings-mcp-list">
-                {runtimePreferences.mcpServers.length === 0 ? (
-                  <p className="ds-settings-empty-note">
-                    {t("settings.mcpServers.empty")}
-                  </p>
-                ) : null}
-                {runtimePreferences.mcpServers.map((server) => (
-                  <article className="ds-settings-mcp-server" key={server.id}>
-                    <div className="ds-settings-mcp-header">
-                      <div>
-                        <strong>{server.name}</strong>
-                        <span>{mcpServerConnectionLabel(server, mcpServerStatuses[server.id], t)}</span>
-                      </div>
-                      <Toggle
-                        checked={server.enabled}
-                        label={t("settings.fields.mcpServerEnabled")}
-                        disabled={runtimeControlsDisabled}
-                        onChange={(checked) => updateMcpServer(server.id, { enabled: checked })}
-                      />
-                    </div>
-                    <div className="ds-settings-mcp-grid">
-                      <label>
-                        <span>{t("settings.fields.mcpServerTransport")}</span>
-                        <select
-                          value={server.transport}
-                          disabled={runtimeControlsDisabled}
-                          onChange={(event) =>
-                            updateMcpServerTransport(
-                              server.id,
-                              event.target.value as McpServerTransport,
-                            )
-                          }
-                        >
-                          {MCP_SERVER_TRANSPORTS.map((transport) => (
-                            <option key={transport} value={transport}>
-                              {t(`settings.mcpTransports.${transport}`)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>{t("settings.fields.mcpServerName")}</span>
-                        <input
-                          value={server.name}
-                          disabled={runtimeControlsDisabled}
-                          onChange={(event) =>
-                            updateMcpServer(server.id, { name: event.target.value })
-                          }
-                        />
-                      </label>
-                      {server.transport === "stdio" ? (
-                        <>
-                          <label>
-                            <span>{t("settings.fields.mcpServerCommand")}</span>
-                            <input
-                              value={server.command ?? ""}
-                              placeholder={t("settings.placeholders.mcpServerCommand")}
-                              disabled={runtimeControlsDisabled}
-                              onChange={(event) =>
-                                updateMcpServer(server.id, { command: event.target.value })
-                              }
-                            />
-                          </label>
-                          <label>
-                            <span>{t("settings.fields.mcpServerArgs")}</span>
-                            <input
-                              value={server.args.join(" ")}
-                              placeholder={t("settings.placeholders.mcpServerArgs")}
-                              disabled={runtimeControlsDisabled}
-                              onChange={(event) =>
-                                updateMcpServer(server.id, {
-                                  args: splitWhitespaceList(event.target.value),
-                                })
-                              }
-                            />
-                          </label>
-                          <label>
-                            <span>{t("settings.fields.mcpServerCwd")}</span>
-                            <input
-                              value={server.cwd ?? ""}
-                              placeholder={t("settings.placeholders.mcpServerCwd")}
-                              disabled={runtimeControlsDisabled}
-                              onChange={(event) =>
-                                updateMcpServer(server.id, {
-                                  cwd: event.target.value.trim() || undefined,
-                                })
-                              }
-                            />
-                          </label>
-                        </>
-                      ) : (
-                        <>
-                          <label>
-                            <span>{t("settings.fields.mcpServerUrl")}</span>
-                            <input
-                              value={server.url ?? ""}
-                              placeholder={t("settings.placeholders.mcpServerUrl")}
-                              disabled={runtimeControlsDisabled}
-                              onChange={(event) =>
-                                updateMcpServer(server.id, { url: event.target.value })
-                              }
-                            />
-                          </label>
-                          <label className="is-wide">
-                            <span>{t("settings.fields.mcpServerHeaders")}</span>
-                            <textarea
-                              key={`${server.id}:${JSON.stringify(server.headers)}:headers`}
-                              defaultValue={JSON.stringify(server.headers, null, 2)}
-                              disabled={runtimeControlsDisabled}
-                              rows={4}
-                              spellCheck={false}
-                              onBlur={(event) =>
-                                updateMcpServerHeaders(server.id, event.currentTarget.value)
-                              }
-                            />
-                          </label>
-                        </>
-                      )}
-                      <label>
-                        <span>{t("settings.fields.mcpServerReadOnlyTools")}</span>
-                        <input
-                          value={server.readOnlyTools.join(", ")}
-                          disabled={runtimeControlsDisabled}
-                          onChange={(event) =>
-                            updateMcpServer(server.id, {
-                              readOnlyTools: splitCommaList(event.target.value),
-                            })
-                          }
-                        />
-                      </label>
-                      {server.transport === "stdio" ? (
-                        <label className="is-wide">
-                          <span>{t("settings.fields.mcpServerEnv")}</span>
-                          <textarea
-                            key={`${server.id}:${JSON.stringify(server.env)}:env`}
-                            defaultValue={JSON.stringify(server.env, null, 2)}
-                            disabled={runtimeControlsDisabled}
-                            rows={4}
-                            spellCheck={false}
-                            onBlur={(event) =>
-                              updateMcpServerEnv(server.id, event.currentTarget.value)
-                            }
-                          />
-                        </label>
-                      ) : null}
-                    </div>
-                    <McpServerSurfaceSummary
-                      status={mcpServerStatuses[server.id]}
-                      emptyLabel={t("settings.mcpServers.surfaceEmpty")}
-                      toolsLabel={t("settings.mcpServers.tools")}
-                      promptsLabel={t("settings.mcpServers.prompts")}
-                      resourcesLabel={t("settings.mcpServers.resources")}
-                      t={t}
-                    />
-                    <div className="ds-settings-mcp-actions">
-                      <button
-                        type="button"
-                        className="ds-settings-secondary-action"
-                        disabled={runtimeControlsDisabled || !window.agentApi}
-                        onClick={() => void handleMcpConnect(server.id)}
-                      >
-                        {t("settings.actions.connectMcpServer")}
-                      </button>
-                      <button
-                        type="button"
-                        className="ds-settings-secondary-action"
-                        disabled={runtimeControlsDisabled || !window.agentApi}
-                        onClick={() => void handleMcpDisconnect(server.id)}
-                      >
-                        {t("settings.actions.disconnectMcpServer")}
-                      </button>
-                      <button
-                        type="button"
-                        className="ds-settings-secondary-action"
-                        disabled={runtimeControlsDisabled || !window.agentApi}
-                        onClick={() => void handleMcpRefreshTools(server.id)}
-                      >
-                        {t("settings.actions.refreshMcpServer")}
-                      </button>
-                      <button
-                        type="button"
-                        className="ds-settings-secondary-action"
-                        disabled={runtimeControlsDisabled}
-                        onClick={() => deleteMcpServer(server.id)}
-                      >
-                        {t("settings.actions.deleteMcpServer")}
-                      </button>
-                    </div>
-                  </article>
-                ))}
-                <button
-                  type="button"
-                  className="ds-settings-primary-action"
-                  disabled={runtimeControlsDisabled}
-                  onClick={addMcpServer}
-                >
-                  {t("settings.actions.addMcpServer")}
-                </button>
-              </div>
-            </SettingsCard>
+            <SettingsMcpServersPanel
+              t={t}
+              servers={runtimePreferences.mcpServers}
+              statuses={mcpServerStatuses}
+              runtimeControlsDisabled={runtimeControlsDisabled}
+              hasAgentApi={hasAgentApi}
+              onAddServer={addMcpServer}
+              onUpdateServer={updateMcpServer}
+              onUpdateServerTransport={updateMcpServerTransport}
+              onUpdateServerEnv={updateMcpServerEnv}
+              onUpdateServerHeaders={updateMcpServerHeaders}
+              onDeleteServer={deleteMcpServer}
+              onConnectServer={handleMcpConnect}
+              onDisconnectServer={handleMcpDisconnect}
+              onRefreshServerTools={handleMcpRefreshTools}
+            />
           ) : null}
 
           {section === "tools" && category === "commandLimits" ? (
@@ -2646,100 +2268,7 @@ export function SettingsView(): ReactElement {
   );
 }
 
-export function formatSkillTriggerSummary(
-  skill: RuntimeSkillCatalogEntry,
-  t: SettingsTranslator,
-): string {
-  const parts: string[] = [];
-  if (skill.trigger.manual) {
-    parts.push(t("settings.skills.manualTrigger"));
-  }
-  if (skill.trigger.commands.length > 0) {
-    parts.push(t("settings.skills.commands", {
-      values: skill.trigger.commands.join(", "),
-    }));
-  }
-  if (skill.trigger.keywords.length > 0) {
-    parts.push(t("settings.skills.keywords", {
-      values: skill.trigger.keywords.join(", "),
-    }));
-  }
-  if (skill.trigger.promptPatterns.length > 0) {
-    parts.push(t("settings.skills.promptPatterns", {
-      values: skill.trigger.promptPatterns.join(", "),
-    }));
-  }
-  if (skill.trigger.fileTypes.length > 0) {
-    parts.push(t("settings.skills.fileTypes", {
-      values: skill.trigger.fileTypes.join(", "),
-    }));
-  }
-  return parts.length > 0 ? parts.join(" · ") : t("settings.skills.noTriggers");
-}
-
-function McpServerSurfaceSummary({
-  status,
-  emptyLabel,
-  toolsLabel,
-  promptsLabel,
-  resourcesLabel,
-  t,
-}: {
-  status?: McpServerStatusRecord;
-  emptyLabel: string;
-  toolsLabel: string;
-  promptsLabel: string;
-  resourcesLabel: string;
-  t: SettingsTranslator;
-}): ReactElement {
-  if (!status) {
-    return <p className="ds-settings-mcp-surface-empty">{emptyLabel}</p>;
-  }
-  const startupStats = formatMcpStartupStats(status, t);
-  return (
-    <div className="ds-settings-mcp-surface">
-      <div className="ds-settings-mcp-surface-counts">
-        <span>{toolsLabel}: {status.toolCount}</span>
-        <span>{promptsLabel}: {status.promptCount}</span>
-        <span>{resourcesLabel}: {status.resourceCount}</span>
-      </div>
-      {startupStats ? (
-        <p className="ds-settings-mcp-surface-meta">{startupStats}</p>
-      ) : null}
-      {status.lastError ? (
-        <p className="ds-settings-mcp-surface-error">{status.lastError}</p>
-      ) : null}
-      <McpSurfaceList
-        label={toolsLabel}
-        values={status.tools.map((tool) => tool.name)}
-      />
-      <McpSurfaceList
-        label={promptsLabel}
-        values={status.prompts.map((prompt) => prompt.name)}
-      />
-      <McpSurfaceList
-        label={resourcesLabel}
-        values={status.resources.map((resource) => resource.name || resource.uri)}
-      />
-    </div>
-  );
-}
-
-function McpSurfaceList({
-  label,
-  values,
-}: {
-  label: string;
-  values: string[];
-}): ReactElement | null {
-  if (values.length === 0) return null;
-  return (
-    <div className="ds-settings-mcp-surface-list">
-      <strong>{label}</strong>
-      <span>{values.slice(0, 6).join(", ")}</span>
-    </div>
-  );
-}
+export { formatSkillTriggerSummary } from "./components/settings/SettingsSkillsPanel";
 
 export function messageOfUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
