@@ -245,6 +245,10 @@ flowchart TD
   `src/main/application/tools/command-process-runner.ts`; command sessions,
   diagnostics and tool definitions remain in
   `src/main/application/tools/command-tools.ts`.
+- Command child-process environment construction lives in
+  `src/main/application/tools/command-environment.ts`; foreground commands and
+  long-running sessions both use it to strip credential-like env vars while
+  preserving shell/package-manager basics such as PATH, HOME and TEMP.
 - Package manager detection, package.json script normalization, install/script
   argument construction and package script validation live in
   `src/main/application/tools/command-package.ts`.
@@ -255,13 +259,15 @@ flowchart TD
 - One-shot command stdout/stderr capture and truncation live in
   `src/main/application/tools/command-output-capture.ts`.
 - Live command progress batching and UTF-8 stream decoding live in
-  `src/main/application/tools/command-progress-reporter.ts`.
-- Read-only developer tools include `rg_search`, `git_status`, `git_diff`,
+  `src/main/application/tools/command-progress-reporter.ts`; foreground
+  commands and long-running command sessions both use it for `tool_progress`.
+- Read-only developer tools include `rg_search`, `list_symbols`, `git_status`, `git_diff`,
   `git_log`, `git_branch`, `package_scripts`, `read_command_session`,
   `detect_shell_environment`, and `diagnose_file`.
 - `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through
-  command execution and therefore requires approval; `diagnose_file` uses
-  TypeScript Language Service for file-level diagnostics and remains read-only.
+  command execution and therefore requires approval; `diagnose_file` and
+  `list_symbols` use TypeScript Language Service for file-level diagnostics and
+  symbol outlines, and both remain read-only.
   TypeScript diagnostic parsing and Language Service result shaping live in
   `src/main/application/tools/command-diagnostics.ts`.
 - Write threads use `ToolCatalogService` tool access policy and persisted

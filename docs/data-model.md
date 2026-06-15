@@ -327,6 +327,17 @@ Append-only update rule:
 - Replay consumers dedupe by `item.id` and keep the latest row.
 - Do not rewrite old JSONL rows for normal updates.
 
+Tool failure results:
+
+- Failed `ToolItem.result` values use the shared `ToolFailureResult` shape:
+  `{ code, message, ...details }`.
+- Stable `ToolFailureCode` values live in `src/shared/agent-contracts.ts` as
+  `TOOL_FAILURE_CODES`. They cover unavailable tools, missing registry entries,
+  schema validation, repeat read-only suppression, policy or approval denial,
+  interruption, execution failure, and automatic tool-budget exhaustion.
+- Successful tool results remain tool-specific payloads; do not force them into
+  the failure result shape.
+
 ## Attachment Model
 
 `AttachmentRecord` metadata:

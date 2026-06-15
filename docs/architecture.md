@@ -251,7 +251,7 @@ flowchart LR
   Plan["create_plan"]
   Workspace["list_files\nread_file\nsearch_files"]
   Coding["edit_file\nmulti_edit\nwrite_file\napply_patch\nrollback_file"]
-  Command["run_command\ncommand sessions\ndiagnose_workspace\ndiagnose_file"]
+  Command["run_command\ncommand sessions\ndiagnose_workspace\ndiagnose_file\nlist_symbols"]
   Mcp["MCP tools\nmcp__server__tool"]
   Goal["update_goal"]
   Approval["Approval gate"]
@@ -294,6 +294,9 @@ Tool availability is decided at the runtime boundary:
   commands.
 - `diagnose_file`: read-only diagnostics tool that uses TypeScript Language
   Service for one file and does not require approval.
+- `list_symbols`: read-only TypeScript/JavaScript outline tool that uses the
+  same short-lived Language Service boundary to return single-file symbols
+  before editing unfamiliar code.
 - MCP tools are dynamically registered by `McpHost` from configured stdio or
   Streamable HTTP MCP servers. They use `mcp__<server>__<tool>` names, reuse the
   normal ToolRegistry/approval/sandbox/permission path, and are hidden from
