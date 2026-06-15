@@ -232,8 +232,10 @@ flowchart TD
   `wsl_command`, package/task wrappers, Git commit, and command session write /
   stop tools run through the command approval boundary.
 - Shell and package-manager invocation construction lives in
-  `src/main/application/tools/command-invocation.ts`; process execution,
-  command sessions, diagnostics and tool definitions remain in
+  `src/main/application/tools/command-invocation.ts`; foreground process
+  execution and shared process-tree kill behavior live in
+  `src/main/application/tools/command-process-runner.ts`; command sessions,
+  diagnostics and tool definitions remain in
   `src/main/application/tools/command-tools.ts`.
 - Package manager detection, package.json script normalization, install/script
   argument construction and package script validation live in
