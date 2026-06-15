@@ -28,6 +28,7 @@ import {
   RUNTIME_READ_ONLY_TOOL_NAMES,
   RUNTIME_TOOL_NAMES,
   type ThreadGoalStatus,
+  type ToolProgressStream,
 } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
@@ -158,6 +159,94 @@ describe("application tools", () => {
     });
   });
 
+  it("validates tool arguments against the published input schema before execution", async () => {
+    const execute = vi.fn(async () => "accepted");
+    const schemaTool: AgentTool = {
+      definition: {
+        name: "schema_tool",
+        description: "Exercises registry-level schema validation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            mode: {
+              type: "string",
+              enum: ["read", "write"],
+            },
+            flags: {
+              type: "array",
+              minItems: 1,
+              items: { type: "string" },
+            },
+            options: {
+              type: "object",
+              properties: {
+                dry_run: { type: "boolean" },
+              },
+              required: ["dry_run"],
+            },
+          },
+          required: ["mode", "flags", "options"],
+        },
+      },
+      execute,
+    };
+    const registry = new InMemoryToolRegistry([schemaTool]);
+
+    await expect(
+      registry.execute(
+        {
+          id: "call-missing",
+          name: "schema_tool",
+          arguments: { mode: "read", options: { dry_run: true } },
+        },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).rejects.toThrow(
+      'Tool "schema_tool" arguments do not match inputSchema: arguments.flags is required.',
+    );
+    await expect(
+      registry.execute(
+        {
+          id: "call-enum",
+          name: "schema_tool",
+          arguments: { mode: "fast", flags: ["safe"], options: { dry_run: true } },
+        },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).rejects.toThrow(
+      'Tool "schema_tool" arguments do not match inputSchema: arguments.mode must be one of "read", "write".',
+    );
+    await expect(
+      registry.execute(
+        {
+          id: "call-array-item",
+          name: "schema_tool",
+          arguments: { mode: "read", flags: [1], options: { dry_run: true } },
+        },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).rejects.toThrow(
+      'Tool "schema_tool" arguments do not match inputSchema: arguments.flags[0] must be string.',
+    );
+    expect(execute).not.toHaveBeenCalled();
+
+    await expect(
+      registry.execute(
+        {
+          id: "call-valid",
+          name: "schema_tool",
+          arguments: { mode: "read", flags: ["safe"], options: { dry_run: true } },
+        },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).resolves.toMatchObject({
+      toolCallId: "call-valid",
+      name: "schema_tool",
+      content: "accepted",
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects duplicate tool names during construction and registration", () => {
     expect(() => new InMemoryToolRegistry([sampleTool, sampleTool]))
       .toThrow('Tool "sample" is already registered.');
@@ -234,6 +323,26 @@ describe("application tools", () => {
       .toEqual(["path"]);
   });
 
+  it("keeps list_symbols schema aligned with the language service implementation", () => {
+    const listSymbols = createCommandTools()
+      .find((tool) => tool.definition.name === "list_symbols");
+
+    expect(listSymbols?.definition.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+        },
+        max_results: {
+          type: "number",
+        },
+      },
+      required: ["path"],
+    });
+    expect(Object.keys(listSymbols?.definition.inputSchema.properties ?? {}))
+      .toEqual(["path", "max_results"]);
+  });
+
   it("registers dedicated development command tools", () => {
     const names = createCommandTools().map((tool) => tool.definition.name);
 
@@ -263,6 +372,7 @@ describe("application tools", () => {
       "write_command_session",
       "stop_command_session",
       "detect_shell_environment",
+      "list_symbols",
     ]));
   });
 
@@ -706,7 +816,9 @@ describe("application tools", () => {
           { id: "call-list-invalid-limit", name: "list_files", arguments: { max_entries: "10" } },
           context,
         ),
-      ).rejects.toThrow("max_entries must be a finite number.");
+      ).rejects.toThrow(
+        'Tool "list_files" arguments do not match inputSchema: arguments.max_entries must be number.',
+      );
 
       await expect(
         registry.execute(
@@ -745,14 +857,18 @@ describe("application tools", () => {
           { id: "call-list-invalid-path", name: "list_files", arguments: { path: 1 } },
           context,
         ),
-      ).rejects.toThrow("path must be a string.");
+      ).rejects.toThrow(
+        'Tool "list_files" arguments do not match inputSchema: arguments.path must be string.',
+      );
 
       await expect(
         registry.execute(
           { id: "call-search-invalid-path", name: "search_files", arguments: { query: "marker", path: false } },
           context,
         ),
-      ).rejects.toThrow("path must be a string.");
+      ).rejects.toThrow(
+        'Tool "search_files" arguments do not match inputSchema: arguments.path must be string.',
+      );
     } finally {
       await removeTempDir(workspace);
     }
@@ -2521,6 +2637,67 @@ describe("application tools", () => {
     }
   });
 
+  it("redacts sensitive environment variables from foreground commands", async () => {
+    const workspace = await makeTempDir("command-tools-env-");
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalToken = process.env.AGENT_PYRAMID_TEST_TOKEN;
+    const originalPath = process.env.PATH;
+    try {
+      process.env.OPENAI_API_KEY = "secret-openai-key";
+      process.env.AGENT_PYRAMID_TEST_TOKEN = "secret-agent-token";
+      process.env.PATH = originalPath ?? path.dirname(process.execPath);
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-command-env",
+          name: "run_command",
+          arguments: {
+            command: nodeCommand(
+              [
+                "process.stdout.write(JSON.stringify({",
+                "openai: process.env.OPENAI_API_KEY ?? null,",
+                "token: process.env.AGENT_PYRAMID_TEST_TOKEN ?? null,",
+                "hasPath: Boolean(process.env.PATH || process.env.Path)",
+                "}));",
+              ].join(""),
+            ),
+          },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as { stdout: string };
+      const envSnapshot = JSON.parse(parsed.stdout) as {
+        openai: string | null;
+        token: string | null;
+        hasPath: boolean;
+      };
+
+      expect(envSnapshot).toEqual({
+        openai: null,
+        token: null,
+        hasPath: true,
+      });
+    } finally {
+      if (originalOpenAiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalOpenAiKey;
+      }
+      if (originalToken === undefined) {
+        delete process.env.AGENT_PYRAMID_TEST_TOKEN;
+      } else {
+        process.env.AGENT_PYRAMID_TEST_TOKEN = originalToken;
+      }
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      await removeTempDir(workspace);
+    }
+  });
+
   it("reports foreground command stdout and stderr progress without changing the final result", async () => {
     const workspace = await makeTempDir("command-tools-progress-");
     try {
@@ -3654,7 +3831,15 @@ describe("application tools", () => {
     let sessionId: string | undefined;
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const progressEvents: Array<{ chunk: string; stream: ToolProgressStream }> = [];
+      const context = {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        workspace,
+        reportProgress(chunk: string, stream: ToolProgressStream): void {
+          progressEvents.push({ chunk, stream });
+        },
+      };
       const start = JSON.parse(
         (
           await registry.execute(
@@ -3771,6 +3956,14 @@ describe("application tools", () => {
       expect(listedWithOutput.sessions[0].sessionId).toBe(sessionId);
       expect(listedWithOutput.sessions[0].stdout.text).toContain("ready");
       expect(listedWithOutput.sessions[0].stdout.text).toContain("echo: ping ");
+      await waitUntil(() =>
+        progressEvents.some((event) =>
+          event.stream === "stdout" && event.chunk.includes("ready"),
+        ) &&
+        progressEvents.some((event) =>
+          event.stream === "stdout" && event.chunk.includes("echo: ping "),
+        ),
+      );
 
       const stopped = JSON.parse(
         (
@@ -3809,6 +4002,159 @@ describe("application tools", () => {
           if (error instanceof Error && error.message.includes("Command session not found")) return;
           throw error;
         });
+      }
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("does not start a command session when the tool context is already aborted", async () => {
+    const workspace = await makeTempDir("command-session-pre-aborted-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const controller = new AbortController();
+      controller.abort();
+      const context = {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        workspace,
+        signal: controller.signal,
+      };
+
+      await expect(
+        registry.execute(
+          {
+            id: "session-start-aborted",
+            name: "start_command_session",
+            arguments: {
+              command: nodeCommand("process.stdout.write('should-not-run');"),
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Command was interrupted.");
+
+      const list = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-list-after-abort",
+              name: "list_command_sessions",
+              arguments: {},
+            },
+            { threadId: "thread-1", turnId: "turn-1", workspace },
+          )
+        ).content,
+      ) as { sessionCount: number };
+      expect(list.sessionCount).toBe(0);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("redacts sensitive environment variables from long-running command sessions", async () => {
+    const workspace = await makeTempDir("command-session-env-");
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalToken = process.env.AGENT_PYRAMID_TEST_TOKEN;
+    const originalPath = process.env.PATH;
+    let sessionId: string | undefined;
+    try {
+      process.env.OPENAI_API_KEY = "secret-openai-key";
+      process.env.AGENT_PYRAMID_TEST_TOKEN = "secret-agent-token";
+      process.env.PATH = originalPath ?? path.dirname(process.execPath);
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const start = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-env-start",
+              name: "start_command_session",
+              arguments: {
+                command: nodeCommand(
+                  [
+                    "process.stdout.write(JSON.stringify({",
+                    "openai: process.env.OPENAI_API_KEY ?? null,",
+                    "token: process.env.AGENT_PYRAMID_TEST_TOKEN ?? null,",
+                    "hasPath: Boolean(process.env.PATH || process.env.Path)",
+                    "}) + '\\n');",
+                    "setInterval(() => undefined, 1000);",
+                  ].join(""),
+                ),
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionId: string };
+      sessionId = start.sessionId;
+
+      await waitUntil(async () => {
+        const read = JSON.parse(
+          (
+            await registry.execute(
+              {
+                id: "session-env-read-wait",
+                name: "read_command_session",
+                arguments: { session_id: sessionId },
+              },
+              context,
+            )
+          ).content,
+        ) as { stdout: { text: string } };
+        return read.stdout.text.includes("}");
+      });
+      const read = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-env-read",
+              name: "read_command_session",
+              arguments: { session_id: sessionId },
+            },
+            context,
+          )
+        ).content,
+      ) as { stdout: { text: string } };
+      const envSnapshot = JSON.parse(read.stdout.text.trim()) as {
+        openai: string | null;
+        token: string | null;
+        hasPath: boolean;
+      };
+
+      expect(envSnapshot).toEqual({
+        openai: null,
+        token: null,
+        hasPath: true,
+      });
+    } finally {
+      if (sessionId) {
+        const registry = new InMemoryToolRegistry(createCommandTools());
+        await registry.execute(
+          {
+            id: "session-env-cleanup",
+            name: "stop_command_session",
+            arguments: { session_id: sessionId },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ).catch((error: unknown) => {
+          if (error instanceof Error && error.message.includes("Command session not found")) return;
+          throw error;
+        });
+      }
+      if (originalOpenAiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalOpenAiKey;
+      }
+      if (originalToken === undefined) {
+        delete process.env.AGENT_PYRAMID_TEST_TOKEN;
+      } else {
+        process.env.AGENT_PYRAMID_TEST_TOKEN = originalToken;
+      }
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
       }
       await removeTempDir(workspace);
     }
@@ -4378,6 +4724,136 @@ describe("application tools", () => {
           context,
         ),
       ).rejects.toThrow("diagnose_file path is not valid UTF-8: src/invalid.ts");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("returns a structured symbol outline for one workspace file", async () => {
+    const workspace = await makeTempDir("list-symbols-tools-");
+    try {
+      await fs.writeFile(
+        path.join(workspace, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            target: "ES2022",
+            strict: true,
+            noEmit: true,
+          },
+          include: ["src/**/*.ts"],
+        }),
+        "utf8",
+      );
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(
+        path.join(workspace, "src", "index.ts"),
+        [
+          "export class Runner {",
+          "  start(): void {}",
+          "}",
+          "export function createRunner(): Runner {",
+          "  return new Runner();",
+          "}",
+        ].join("\n"),
+        "utf8",
+      );
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-list-symbols",
+          name: "list_symbols",
+          arguments: { path: "src/index.ts", max_results: 10 },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        path: string;
+        symbolCount: number;
+        truncated: boolean;
+        symbols: Array<{
+          path: string;
+          name: string;
+          kind: string;
+          line: number;
+          column: number;
+          level: number;
+        }>;
+      };
+
+      expect(parsed.path).toBe("src/index.ts");
+      expect(parsed.truncated).toBe(false);
+      expect(parsed.symbolCount).toBeGreaterThanOrEqual(3);
+      expect(parsed.symbols).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          path: "src/index.ts",
+          name: "Runner",
+          kind: "class",
+          line: 1,
+          column: 1,
+          level: 0,
+        }),
+        expect.objectContaining({
+          path: "src/index.ts",
+          name: "start",
+          kind: "method",
+          line: 2,
+          level: 1,
+        }),
+        expect.objectContaining({
+          path: "src/index.ts",
+          name: "createRunner",
+          kind: "function",
+          line: 4,
+          level: 0,
+        }),
+      ]));
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("guards list_symbols paths and UTF-8 decoding", async () => {
+    const workspace = await makeTempDir("list-symbols-tools-guard-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "file.ts"), "export const value = 1;\n", "utf8");
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-list-symbols-escape",
+            name: "list_symbols",
+            arguments: { path: "../outside.ts" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Path escapes workspace: ../outside.ts");
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-list-symbols-directory",
+            name: "list_symbols",
+            arguments: { path: "src" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("list_symbols path is not a file: src");
+
+      await fs.writeFile(path.join(workspace, "src", "invalid.ts"), Buffer.from([0xff, 0xfe]));
+      await expect(
+        registry.execute(
+          {
+            id: "call-list-symbols-invalid-utf8",
+            name: "list_symbols",
+            arguments: { path: "src/invalid.ts" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("list_symbols path is not valid UTF-8: src/invalid.ts");
     } finally {
       await removeTempDir(workspace);
     }

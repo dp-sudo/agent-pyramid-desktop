@@ -1690,6 +1690,7 @@ describe("AgentRuntime", () => {
     expect(toolItems[2]).toMatchObject({
       status: "failed",
       result: {
+        code: "tool_repeat_suppressed",
         suppressed: true,
         reason: "repeat_read_only_tool_call",
         count: 3,
@@ -1974,6 +1975,81 @@ describe("AgentRuntime", () => {
     }
   });
 
+  it("rejects schema-invalid destructive tool calls before requesting approval", async () => {
+    const execute = vi.fn(async () => "should not run");
+    const preview = vi.fn(async () => ({
+      kind: "file_diff" as const,
+      path: "src/index.ts",
+      operation: "update" as const,
+      added: 1,
+      removed: 1,
+      lines: [],
+    }));
+    const registry = new InMemoryToolRegistry([
+      {
+        metadata: {
+          category: "workspace",
+          isDestructive: true,
+        },
+        definition: {
+          name: "schema_write",
+          description: "Test destructive schema validation before approval.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              text: { type: "string" },
+            },
+            required: ["text"],
+          },
+        },
+        preview,
+        execute,
+      },
+    ]);
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          { id: "call-schema-write", name: "schema_write", arguments: { text: 42 } },
+        ],
+        raw: {},
+      },
+      {
+        text: "Finished.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Run schema write",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    expect(preview).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    const replayed: Item[] = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    expect(finalItems(replayed).find(isToolItemNamed("schema_write"))).toMatchObject({
+      status: "failed",
+      result: {
+        code: "tool_schema_invalid",
+        message: 'Tool "schema_write" arguments do not match inputSchema: arguments.text must be string.',
+      },
+    });
+  });
+
   it("keeps preview failures scoped to the tool call", async () => {
     const workspace = await makeTempDir("runtime-coding-preview-failure-");
     try {
@@ -2039,6 +2115,7 @@ describe("AgentRuntime", () => {
       ).toMatchObject({
         status: "failed",
         result: {
+          code: "tool_execution_failed",
           message: "Read the file with read_file before attempting to edit or overwrite it.",
         },
       });
@@ -2755,6 +2832,66 @@ describe("AgentRuntime", () => {
     }
   });
 
+  it("runs list_symbols without approval because it is read-only", async () => {
+    const workspace = await makeTempDir("runtime-list-symbols-");
+    try {
+      await fs.writeFile(
+        path.join(workspace, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            noEmit: true,
+          },
+          include: ["src/**/*.ts"],
+        }),
+        "utf8",
+      );
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(
+        path.join(workspace, "src", "index.ts"),
+        "export function makeValue(): number { return 1; }\n",
+        "utf8",
+      );
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            { id: "call-list-symbols", name: "list_symbols", arguments: { path: "src/index.ts" } },
+          ],
+          raw: {},
+        },
+        {
+          text: "Symbols complete.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+
+      await createRuntime(registry).startTurn({
+        threadId: thread.id,
+        text: "List symbols",
+      });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"), 3000);
+
+      expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+      const toolMessage = fakePool.requests[1].messages.find(
+        (message) => message.role === "tool" && message.toolCallId === "call-list-symbols",
+      );
+      expect(toolMessage?.content).toContain("src/index.ts");
+      expect(toolMessage?.content).toContain("makeValue");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("keeps coding and command tools visible in Code threads", async () => {
     const thread = await store.createThread({
       title: "Runtime",
@@ -2884,7 +3021,10 @@ describe("AgentRuntime", () => {
       finalItems(replayed).find((item) => item.kind === "tool" && item.name === "run_command"),
     ).toMatchObject({
       status: "failed",
-      result: { message: 'Tool "run_command" is not available in this turn.' },
+      result: {
+        code: "tool_unavailable",
+        message: 'Tool "run_command" is not available in this turn.',
+      },
     });
   });
 
@@ -3092,7 +3232,10 @@ describe("AgentRuntime", () => {
       finalItems(replayed).find((item) => item.kind === "tool" && item.name === "write_file"),
     ).toMatchObject({
       status: "failed",
-      result: { message: 'Tool "write_file" is not available in this turn.' },
+      result: {
+        code: "tool_unavailable",
+        message: 'Tool "write_file" is not available in this turn.',
+      },
     });
   });
 
@@ -4238,6 +4381,7 @@ describe("AgentRuntime", () => {
       name: "read_file",
       status: "failed",
       result: {
+        code: "tool_budget_exhausted",
         message: expect.stringContaining("tool was not executed"),
       },
     });
@@ -4342,7 +4486,10 @@ describe("AgentRuntime", () => {
           kind: "tool",
           name: "shell_command",
           status: "failed",
-          result: { message: "Command was interrupted." },
+          result: expect.objectContaining({
+            code: "tool_interrupted",
+            message: "Command was interrupted.",
+          }),
         }),
       ]),
     );
@@ -4683,7 +4830,10 @@ describe("AgentRuntime", () => {
           kind: "tool",
           name: "shell_command",
           status: "failed",
-          result: { message: "Command was interrupted." },
+          result: expect.objectContaining({
+            code: "tool_interrupted",
+            message: "Command was interrupted.",
+          }),
         }),
       ]),
     );

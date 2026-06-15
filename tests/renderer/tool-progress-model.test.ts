@@ -121,6 +121,36 @@ describe("tool progress model", () => {
     expect(appendToolProgressToItems(missing, progress)).toBe(missing);
   });
 
+  it("preserves completed command session snapshots while adding live progress", () => {
+    const completedSession = toolItem({
+      name: "start_command_session",
+      status: "completed",
+      result: {
+        sessionId: "session-1",
+        status: "running",
+      },
+    });
+
+    const next = appendToolProgressToItems([completedSession], {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      seq: 1,
+      stdout: "ready\n",
+    });
+
+    expect(next[0]).toMatchObject({
+      result: {
+        sessionId: "session-1",
+        status: "running",
+        liveProgress: {
+          kind: "tool_progress",
+          stdout: "ready\n",
+        },
+      },
+    });
+  });
+
   it("keeps only the latest progress text when the display limit is exceeded", () => {
     const previous = "a".repeat(11_995);
     const item = toolItem({

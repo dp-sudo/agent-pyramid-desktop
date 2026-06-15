@@ -43,6 +43,7 @@ import {
   THREAD_RELATIONS,
   THREAD_SANDBOX_MODES,
   THREAD_STATUSES,
+  TOOL_FAILURE_CODES,
   UUID_PATTERN,
   err,
   isAgentAutonomyLevel,
@@ -60,6 +61,8 @@ import {
   isSkillListResponse,
   isMcpServerTransport,
   isRuntimeToolName,
+  isToolFailureCode,
+  isToolFailureResult,
   isThreadApprovalPolicy,
   isThreadGoalStatus,
   isThreadMode,
@@ -117,6 +120,44 @@ describe("shared agent contracts", () => {
     expect(isNonNegativeInteger(1.5)).toBe(false);
     expect(isUuidString("../outside")).toBe(false);
     expect(isUuidString("attachment-1")).toBe(false);
+  });
+
+  it("validates structured tool failure results", () => {
+    expect(TOOL_FAILURE_CODES).toEqual([
+      "tool_unavailable",
+      "tool_not_registered",
+      "tool_schema_invalid",
+      "tool_repeat_suppressed",
+      "tool_policy_denied",
+      "tool_approval_denied",
+      "tool_interrupted",
+      "tool_execution_failed",
+      "tool_budget_exhausted",
+    ]);
+    expect(isToolFailureCode("tool_schema_invalid")).toBe(true);
+    expect(isToolFailureCode("schema_invalid")).toBe(false);
+    expect(isToolFailureResult({
+      code: "tool_repeat_suppressed",
+      message: "Duplicate read-only call suppressed.",
+      suppressed: true,
+      reason: "repeat_read_only_tool_call",
+      count: 3,
+      threshold: 3,
+    })).toBe(true);
+    expect(isToolFailureResult({
+      code: "tool_policy_denied",
+      message: "Denied.",
+      denied: true,
+    })).toBe(true);
+    expect(isToolFailureResult({
+      code: "tool_policy_denied",
+      denied: true,
+    })).toBe(false);
+    expect(isToolFailureResult({
+      code: "tool_execution_failed",
+      message: "Failed.",
+      count: -1,
+    })).toBe(false);
   });
 
   it("keeps ISO timestamp validation as a shared persistence boundary", () => {
@@ -214,6 +255,7 @@ describe("shared agent contracts", () => {
       "read_file",
       "search_files",
       "rg_search",
+      "list_symbols",
       "git_status",
       "git_diff",
       "git_log",
@@ -237,6 +279,7 @@ describe("shared agent contracts", () => {
       "aggressive",
     ]);
     expect(isRuntimeToolName("diagnose_file")).toBe(true);
+    expect(isRuntimeToolName("list_symbols")).toBe(true);
     expect(isRuntimeToolName("unknown_tool")).toBe(false);
     expect(isRuntimeCompactionStrategy("preserve-tools")).toBe(true);
     expect(isRuntimeCompactionStrategy("full-history")).toBe(false);
@@ -265,6 +308,8 @@ describe("shared agent contracts", () => {
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.multi_edit).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.list_command_sessions).toBe(true);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_command_sessions).toBe(false);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.list_symbols).toBe(true);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_symbols).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_command).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_skills).toBe(true);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_skill).toBe(true);

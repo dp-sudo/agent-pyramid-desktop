@@ -434,6 +434,37 @@ describe("timeline model", () => {
     expect(display.statusText).toBe("chat.toolStatus.completed");
   });
 
+  it("summarizes completed command session live progress without dropping the session snapshot", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "start_command_session",
+      args: { command: "npm run dev" },
+      result: {
+        sessionId: "session-1",
+        status: "running",
+        liveProgress: {
+          kind: "tool_progress",
+          stdout: "ready\n",
+          stderr: "warn\n",
+        },
+      },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key, options) =>
+      options?.command ? `${key}:${String(options.command)}` : key,
+    );
+
+    expect(display.detail).toContain("\"sessionId\": \"session-1\"");
+    expect(display.detail).toContain("[stdout]\nready");
+    expect(display.detail).toContain("[stderr]\nwarn");
+    expect(display.detail).not.toContain("liveProgress");
+  });
+
   it("uses a short compact title for failed command tools", () => {
     const command = `find src -type d -name "__tests__" ${"nested ".repeat(16)}`;
     const item: ToolItem = {
@@ -545,6 +576,27 @@ describe("timeline model", () => {
     );
 
     expect(display.title).toBe("chat.tools.diagnoseFilePath:src/index.ts");
+    expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
+  it("summarizes list_symbols with file paths", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "list_symbols",
+      args: { path: "src/index.ts" },
+      result: { symbolCount: 3 },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key, options) =>
+      options?.path ? `${key}:${String(options.path)}` : key,
+    );
+
+    expect(display.title).toBe("chat.tools.listSymbolsPath:src/index.ts");
     expect(display.statusText).toBe("chat.toolStatus.completed");
   });
 
