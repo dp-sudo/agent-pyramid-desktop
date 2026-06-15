@@ -54,6 +54,7 @@ import type {
   SystemItem,
   ThreadRecord,
   ThreadGoal,
+  ToolFailureResult,
   ToolItem,
   TurnRecord,
   TurnStartRequest,
@@ -588,9 +589,10 @@ export class AgentRuntime {
         args: call.arguments,
         status: "failed",
         result: {
+          code: "tool_budget_exhausted",
           message:
             `Automatic tool budget reached after ${maxToolRounds} round(s); tool was not executed.`,
-        },
+        } satisfies ToolFailureResult,
         createdAt: new Date().toISOString(),
       };
       await appendItemAndBroadcast(

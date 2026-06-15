@@ -14,6 +14,7 @@ import {
 import {
   COMMAND_KILL_GRACE_MS,
 } from "../constants.js";
+import { buildCommandEnvironment } from "./command-environment.js";
 
 export interface CommandOutput {
   exitCode: number | null;
@@ -68,6 +69,7 @@ export async function spawnWorkspaceProcess(
 
     const child = spawn(invocation.file, invocation.args, {
       cwd,
+      env: buildCommandEnvironment(),
       shell: false,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],

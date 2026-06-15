@@ -53,6 +53,7 @@ export const COMMAND_TOOL_NAMES = [
   "detect_shell_environment",
   "diagnose_workspace",
   "diagnose_file",
+  "list_symbols",
 ] as const satisfies readonly RuntimeToolName[];
 
 const COMMAND_TOOL_NAME_SET = new Set<string>(COMMAND_TOOL_NAMES);

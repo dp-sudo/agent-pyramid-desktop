@@ -31,8 +31,10 @@ import {
   type ShellKind,
 } from "./command-invocation.js";
 import {
+  collectFileSymbols,
   collectLanguageServiceDiagnostics,
   parseTypeScriptDiagnostics,
+  type WorkspaceSymbol,
   type WorkspaceDiagnostic,
 } from "./command-diagnostics.js";
 import {
@@ -55,8 +57,12 @@ import {
   type SessionCapture,
 } from "./command-session-capture.js";
 import {
+  createCommandProgressReporter,
+} from "./command-progress-reporter.js";
+import {
   type StreamCapture,
 } from "./command-output-capture.js";
+import { buildCommandEnvironment } from "./command-environment.js";
 import {
   killProcessTree,
   spawnWorkspaceCommand,
@@ -92,6 +98,8 @@ const MAX_COMMAND_TIMEOUT_MS = MAX_RUNTIME_COMMAND_TIMEOUT_MS;
 const DEFAULT_COMMAND_MAX_OUTPUT_BYTES = DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MIN_COMMAND_MAX_OUTPUT_BYTES = MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MAX_COMMAND_MAX_OUTPUT_BYTES = MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
+const DEFAULT_SYMBOL_LIMIT = 200;
+const MAX_SYMBOL_LIMIT = 1000;
 const COMMAND_TIMEOUT_DESCRIPTION =
   `Maximum runtime in milliseconds. Defaults to the runtime command preference ` +
   `(${DEFAULT_COMMAND_TIMEOUT_MS}). Overrides must be between ${MIN_COMMAND_TIMEOUT_MS} ` +
@@ -136,6 +144,13 @@ interface DiagnoseFileResult extends DiagnoseWorkspaceResult {
   path: string;
 }
 
+interface ListSymbolsResult {
+  path: string;
+  symbolCount: number;
+  truncated: boolean;
+  symbols: WorkspaceSymbol[];
+}
+
 export function createCommandTools(): AgentTool[] {
   return [
     runCommandTool,
@@ -165,6 +180,7 @@ export function createCommandTools(): AgentTool[] {
     detectShellEnvironmentTool,
     diagnoseWorkspaceTool,
     diagnoseFileTool,
+    listSymbolsTool,
   ];
 }
 
@@ -975,6 +991,42 @@ const diagnoseFileTool: AgentTool = {
   },
 };
 
+const listSymbolsTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "list_symbols",
+    description:
+      "Return a structured TypeScript/JavaScript symbol outline for one UTF-8 workspace file. Use before editing unfamiliar code to identify classes, functions, methods, and exports.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Workspace-relative source file path to inspect.",
+        },
+        max_results: {
+          type: "number",
+          description: `Maximum symbols to return. Defaults to ${DEFAULT_SYMBOL_LIMIT}, maximum ${MAX_SYMBOL_LIMIT}.`,
+        },
+      },
+      required: ["path"],
+    },
+  },
+  async execute(input, context) {
+    const result = await executeListSymbols(input, context);
+    return {
+      toolCallId: "",
+      name: "list_symbols",
+      content: JSON.stringify(result),
+      displayResult: result,
+    };
+  },
+};
+
 async function executeRunCommand(
   input: Record<string, unknown>,
   context: AgentToolContext,
@@ -1612,6 +1664,35 @@ async function executeDiagnoseFile(
   };
 }
 
+async function executeListSymbols(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<ListSymbolsResult> {
+  const workspace = requireWorkspace(context);
+  const relativePath = requiredPath(input.path, "list_symbols requires a string path.");
+  const maxResults = numberInRange(
+    input.max_results,
+    1,
+    MAX_SYMBOL_LIMIT,
+    DEFAULT_SYMBOL_LIMIT,
+    "max_results",
+  );
+  const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile()) {
+    throw new Error(`list_symbols path is not a file: ${relativePath}`);
+  }
+  await assertTextFile(filePath, relativePath, "list_symbols path");
+  const normalizedTarget = toWorkspaceRelative(workspace, filePath);
+  const outline = await collectFileSymbols(workspace, filePath, maxResults);
+  return {
+    path: normalizedTarget,
+    symbolCount: outline.symbols.length,
+    truncated: outline.truncated,
+    symbols: outline.symbols,
+  };
+}
+
 async function executeDiagnoseWorkspace(
   input: Record<string, unknown>,
   context: AgentToolContext,
@@ -1863,6 +1944,9 @@ class CommandSessionManager {
     }
     const workspace = requireWorkspace(context);
     const command = requiredCommandForTool(input.command, "start_command_session");
+    if (context.signal?.aborted) {
+      throw new Error("Command was interrupted.");
+    }
     const cwdArg = optionalString(input.cwd) ?? ".";
     const cwdPath = await resolveWorkspacePathForAccess(workspace, cwdArg, "read");
     const stat = await fs.stat(cwdPath);
@@ -1882,8 +1966,13 @@ class CommandSessionManager {
       "max_buffer_bytes",
     );
     const invocation = await createSelectedShellInvocation(command, { shell });
+    if (context.signal?.aborted) {
+      throw new Error("Command was interrupted.");
+    }
+    const progress = createCommandProgressReporter(context.reportProgress);
     const child = spawn(invocation.file, invocation.args, {
       cwd: cwdPath,
+      env: buildCommandEnvironment(),
       shell: false,
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
@@ -1908,18 +1997,22 @@ class CommandSessionManager {
     };
     child.stdout?.on("data", (data: Buffer | string) => {
       session.stdout.collect(data);
+      progress?.collect(data, "stdout");
       session.updatedAt = new Date().toISOString();
     });
     child.stderr?.on("data", (data: Buffer | string) => {
       session.stderr.collect(data);
+      progress?.collect(data, "stderr");
       session.updatedAt = new Date().toISOString();
     });
     child.on("error", (error) => {
+      progress?.flush();
       session.status = "failed";
       session.error = error.message;
       session.updatedAt = new Date().toISOString();
     });
     child.on("close", (exitCode, signal) => {
+      progress?.flush();
       if (session.status === "failed") {
         session.exitCode = exitCode;
         session.signal = signal;
@@ -1931,9 +2024,27 @@ class CommandSessionManager {
       session.signal = signal;
       session.updatedAt = new Date().toISOString();
     });
-    await this.waitForSessionSpawn(session);
-    this.sessions.set(session.id, session);
-    return this.snapshot(session, DEFAULT_COMMAND_SESSION_TAIL_BYTES);
+    const onAbort = (): void => {
+      session.status = "failed";
+      session.error = "Command was interrupted.";
+      session.updatedAt = new Date().toISOString();
+      killProcessTree(child, "SIGTERM");
+    };
+    context.signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      await this.waitForSessionSpawn(session);
+      if (context.signal?.aborted) {
+        throw new Error("Command was interrupted.");
+      }
+      this.sessions.set(session.id, session);
+      return this.snapshot(session, DEFAULT_COMMAND_SESSION_TAIL_BYTES);
+    } catch (error) {
+      progress?.flush();
+      killProcessTree(child, "SIGKILL");
+      throw error;
+    } finally {
+      context.signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   list(input: Record<string, unknown>, context: AgentToolContext): CommandSessionListResult {
@@ -2372,9 +2483,13 @@ function requiredPath(value: unknown, message: string): string {
   return value.trim();
 }
 
-async function assertTextFile(filePath: string, relativePath: string): Promise<void> {
+async function assertTextFile(
+  filePath: string,
+  relativePath: string,
+  label = "diagnose_file path",
+): Promise<void> {
   const sample = await fs.readFile(filePath);
-  assertUtf8TextBuffer(sample, relativePath, "diagnose_file path");
+  assertUtf8TextBuffer(sample, relativePath, label);
 }
 
 function optionalString(value: unknown): string | undefined {

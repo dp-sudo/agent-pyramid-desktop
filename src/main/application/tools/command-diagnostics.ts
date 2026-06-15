@@ -13,6 +13,18 @@ export interface WorkspaceDiagnostic {
   source: "typecheck" | "language_service";
 }
 
+export interface WorkspaceSymbol {
+  path: string;
+  name: string;
+  kind: string;
+  kindModifiers: string;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  level: number;
+}
+
 /**
  * Converts TypeScript CLI output into workspace-relative diagnostics. Entries
  * outside the active workspace are omitted so command output cannot surface
@@ -53,6 +65,56 @@ export async function collectLanguageServiceDiagnostics(
   workspace: string,
   filePath: string,
 ): Promise<WorkspaceDiagnostic[]> {
+  const service = createFileLanguageService(workspace, filePath);
+  const diagnostics = [
+    ...service.getSyntacticDiagnostics(filePath),
+    ...service.getSemanticDiagnostics(filePath),
+    ...service.getSuggestionDiagnostics(filePath),
+  ];
+  service.dispose();
+  return diagnostics.flatMap((diagnostic) => {
+    const workspaceDiagnostic = toWorkspaceDiagnostic(diagnostic, workspace, filePath);
+    return workspaceDiagnostic ? [workspaceDiagnostic] : [];
+  });
+}
+
+/**
+ * Returns a TypeScript navigation outline for one workspace file. This gives
+ * coding tools a structured pre-edit map without introducing a persistent LSP
+ * server or repository-wide symbol index.
+ */
+export async function collectFileSymbols(
+  workspace: string,
+  filePath: string,
+  maxSymbols: number,
+): Promise<{ symbols: WorkspaceSymbol[]; truncated: boolean }> {
+  const service = createFileLanguageService(workspace, filePath);
+  try {
+    const sourceFile = service.getProgram()?.getSourceFile(filePath) ??
+      ts.createSourceFile(
+        filePath,
+        ts.sys.readFile(filePath) ?? "",
+        ts.ScriptTarget.Latest,
+        true,
+      );
+    const relativePath = workspaceRelativeDiagnosticPath(workspace, filePath);
+    if (!relativePath) return { symbols: [], truncated: false };
+    const tree = service.getNavigationTree(filePath);
+    const symbols: WorkspaceSymbol[] = [];
+    collectNavigationSymbols(tree, sourceFile, relativePath, symbols, maxSymbols + 1, 0);
+    return {
+      symbols: symbols.slice(0, maxSymbols),
+      truncated: symbols.length > maxSymbols,
+    };
+  } finally {
+    service.dispose();
+  }
+}
+
+function createFileLanguageService(
+  workspace: string,
+  filePath: string,
+): ts.LanguageService {
   const configPath = findTsConfig(workspace, filePath);
   const parsed = configPath
     ? parseTsConfig(configPath)
@@ -93,17 +155,42 @@ export async function collectLanguageServiceDiagnostics(
     realpath: ts.sys.realpath,
     useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
   };
-  const service = ts.createLanguageService(host, ts.createDocumentRegistry());
-  const diagnostics = [
-    ...service.getSyntacticDiagnostics(filePath),
-    ...service.getSemanticDiagnostics(filePath),
-    ...service.getSuggestionDiagnostics(filePath),
-  ];
-  service.dispose();
-  return diagnostics.flatMap((diagnostic) => {
-    const workspaceDiagnostic = toWorkspaceDiagnostic(diagnostic, workspace, filePath);
-    return workspaceDiagnostic ? [workspaceDiagnostic] : [];
-  });
+  return ts.createLanguageService(host, ts.createDocumentRegistry());
+}
+
+function collectNavigationSymbols(
+  item: ts.NavigationTree,
+  sourceFile: ts.SourceFile,
+  relativePath: string,
+  symbols: WorkspaceSymbol[],
+  limit: number,
+  level: number,
+): void {
+  if (symbols.length >= limit) return;
+  const includeCurrent = item.kind !== "script" && item.kind !== "module";
+  if (includeCurrent) {
+    const span = item.spans[0];
+    if (span) {
+      const start = sourceFile.getLineAndCharacterOfPosition(span.start);
+      const end = sourceFile.getLineAndCharacterOfPosition(span.start + span.length);
+      symbols.push({
+        path: relativePath,
+        name: item.text,
+        kind: item.kind,
+        kindModifiers: item.kindModifiers,
+        line: start.line + 1,
+        column: start.character + 1,
+        endLine: end.line + 1,
+        endColumn: end.character + 1,
+        level,
+      });
+    }
+  }
+  const childLevel = includeCurrent ? level + 1 : level;
+  for (const child of item.childItems ?? []) {
+    collectNavigationSymbols(child, sourceFile, relativePath, symbols, limit, childLevel);
+    if (symbols.length >= limit) return;
+  }
 }
 
 function findTsConfig(workspace: string, filePath: string): string | undefined {

@@ -13,6 +13,7 @@ import {
 import { ApprovalCoordinator } from "./approval-coordinator.js";
 import { ToolCatalogService, isCommandToolName } from "./tool-catalog.js";
 import { ToolPolicyService } from "./tool-policy.js";
+import { validateToolInputSchema } from "./tools/tool-schema.js";
 import type {
   ApprovalItem,
   ApprovalRespondRequest,
@@ -20,6 +21,8 @@ import type {
   RuntimeErrorEvent,
   RuntimePreferences,
   ThreadRecord,
+  ToolFailureCode,
+  ToolFailureResult,
   ToolItem,
   ToolProgressStream,
   TurnRecord,
@@ -124,16 +127,46 @@ export class ToolCallExecutor {
       runtimePreferences,
     );
     if (!isToolAvailable) {
+      const message = `Tool "${call.name}" is not available in this turn.`;
       toolItem.status = "failed";
-      toolItem.result = { message: `Tool "${call.name}" is not available in this turn.` };
+      toolItem.result = toolFailureResult("tool_unavailable", message);
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
       this.unregisterActiveToolExecution(turn.id, activeExecution);
-      this.deps.reportRuntimeError(
-        turn,
-        "tool_not_found",
-        `Tool "${call.name}" is not available in this turn.`,
-      );
+      this.deps.reportRuntimeError(turn, "tool_not_found", message);
+      return {
+        toolCallId: call.id,
+        name: call.name,
+        content: JSON.stringify(toolItem.result),
+      };
+    }
+
+    const tool = this.deps.registry.getTool(call.name);
+    if (!tool) {
+      const message = `Tool "${call.name}" is not registered.`;
+      toolItem.status = "failed";
+      toolItem.result = toolFailureResult("tool_not_registered", message);
+      await this.deps.store.appendItem(turn.threadId, toolItem);
+      this.emitToolItemUpdated(turn, toolItem);
+      this.unregisterActiveToolExecution(turn.id, activeExecution);
+      this.deps.reportRuntimeError(turn, "tool_not_found", message);
+      return {
+        toolCallId: call.id,
+        name: call.name,
+        content: JSON.stringify(toolItem.result),
+      };
+    }
+
+    try {
+      validateToolInputSchema(tool.definition.name, tool.definition.inputSchema, call.arguments);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toolItem.status = "failed";
+      toolItem.result = toolFailureResult("tool_schema_invalid", message);
+      await this.deps.store.appendItem(turn.threadId, toolItem);
+      this.emitToolItemUpdated(turn, toolItem);
+      this.unregisterActiveToolExecution(turn.id, activeExecution);
+      this.deps.reportRuntimeError(turn, "tool_failed", `${call.name}: ${message}`, error);
       return {
         toolCallId: call.id,
         name: call.name,
@@ -145,17 +178,17 @@ export class ToolCallExecutor {
     // workspace; the visible failed ToolItem keeps the model/user audit trail.
     const repeatInspection = this.inspectReadOnlyToolRepeat(turn.id, call);
     if (repeatInspection.suppressed) {
+      const message = [
+        `Tool "${call.name}" was called with identical arguments ${repeatInspection.count} time(s) in this turn.`,
+        "The duplicate read-only call was not executed; reuse the earlier result or change the arguments.",
+      ].join(" ");
       toolItem.status = "failed";
-      toolItem.result = {
+      toolItem.result = toolFailureResult("tool_repeat_suppressed", message, {
         suppressed: true,
         reason: "repeat_read_only_tool_call",
         count: repeatInspection.count,
         threshold: repeatInspection.threshold,
-        message: [
-          `Tool "${call.name}" was called with identical arguments ${repeatInspection.count} time(s) in this turn.`,
-          "The duplicate read-only call was not executed; reuse the earlier result or change the arguments.",
-        ].join(" "),
-      };
+      });
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
       this.unregisterActiveToolExecution(turn.id, activeExecution);
@@ -174,11 +207,11 @@ export class ToolCallExecutor {
       isToolAvailable,
     });
     if (policyDecision === "deny") {
+      const message = `Tool "${call.name}" is denied by thread policy.`;
       toolItem.status = "failed";
-      toolItem.result = {
+      toolItem.result = toolFailureResult("tool_policy_denied", message, {
         denied: true,
-        message: `Tool "${call.name}" is denied by thread policy.`,
-      };
+      });
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
       this.unregisterActiveToolExecution(turn.id, activeExecution);
@@ -197,8 +230,11 @@ export class ToolCallExecutor {
             this.unregisterActiveToolExecution(turn.id, activeExecution);
             return interruptedToolResult(call, toolItem);
           }
+          const message = `Tool "${call.name}" was denied by user approval.`;
           toolItem.status = "failed";
-          toolItem.result = { denied: true };
+          toolItem.result = toolFailureResult("tool_approval_denied", message, {
+            denied: true,
+          });
           await this.deps.store.appendItem(turn.threadId, toolItem);
           this.emitToolItemUpdated(turn, toolItem);
           this.unregisterActiveToolExecution(turn.id, activeExecution);
@@ -288,9 +324,7 @@ export class ToolCallExecutor {
       }
       const message = error instanceof Error ? error.message : String(error);
       toolItem.status = "failed";
-      toolItem.result = {
-        message,
-      };
+      toolItem.result = toolFailureResult("tool_execution_failed", message);
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
       this.unregisterActiveToolExecution(turn.id, activeExecution);
@@ -321,7 +355,10 @@ export class ToolCallExecutor {
       if (execution.item.status !== "running") continue;
       execution.finalizedByInterrupt = true;
       execution.item.status = "failed";
-      execution.item.result = { message: interruptedToolMessage(execution.item.name) };
+      execution.item.result = toolFailureResult(
+        "tool_interrupted",
+        interruptedToolMessage(execution.item.name),
+      );
       try {
         await this.deps.store.appendItem(turn.threadId, execution.item);
       } catch (error) {
@@ -370,6 +407,7 @@ export class ToolCallExecutor {
   ): Promise<ApprovalItem["preview"] | undefined> {
     const tool = this.deps.registry.getTool(call.name);
     if (!tool?.preview) return undefined;
+    validateToolInputSchema(tool.definition.name, tool.definition.inputSchema, call.arguments);
     const preview = await tool.preview(call.arguments, {
       threadId: turn.threadId,
       turnId: turn.id,
@@ -421,7 +459,21 @@ function interruptedToolResult(call: AgentToolCall, item: ToolItem): AgentToolRe
   return {
     toolCallId: call.id,
     name: call.name,
-    content: JSON.stringify(item.result ?? { message: interruptedToolMessage(call.name) }),
+    content: JSON.stringify(
+      item.result ?? toolFailureResult("tool_interrupted", interruptedToolMessage(call.name)),
+    ),
+  };
+}
+
+function toolFailureResult(
+  code: ToolFailureCode,
+  message: string,
+  extra: Partial<Omit<ToolFailureResult, "code" | "message">> = {},
+): ToolFailureResult {
+  return {
+    code,
+    message,
+    ...extra,
   };
 }
 

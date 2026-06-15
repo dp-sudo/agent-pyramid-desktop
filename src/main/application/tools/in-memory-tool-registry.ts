@@ -5,6 +5,7 @@ import type {
   AgentToolContext,
   AgentToolResult,
 } from "../../domain/agent/types";
+import { validateToolInputSchema } from "./tool-schema.js";
 
 export class InMemoryToolRegistry implements ToolRegistry {
   private readonly tools = new Map<string, AgentTool>();
@@ -41,6 +42,7 @@ export class InMemoryToolRegistry implements ToolRegistry {
       throw new Error(`Tool "${call.name}" is not registered.`);
     }
 
+    validateToolInputSchema(tool.definition.name, tool.definition.inputSchema, call.arguments);
     const result = await tool.execute(call.arguments, context);
     if (typeof result !== "string") {
       return {
