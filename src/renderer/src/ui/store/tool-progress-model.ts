@@ -61,16 +61,28 @@ export function appendToolProgressToItems(
   );
   if (index < 0) return items;
   const item = items[index];
-  if (item.kind !== "tool" || item.status !== "running") return items;
-  const current = readToolProgressDisplayResult(item.result);
+  if (item.kind !== "tool" || !acceptsLiveToolProgress(item)) return items;
+  const current = item.status === "running"
+    ? readToolProgressDisplayResult(item.result)
+    : readToolProgressDisplayResult(readLiveProgressDisplayResult(item.result));
   const nextResult: ToolProgressDisplayResult = {
     kind: "tool_progress",
     ...appendProgressStream(current, "stdout", progress.stdout),
     ...appendProgressStream(current, "stderr", progress.stderr),
   };
   const next = [...items];
-  next[index] = { ...item, result: nextResult };
+  next[index] = {
+    ...item,
+    result: item.status === "running"
+      ? nextResult
+      : mergeLiveProgressDisplayResult(item.result, nextResult),
+  };
   return next;
+}
+
+function acceptsLiveToolProgress(item: Extract<Item, { kind: "tool" }>): boolean {
+  return item.status === "running" ||
+    (item.status === "completed" && item.name === "start_command_session");
 }
 
 function readToolProgressDisplayResult(result: unknown): ToolProgressDisplayResult {
@@ -87,6 +99,24 @@ function readToolProgressDisplayResult(result: unknown): ToolProgressDisplayResu
     ...(typeof record.stderr === "string" ? { stderr: record.stderr } : {}),
     ...(record.stdoutTruncated === true ? { stdoutTruncated: true } : {}),
     ...(record.stderrTruncated === true ? { stderrTruncated: true } : {}),
+  };
+}
+
+function readLiveProgressDisplayResult(result: unknown): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return undefined;
+  return (result as Record<string, unknown>).liveProgress;
+}
+
+function mergeLiveProgressDisplayResult(
+  result: unknown,
+  liveProgress: ToolProgressDisplayResult,
+): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return { liveProgress };
+  }
+  return {
+    ...result,
+    liveProgress,
   };
 }
 

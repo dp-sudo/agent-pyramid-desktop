@@ -197,6 +197,7 @@ export interface ToolAction {
 const EXPLORATORY_TOOL_NAMES = new Set<string>(["list_files", "search_files", "rg_search"]);
 const READ_TOOL_NAMES = new Set<string>([
   "read_file",
+  "list_symbols",
   "list_command_sessions",
   "diagnose_file",
   "diagnose_workspace",
@@ -372,6 +373,10 @@ function titleForTool(
       return path
         ? t("chat.tools.diagnoseFilePath", { path })
         : t("chat.tools.diagnoseFile");
+    case "list_symbols":
+      return path
+        ? t("chat.tools.listSymbolsPath", { path })
+        : t("chat.tools.listSymbols");
     case "create_plan":
       return t("chat.tools.createPlan");
     case "update_goal":
@@ -519,6 +524,13 @@ function formatToolDetailPreview(
 
 function extractToolResultText(result: unknown): string {
   if (result === undefined) return "";
+  const liveProgress = readLiveProgressDisplayResult(result);
+  if (liveProgress) {
+    return [
+      extractToolResultText(stripLiveProgressDisplayResult(result)),
+      formatToolProgressDisplayResult(liveProgress),
+    ].filter((part) => part.trim().length > 0).join("\n\n");
+  }
   if (typeof result === "string") return result;
   if (isToolProgressDisplayResult(result)) {
     return formatToolProgressDisplayResult(result);
@@ -536,6 +548,16 @@ function extractToolResultPreview(
 ): { text: string; truncated: boolean; hiddenCharCount: number } {
   const normalizedMaxChars = normalizePreviewLimit(maxChars);
   if (result === undefined) return { text: "", truncated: false, hiddenCharCount: 0 };
+  const liveProgress = readLiveProgressDisplayResult(result);
+  if (liveProgress) {
+    return previewPlainText(
+      [
+        extractToolResultText(stripLiveProgressDisplayResult(result)),
+        formatToolProgressDisplayResult(liveProgress),
+      ].filter((part) => part.trim().length > 0).join("\n\n"),
+      normalizedMaxChars,
+    );
+  }
   if (typeof result === "string") return previewPlainText(result, normalizedMaxChars);
   if (isToolProgressDisplayResult(result)) {
     return previewPlainText(formatToolProgressDisplayResult(result), normalizedMaxChars);
@@ -549,24 +571,34 @@ function extractToolResultPreview(
   return stringifyJsonPreview(result, normalizedMaxChars);
 }
 
-function isToolProgressDisplayResult(result: unknown): result is {
+interface ToolProgressDisplayResult {
   kind: "tool_progress";
   stdout?: string;
   stderr?: string;
   stdoutTruncated?: boolean;
   stderrTruncated?: boolean;
-} {
+}
+
+function isToolProgressDisplayResult(result: unknown): result is ToolProgressDisplayResult {
   return Boolean(result) &&
     typeof result === "object" &&
     (result as { kind?: unknown }).kind === "tool_progress";
 }
 
-function formatToolProgressDisplayResult(result: {
-  stdout?: string;
-  stderr?: string;
-  stdoutTruncated?: boolean;
-  stderrTruncated?: boolean;
-}): string {
+function readLiveProgressDisplayResult(result: unknown): ToolProgressDisplayResult | null {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+  const liveProgress = (result as Record<string, unknown>).liveProgress;
+  return isToolProgressDisplayResult(liveProgress) ? liveProgress : null;
+}
+
+function stripLiveProgressDisplayResult(result: unknown): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const entries = Object.entries(result).filter(([key]) => key !== "liveProgress");
+  if (entries.length === 0) return undefined;
+  return Object.fromEntries(entries);
+}
+
+function formatToolProgressDisplayResult(result: ToolProgressDisplayResult): string {
   const parts: string[] = [];
   if (result.stdout) {
     parts.push(`${result.stdoutTruncated ? "[stdout: latest output]" : "[stdout]"}\n${result.stdout}`);
