@@ -3,6 +3,7 @@ import type { AgentToolCall } from "../domain/agent/types.js";
 import { JsonlThreadStore } from "../persistence/index.js";
 import { RuntimeEventBus } from "../event-bus.js";
 import type {
+  ApprovalDecisionScope,
   ApprovalItem,
   ApprovalRespondRequest,
   ThreadRecord,
@@ -10,6 +11,7 @@ import type {
 } from "../../shared/agent-contracts.js";
 
 type ApprovalDecision = "allow" | "deny";
+type ApprovalResolution = { decision: ApprovalDecision; scope: ApprovalDecisionScope };
 
 interface PendingApproval {
   approvalId: string;
@@ -18,7 +20,7 @@ interface PendingApproval {
   toolName: string;
   args: Record<string, unknown>;
   preview?: ApprovalItem["preview"];
-  resolve: (decision: ApprovalDecision) => Promise<void>;
+  resolve: (resolution: ApprovalResolution) => Promise<void>;
 }
 
 export interface ApprovalCoordinatorDeps {
@@ -44,7 +46,10 @@ export class ApprovalCoordinator {
     if (!pending) {
       throw new Error(`Approval ${approval.approvalId} is not pending.`);
     }
-    void pending.resolve(approval.decision);
+    void pending.resolve({
+      decision: approval.decision,
+      scope: approval.scope ?? "once",
+    });
     this.pendingApprovals.delete(approval.approvalId);
   }
 
@@ -57,7 +62,7 @@ export class ApprovalCoordinator {
     turn: TurnRecord,
     call: AgentToolCall,
     thread: ThreadRecord,
-  ): Promise<ApprovalDecision> {
+  ): Promise<ApprovalResolution> {
     const approvalId = randomUUID();
     const preview = await this.deps.previewProvider(call, turn, thread);
     const pendingItem: ApprovalItem = {
@@ -79,7 +84,7 @@ export class ApprovalCoordinator {
       item: pendingItem,
     });
 
-    return new Promise<ApprovalDecision>((resolve) => {
+    return new Promise<ApprovalResolution>((resolve) => {
       this.pendingApprovals.set(approvalId, {
         approvalId,
         threadId: turn.threadId,
@@ -87,9 +92,9 @@ export class ApprovalCoordinator {
         toolName: call.name,
         args: call.arguments,
         ...(preview ? { preview } : {}),
-        resolve: async (decision) => {
-          await this.resolveApproval(pendingItem, decision);
-          resolve(decision);
+        resolve: async (resolution) => {
+          await this.resolveApproval(pendingItem, resolution);
+          resolve(resolution);
         },
       });
       this.deps.bus.emit("approval_requested", {
@@ -111,17 +116,20 @@ export class ApprovalCoordinator {
       pendingForTurn.push(pending);
       this.pendingApprovals.delete(approvalId);
     }
-    await Promise.all(pendingForTurn.map((pending) => pending.resolve(decision)));
+    await Promise.all(pendingForTurn.map((pending) =>
+      pending.resolve({ decision, scope: "once" })
+    ));
   }
 
   private async resolveApproval(
     pendingItem: ApprovalItem,
-    decision: ApprovalDecision,
+    resolution: ApprovalResolution,
   ): Promise<void> {
     const item: ApprovalItem = {
       ...pendingItem,
       kind: "approval",
-      decision,
+      decision: resolution.decision,
+      scope: resolution.scope,
       resolvedAt: new Date().toISOString(),
     };
     try {

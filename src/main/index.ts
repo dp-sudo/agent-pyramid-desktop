@@ -13,7 +13,7 @@ import { createPlanTool } from "./application/tools/create-plan-tool.js";
 import { createGoalTools } from "./application/tools/goal-tools.js";
 import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
 import { createCodingTools } from "./application/tools/coding-tools.js";
-import { createCommandTools } from "./application/tools/command-tools.js";
+import { createCommandTools, shutdownCommandSessions } from "./application/tools/command-tools.js";
 import { createSkillTools } from "./application/tools/skill-tools.js";
 import { InMemoryToolRegistry } from "./application/tools/in-memory-tool-registry.js";
 import { SkillService } from "./skills/skill-service.js";
@@ -195,6 +195,14 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   void mcpHost.close();
+});
+
+app.on("before-quit", () => {
+  // Long-running command sessions are owned by this main process; shutdown must
+  // terminate their process trees before the app releases its runtime graph.
+  void shutdownCommandSessions().catch((error) => {
+    console.error("[main] command session shutdown failed:", error);
+  });
 });
 
 app.on("window-all-closed", () => {

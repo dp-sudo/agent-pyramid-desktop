@@ -14,6 +14,7 @@ import {
   isIsoTimestampString,
   isRuntimeCompactionStrategy,
   isRuntimePermissionRuleEffect,
+  isRuntimePermissionRuleMatch,
   isRuntimePermissionRuleTool,
   isRuntimeToolName,
   isThreadApprovalPolicy,
@@ -445,7 +446,11 @@ function parseRuntimePermissionRule(
   if (!isRuntimePermissionRuleEffect(effect)) {
     throw new Error(`permissionRules[${index}].effect is invalid.`);
   }
-  return { id, tool, pattern, effect };
+  const match = value.match;
+  if (match !== undefined && !isRuntimePermissionRuleMatch(match)) {
+    throw new Error(`permissionRules[${index}].match is invalid.`);
+  }
+  return { id, tool, pattern, effect, ...(match ? { match } : {}) };
 }
 
 function parsePermissionRuleId(value: unknown, index: number, ids: Set<string>): string {

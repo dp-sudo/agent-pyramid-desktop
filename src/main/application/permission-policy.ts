@@ -2,7 +2,11 @@ import type {
   RuntimePermissionRule,
   RuntimePermissionRuleEffect,
 } from "../../shared/agent-contracts.js";
-import { mcpPermissionValueFromToolName } from "../../shared/mcp-names.js";
+import {
+  isMcpFacadeCallToolName,
+  mcpPermissionValueFromFacadeCall,
+  mcpPermissionValueFromToolName,
+} from "../../shared/mcp-names.js";
 
 export type PermissionPolicyDecision = RuntimePermissionRuleEffect | "none";
 
@@ -30,6 +34,8 @@ const WRITE_POLICY_TOOL_NAMES = new Set([
   "rollback_file",
 ]);
 
+const COMMAND_PREFIX_UNSAFE_CONTINUATION_PATTERN = /&&|\|\||;;|[;&|<>`]|\$\(/;
+
 export interface PermissionPolicyInput {
   toolName: string;
   args: Record<string, unknown>;
@@ -52,7 +58,7 @@ export function evaluatePermission(input: PermissionPolicyInput): PermissionPoli
   for (const rule of input.rules) {
     if (
       rule.tool !== candidate.tool ||
-      !matchesCandidatePattern(candidate.tool, rule.pattern, candidate.value)
+      !matchesCandidateRule(candidate.tool, rule, candidate.value)
     ) {
       continue;
     }
@@ -75,8 +81,8 @@ export function buildPermissionCandidate(
       : null;
   }
   if (!WRITE_POLICY_TOOL_NAMES.has(toolName)) {
-    return buildMcpPermissionCandidate(toolName);
-  }
+  return buildMcpPermissionCandidate(toolName, args);
+}
   if (toolName === "apply_patch") {
     if (typeof args.patch !== "string") {
       return null;
@@ -91,9 +97,34 @@ export function buildPermissionCandidate(
 
 function buildMcpPermissionCandidate(
   toolName: string,
+  args: Record<string, unknown> = {},
 ): { tool: RuntimePermissionRule["tool"]; value: string } | null {
+  const facadeValue = mcpPermissionValueFromFacadeCall(toolName, args);
+  if (facadeValue) {
+    return { tool: "mcp", value: facadeValue };
+  }
+  if (isMcpFacadeCallToolName(toolName)) {
+    return null;
+  }
   const value = mcpPermissionValueFromToolName(toolName);
   return value ? { tool: "mcp", value } : null;
+}
+
+export function buildExactPermissionRuleForCall(input: {
+  id: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  effect: RuntimePermissionRuleEffect;
+}): RuntimePermissionRule | null {
+  const candidate = buildPermissionCandidate(input.toolName, input.args);
+  if (!candidate) return null;
+  return {
+    id: input.id,
+    tool: candidate.tool,
+    pattern: candidate.value,
+    effect: input.effect,
+    match: "exact",
+  };
 }
 
 export function matchesPermissionPattern(pattern: string, value: string): boolean {
@@ -102,15 +133,25 @@ export function matchesPermissionPattern(pattern: string, value: string): boolea
   return values.some((entry) => wildcardToRegExp(normalizedPattern).test(entry));
 }
 
-function matchesCandidatePattern(
+function matchesCandidateRule(
   tool: RuntimePermissionRule["tool"],
-  pattern: string,
+  rule: RuntimePermissionRule,
   value: string,
 ): boolean {
-  if (tool === "command" && matchesCommandPrefixPattern(pattern, value)) {
+  if (rule.match === "exact") {
+    return matchesExactPermissionPattern(rule.pattern, value);
+  }
+  if (tool === "command" && matchesCommandPrefixPattern(rule.pattern, value)) {
     return true;
   }
-  return matchesPermissionPattern(pattern, value);
+  return matchesPermissionPattern(rule.pattern, value);
+}
+
+export function matchesExactPermissionPattern(pattern: string, value: string): boolean {
+  const approvedValues = new Set(splitPermissionValues(pattern));
+  const candidateValues = splitPermissionValues(value);
+  return candidateValues.length > 0 &&
+    candidateValues.every((entry) => approvedValues.has(entry));
 }
 
 function matchesCommandPrefixPattern(pattern: string, value: string): boolean {
@@ -123,7 +164,15 @@ function matchesCommandPrefixPattern(pattern: string, value: string): boolean {
     return false;
   }
   const values = value.split("\n").map((entry) => normalizeCommandValue(entry)).filter(Boolean);
-  return values.some((entry) => entry === prefix || entry.startsWith(`${prefix} `));
+  return values.some((entry) => {
+    if (entry === prefix) {
+      return true;
+    }
+    if (!entry.startsWith(`${prefix} `)) {
+      return false;
+    }
+    return isSafeCommandPrefixContinuation(entry.slice(prefix.length).trimStart());
+  });
 }
 
 export function extractUnifiedDiffTargetPaths(patch: string): string[] {
@@ -155,7 +204,11 @@ function parsePatchPathToken(raw: string): string | null {
 }
 
 function normalizeCommandValue(command: string): string {
-  return command.trim().replace(/\s+/g, " ");
+  return command.trim().replace(/\r\n|\r|\n/g, " ; ").replace(/\s+/g, " ");
+}
+
+function isSafeCommandPrefixContinuation(continuation: string): boolean {
+  return !COMMAND_PREFIX_UNSAFE_CONTINUATION_PATTERN.test(continuation);
 }
 
 function normalizePattern(pattern: string): string {
@@ -164,6 +217,10 @@ function normalizePattern(pattern: string): string {
 
 function normalizePermissionPath(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/^\.\/+/, "");
+}
+
+function splitPermissionValues(value: string): string[] {
+  return value.split("\n").map((entry) => entry.trim()).filter(Boolean);
 }
 
 function wildcardToRegExp(pattern: string): RegExp {

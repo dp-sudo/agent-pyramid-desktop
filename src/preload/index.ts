@@ -215,9 +215,17 @@ const sse = {
 const approvals = {
   respond(
     request: ApprovalRespondRequest,
-  ): Promise<IpcResult<{ approvalId: string; decision: "allow" | "deny" }>> {
+  ): Promise<IpcResult<{
+    approvalId: string;
+    decision: "allow" | "deny";
+    scope?: ApprovalRespondRequest["scope"];
+  }>> {
     return ipcRenderer.invoke(APPROVAL_RESPOND_CHANNEL, request) as Promise<
-      IpcResult<{ approvalId: string; decision: "allow" | "deny" }>
+      IpcResult<{
+        approvalId: string;
+        decision: "allow" | "deny";
+        scope?: ApprovalRespondRequest["scope"];
+      }>
     >;
   },
 };

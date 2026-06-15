@@ -61,6 +61,26 @@ export interface CheckpointRestoreResult {
   deletedPaths: string[];
 }
 
+export interface CheckpointFileSnapshotLookupInput {
+  threadId: string;
+  workspace: string;
+  relativePath: string;
+}
+
+export interface CheckpointFileSnapshotLookupResult {
+  threadId: string;
+  turnId: string;
+  workspace: string;
+  toolName: string;
+  relativePath: string;
+  operation: CheckpointFileOperation;
+  beforeContent: string | null;
+  afterContent: string | null;
+  beforeSha256: string | null;
+  afterSha256: string | null;
+  createdAt: string;
+}
+
 /**
  * Persistent edit snapshots live outside messages.jsonl so rewind can restore
  * workspace files without changing the thread item schema. Each mutation rewrites
@@ -148,6 +168,46 @@ export class CheckpointStore {
       canRewindCode: canRewindCodeByIndex[index] ?? false,
       canRewindSession: true,
     }));
+  }
+
+  // Single-file rollback may need restart-safe evidence, but checkpoint records
+  // are turn/file snapshots rather than a full edit stack. Return only the
+  // newest same-thread/workspace snapshot; callers still verify the live file
+  // matches `afterSha256` before restoring `beforeContent`.
+  async latestFileSnapshot(
+    input: CheckpointFileSnapshotLookupInput,
+  ): Promise<CheckpointFileSnapshotLookupResult | null> {
+    const threadId = normalizeSafeId(input.threadId, "threadId");
+    const workspace = resolveWorkspaceRoot(input.workspace);
+    const relativePath = normalizeRelativePath(input.relativePath);
+    const records = sortRecords(await this.readRecords(threadId));
+
+    for (let recordIndex = records.length - 1; recordIndex >= 0; recordIndex -= 1) {
+      const record = records[recordIndex];
+      if (!isSamePath(record.workspace, workspace)) {
+        continue;
+      }
+      for (let fileIndex = record.files.length - 1; fileIndex >= 0; fileIndex -= 1) {
+        const file = record.files[fileIndex];
+        if (file.path !== relativePath) {
+          continue;
+        }
+        return {
+          threadId: record.threadId,
+          turnId: record.turnId,
+          workspace: record.workspace,
+          toolName: file.toolName,
+          relativePath: file.path,
+          operation: file.operation,
+          beforeContent: file.beforeContent,
+          afterContent: file.afterContent,
+          beforeSha256: file.beforeSha256,
+          afterSha256: file.afterSha256,
+          createdAt: file.createdAt,
+        };
+      }
+    }
+    return null;
   }
 
   async restoreCode(thread: ThreadRecord, turnId: string): Promise<CheckpointRestoreResult> {

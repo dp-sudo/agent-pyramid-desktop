@@ -2,7 +2,7 @@ import { ipcMain } from "electron";
 import { APPROVAL_RESPOND_CHANNEL } from "../../shared/ipc.js";
 import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
 import type { ApprovalRespondRequest } from "../../shared/agent-contracts.js";
-import { err, ok } from "../../shared/agent-contracts.js";
+import { err, isApprovalDecisionScope, ok } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
 import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
@@ -11,7 +11,11 @@ export function registerApprovalHandlers(runtime: AgentRuntime): void {
     try {
       const parsed = parseApprovalRespondRequest(request);
       runtime.respondApproval(parsed);
-      return ok({ approvalId: parsed.approvalId, decision: parsed.decision });
+      return ok({
+        approvalId: parsed.approvalId,
+        decision: parsed.decision,
+        ...(parsed.scope ? { scope: parsed.scope } : {}),
+      });
     } catch (error) {
       return err(IPC_ERROR_CODES.APPROVAL_RESPOND_FAILED, messageOf(error));
     }
@@ -31,8 +35,12 @@ export function parseApprovalRespondRequest(request: unknown): ApprovalRespondRe
   if (value.decision !== "allow" && value.decision !== "deny") {
     throw new Error("Approval decision must be allow or deny.");
   }
+  if (value.scope !== undefined && !isApprovalDecisionScope(value.scope)) {
+    throw new Error("Approval scope is invalid.");
+  }
   return {
     approvalId: value.approvalId.trim(),
     decision: value.decision,
+    ...(value.scope !== undefined ? { scope: value.scope } : {}),
   };
 }

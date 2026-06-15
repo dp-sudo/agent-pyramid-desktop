@@ -33,7 +33,9 @@ import {
 import {
   collectFileSymbols,
   collectLanguageServiceDiagnostics,
+  collectProjectSymbols,
   parseTypeScriptDiagnostics,
+  type ProjectSymbolSearchResult,
   type WorkspaceSymbol,
   type WorkspaceDiagnostic,
 } from "./command-diagnostics.js";
@@ -62,7 +64,11 @@ import {
 import {
   type StreamCapture,
 } from "./command-output-capture.js";
-import { buildCommandEnvironment } from "./command-environment.js";
+import {
+  createCommandSpawnOptions,
+  describeCommandSandbox,
+  type CommandSandboxReport,
+} from "./command-sandbox.js";
 import {
   killProcessTree,
   spawnWorkspaceCommand,
@@ -100,6 +106,13 @@ const MIN_COMMAND_MAX_OUTPUT_BYTES = MIN_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const MAX_COMMAND_MAX_OUTPUT_BYTES = MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES;
 const DEFAULT_SYMBOL_LIMIT = 200;
 const MAX_SYMBOL_LIMIT = 1000;
+const DEFAULT_PROJECT_SYMBOL_LIMIT = 200;
+const MAX_PROJECT_SYMBOL_LIMIT = 1000;
+const MAX_PROJECT_SYMBOL_FILES = 500;
+const COMMAND_SESSION_SHUTDOWN_MESSAGE =
+  "Command session stopped during application shutdown.";
+const COMMAND_SESSION_SHUTDOWN_TIMEOUT_MS =
+  COMMAND_KILL_GRACE_MS + COMMAND_SESSION_STOP_TIMEOUT_EXTRA_MS;
 const COMMAND_TIMEOUT_DESCRIPTION =
   `Maximum runtime in milliseconds. Defaults to the runtime command preference ` +
   `(${DEFAULT_COMMAND_TIMEOUT_MS}). Overrides must be between ${MIN_COMMAND_TIMEOUT_MS} ` +
@@ -151,6 +164,8 @@ interface ListSymbolsResult {
   symbols: WorkspaceSymbol[];
 }
 
+interface SearchSymbolsResult extends ProjectSymbolSearchResult {}
+
 export function createCommandTools(): AgentTool[] {
   return [
     runCommandTool,
@@ -181,7 +196,17 @@ export function createCommandTools(): AgentTool[] {
     diagnoseWorkspaceTool,
     diagnoseFileTool,
     listSymbolsTool,
+    searchSymbolsTool,
   ];
+}
+
+/**
+ * Main-process lifecycle hook for sessions that outlive a single tool call.
+ * It returns bounded snapshots for shutdown diagnostics, then clears ownership
+ * so a repeated Electron quit path cannot expose stale in-memory sessions.
+ */
+export async function shutdownCommandSessions(): Promise<CommandSessionShutdownResult> {
+  return commandSessionManager.shutdown();
 }
 
 const runCommandTool: AgentTool = {
@@ -1027,6 +1052,51 @@ const listSymbolsTool: AgentTool = {
   },
 };
 
+const searchSymbolsTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "search_symbols",
+    description:
+      "Search or list TypeScript/JavaScript symbols across the current workspace or a workspace subdirectory. Use this to find project-wide classes, functions, methods, and exports before coordinated edits.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Optional text matched against symbol name, kind, modifiers, or path. Omit to return a bounded project symbol map.",
+        },
+        path: {
+          type: "string",
+          description: "Optional workspace-relative directory or source file to inspect. Defaults to the workspace root.",
+        },
+        case_sensitive: {
+          type: "boolean",
+          description: "Whether matching is case-sensitive. Defaults to false.",
+        },
+        max_results: {
+          type: "number",
+          description:
+            `Maximum symbols to return. Defaults to ${DEFAULT_PROJECT_SYMBOL_LIMIT}, maximum ${MAX_PROJECT_SYMBOL_LIMIT}.`,
+        },
+      },
+    },
+  },
+  async execute(input, context) {
+    const result = await executeSearchSymbols(input, context);
+    return {
+      toolCallId: "",
+      name: "search_symbols",
+      content: JSON.stringify(result),
+      displayResult: result,
+    };
+  },
+};
+
 async function executeRunCommand(
   input: Record<string, unknown>,
   context: AgentToolContext,
@@ -1056,6 +1126,7 @@ async function executeRunCommand(
     maxOutputBytes,
     context.signal,
     context.reportProgress,
+    context.sandboxMode,
   );
   return {
     command,
@@ -1112,6 +1183,7 @@ async function executeShellCommand(
     maxOutputBytes,
     context.signal,
     context.reportProgress,
+    context.sandboxMode,
   );
   return {
     command,
@@ -1163,6 +1235,7 @@ async function executeWslCommand(
     maxOutputBytes,
     context.signal,
     context.reportProgress,
+    context.sandboxMode,
   );
   return {
     command,
@@ -1624,6 +1697,7 @@ async function executePackageCommand(
     maxOutputBytes,
     context.signal,
     context.reportProgress,
+    context.sandboxMode,
   );
   return commandOutputToRunResult(
     [manager, ...args].join(" "),
@@ -1693,6 +1767,39 @@ async function executeListSymbols(
   };
 }
 
+async function executeSearchSymbols(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<SearchSymbolsResult> {
+  const workspace = requireWorkspace(context);
+  const query = optionalLimitedString(input.query, MAX_REGEX_PATTERN_BYTES, "query");
+  const relativePath = optionalString(input.path) ?? ".";
+  const maxResults = numberInRange(
+    input.max_results,
+    1,
+    MAX_PROJECT_SYMBOL_LIMIT,
+    DEFAULT_PROJECT_SYMBOL_LIMIT,
+    "max_results",
+  );
+  const caseSensitive = input.case_sensitive === undefined
+    ? false
+    : requiredBoolean(input.case_sensitive, "case_sensitive");
+  const rootPath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
+  const stat = await fs.stat(rootPath);
+  if (!stat.isDirectory() && !stat.isFile()) {
+    throw new Error(`search_symbols path is not a file or directory: ${relativePath}`);
+  }
+  if (stat.isFile()) {
+    await assertTextFile(rootPath, relativePath, "search_symbols path");
+  }
+  return collectProjectSymbols(workspace, rootPath, {
+    ...(query ? { query } : {}),
+    caseSensitive,
+    maxSymbols: maxResults,
+    maxFiles: MAX_PROJECT_SYMBOL_FILES,
+  });
+}
+
 async function executeDiagnoseWorkspace(
   input: Record<string, unknown>,
   context: AgentToolContext,
@@ -1721,6 +1828,7 @@ async function executeDiagnoseWorkspace(
     maxOutputBytes,
     context.signal,
     context.reportProgress,
+    context.sandboxMode,
   );
   const rawOutput = joinCommandOutput(output.stdout.text, output.stderr.text);
   const cwd = toWorkspaceRelative(workspace, cwdPath) || ".";
@@ -1858,6 +1966,7 @@ async function executeGitCommand(
     commandMaxOutputBytes(context),
     context.signal,
     context.reportProgress,
+    context.sandboxMode,
   );
 }
 
@@ -1888,6 +1997,7 @@ async function detectShellEnvironment(
   gitBashCandidates: Array<{ path: string; exists: boolean }>;
   workspacePath?: string;
   wslWorkspacePath?: string;
+  sandbox: CommandSandboxReport;
 }> {
   const workspacePath = optionalString(input.workspace_path) ?? context.workspace;
   const executables = {
@@ -1913,6 +2023,7 @@ async function detectShellEnvironment(
     pathEntries: getPathEntries(),
     executables,
     gitBashCandidates,
+    sandbox: describeCommandSandbox(context.sandboxMode),
     ...(workspacePath ? { workspacePath, wslWorkspacePath: toWslPath(workspacePath) } : {}),
   };
 }
@@ -1933,6 +2044,7 @@ function gitBashDetectionCandidates(): string[] {
 
 class CommandSessionManager {
   private readonly sessions = new Map<string, CommandSession>();
+  private shutdownPromise: Promise<CommandSessionShutdownResult> | undefined;
 
   async start(
     input: Record<string, unknown>,
@@ -1970,14 +2082,11 @@ class CommandSessionManager {
       throw new Error("Command was interrupted.");
     }
     const progress = createCommandProgressReporter(context.reportProgress);
-    const child = spawn(invocation.file, invocation.args, {
+    const child = spawn(invocation.file, invocation.args, createCommandSpawnOptions({
       cwd: cwdPath,
-      env: buildCommandEnvironment(),
-      shell: false,
-      detached: process.platform !== "win32",
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+      sandboxMode: context.sandboxMode,
+      stdin: "pipe",
+    }));
     const now = new Date().toISOString();
     const session: CommandSession = {
       id: randomUUID(),
@@ -2031,15 +2140,16 @@ class CommandSessionManager {
       killProcessTree(child, "SIGTERM");
     };
     context.signal?.addEventListener("abort", onAbort, { once: true });
+    this.sessions.set(session.id, session);
     try {
       await this.waitForSessionSpawn(session);
       if (context.signal?.aborted) {
         throw new Error("Command was interrupted.");
       }
-      this.sessions.set(session.id, session);
       return this.snapshot(session, DEFAULT_COMMAND_SESSION_TAIL_BYTES);
     } catch (error) {
       progress?.flush();
+      this.sessions.delete(session.id);
       killProcessTree(child, "SIGKILL");
       throw error;
     } finally {
@@ -2129,6 +2239,14 @@ class CommandSessionManager {
     return this.snapshot(session, DEFAULT_COMMAND_SESSION_TAIL_BYTES);
   }
 
+  async shutdown(): Promise<CommandSessionShutdownResult> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.shutdownPromise = this.shutdownOnce().finally(() => {
+      this.shutdownPromise = undefined;
+    });
+    return this.shutdownPromise;
+  }
+
   private requireSession(
     value: unknown,
     context: AgentToolContext,
@@ -2152,6 +2270,59 @@ class CommandSessionManager {
         this.sessions.delete(id);
       }
     }
+  }
+
+  private async shutdownOnce(): Promise<CommandSessionShutdownResult> {
+    const sessions = [...this.sessions.values()];
+    const activeSessions = sessions.filter((session) => this.isActiveSession(session));
+    const shutdownErrors: Error[] = [];
+
+    await Promise.all(
+      activeSessions.map(async (session) => {
+        try {
+          await this.stopSessionForShutdown(session);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          session.status = "failed";
+          session.error = message;
+          session.updatedAt = new Date().toISOString();
+          shutdownErrors.push(error instanceof Error ? error : new Error(message));
+        }
+      }),
+    );
+
+    const result = {
+      sessionCount: sessions.length,
+      stoppedSessionCount: activeSessions.length,
+      sessions: sessions.map((session) => this.snapshot(session, DEFAULT_COMMAND_SESSION_TAIL_BYTES)),
+    };
+    this.sessions.clear();
+
+    if (shutdownErrors.length > 0) {
+      throw new AggregateError(shutdownErrors, "Command session shutdown failed.");
+    }
+    return result;
+  }
+
+  private async stopSessionForShutdown(session: CommandSession): Promise<void> {
+    if (!this.isActiveSession(session)) return;
+    if (session.stopForceKillTimer) {
+      clearTimeout(session.stopForceKillTimer);
+      session.stopForceKillTimer = undefined;
+    }
+    session.status = "stopping";
+    session.error = COMMAND_SESSION_SHUTDOWN_MESSAGE;
+    session.updatedAt = new Date().toISOString();
+    killProcessTree(session.child, "SIGTERM");
+    session.stopForceKillTimer = setTimeout(() => {
+      session.stopForceKillTimer = undefined;
+      killProcessTree(session.child, "SIGKILL");
+    }, COMMAND_KILL_GRACE_MS);
+    await this.waitForTerminalSession(session, COMMAND_SESSION_SHUTDOWN_TIMEOUT_MS);
+  }
+
+  private isActiveSession(session: CommandSession): boolean {
+    return session.status === "running" || session.status === "stopping";
   }
 
   private async waitForSessionSpawn(session: CommandSession): Promise<void> {
@@ -2403,6 +2574,12 @@ interface CommandSessionListEntry {
   stderr?: StreamCapture;
 }
 
+interface CommandSessionShutdownResult {
+  sessionCount: number;
+  stoppedSessionCount: number;
+  sessions: CommandSessionSnapshot[];
+}
+
 const commandSessionManager = new CommandSessionManager();
 
 function joinCommandOutput(stdout: string, stderr: string): string {
@@ -2462,6 +2639,26 @@ function requiredRegexPattern(value: unknown): string {
     "rg_search requires a non-empty pattern string.",
     MAX_REGEX_PATTERN_BYTES,
   );
+}
+
+function optionalLimitedString(
+  value: unknown,
+  maxBytes: number,
+  name: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`${name} must be a string.`);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.includes("\0")) {
+    throw new Error(`${name} cannot contain NUL bytes.`);
+  }
+  if (Buffer.byteLength(trimmed, "utf8") > maxBytes) {
+    throw new Error(`${name} exceeds ${maxBytes} bytes.`);
+  }
+  return trimmed;
 }
 
 function createLineRegex(pattern: string, flags: string): RegExp {

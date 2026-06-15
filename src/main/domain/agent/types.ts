@@ -3,6 +3,7 @@ import type {
   ModelReasoningEffort,
   RuntimeCommandPreferences,
   RuntimePreferences,
+  ThreadSandboxMode,
   ToolProgressStream,
   TokenUsage,
 } from "../../../shared/agent-contracts";
@@ -52,6 +53,10 @@ export interface AgentCancellationCapability {
 
 export interface AgentCommandPreferencesCapability {
   commandDefaults?: RuntimeCommandPreferences;
+}
+
+export interface AgentSandboxCapability {
+  sandboxMode?: ThreadSandboxMode;
 }
 
 export type AgentToolProgressReporter = (chunk: string, stream: ToolProgressStream) => void;
@@ -158,6 +163,23 @@ export interface AgentCheckpointRecorder {
     beforeSha256: string | null;
     afterSha256: string | null;
   }): Promise<void>;
+  latestFileSnapshot?(entry: {
+    threadId: string;
+    workspace: string;
+    relativePath: string;
+  }): Promise<{
+    threadId: string;
+    turnId: string;
+    workspace: string;
+    toolName: string;
+    relativePath: string;
+    operation: "create" | "update" | "delete" | "rollback";
+    beforeContent: string | null;
+    afterContent: string | null;
+    beforeSha256: string | null;
+    afterSha256: string | null;
+    createdAt: string;
+  } | null>;
 }
 
 export interface AgentCheckpointCapability {
@@ -179,6 +201,7 @@ export interface AgentCommandToolContext
     AgentWorkspaceCapability,
     AgentCancellationCapability,
     AgentCommandPreferencesCapability,
+    AgentSandboxCapability,
     AgentProgressCapability {}
 
 export interface AgentSkillToolContext

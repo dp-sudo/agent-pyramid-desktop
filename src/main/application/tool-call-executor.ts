@@ -11,6 +11,8 @@ import {
   READ_ONLY_TOOL_REPEAT_SUPPRESSION_THRESHOLD,
 } from "./constants.js";
 import { ApprovalCoordinator } from "./approval-coordinator.js";
+import { isSamePath } from "./path-utils.js";
+import { buildExactPermissionRuleForCall } from "./permission-policy.js";
 import { ToolCatalogService, isCommandToolName } from "./tool-catalog.js";
 import { ToolPolicyService } from "./tool-policy.js";
 import { validateToolInputSchema } from "./tools/tool-schema.js";
@@ -18,6 +20,7 @@ import type {
   ApprovalItem,
   ApprovalRespondRequest,
   ModelConfig,
+  RuntimePermissionRule,
   RuntimeErrorEvent,
   RuntimePreferences,
   ThreadRecord,
@@ -52,6 +55,12 @@ type SubagentSkillExecutor = (
   signal: AbortSignal,
 ) => Promise<AgentToolResult> | null;
 
+interface ScopedApprovalGrant {
+  threadId: string;
+  workspace: string;
+  rule: RuntimePermissionRule;
+}
+
 export interface ToolCallExecutorDeps {
   store: JsonlThreadStore;
   checkpointStore?: CheckpointStore;
@@ -63,6 +72,7 @@ export interface ToolCallExecutorDeps {
   executeSubagentSkillCall: SubagentSkillExecutor;
   appendPlanItem: (turn: TurnRecord, rawContent: string) => Promise<void>;
   reportRuntimeError: RuntimeErrorReporter;
+  persistApprovalPermissionRule?: (rule: RuntimePermissionRule) => Promise<void>;
 }
 
 /**
@@ -75,6 +85,7 @@ export class ToolCallExecutor {
   private readonly readOnlyToolRepeatCounts = new Map<string, Map<string, number>>();
   private readonly toolPolicy: ToolPolicyService;
   private readonly approvals: ApprovalCoordinator;
+  private readonly scopedApprovalGrants: ScopedApprovalGrant[] = [];
 
   constructor(private readonly deps: ToolCallExecutorDeps) {
     this.toolPolicy = new ToolPolicyService(deps.registry);
@@ -205,6 +216,7 @@ export class ToolCallExecutor {
       thread,
       runtimePreferences,
       isToolAvailable,
+      scopedPermissionRules: this.scopedPermissionRulesForThread(thread),
     });
     if (policyDecision === "deny") {
       const message = `Tool "${call.name}" is denied by thread policy.`;
@@ -225,7 +237,8 @@ export class ToolCallExecutor {
     try {
       if (policyDecision === "ask") {
         const approval = await this.approvals.requestApproval(turn, call, thread);
-        if (approval === "deny") {
+        await this.applyApprovalScope(turn, thread, call, approval);
+        if (approval.decision === "deny") {
           if (activeExecution.finalizedByInterrupt) {
             this.unregisterActiveToolExecution(turn.id, activeExecution);
             return interruptedToolResult(call, toolItem);
@@ -276,6 +289,7 @@ export class ToolCallExecutor {
         threadId: turn.threadId,
         turnId: turn.id,
         workspace: thread.workspace,
+        sandboxMode: thread.sandboxMode,
         signal: controller.signal,
         commandDefaults: runtimePreferences.command,
         runtimePreferences,
@@ -313,7 +327,7 @@ export class ToolCallExecutor {
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
       this.unregisterActiveToolExecution(turn.id, activeExecution);
-      if (call.name === "create_plan") {
+      if (call.name === "create_plan" || call.name === "create_edit_plan") {
         await this.deps.appendPlanItem(turn, content.content);
       }
       return content;
@@ -416,6 +430,63 @@ export class ToolCallExecutor {
       fileHistory: this.deps.fileHistory,
     });
     return isApprovalPreview(preview) ? preview : undefined;
+  }
+
+  private async applyApprovalScope(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    call: AgentToolCall,
+    approval: { decision: "allow" | "deny"; scope: ApprovalRespondRequest["scope"] },
+  ): Promise<void> {
+    if (!approval.scope || approval.scope === "once") return;
+    const rule = buildExactPermissionRuleForCall({
+      id: `approval-${approval.scope}-${randomUUID()}`,
+      toolName: call.name,
+      args: call.arguments,
+      effect: approval.decision,
+    });
+    if (!rule) {
+      this.deps.reportRuntimeError(
+        turn,
+        "internal",
+        `Approval scope ${approval.scope} is not available for tool "${call.name}".`,
+      );
+      return;
+    }
+    if (approval.scope === "session") {
+      this.scopedApprovalGrants.push({
+        threadId: thread.id,
+        workspace: thread.workspace,
+        rule,
+      });
+      return;
+    }
+    if (!this.deps.persistApprovalPermissionRule) {
+      this.deps.reportRuntimeError(
+        turn,
+        "persistence_error",
+        "Approval scope persist_rule requires runtime preferences persistence.",
+      );
+      return;
+    }
+    try {
+      await this.deps.persistApprovalPermissionRule(rule);
+    } catch (error) {
+      this.deps.reportRuntimeError(
+        turn,
+        "persistence_error",
+        error instanceof Error ? error.message : String(error),
+        error,
+      );
+    }
+  }
+
+  private scopedPermissionRulesForThread(thread: ThreadRecord): RuntimePermissionRule[] {
+    return this.scopedApprovalGrants
+      .filter((grant) =>
+        grant.threadId === thread.id && isSamePath(grant.workspace, thread.workspace)
+      )
+      .map((grant) => grant.rule);
   }
 
   private registerActiveToolExecution(

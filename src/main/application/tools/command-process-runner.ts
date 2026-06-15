@@ -14,7 +14,10 @@ import {
 import {
   COMMAND_KILL_GRACE_MS,
 } from "../constants.js";
-import { buildCommandEnvironment } from "./command-environment.js";
+import {
+  createCommandSpawnOptions,
+} from "./command-sandbox.js";
+import type { ThreadSandboxMode } from "../../../shared/agent-contracts.js";
 
 export interface CommandOutput {
   exitCode: number | null;
@@ -36,6 +39,7 @@ export async function spawnWorkspaceCommand(
   maxOutputBytes: number,
   signal: AbortSignal | undefined,
   reportProgress?: ToolProgressCallback,
+  sandboxMode?: ThreadSandboxMode,
 ): Promise<CommandOutput> {
   return spawnWorkspaceProcess(
     createShellInvocation(command),
@@ -44,6 +48,7 @@ export async function spawnWorkspaceCommand(
     maxOutputBytes,
     signal,
     reportProgress,
+    sandboxMode,
   );
 }
 
@@ -54,6 +59,7 @@ export async function spawnWorkspaceProcess(
   maxOutputBytes: number,
   signal: AbortSignal | undefined,
   reportProgress?: ToolProgressCallback,
+  sandboxMode?: ThreadSandboxMode,
 ): Promise<CommandOutput> {
   if (signal?.aborted) {
     throw new Error("Command was interrupted.");
@@ -67,14 +73,11 @@ export async function spawnWorkspaceProcess(
     let settled = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
 
-    const child = spawn(invocation.file, invocation.args, {
+    const child = spawn(invocation.file, invocation.args, createCommandSpawnOptions({
       cwd,
-      env: buildCommandEnvironment(),
-      shell: false,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+      sandboxMode,
+      stdin: "ignore",
+    }));
 
     const killChild = (killSignal: NodeJS.Signals): void => {
       killProcessTree(child, killSignal);
@@ -110,6 +113,10 @@ export async function spawnWorkspaceProcess(
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted) {
       onAbort();
+    }
+    if (!child.stdout || !child.stderr) {
+      settleReject(new Error("Command sandbox failed to create stdout/stderr pipes."));
+      return;
     }
     child.stdout.on("data", (data: Buffer | string) => {
       stdout.collect(data);

@@ -3,9 +3,14 @@ import { createHash } from "node:crypto";
 import * as path from "node:path";
 import type { AgentTool, AgentToolContext, AgentToolResult } from "../../domain/agent/types";
 import {
+  PLAN_STEP_STATUSES,
+  type PlanStepStatus,
+} from "../../../shared/agent-contracts.js";
+import {
   assertNoSymlinkInPath,
   getErrorCode,
   requireWorkspace,
+  resolveWorkspacePathLexically,
   resolveWorkspacePathForAccess,
   toWorkspaceRelative,
 } from "./workspace-policy.js";
@@ -56,8 +61,30 @@ interface PatchApplyResult {
   diff: MultiFileDiffPreview;
 }
 
+type EditPlanFileAction = "create" | "update" | "delete" | "rollback" | "inspect";
+
+interface EditPlanFile {
+  path: string;
+  action: EditPlanFileAction;
+  reason?: string;
+}
+
+interface EditPlanStep {
+  title: string;
+  status: PlanStepStatus;
+}
+
+interface EditPlanResult {
+  title?: string;
+  summary?: string;
+  files: EditPlanFile[];
+  steps: EditPlanStep[];
+  verification: string[];
+}
+
 export function createCodingTools(): AgentTool[] {
   return [
+    createEditPlanTool,
     editFileTool,
     multiEditTool,
     writeFileTool,
@@ -66,6 +93,83 @@ export function createCodingTools(): AgentTool[] {
     rollbackFileTool,
   ];
 }
+
+const createEditPlanTool: AgentTool = {
+  metadata: {
+    category: "plan",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "create_edit_plan",
+    description:
+      "Create a visible coordination plan before a code change touches multiple files through separate edit/write/delete calls. Include the files, planned actions, and verification steps.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Optional short title for the edit plan.",
+        },
+        summary: {
+          type: "string",
+          description: "Short explanation of the coordinated change.",
+        },
+        files: {
+          type: "array",
+          minItems: 2,
+          description: "Workspace-relative files expected to be touched.",
+          items: {
+            type: "object",
+            properties: {
+              path: {
+                type: "string",
+                description: "Workspace-relative file path.",
+              },
+              action: {
+                type: "string",
+                enum: ["create", "update", "delete", "rollback", "inspect"],
+                description: "Planned action for this file.",
+              },
+              reason: {
+                type: "string",
+                description: "Why this file is part of the coordinated change.",
+              },
+            },
+            required: ["path", "action"],
+          },
+        },
+        steps: {
+          type: "array",
+          description: "Optional ordered implementation steps. Generated from files when omitted.",
+          items: {
+            type: "object",
+            properties: {
+              title: {
+                type: "string",
+                description: "A concise step title.",
+              },
+              status: {
+                type: "string",
+                enum: ["pending", "in_progress", "completed"],
+              },
+            },
+            required: ["title"],
+          },
+        },
+        verification: {
+          type: "array",
+          description: "Optional commands or checks expected after the edits.",
+          items: { type: "string" },
+        },
+      },
+      required: ["files"],
+    },
+  },
+  async execute(input, context) {
+    return createVisibleEditPlan(input, context);
+  },
+};
 
 const editFileTool: AgentTool = {
   metadata: {
@@ -312,6 +416,14 @@ interface PreparedPatch {
   diff: MultiFileDiffPreview;
 }
 
+interface RollbackSource {
+  kind: "history" | "checkpoint";
+  threadId: string;
+  workspace: string;
+  beforeContent: string | null;
+  afterSha256: string | null;
+}
+
 interface MultiEditStep {
   oldString: string;
   newString: string;
@@ -448,28 +560,70 @@ async function prepareRollback(
   const relativePath = requiredString(input.path, "rollback_file requires a string path.");
   const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "write");
   await assertNoSymlinkInPath(workspace, relativePath, "write", "Coding tools");
-  const entry = context.fileHistory?.latest(filePath);
-  if (!entry) {
+  const normalizedRelativePath = toWorkspaceRelative(workspace, filePath);
+  const historyEntry = context.fileHistory?.latest(filePath);
+  const source: RollbackSource | null = historyEntry
+    ? {
+        kind: "history",
+        threadId: historyEntry.threadId,
+        workspace: historyEntry.workspace,
+        beforeContent: historyEntry.beforeContent,
+        afterSha256: historyEntry.afterSha256,
+      }
+    : await resolveCheckpointRollbackSource(
+        context,
+        workspace,
+        normalizedRelativePath,
+      );
+  if (!source) {
     throw new Error(`rollback_file has no history for ${relativePath}.`);
   }
-  if (!isSamePath(path.resolve(entry.workspace), path.resolve(workspace))) {
+  if (!isSamePath(path.resolve(source.workspace), path.resolve(workspace))) {
     throw new Error(`rollback_file history does not belong to this workspace: ${relativePath}`);
   }
-  if (entry.threadId !== context.threadId) {
+  if (source.threadId !== context.threadId) {
     throw new Error(`rollback_file history does not belong to this thread: ${relativePath}`);
   }
 
   const current = await readCurrentTextOrMissing(filePath, relativePath);
   const currentSha = current.exists ? sha256(current.content) : null;
-  if (currentSha !== entry.afterSha256) {
-    throw new Error(`rollback_file current content no longer matches the latest history entry: ${relativePath}`);
+  if (currentSha !== source.afterSha256) {
+    throw new Error(
+      `rollback_file current content no longer matches the latest ${source.kind} entry: ${relativePath}`,
+    );
   }
 
-  if (entry.beforeContent === null) {
+  if (source.beforeContent === null) {
     return buildPreparedChange(workspace, filePath, current.content, "", "delete");
   }
   const operation: FileChangeResult["operation"] = current.exists ? "update" : "create";
-  return buildPreparedChange(workspace, filePath, current.exists ? current.content : "", entry.beforeContent, operation);
+  return buildPreparedChange(
+    workspace,
+    filePath,
+    current.exists ? current.content : "",
+    source.beforeContent,
+    operation,
+  );
+}
+
+async function resolveCheckpointRollbackSource(
+  context: AgentToolContext,
+  workspace: string,
+  relativePath: string,
+): Promise<RollbackSource | null> {
+  const snapshot = await context.checkpoint?.latestFileSnapshot?.({
+    threadId: context.threadId,
+    workspace,
+    relativePath,
+  });
+  if (!snapshot) return null;
+  return {
+    kind: "checkpoint",
+    threadId: snapshot.threadId,
+    workspace: snapshot.workspace,
+    beforeContent: snapshot.beforeContent,
+    afterSha256: snapshot.afterSha256,
+  };
 }
 
 async function writePreparedChange(
@@ -1080,6 +1234,161 @@ function toToolResult(toolName: string, change: PreparedFileChange): AgentToolRe
     }),
     displayResult,
   };
+}
+
+function createVisibleEditPlan(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): AgentToolResult {
+  const plan = normalizeEditPlan(input, context);
+  return {
+    toolCallId: "",
+    name: "create_edit_plan",
+    content: JSON.stringify(plan),
+    displayResult: plan,
+  };
+}
+
+function normalizeEditPlan(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): EditPlanResult {
+  const workspace = requireWorkspace(context);
+  const title = optionalNonEmptyString(input.title, "title");
+  const summary = optionalNonEmptyString(input.summary, "summary");
+  const files = parseEditPlanFiles(input.files, workspace);
+  const verification = parseOptionalStringList(input.verification, "verification");
+  const parsedSteps = parseOptionalEditPlanSteps(input.steps);
+  const steps = parsedSteps.length > 0
+    ? parsedSteps
+    : [
+        ...files.map((file) => ({
+          title: `${capitalize(file.action)} ${file.path}${file.reason ? `: ${file.reason}` : ""}`,
+          status: "pending" as const,
+        })),
+        ...verification.map((entry) => ({
+          title: `Verify: ${entry}`,
+          status: "pending" as const,
+        })),
+      ];
+  return {
+    ...(title ? { title } : {}),
+    ...(summary ? { summary } : {}),
+    files,
+    steps,
+    verification,
+  };
+}
+
+function parseEditPlanFiles(value: unknown, workspace: string): EditPlanFile[] {
+  if (!Array.isArray(value) || value.length < 2) {
+    throw new Error("create_edit_plan requires at least two planned files.");
+  }
+  const files = value.map((entry, index) => parseEditPlanFile(entry, index, workspace));
+  const seen = new Set<string>();
+  for (const file of files) {
+    const key = file.path.toLocaleLowerCase();
+    if (seen.has(key)) {
+      throw new Error(`create_edit_plan file path is duplicated: ${file.path}`);
+    }
+    seen.add(key);
+  }
+  return files;
+}
+
+function parseEditPlanFile(
+  value: unknown,
+  index: number,
+  workspace: string,
+): EditPlanFile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`create_edit_plan file ${index + 1} must be an object.`);
+  }
+  const raw = value as Record<string, unknown>;
+  const pathValue = requiredPlanString(raw.path, `create_edit_plan file ${index + 1} requires path.`);
+  const fullPath = resolveWorkspacePathLexically(workspace, pathValue);
+  const normalizedPath = toWorkspaceRelative(workspace, fullPath);
+  const action = parseEditPlanAction(raw.action, index);
+  const reason = optionalNonEmptyString(raw.reason, `file ${index + 1} reason`);
+  return {
+    path: normalizedPath,
+    action,
+    ...(reason ? { reason } : {}),
+  };
+}
+
+function parseEditPlanAction(value: unknown, index: number): EditPlanFileAction {
+  if (
+    value === "create" ||
+    value === "update" ||
+    value === "delete" ||
+    value === "rollback" ||
+    value === "inspect"
+  ) {
+    return value;
+  }
+  throw new Error(`create_edit_plan file ${index + 1} action must be create, update, delete, rollback, or inspect.`);
+}
+
+function parseOptionalEditPlanSteps(value: unknown): EditPlanStep[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("create_edit_plan steps must be an array.");
+  }
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`create_edit_plan step ${index + 1} must be an object.`);
+    }
+    const raw = entry as Record<string, unknown>;
+    return {
+      title: requiredPlanString(raw.title, `create_edit_plan step ${index + 1} requires title.`),
+      status: parseEditPlanStepStatus(raw.status),
+    };
+  });
+}
+
+function parseEditPlanStepStatus(value: unknown): PlanStepStatus {
+  if (value === undefined) return "pending";
+  if (typeof value === "string" && PLAN_STEP_STATUSES.includes(value as PlanStepStatus)) {
+    return value as PlanStepStatus;
+  }
+  throw new Error("create_edit_plan step status must be pending, in_progress, or completed.");
+}
+
+function parseOptionalStringList(value: unknown, name: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`create_edit_plan ${name} must be an array of strings.`);
+  }
+  return value.map((entry, index) =>
+    requiredPlanString(entry, `create_edit_plan ${name} entry ${index + 1} must be a non-empty string.`),
+  );
+}
+
+function optionalNonEmptyString(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`create_edit_plan ${name} must be a string.`);
+  }
+  if (value.includes("\0")) {
+    throw new Error("create_edit_plan strings cannot contain NUL bytes.");
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function requiredPlanString(value: unknown, message: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(message);
+  }
+  if (value.includes("\0")) {
+    throw new Error("create_edit_plan strings cannot contain NUL bytes.");
+  }
+  return value.trim();
+}
+
+function capitalize(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
 
 function recordFileHistory(

@@ -39,6 +39,10 @@ import {
   type ThreadGoalUpdate,
 } from "./thread-goal-update.js";
 import {
+  buildTurnCompletionEvidenceText,
+  type CompletionEvidenceCheckpointState,
+} from "./completion-evidence.js";
+import {
   appendItemAndBroadcast,
   persistEventOrReportError,
 } from "./runtime-event-persist.js";
@@ -61,6 +65,7 @@ import type {
   PlanItem,
   RuntimePreferences,
   RuntimeErrorEvent,
+  RuntimePermissionRule,
   TerminalTurnStatus,
   UserItem,
 } from "../../shared/agent-contracts.js";
@@ -101,6 +106,7 @@ const SYSTEM_PROMPT = [
   "Stay concise, explain actions, and only call tools when needed.",
   "Use the provided structured tools for workspace inspection; do not write <tool_call>, <tool_result>, or raw tool JSON in assistant text.",
   "For repository exploration, prefer list_files, read_file, search_files, and rg_search before shell commands.",
+  "Before a code change touches multiple files through separate edit/write/delete calls, create a visible coordination plan with create_edit_plan; a single apply_patch can still carry one coordinated patch.",
   "Before using shell-specific syntax, confirm the host shell with detect_shell_environment or choose the matching command tool.",
   "On Windows, run_command uses cmd.exe syntax by default; use powershell_command for PowerShell syntax, and only use POSIX shell syntax after confirming Bash or WSL is available.",
   "If a shell command fails because of shell syntax or executable availability, switch to structured workspace tools or detect_shell_environment instead of retrying unrelated shells.",
@@ -155,6 +161,7 @@ export class AgentRuntime {
       appendPlanItem: (turn, rawContent) => this.appendPlanItem(turn, rawContent),
       reportRuntimeError: (turn, code, message, error) =>
         this.reportRuntimeError(turn, code, message, error),
+      persistApprovalPermissionRule: (rule) => this.persistApprovalPermissionRule(rule),
     });
   }
 
@@ -444,6 +451,7 @@ export class AgentRuntime {
         turn.usage = response.usage ?? turn.usage;
 
         if (response.toolCalls.length === 0) {
+          await this.appendCompletionEvidenceIfNeeded(turn);
           await this.markTurnStatus(turn, "completed");
           return;
         }
@@ -1176,6 +1184,59 @@ export class AgentRuntime {
     );
   }
 
+  private async appendCompletionEvidenceIfNeeded(turn: TurnRecord): Promise<void> {
+    const items: Item[] = [];
+    for await (const item of this.deps.store.replayItems(turn.threadId)) {
+      if ("turnId" in item && item.turnId === turn.id) {
+        items.push(item);
+      }
+    }
+    const text = buildTurnCompletionEvidenceText({
+      items,
+      checkpointState: await this.resolveCompletionEvidenceCheckpointState(turn),
+    });
+    if (!text) return;
+    await this.appendSystemItem(turn, text, "info");
+  }
+
+  private async resolveCompletionEvidenceCheckpointState(
+    turn: TurnRecord,
+  ): Promise<CompletionEvidenceCheckpointState> {
+    if (!this.deps.checkpointStore) {
+      return { kind: "not_configured" };
+    }
+    try {
+      const checkpoints = await this.deps.checkpointStore.list(turn.threadId);
+      const checkpoint = checkpoints.find((candidate) => candidate.turnId === turn.id);
+      return {
+        kind: "available",
+        paths: checkpoint?.files.map((file) => file.path) ?? [],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.reportRuntimeError(
+        turn,
+        "persistence_error",
+        `Completion evidence checkpoint lookup failed: ${message}`,
+        error,
+      );
+      return { kind: "lookup_failed", message };
+    }
+  }
+
+  private async persistApprovalPermissionRule(rule: RuntimePermissionRule): Promise<void> {
+    if (!this.deps.runtimePreferencesStore) {
+      throw new Error("Runtime preferences store is not available.");
+    }
+    const current = await this.deps.runtimePreferencesStore.get();
+    if (current.permissionRules.some((existing) => arePermissionRulesEquivalent(existing, rule))) {
+      return;
+    }
+    await this.deps.runtimePreferencesStore.update({
+      permissionRules: [...current.permissionRules, rule],
+    });
+  }
+
   private resolveModelProfile(
     state: ModelConfigProfilesState,
     request: TurnStartRequest,
@@ -1400,6 +1461,16 @@ function shouldWarnAboutToolBudget(nextRound: number, maxToolRounds: number): bo
     return false;
   }
   return nextRound >= Math.max(1, Math.ceil(maxToolRounds * TOOL_ROUND_WARNING_THRESHOLD));
+}
+
+function arePermissionRulesEquivalent(
+  left: RuntimePermissionRule,
+  right: RuntimePermissionRule,
+): boolean {
+  return left.tool === right.tool &&
+    left.pattern === right.pattern &&
+    left.effect === right.effect &&
+    (left.match ?? "glob") === (right.match ?? "glob");
 }
 
 function stableStringify(value: unknown): string {

@@ -15,6 +15,7 @@ export interface ToolPolicyInput {
   thread: ThreadRecord;
   runtimePreferences: RuntimePreferences;
   isToolAvailable: boolean;
+  scopedPermissionRules?: readonly RuntimePreferences["permissionRules"][number][];
 }
 
 export class ToolPolicyService {
@@ -45,6 +46,14 @@ export class ToolPolicyService {
     }
     if (input.thread.approvalPolicy === "never") {
       return "deny";
+    }
+    const scopedPermissionDecision = evaluatePermission({
+      toolName: name,
+      args: input.call.arguments,
+      rules: input.scopedPermissionRules ?? [],
+    });
+    if (scopedPermissionDecision !== "none") {
+      return scopedPermissionDecision;
     }
     const permissionDecision = evaluatePermission({
       toolName: name,

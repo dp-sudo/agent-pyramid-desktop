@@ -54,11 +54,13 @@ export const COMMAND_TOOL_NAMES = [
   "diagnose_workspace",
   "diagnose_file",
   "list_symbols",
+  "search_symbols",
 ] as const satisfies readonly RuntimeToolName[];
 
 const COMMAND_TOOL_NAME_SET = new Set<string>(COMMAND_TOOL_NAMES);
 
 export const CODE_ONLY_TOOL_NAMES = [
+  "create_edit_plan",
   "edit_file",
   "multi_edit",
   "write_file",
