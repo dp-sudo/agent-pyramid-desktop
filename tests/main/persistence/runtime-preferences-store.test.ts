@@ -110,6 +110,7 @@ describe("RuntimePreferencesStore", () => {
           tool: "command",
           pattern: "npm test*",
           effect: "allow",
+          match: "exact",
         },
         {
           id: "ask-src",
@@ -146,6 +147,7 @@ describe("RuntimePreferencesStore", () => {
         tool: "command",
         pattern: "npm test*",
         effect: "allow",
+        match: "exact",
       },
       {
         id: "ask-src",
@@ -346,6 +348,19 @@ describe("RuntimePreferencesStore", () => {
         ],
       })),
     ).rejects.toThrow("permissionRules[0].pattern cannot contain NUL bytes.");
+    await expect(
+      store.update(malformedRuntimePreferencesUpdate({
+        permissionRules: [
+          {
+            id: "bad-match",
+            tool: "command",
+            pattern: "npm test",
+            effect: "allow",
+            match: "regex",
+          },
+        ],
+      })),
+    ).rejects.toThrow("permissionRules[0].match is invalid.");
     await expect(
       store.update(malformedRuntimePreferencesUpdate({ mcpServers: "not-an-array" })),
     ).rejects.toThrow("mcpServers must be an array.");

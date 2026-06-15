@@ -8,6 +8,7 @@ import {
   createCommandTools,
   createShellInvocation,
   resolveDefaultPowerShellShell,
+  shutdownCommandSessions,
   toWslPath,
 } from "../../../src/main/application/tools/command-tools";
 import { createCodingTools } from "../../../src/main/application/tools/coding-tools";
@@ -30,6 +31,7 @@ import {
   type ThreadGoalStatus,
   type ToolProgressStream,
 } from "../../../src/shared/agent-contracts";
+import { CheckpointStore } from "../../../src/main/persistence/checkpoint-store";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
 const sampleTool: AgentTool = {
@@ -58,6 +60,10 @@ const requireFromTest = createRequire(import.meta.url);
 
 function asStringToolResult(result: string | { content: string }): string {
   return typeof result === "string" ? result : result.content;
+}
+
+function sha256Text(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 function toolSchemaProperties(tool: AgentTool | undefined): Record<string, unknown> {
@@ -343,6 +349,31 @@ describe("application tools", () => {
       .toEqual(["path", "max_results"]);
   });
 
+  it("keeps search_symbols schema aligned with project symbol search", () => {
+    const searchSymbols = createCommandTools()
+      .find((tool) => tool.definition.name === "search_symbols");
+
+    expect(searchSymbols?.definition.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+        },
+        path: {
+          type: "string",
+        },
+        case_sensitive: {
+          type: "boolean",
+        },
+        max_results: {
+          type: "number",
+        },
+      },
+    });
+    expect(Object.keys(searchSymbols?.definition.inputSchema.properties ?? {}))
+      .toEqual(["query", "path", "case_sensitive", "max_results"]);
+  });
+
   it("registers dedicated development command tools", () => {
     const names = createCommandTools().map((tool) => tool.definition.name);
 
@@ -373,6 +404,7 @@ describe("application tools", () => {
       "stop_command_session",
       "detect_shell_environment",
       "list_symbols",
+      "search_symbols",
     ]));
   });
 
@@ -380,6 +412,7 @@ describe("application tools", () => {
     const names = createCodingTools().map((tool) => tool.definition.name);
 
     expect(names).toEqual([
+      "create_edit_plan",
       "edit_file",
       "multi_edit",
       "write_file",
@@ -387,6 +420,136 @@ describe("application tools", () => {
       "apply_patch",
       "rollback_file",
     ]);
+  });
+
+  it("normalizes create_edit_plan into a visible multi-file plan payload", async () => {
+    const workspace = await makeTempDir("create-edit-plan-tool-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      const registry = new InMemoryToolRegistry(createCodingTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-edit-plan",
+          name: "create_edit_plan",
+          arguments: {
+            title: "Refactor runtime boundary",
+            summary: "Coordinate runtime and tests before writing.",
+            files: [
+              {
+                path: "src/runtime.ts",
+                action: "update",
+                reason: "implementation entry",
+              },
+              {
+                path: "src/runtime.test.ts",
+                action: "update",
+                reason: "coverage",
+              },
+            ],
+            verification: ["npm test -- runtime"],
+          },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        title: string;
+        summary: string;
+        files: Array<{ path: string; action: string; reason: string }>;
+        steps: Array<{ title: string; status: string }>;
+        verification: string[];
+      };
+
+      expect(parsed).toMatchObject({
+        title: "Refactor runtime boundary",
+        summary: "Coordinate runtime and tests before writing.",
+        files: [
+          { path: "src/runtime.ts", action: "update", reason: "implementation entry" },
+          { path: "src/runtime.test.ts", action: "update", reason: "coverage" },
+        ],
+        verification: ["npm test -- runtime"],
+      });
+      expect(parsed.steps).toEqual([
+        { title: "Update src/runtime.ts: implementation entry", status: "pending" },
+        { title: "Update src/runtime.test.ts: coverage", status: "pending" },
+        { title: "Verify: npm test -- runtime", status: "pending" },
+      ]);
+      expect(result.displayResult).toEqual(parsed);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("validates create_edit_plan paths and distinct multi-file scope", async () => {
+    const workspace = await makeTempDir("create-edit-plan-tool-guard-");
+    try {
+      const registry = new InMemoryToolRegistry(createCodingTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-edit-plan-single-file",
+            name: "create_edit_plan",
+            arguments: {
+              files: [{ path: "src/runtime.ts", action: "update" }],
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Tool \"create_edit_plan\" arguments do not match inputSchema");
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-edit-plan-escape",
+            name: "create_edit_plan",
+            arguments: {
+              files: [
+                { path: "../outside.ts", action: "update" },
+                { path: "src/runtime.test.ts", action: "update" },
+              ],
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Path escapes workspace: ../outside.ts");
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-edit-plan-duplicate",
+            name: "create_edit_plan",
+            arguments: {
+              files: [
+                { path: "src/runtime.ts", action: "update" },
+                { path: "src/runtime.ts", action: "delete" },
+              ],
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("create_edit_plan file path is duplicated: src/runtime.ts");
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-edit-plan-nul",
+            name: "create_edit_plan",
+            arguments: {
+              title: "runtime\0plan",
+              files: [
+                { path: "src/runtime.ts", action: "update" },
+                { path: "src/runtime.test.ts", action: "update" },
+              ],
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("create_edit_plan strings cannot contain NUL bytes.");
+    } finally {
+      await removeTempDir(workspace);
+    }
   });
 
   it("keeps workspace tool limit schema aligned with runtime bounds", () => {
@@ -2503,6 +2666,118 @@ describe("application tools", () => {
     }
   });
 
+  it("rolls back from checkpoint snapshots when in-memory file history is absent", async () => {
+    const userDataDir = await makeTempDir("rollback-checkpoint-userdata-");
+    const workspace = await makeTempDir("rollback-checkpoint-workspace-");
+    try {
+      const targetPath = path.join(workspace, "file.ts");
+      await fs.writeFile(targetPath, "two\n", "utf8");
+      const checkpoint = new CheckpointStore(userDataDir);
+      await checkpoint.init();
+      await checkpoint.beginTurn({
+        threadId: "thread-1",
+        turnId: "turn-edit",
+        workspace,
+        prompt: "edit file",
+        createdAt: "2026-06-12T01:00:00.000Z",
+      });
+      await checkpoint.recordFileSnapshot({
+        threadId: "thread-1",
+        turnId: "turn-edit",
+        workspace,
+        toolName: "edit_file",
+        relativePath: "file.ts",
+        operation: "update",
+        beforeContent: "one\n",
+        afterContent: "two\n",
+        beforeSha256: sha256Text("one\n"),
+        afterSha256: sha256Text("two\n"),
+      });
+
+      const resumedCheckpoint = new CheckpointStore(userDataDir);
+      const registry = new InMemoryToolRegistry(createCodingTools());
+      const rollback = await registry.execute(
+        {
+          id: "call-checkpoint-rollback",
+          name: "rollback_file",
+          arguments: { path: "file.ts" },
+        },
+        {
+          threadId: "thread-1",
+          turnId: "turn-rollback",
+          workspace,
+          checkpoint: resumedCheckpoint,
+        },
+      );
+
+      expect(await fs.readFile(targetPath, "utf8")).toBe("one\n");
+      expect(rollback.displayResult).toMatchObject({
+        path: "file.ts",
+        operation: "update",
+        diff: {
+          removed: 1,
+          added: 1,
+        },
+      });
+    } finally {
+      await removeTempDir(userDataDir);
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("refuses checkpoint rollback when current content no longer matches the snapshot", async () => {
+    const userDataDir = await makeTempDir("rollback-checkpoint-stale-userdata-");
+    const workspace = await makeTempDir("rollback-checkpoint-stale-workspace-");
+    try {
+      const targetPath = path.join(workspace, "file.ts");
+      await fs.writeFile(targetPath, "external\n", "utf8");
+      const checkpoint = new CheckpointStore(userDataDir);
+      await checkpoint.init();
+      await checkpoint.beginTurn({
+        threadId: "thread-1",
+        turnId: "turn-edit",
+        workspace,
+        prompt: "edit file",
+        createdAt: "2026-06-12T01:00:00.000Z",
+      });
+      await checkpoint.recordFileSnapshot({
+        threadId: "thread-1",
+        turnId: "turn-edit",
+        workspace,
+        toolName: "edit_file",
+        relativePath: "file.ts",
+        operation: "update",
+        beforeContent: "one\n",
+        afterContent: "two\n",
+        beforeSha256: sha256Text("one\n"),
+        afterSha256: sha256Text("two\n"),
+      });
+
+      const registry = new InMemoryToolRegistry(createCodingTools());
+      await expect(
+        registry.execute(
+          {
+            id: "call-stale-checkpoint-rollback",
+            name: "rollback_file",
+            arguments: { path: "file.ts" },
+          },
+          {
+            threadId: "thread-1",
+            turnId: "turn-rollback",
+            workspace,
+            checkpoint: new CheckpointStore(userDataDir),
+          },
+        ),
+      ).rejects.toThrow(
+        "rollback_file current content no longer matches the latest checkpoint entry: file.ts",
+      );
+      expect(await fs.readFile(targetPath, "utf8")).toBe("external\n");
+    } finally {
+      await removeTempDir(userDataDir);
+      await removeTempDir(workspace);
+    }
+  });
+
   it("refuses rollback when history is missing or current content is stale", async () => {
     const workspace = await makeTempDir("rollback-tools-guard-");
     try {
@@ -2882,6 +3157,15 @@ describe("application tools", () => {
         executables: Record<string, { found: boolean; path?: string }>;
         workspacePath: string;
         wslWorkspacePath: string;
+        sandbox: {
+          mode: string;
+          cwdBoundary: string;
+          environment: string;
+          stdio: string;
+          shell: string;
+          processCleanup: string;
+          osJail: { enabled: boolean; reason: string };
+        };
       };
 
       expect(parsed.platform).toBe(process.platform);
@@ -2889,6 +3173,14 @@ describe("application tools", () => {
       expect(parsed.executables).toHaveProperty("git");
       expect(parsed.workspacePath).toBe(workspace);
       expect(parsed.wslWorkspacePath).toBe(toWslPath(workspace));
+      expect(parsed.sandbox).toMatchObject({
+        mode: "workspace-write",
+        cwdBoundary: "workspace-realpath",
+        environment: "credential-filtered",
+        stdio: "not-inherited",
+        shell: "explicit",
+        osJail: { enabled: false },
+      });
     } finally {
       await removeTempDir(workspace);
     }
@@ -4051,6 +4343,81 @@ describe("application tools", () => {
     }
   });
 
+  it("cleans up command sessions during application shutdown", async () => {
+    const workspace = await makeTempDir("command-session-shutdown-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const start = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-shutdown-start",
+              name: "start_command_session",
+              arguments: {
+                command: nodeCommand(
+                  "process.stdout.write('shutdown-ready\\n'); setInterval(() => undefined, 1000);",
+                ),
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionId: string };
+
+      await waitUntil(async () => {
+        const read = JSON.parse(
+          (
+            await registry.execute(
+              {
+                id: "session-shutdown-read",
+                name: "read_command_session",
+                arguments: { session_id: start.sessionId },
+              },
+              context,
+            )
+          ).content,
+        ) as { stdout: { text: string } };
+        return read.stdout.text.includes("shutdown-ready");
+      });
+
+      const shutdown = await shutdownCommandSessions();
+      expect(shutdown.sessionCount).toBe(1);
+      expect(shutdown.stoppedSessionCount).toBe(1);
+      expect(shutdown.sessions).toHaveLength(1);
+      expect(shutdown.sessions[0].sessionId).toBe(start.sessionId);
+      expect(["exited", "failed"]).toContain(shutdown.sessions[0].status);
+      expect(shutdown.sessions[0].error).toBe(
+        "Command session stopped during application shutdown.",
+      );
+
+      const listed = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-shutdown-list",
+              name: "list_command_sessions",
+              arguments: {},
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionCount: number; sessions: unknown[] };
+      expect(listed).toEqual({ sessionCount: 0, sessions: [] });
+      await expect(shutdownCommandSessions()).resolves.toEqual({
+        sessionCount: 0,
+        stoppedSessionCount: 0,
+        sessions: [],
+      });
+    } finally {
+      await shutdownCommandSessions().catch((error: unknown) => {
+        if (error instanceof Error && error.message.includes("Command session shutdown failed")) return;
+        throw error;
+      });
+      await removeTempDir(workspace);
+    }
+  });
+
   it("redacts sensitive environment variables from long-running command sessions", async () => {
     const workspace = await makeTempDir("command-session-env-");
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
@@ -4808,6 +5175,183 @@ describe("application tools", () => {
           level: 0,
         }),
       ]));
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("searches TypeScript symbols across workspace project files", async () => {
+    const workspace = await makeTempDir("search-symbols-tools-");
+    try {
+      await fs.writeFile(
+        path.join(workspace, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            target: "ES2022",
+            strict: true,
+            noEmit: true,
+          },
+          include: ["src/**/*.ts"],
+        }),
+        "utf8",
+      );
+      await fs.mkdir(path.join(workspace, "src", "nested"), { recursive: true });
+      await fs.mkdir(path.join(workspace, "docs", "external-references"), { recursive: true });
+      await fs.writeFile(
+        path.join(workspace, "src", "alpha.ts"),
+        [
+          "export class AlphaRunner {",
+          "  runAlpha(): void {}",
+          "}",
+        ].join("\n"),
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(workspace, "src", "nested", "beta.ts"),
+        [
+          "export function betaRunner(): void {}",
+          "export const betaValue = 1;",
+        ].join("\n"),
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(workspace, "docs", "external-references", "ignored.ts"),
+        "export function betaReference(): void {}\n",
+        "utf8",
+      );
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-search-symbols",
+          name: "search_symbols",
+          arguments: { query: "runner", max_results: 10 },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        query: string;
+        path: string;
+        fileCount: number;
+        symbolCount: number;
+        truncated: boolean;
+        symbols: Array<{
+          path: string;
+          name: string;
+          kind: string;
+          level: number;
+        }>;
+      };
+
+      expect(parsed.query).toBe("runner");
+      expect(parsed.path).toBe(".");
+      expect(parsed.fileCount).toBe(2);
+      expect(parsed.truncated).toBe(false);
+      expect(parsed.symbolCount).toBe(2);
+      expect(parsed.symbols).toEqual([
+        expect.objectContaining({
+          path: "src/alpha.ts",
+          name: "AlphaRunner",
+          kind: "class",
+          level: 0,
+        }),
+        expect.objectContaining({
+          path: "src/nested/beta.ts",
+          name: "betaRunner",
+          kind: "function",
+          level: 0,
+        }),
+      ]);
+      expect(parsed.symbols.some((symbol) => symbol.path.includes("external-references"))).toBe(false);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("bounds project symbol search by directory and result limit", async () => {
+    const workspace = await makeTempDir("search-symbols-tools-bounds-");
+    try {
+      await fs.mkdir(path.join(workspace, "src", "a"), { recursive: true });
+      await fs.mkdir(path.join(workspace, "src", "b"), { recursive: true });
+      await fs.writeFile(
+        path.join(workspace, "src", "a", "one.ts"),
+        "export function oneSymbol(): void {}\nexport function twoSymbol(): void {}\n",
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(workspace, "src", "b", "three.ts"),
+        "export function threeSymbol(): void {}\n",
+        "utf8",
+      );
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      const result = await registry.execute(
+        {
+          id: "call-search-symbols-bounds",
+          name: "search_symbols",
+          arguments: { path: "src/a", max_results: 1 },
+        },
+        { threadId: "thread-1", turnId: "turn-1", workspace },
+      );
+      const parsed = JSON.parse(result.content) as {
+        fileCount: number;
+        symbolCount: number;
+        truncated: boolean;
+        symbols: Array<{ path: string; name: string }>;
+      };
+
+      expect(parsed.fileCount).toBe(1);
+      expect(parsed.symbolCount).toBe(1);
+      expect(parsed.truncated).toBe(true);
+      expect(parsed.symbols).toEqual([
+        expect.objectContaining({ path: "src/a/one.ts", name: "oneSymbol" }),
+      ]);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("guards search_symbols paths and UTF-8 decoding", async () => {
+    const workspace = await makeTempDir("search-symbols-tools-guard-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "file.ts"), "export const value = 1;\n", "utf8");
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-search-symbols-escape",
+            name: "search_symbols",
+            arguments: { path: "../outside" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("Path escapes workspace: ../outside");
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-search-symbols-invalid-limit",
+            name: "search_symbols",
+            arguments: { max_results: 1.5 },
+          },
+          context,
+        ),
+      ).rejects.toThrow("max_results must be an integer between 1 and 1000.");
+
+      await fs.writeFile(path.join(workspace, "src", "invalid.ts"), Buffer.from([0xff, 0xfe]));
+      await expect(
+        registry.execute(
+          {
+            id: "call-search-symbols-invalid-utf8",
+            name: "search_symbols",
+            arguments: { path: "src" },
+          },
+          context,
+        ),
+      ).rejects.toThrow("search_symbols path is not valid UTF-8: src/invalid.ts");
     } finally {
       await removeTempDir(workspace);
     }

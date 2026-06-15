@@ -255,6 +255,18 @@ describe("ToolPolicyService", () => {
       isToolAvailable: true,
     })).toBe("allow");
     expect(service.resolve({
+      call: createCall("run_command", { command: "npm test && npm run build" }),
+      turn,
+      thread,
+      runtimePreferences: {
+        ...DEFAULT_RUNTIME_PREFERENCES,
+        permissionRules: [
+          { id: "allow-tests", tool: "command", pattern: "npm test:*", effect: "allow" },
+        ],
+      },
+      isToolAvailable: true,
+    })).toBe("ask");
+    expect(service.resolve({
       call: createCall("preview"),
       turn,
       thread: createThread({ approvalPolicy: "auto" }),

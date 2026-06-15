@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
 import { RuntimeEventBus } from "../../../src/main/event-bus";
 import { McpCacheStore } from "../../../src/main/infrastructure/mcp/cache-store";
-import { McpHost } from "../../../src/main/infrastructure/mcp/host";
+import {
+  MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD,
+  McpHost,
+} from "../../../src/main/infrastructure/mcp/host";
 import type { AgentTool } from "../../../src/main/domain/agent/types";
 import type { McpServerConfig } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
@@ -183,6 +186,109 @@ describe("McpHost", () => {
       startupSuccessCount: 1,
       startupFailureCount: 0,
     });
+    await host.close();
+  });
+
+  it("uses progressive discovery facades for large MCP tool catalogs", async () => {
+    const registry = new InMemoryToolRegistry([builtInTool]);
+    const host = new McpHost(registry, new RuntimeEventBus());
+    await host.configure([
+      config({
+        id: "server-1",
+        name: "local-mcp",
+        args: ["-e", mcpServerScriptWithLargeToolCatalog()],
+      }),
+    ]);
+
+    const connected = await host.connect("server-1");
+
+    expect(connected).toMatchObject({
+      status: "connected",
+      toolCount: MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD + 3,
+    });
+    expect(registry.getTool("mcp__local-mcp__read_alpha")).toBeUndefined();
+    expect(registry.getTool("mcp__local-mcp__write_beta")).toBeUndefined();
+    expect(registry.getTool("mcp__local-mcp__search_tools")).toBeDefined();
+    expect(registry.getTool("mcp__local-mcp__describe_tool")).toBeDefined();
+    expect(registry.getTool("mcp__local-mcp__call_read_tool")).toBeDefined();
+    expect(registry.getTool("mcp__local-mcp__call_tool")).toBeDefined();
+
+    const search = JSON.parse((await registry.execute(
+      {
+        id: "call-search",
+        name: "mcp__local-mcp__search_tools",
+        arguments: { query: "alpha" },
+      },
+      { threadId: "thread-1", turnId: "turn-1" },
+    )).content) as {
+      totalToolCount: number;
+      matchCount: number;
+      tools: Array<{ name: string; rawName: string; readOnly: boolean }>;
+    };
+    expect(search.totalToolCount).toBe(MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD + 3);
+    expect(search.matchCount).toBe(1);
+    expect(search.tools).toEqual([
+      expect.objectContaining({
+        name: "mcp__local-mcp__read_alpha",
+        rawName: "read_alpha",
+        readOnly: true,
+      }),
+    ]);
+
+    const describe = JSON.parse((await registry.execute(
+      {
+        id: "call-describe",
+        name: "mcp__local-mcp__describe_tool",
+        arguments: { tool_name: "write_beta" },
+      },
+      { threadId: "thread-1", turnId: "turn-1" },
+    )).content) as {
+      tool: { name: string; rawName: string; readOnly: boolean; inputSchema: Record<string, unknown> };
+    };
+    expect(describe.tool).toMatchObject({
+      name: "mcp__local-mcp__write_beta",
+      rawName: "write_beta",
+      readOnly: false,
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+      },
+    });
+
+    await expect(registry.execute(
+      {
+        id: "call-read-writer",
+        name: "mcp__local-mcp__call_read_tool",
+        arguments: { tool_name: "write_beta" },
+      },
+      { threadId: "thread-1", turnId: "turn-1" },
+    )).rejects.toThrow("MCP tool is not read-only on local-mcp: write_beta.");
+
+    const readCall = await registry.execute(
+      {
+        id: "call-read-alpha",
+        name: "mcp__local-mcp__call_read_tool",
+        arguments: { tool_name: "mcp__local-mcp__read_alpha", arguments: { text: "hello" } },
+      },
+      { threadId: "thread-1", turnId: "turn-1" },
+    );
+    expect(readCall.content).toBe("called read_alpha: hello");
+    expect(readCall.displayResult).toMatchObject({
+      serverId: "server-1",
+      serverName: "local-mcp",
+      toolName: "read_alpha",
+      namespacedToolName: "mcp__local-mcp__read_alpha",
+    });
+
+    const writeCall = await registry.execute(
+      {
+        id: "call-write-beta",
+        name: "mcp__local-mcp__call_tool",
+        arguments: { tool_name: "write_beta", arguments: { text: "updated" } },
+      },
+      { threadId: "thread-1", turnId: "turn-1" },
+    );
+    expect(writeCall.content).toBe("called write_beta: updated");
     await host.close();
   });
 
@@ -659,6 +765,63 @@ rl.on("line", (line) => {
       id: request.id,
       result: {
         content: [{ type: "text", text: "echo: " + request.params.arguments.text }],
+      },
+    });
+    return;
+  }
+  send({ jsonrpc: "2.0", id: request.id, result: {} });
+});
+`;
+}
+
+function mcpServerScriptWithLargeToolCatalog(): string {
+  return `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+const tools = [
+  {
+    name: "read_alpha",
+    description: "Read alpha data",
+    inputSchema: { type: "object", properties: { text: { type: "string" } } },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "write_beta",
+    description: "Write beta data",
+    inputSchema: { type: "object", properties: { text: { type: "string" } } },
+  },
+  ...Array.from({ length: ${MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD + 1} }, (_, index) => ({
+    name: "bulk_" + String(index + 1).padStart(2, "0"),
+    description: "Bulk read-only tool " + String(index + 1),
+    inputSchema: { type: "object", properties: { text: { type: "string" } } },
+    annotations: { readOnlyHint: true },
+  })),
+];
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  if (request.method === "initialize") {
+    send({ jsonrpc: "2.0", id: request.id, result: { capabilities: { tools: {} } } });
+    return;
+  }
+  if (request.method === "tools/list") {
+    send({ jsonrpc: "2.0", id: request.id, result: { tools } });
+    return;
+  }
+  if (request.method === "tools/call") {
+    send({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "called " + request.params.name + ": " + (request.params.arguments?.text ?? ""),
+          },
+        ],
       },
     });
     return;

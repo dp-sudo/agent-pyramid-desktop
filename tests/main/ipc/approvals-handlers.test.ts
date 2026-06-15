@@ -40,9 +40,11 @@ describe("approval handlers", () => {
     expect(parseApprovalRespondRequest({
       approvalId: " approval-1 ",
       decision: "allow",
+      scope: "session",
     })).toEqual({
       approvalId: "approval-1",
       decision: "allow",
+      scope: "session",
     });
     expect(() => parseApprovalRespondRequest(null)).toThrow(
       "Approval response request must be an object.",
@@ -55,6 +57,11 @@ describe("approval handlers", () => {
       approvalId: " ",
       decision: "deny",
     })).toThrow("Approval response requires approvalId.");
+    expect(() => parseApprovalRespondRequest({
+      approvalId: "approval-1",
+      decision: "allow",
+      scope: "workspace",
+    })).toThrow("Approval scope is invalid.");
   });
 
   it("responds to valid approval requests", async () => {
@@ -66,15 +73,17 @@ describe("approval handlers", () => {
     const result = await handler({}, {
       approvalId: " approval-1 ",
       decision: "deny",
+      scope: "persist_rule",
     });
 
     expect(result).toEqual({
       ok: true,
-      value: { approvalId: "approval-1", decision: "deny" },
+      value: { approvalId: "approval-1", decision: "deny", scope: "persist_rule" },
     });
     expect(runtime.respondApproval).toHaveBeenCalledWith({
       approvalId: "approval-1",
       decision: "deny",
+      scope: "persist_rule",
     });
   });
 

@@ -157,6 +157,76 @@ describe("CheckpointStore", () => {
     expect((await store.list(THREAD_ID))[0].files).toHaveLength(1);
   });
 
+  it("finds the latest same-workspace file snapshot for restart-safe rollback", async () => {
+    const store = new CheckpointStore(userDataDir);
+    await store.init();
+    await fs.writeFile(path.join(workspace, "a.txt"), "v2\n", "utf8");
+
+    await store.beginTurn({
+      threadId: THREAD_ID,
+      turnId: "turn-0",
+      workspace,
+      prompt: "first",
+      createdAt: "2026-06-12T01:00:00.000Z",
+    });
+    await store.recordFileSnapshot({
+      threadId: THREAD_ID,
+      turnId: "turn-0",
+      workspace,
+      toolName: "edit_file",
+      relativePath: "a.txt",
+      operation: "update",
+      beforeContent: "v0\n",
+      afterContent: "v1\n",
+      beforeSha256: sha256("v0\n"),
+      afterSha256: sha256("v1\n"),
+    });
+    await store.beginTurn({
+      threadId: THREAD_ID,
+      turnId: "turn-1",
+      workspace,
+      prompt: "second",
+      createdAt: "2026-06-12T02:00:00.000Z",
+    });
+    await store.recordFileSnapshot({
+      threadId: THREAD_ID,
+      turnId: "turn-1",
+      workspace,
+      toolName: "edit_file",
+      relativePath: "a.txt",
+      operation: "update",
+      beforeContent: "v1\n",
+      afterContent: "v2\n",
+      beforeSha256: sha256("v1\n"),
+      afterSha256: sha256("v2\n"),
+    });
+
+    const resumed = new CheckpointStore(userDataDir);
+    const snapshot = await resumed.latestFileSnapshot({
+      threadId: THREAD_ID,
+      workspace,
+      relativePath: "./a.txt",
+    });
+
+    expect(snapshot).toMatchObject({
+      threadId: THREAD_ID,
+      turnId: "turn-1",
+      workspace,
+      toolName: "edit_file",
+      relativePath: "a.txt",
+      operation: "update",
+      beforeContent: "v1\n",
+      afterContent: "v2\n",
+      beforeSha256: sha256("v1\n"),
+      afterSha256: sha256("v2\n"),
+    });
+    expect(await resumed.latestFileSnapshot({
+      threadId: THREAD_ID,
+      workspace: path.join(workspace, "..", "agent-checkpoint-other-workspace"),
+      relativePath: "a.txt",
+    })).toBeNull();
+  });
+
   it("refuses to restore hostile snapshot paths outside the workspace", async () => {
     const outside = path.join(await makeTempDir("agent-checkpoint-outside-"), "evil.txt");
     try {

@@ -106,13 +106,14 @@ describe("ApprovalCoordinator", () => {
     expect((await replayItems(store, thread.id)).filter((item) => item.kind === "approval")).toHaveLength(1);
 
     coordinator.respond({ approvalId: requestEvent.approvalId, decision: "allow" });
-    await expect(decision).resolves.toBe("allow");
+    await expect(decision).resolves.toEqual({ decision: "allow", scope: "once" });
 
     const approvalItems = (await replayItems(store, thread.id)).filter((item) => item.kind === "approval");
     expect(approvalItems).toHaveLength(2);
     expect(approvalItems[1]).toMatchObject({
       approvalId: requestEvent.approvalId,
       decision: "allow",
+      scope: "once",
     });
     expect(events).toEqual(
       expect.arrayContaining([
@@ -133,10 +134,39 @@ describe("ApprovalCoordinator", () => {
     await waitFor(() => events.some((event) => event.kind === "approval_requested"));
 
     await coordinator.resolvePendingForTurn(turn.id, "deny");
-    await expect(decision).resolves.toBe("deny");
+    await expect(decision).resolves.toEqual({ decision: "deny", scope: "once" });
 
     const approvalItems = (await replayItems(store, thread.id)).filter((item) => item.kind === "approval");
     expect(approvalItems[1]).toMatchObject({ decision: "deny" });
+  });
+
+  it("records scoped approval responses for timeline audit", async () => {
+    const coordinator = new ApprovalCoordinator({
+      store,
+      bus,
+      async previewProvider() {
+        return undefined;
+      },
+    });
+    const decision = coordinator.requestApproval(turn, createCall("run_command"), thread);
+    await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+    const requestEvent = events.find((event) => event.kind === "approval_requested");
+    if (!requestEvent || requestEvent.kind !== "approval_requested") {
+      throw new Error("Expected approval request event.");
+    }
+
+    coordinator.respond({
+      approvalId: requestEvent.approvalId,
+      decision: "allow",
+      scope: "session",
+    });
+
+    await expect(decision).resolves.toEqual({ decision: "allow", scope: "session" });
+    const approvalItems = (await replayItems(store, thread.id)).filter((item) => item.kind === "approval");
+    expect(approvalItems[1]).toMatchObject({
+      decision: "allow",
+      scope: "session",
+    });
   });
 
   it("rejects invalid or stale approval responses", () => {
