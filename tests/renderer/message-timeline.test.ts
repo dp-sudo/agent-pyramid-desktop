@@ -132,10 +132,14 @@ describe("MessageTimeline helpers", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
     };
 
-    expect(getApprovalPendingDecision(approval, { "approval-1": "allow" })).toBe("allow");
-    expect(getApprovalPendingDecision(approval, { "approval-2": "deny" })).toBeNull();
+    expect(getApprovalPendingDecision(approval, {
+      "approval-1": { decision: "allow", scope: "session" },
+    })).toEqual({ decision: "allow", scope: "session" });
+    expect(getApprovalPendingDecision(approval, {
+      "approval-2": { decision: "deny" },
+    })).toBeNull();
     expect(getApprovalPendingDecision(toolItem("read_file", "pending"), {
-      "approval-1": "allow",
+      "approval-1": { decision: "allow", scope: "persist_rule" },
     })).toBeNull();
   });
 

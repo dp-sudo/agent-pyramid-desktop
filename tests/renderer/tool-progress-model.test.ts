@@ -103,6 +103,38 @@ describe("tool progress model", () => {
     });
   });
 
+  it("matches progress by thread, turn, and tool call identity", () => {
+    const previousTurn = toolItem({
+      id: "tool-previous",
+      turnId: "turn-previous",
+      result: {
+        kind: "tool_progress",
+        stdout: "previous\n",
+      } satisfies ToolProgressDisplayResult,
+    });
+    const currentTurn = toolItem({
+      id: "tool-current",
+      turnId: "turn-current",
+    });
+
+    const next = appendToolProgressToItems([previousTurn, currentTurn], {
+      threadId: "thread-1",
+      turnId: "turn-current",
+      toolCallId: "call-1",
+      seq: 1,
+      stdout: "current\n",
+    });
+
+    expect(next[0]).toBe(previousTurn);
+    expect(next[1]).toMatchObject({
+      id: "tool-current",
+      result: {
+        kind: "tool_progress",
+        stdout: "current\n",
+      },
+    });
+  });
+
   it("ignores non-running tools and unknown tool call ids", () => {
     const completed = [toolItem({ status: "completed", result: { stdout: "final\n" } })];
     const missing = [toolItem()];

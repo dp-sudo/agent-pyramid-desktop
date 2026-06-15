@@ -7,6 +7,7 @@ import {
   approvalStatusText,
   canRespondToApproval,
   getReasoningCollapsedPreview,
+  isSameApprovalResponse,
   isReasoningOpenByDefault,
   isLongToolDetail,
   resolveToolDetailDisplay,
@@ -216,16 +217,67 @@ describe("ChatBlock approval helpers", () => {
   it("allows approval response only before a decision and without a pending submission", () => {
     expect(canRespondToApproval(undefined, null, true)).toBe(true);
     expect(canRespondToApproval("allow", null, true)).toBe(false);
-    expect(canRespondToApproval(undefined, "deny", true)).toBe(false);
+    expect(canRespondToApproval(undefined, { decision: "deny" }, true)).toBe(false);
     expect(canRespondToApproval(undefined, null, false)).toBe(false);
   });
 
   it("formats approval status from pending or final decisions", () => {
     const t = (key: string): string => key;
 
-    expect(approvalStatusText(undefined, "allow", t)).toBe("approvals.submitting");
-    expect(approvalStatusText("deny", null, t)).toBe("approvals.deny");
-    expect(approvalStatusText(undefined, null, t)).toBe("");
+    expect(approvalStatusText(
+      undefined,
+      undefined,
+      { decision: "allow", scope: "session" },
+      t,
+    )).toBe("approvals.submitting");
+    expect(approvalStatusText("allow", undefined, null, t)).toBe("approvals.allowedOnce");
+    expect(approvalStatusText("allow", "session", null, t))
+      .toBe("approvals.allowedForSession");
+    expect(approvalStatusText("allow", "persist_rule", null, t))
+      .toBe("approvals.allowedPersistRule");
+    expect(approvalStatusText("deny", undefined, null, t)).toBe("approvals.deny");
+    expect(approvalStatusText(undefined, undefined, null, t)).toBe("");
+  });
+
+  it("matches pending approval responses by decision and normalized scope", () => {
+    expect(isSameApprovalResponse(
+      { decision: "allow" },
+      { decision: "allow", scope: "once" },
+    )).toBe(true);
+    expect(isSameApprovalResponse(
+      { decision: "allow", scope: "session" },
+      { decision: "allow", scope: "persist_rule" },
+    )).toBe(false);
+    expect(isSameApprovalResponse(null, { decision: "deny" })).toBe(false);
+  });
+
+  it("renders scoped approval actions before a response is submitted", () => {
+    const approvalItem: Extract<Item, { kind: "approval" }> = {
+      kind: "approval",
+      id: "approval-item",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      approvalId: "approval-1",
+      toolName: "write_file",
+      args: {},
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, {
+          item: approvalItem,
+          onApprove: async () => undefined,
+        }),
+      ),
+    );
+
+    expect(html).toContain("approvals.allowOnce");
+    expect(html).toContain("approvals.allowForSession");
+    expect(html).toContain("approvals.allowPersistRule");
+    expect(html).toContain("approvals.deny");
   });
 
   it("renders shared pending approval state as disabled submitting actions", () => {
@@ -247,13 +299,15 @@ describe("ChatBlock approval helpers", () => {
         createElement(ChatBlock, {
           item: approvalItem,
           onApprove: async () => undefined,
-          approvalPendingDecision: "allow",
+          approvalPendingDecision: { decision: "allow", scope: "session" },
         }),
       ),
     );
 
     expect(html).toContain("is-pending");
     expect(html).toContain("approvals.submitting");
+    expect(html).toContain("approvals.allowOnce");
+    expect(html).toContain("approvals.allowPersistRule");
     expect(html).toContain("disabled=\"\"");
   });
 

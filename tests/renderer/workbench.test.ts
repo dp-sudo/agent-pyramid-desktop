@@ -79,20 +79,32 @@ describe("Workbench", () => {
   });
 
   it("keeps only one in-flight approval response per approval id", () => {
-    const first = beginPendingApprovalResponse({}, "approval-1", "allow");
+    const first = beginPendingApprovalResponse(
+      {},
+      "approval-1",
+      { decision: "allow", scope: "session" },
+    );
 
-    expect(first).toEqual({ "approval-1": "allow" });
-    expect(beginPendingApprovalResponse(first ?? {}, "approval-1", "deny")).toBeNull();
-    expect(beginPendingApprovalResponse(first ?? {}, "approval-2", "deny")).toEqual({
-      "approval-1": "allow",
-      "approval-2": "deny",
+    expect(first).toEqual({ "approval-1": { decision: "allow", scope: "session" } });
+    expect(beginPendingApprovalResponse(
+      first ?? {},
+      "approval-1",
+      { decision: "deny" },
+    )).toBeNull();
+    expect(beginPendingApprovalResponse(
+      first ?? {},
+      "approval-2",
+      { decision: "deny" },
+    )).toEqual({
+      "approval-1": { decision: "allow", scope: "session" },
+      "approval-2": { decision: "deny" },
     });
   });
 
   it("clears pending approval responses only after resolved approval items arrive", () => {
     const pending = {
-      "approval-1": "allow" as const,
-      "approval-2": "deny" as const,
+      "approval-1": { decision: "allow" as const, scope: "once" as const },
+      "approval-2": { decision: "deny" as const },
     };
     const unresolved = approvalItem("item-1", "approval-1");
     const resolved: Extract<Item, { kind: "approval" }> = {
@@ -103,7 +115,7 @@ describe("Workbench", () => {
 
     expect(clearResolvedApprovalResponses(pending, [unresolved])).toBe(pending);
     expect(clearResolvedApprovalResponses(pending, [unresolved, resolved])).toEqual({
-      "approval-1": "allow",
+      "approval-1": { decision: "allow", scope: "once" },
     });
   });
 
@@ -394,6 +406,21 @@ describe("Workbench", () => {
       .toBeGreaterThanOrEqual(0);
     expect(sendCodeSource.indexOf("resolveCodeMcpInputReferences(sendPayload, t)"))
       .toBeLessThan(sendCodeSource.indexOf("window.agentApi.threads.create"));
+  });
+
+  it("passes approval response scope through the preload approval IPC payload", () => {
+    const source = readFileSync(
+      new URL("../../src/renderer/src/ui/Workbench.tsx", import.meta.url),
+      "utf8",
+    );
+    const approveStart = source.indexOf("const onApprove = useCallback");
+    const approveEnd = source.indexOf("const onOpenSettings", approveStart);
+    const approveSource = source.slice(approveStart, approveEnd);
+
+    expect(approveStart).toBeGreaterThanOrEqual(0);
+    expect(approveEnd).toBeGreaterThan(approveStart);
+    expect(approveSource).toContain("decision: response.decision");
+    expect(approveSource).toContain("scope: response.scope");
   });
 
   it("prefers the latest active thread that matches workspace and route mode", () => {

@@ -256,6 +256,8 @@ describe("shared agent contracts", () => {
       "search_files",
       "rg_search",
       "list_symbols",
+      "search_symbols",
+      "create_edit_plan",
       "git_status",
       "git_diff",
       "git_log",
@@ -280,6 +282,7 @@ describe("shared agent contracts", () => {
     ]);
     expect(isRuntimeToolName("diagnose_file")).toBe(true);
     expect(isRuntimeToolName("list_symbols")).toBe(true);
+    expect(isRuntimeToolName("search_symbols")).toBe(true);
     expect(isRuntimeToolName("unknown_tool")).toBe(false);
     expect(isRuntimeCompactionStrategy("preserve-tools")).toBe(true);
     expect(isRuntimeCompactionStrategy("full-history")).toBe(false);
@@ -310,6 +313,10 @@ describe("shared agent contracts", () => {
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_command_sessions).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.list_symbols).toBe(true);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_symbols).toBe(false);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.search_symbols).toBe(true);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.search_symbols).toBe(false);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.create_edit_plan).toBe(true);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.create_edit_plan).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_command).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_skills).toBe(true);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_skill).toBe(true);
@@ -357,6 +364,18 @@ describe("shared agent contracts", () => {
           run_command: "false",
         },
       },
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      permissionRules: [
+        { id: "exact", tool: "command", pattern: "npm test", effect: "allow", match: "exact" },
+      ],
+    })).toBe(true);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      permissionRules: [
+        { id: "bad-match", tool: "command", pattern: "npm test", effect: "allow", match: "regex" },
+      ],
     })).toBe(false);
     expect(isRuntimePreferences({
       ...DEFAULT_RUNTIME_PREFERENCES,
@@ -971,9 +990,26 @@ describe("shared agent contracts", () => {
         toolName: "edit_file",
         args: {},
         preview,
+        decision: "allow",
+        scope: "session",
+        resolvedAt: "2026-06-08T00:00:01.000Z",
         createdAt: "2026-06-08T00:00:00.000Z",
       }),
     ).toBe(true);
+    expect(
+      isItem({
+        kind: "approval",
+        id: "item-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        approvalId: "approval-1",
+        toolName: "edit_file",
+        args: {},
+        decision: "allow",
+        scope: "workspace",
+        createdAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ).toBe(false);
     expect(
       isRuntimeEvent({
         kind: "approval_requested",

@@ -600,6 +600,46 @@ describe("timeline model", () => {
     expect(display.statusText).toBe("chat.toolStatus.completed");
   });
 
+  it("summarizes search_symbols with queries", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "search_symbols",
+      args: { query: "Runner" },
+      result: { symbolCount: 2 },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key, options) =>
+      options?.query ? `${key}:${String(options.query)}` : key,
+    );
+
+    expect(display.title).toBe("chat.tools.searchSymbolsQuery:Runner");
+    expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
+  it("summarizes create_edit_plan with its visible plan title", () => {
+    const item: ToolItem = {
+      kind: "tool",
+      id: "tool-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      name: "create_edit_plan",
+      args: { title: "Coordinate runtime changes" },
+      result: { files: [] },
+      status: "completed",
+      createdAt,
+    };
+    const display = summarizeToolItem(item, (key) => key);
+
+    expect(display.title).toBe("chat.tools.createEditPlan");
+    expect(display.statusText).toBe("chat.toolStatus.completed");
+  });
+
   it("uses localized catalog titles for every runtime tool", () => {
     const rawFallbacks = RUNTIME_TOOL_NAMES.filter((toolName) => {
       const title = summarizeToolItemHeader(toolItem(toolName), timelineTitleT).title;
