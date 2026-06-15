@@ -179,7 +179,10 @@ Tool rules:
 
 ## LLM Gateway
 
-`src/main/infrastructure/minimax/minimax-gateway.ts` implements `LlmGateway` for:
+`src/main/infrastructure/minimax/minimax-gateway.ts` implements `LlmGateway`
+as the protocol router. Protocol-specific request body and SSE conversion live
+next to it in `openai-compatible-adapter.ts` and
+`anthropic-compatible-adapter.ts`:
 
 - OpenAI-compatible chat completions.
 - Anthropic-compatible messages.

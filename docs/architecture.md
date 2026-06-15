@@ -495,8 +495,9 @@ The push event channel is separate:
 | Area | Ownership |
 | --- | --- |
 | `src/main/application/agent-runtime.ts` | Turn state machine, tool loop, model request construction, runtime events. |
+| `src/main/application/tool-call-executor.ts` | Parent-turn tool item lifecycle, catalog/policy checks, approval suspension, live progress, and interruption cleanup. |
 | `src/main/application/tools/` | Tool registry and built-in tool implementations. |
-| `src/main/infrastructure/minimax/` | Provider HTTP/SSE protocols and message/tool conversion. |
+| `src/main/infrastructure/minimax/` | Provider gateway routing, protocol adapters, shared HTTP/SSE helpers, and message/tool conversion. |
 | `src/main/infrastructure/llm-worker/` | Worker isolation, worker affinity, cancellation, worker protocol. |
 | `src/main/infrastructure/mcp/` | MCP client, host, cache/stats store, auth diagnostics, stdio and Streamable HTTP transports, protocol normalization. |
 | `src/main/ipc/` | IPC envelope handlers and Electron-only services. |

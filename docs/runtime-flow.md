@@ -10,7 +10,7 @@
 - `src/main/domain/agent/types.ts`
 - `src/main/domain/agent/ports.ts`
 - `src/main/infrastructure/llm-worker/*`
-- `src/main/infrastructure/minimax/minimax-gateway.ts`
+- `src/main/infrastructure/minimax/*`
 - `src/main/event-bus.ts`
 - `src/main/ipc/turns-handlers.ts`
 - `src/main/ipc/sse-handlers.ts`
@@ -176,7 +176,7 @@ flowchart TD
   Persist["persistModelOutput -> item_appended"]
   ToolCheck{"response.toolCalls.length > 0?"}
   Budget{"round >= maxToolRounds?"}
-  Execute["executeToolCall"]
+  Execute["ToolCallExecutor.execute"]
   PushTool["push assistant tool call + tool result into messages"]
   Complete["markTurnStatus(completed)"]
   NeedsContinuation["append budget warning\nmark needs_continuation"]
@@ -224,7 +224,8 @@ LLM request construction:
 
 - `LlmRequest.protocol` comes from the selected `ModelConfig.protocol`.
   `openai-compatible` and `anthropic-compatible` share the same runtime loop;
-  `MiniMaxGateway` owns request body and SSE parsing differences.
+  `MiniMaxGateway` routes by protocol, while the OpenAI-compatible and
+  Anthropic-compatible adapters own request body and SSE parsing differences.
 - Tool definitions are filtered by turn mode, goal/plan mode and
   `RuntimePreferences.toolAvailability` before they are passed to
   `context-compaction.prepareMessagesForRequest()` and the worker pool.
@@ -388,9 +389,9 @@ Approval policy resolved by `ToolPolicyService`:
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
 - All remaining non-read-only tools require approval.
 
-When a tool call is approved for execution, `AgentRuntime.executeToolCall()`
-still passes the full `AgentToolContext` through `ToolRegistry.execute()`, but
-that context is now composed from narrower capability interfaces. Tool
+When a tool call is approved for execution, `ToolCallExecutor.execute()`
+passes the full `AgentToolContext` through `ToolRegistry.execute()`, but that
+context is composed from narrower capability interfaces. Tool
 implementations should depend on the smallest context they need:
 `AgentReadWorkspaceToolContext` for read-only workspace tools,
 `AgentWriteWorkspaceToolContext` for coding writes,

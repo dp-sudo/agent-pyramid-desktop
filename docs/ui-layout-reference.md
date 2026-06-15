@@ -870,6 +870,9 @@ Save button disabled when:
 ## Settings Page
 
 Implementation entry: `SettingsView` when `state.route === "settings"`.
+`SettingsView` owns loading, save state, and IPC side effects; the Skills and
+MCP server categories render through `SettingsSkillsPanel` and
+`SettingsMcpServersPanel` as controlled panels.
 
 ### Layout
 
