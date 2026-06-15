@@ -36,20 +36,21 @@ export function prepareMessagesForRequest(
   },
 ): AgentMessage[] {
   const budget = resolveContextBudget(options);
+  const repairedMessages = repairModelToolHistory(messages);
   if (!options.compaction.enabled) {
-    return enforceHardContextLimit(messages, budget);
+    return enforceHardContextLimit(repairedMessages, budget);
   }
 
   if (options.compaction.strategy === "recent-only") {
-    return prepareRecentOnlyMessages(messages, budget);
+    return prepareRecentOnlyMessages(repairedMessages, budget);
   }
 
   if (options.compaction.strategy === "aggressive") {
-    return prepareAggressiveMessages(messages, budget);
+    return prepareAggressiveMessages(repairedMessages, budget);
   }
 
   let prepared = applyRequestHistoryHygiene(
-    messages,
+    repairedMessages,
     options.compaction.strategy === "preserve-tools"
       ? PRESERVE_TOOLS_REQUEST_HYGIENE_PROFILE
       : DEFAULT_REQUEST_HYGIENE_PROFILE,
@@ -192,6 +193,83 @@ function isWithinRequestBudget(
   budget: ResolvedContextBudget,
 ): boolean {
   return estimateRequestTokens(budget.systemPrompt, messages, budget.tools) <= budget.tokenLimit;
+}
+
+/**
+ * Provider APIs reject orphan tool results and assistant tool calls that are not
+ * followed by matching results. Repair only the request view so persisted JSONL
+ * remains auditable while model-bound history stays protocol-valid.
+ */
+function repairModelToolHistory(messages: AgentMessage[]): AgentMessage[] {
+  let changed = false;
+  const repaired: AgentMessage[] = [];
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message.role === "tool") {
+      changed = true;
+      continue;
+    }
+
+    if (message.role !== "assistant" || !message.toolCalls?.length) {
+      repaired.push(message);
+      continue;
+    }
+
+    const expectedToolCallIds = new Set(message.toolCalls.map((call) => call.id));
+    const resultIds = new Set<string>();
+    const toolResultById = new Map<string, AgentMessage>();
+    let cursor = index + 1;
+    while (cursor < messages.length) {
+      const candidate = messages[cursor];
+      if (candidate.role !== "tool") break;
+      if (
+        candidate.toolCallId &&
+        expectedToolCallIds.has(candidate.toolCallId) &&
+        !resultIds.has(candidate.toolCallId)
+      ) {
+        resultIds.add(candidate.toolCallId);
+        toolResultById.set(candidate.toolCallId, candidate);
+      } else {
+        changed = true;
+      }
+      cursor += 1;
+    }
+
+    const toolCalls = message.toolCalls.filter((call) => resultIds.has(call.id));
+    if (toolCalls.length > 0) {
+      if (toolCalls.length !== message.toolCalls.length) {
+        changed = true;
+        repaired.push({ ...message, toolCalls });
+      } else {
+        repaired.push(message);
+      }
+      for (const call of toolCalls) {
+        const result = toolResultById.get(call.id);
+        if (result) repaired.push(result);
+      }
+    } else {
+      changed = true;
+      if (hasNonEmptyContent(message.content)) {
+        const assistantMessage: AgentMessage = { ...message };
+        delete assistantMessage.toolCalls;
+        repaired.push(assistantMessage);
+      }
+    }
+    index = cursor - 1;
+  }
+
+  return changed ? repaired : messages;
+}
+
+function hasNonEmptyContent(content: AgentMessage["content"]): boolean {
+  if (typeof content === "string") {
+    return content.trim().length > 0;
+  }
+  return content.some((block) =>
+    block.type === "image" ||
+    (block.type === "text" && block.text.trim().length > 0)
+  );
 }
 
 function applyRequestHistoryHygiene(

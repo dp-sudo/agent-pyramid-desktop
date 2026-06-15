@@ -195,9 +195,15 @@ export interface ToolAction {
 }
 
 const EXPLORATORY_TOOL_NAMES = new Set<string>(["list_files", "search_files", "rg_search"]);
-const READ_TOOL_NAMES = new Set<string>(["read_file", "diagnose_file", "diagnose_workspace"]);
+const READ_TOOL_NAMES = new Set<string>([
+  "read_file",
+  "list_command_sessions",
+  "diagnose_file",
+  "diagnose_workspace",
+]);
 const MODIFY_TOOL_NAMES = new Set<string>([
   "edit_file",
+  "multi_edit",
   "write_file",
   "delete_file",
   "apply_patch",
@@ -342,6 +348,10 @@ function titleForTool(
       return path
         ? t("chat.tools.editFilePath", { path })
         : t("chat.tools.editFile");
+    case "multi_edit":
+      return path
+        ? t("chat.tools.multiEditPath", { path })
+        : t("chat.tools.multiEdit");
     case "write_file":
       return path
         ? t("chat.tools.writeFilePath", { path })

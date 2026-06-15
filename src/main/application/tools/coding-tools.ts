@@ -57,7 +57,14 @@ interface PatchApplyResult {
 }
 
 export function createCodingTools(): AgentTool[] {
-  return [editFileTool, writeFileTool, deleteFileTool, applyPatchTool, rollbackFileTool];
+  return [
+    editFileTool,
+    multiEditTool,
+    writeFileTool,
+    deleteFileTool,
+    applyPatchTool,
+    rollbackFileTool,
+  ];
 }
 
 const editFileTool: AgentTool = {
@@ -100,6 +107,60 @@ const editFileTool: AgentTool = {
     const change = await prepareEdit(input, context);
     const committed = await writePreparedChange(change, context, "edit_file");
     return toToolResult("edit_file", committed);
+  },
+};
+
+const multiEditTool: AgentTool = {
+  metadata: {
+    category: "workspace",
+    isDestructive: true,
+  },
+  definition: {
+    name: "multi_edit",
+    description:
+      "Apply multiple exact string replacements to one UTF-8 workspace text file atomically. Each edit runs against the result of the previous edit; the file is written only if every edit succeeds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Workspace-relative file path to edit.",
+        },
+        edits: {
+          type: "array",
+          minItems: 1,
+          description: "Ordered edit steps to apply in memory before one final write.",
+          items: {
+            type: "object",
+            properties: {
+              old_string: {
+                type: "string",
+                description: "Exact text currently in the file at this step.",
+              },
+              new_string: {
+                type: "string",
+                description: "Replacement text for this step.",
+              },
+              replace_all: {
+                type: "boolean",
+                description: "Set true only when every occurrence for this step should be replaced.",
+              },
+            },
+            required: ["old_string", "new_string"],
+          },
+        },
+      },
+      required: ["path", "edits"],
+    },
+  },
+  async preview(input, context) {
+    const change = await prepareMultiEdit(input, context);
+    return change.diff;
+  },
+  async execute(input, context) {
+    const change = await prepareMultiEdit(input, context);
+    const committed = await writePreparedChange(change, context, "multi_edit");
+    return toToolResult("multi_edit", committed);
   },
 };
 
@@ -216,7 +277,7 @@ const rollbackFileTool: AgentTool = {
   definition: {
     name: "rollback_file",
     description:
-      "Rollback the most recent agent write to a workspace file in the current app session. Use when an edit, write, patch, or previous rollback should be undone.",
+      "Rollback the most recent agent write to a workspace file in the current app session. Use when an edit, multi-edit, write, patch, or previous rollback should be undone.",
     inputSchema: {
       type: "object",
       properties: {
@@ -249,6 +310,12 @@ interface PreparedFileChange extends FileChangeResult {
 interface PreparedPatch {
   changes: PreparedFileChange[];
   diff: MultiFileDiffPreview;
+}
+
+interface MultiEditStep {
+  oldString: string;
+  newString: string;
+  replaceAll: boolean;
 }
 
 async function prepareEdit(
@@ -284,6 +351,45 @@ async function prepareEdit(
   const nextContent = replaceAll
     ? content.split(oldString).join(newString)
     : content.replace(oldString, newString);
+  return buildPreparedChange(workspace, filePath, content, nextContent, "update");
+}
+
+async function prepareMultiEdit(
+  input: Record<string, unknown>,
+  context: AgentToolContext,
+): Promise<PreparedFileChange> {
+  const workspace = requireWorkspace(context);
+  const relativePath = requiredString(input.path, "multi_edit requires a string path.");
+  const edits = requiredMultiEditSteps(input.edits);
+  const filePath = await resolveWorkspacePathForAccess(workspace, relativePath, "read");
+  await assertNoSymlinkInPath(workspace, relativePath, "read", "Coding tools");
+  const { content } = await readEditableTextFile(filePath, relativePath);
+  assertFreshRead(context, filePath, content);
+
+  let nextContent = content;
+  for (const [index, edit] of edits.entries()) {
+    const label = `multi_edit edit ${index + 1}`;
+    if (edit.oldString === edit.newString) {
+      throw new Error(`${label} old_string and new_string are identical.`);
+    }
+    if (!edit.oldString) {
+      throw new Error(`${label} requires a non-empty old_string.`);
+    }
+
+    const matches = countOccurrences(nextContent, edit.oldString);
+    if (matches === 0) {
+      throw new Error(`${label} old_string was not found in ${relativePath}.`);
+    }
+    if (matches > 1 && !edit.replaceAll) {
+      throw new Error(
+        `${label} found ${matches} matches in ${relativePath}. Provide more context or set replace_all to true.`,
+      );
+    }
+    nextContent = edit.replaceAll
+      ? nextContent.split(edit.oldString).join(edit.newString)
+      : nextContent.replace(edit.oldString, edit.newString);
+  }
+
   return buildPreparedChange(workspace, filePath, content, nextContent, "update");
 }
 
@@ -1175,6 +1281,37 @@ function countOccurrences(value: string, search: string): number {
     offset = index + search.length;
   }
   return count;
+}
+
+function requiredMultiEditSteps(value: unknown): MultiEditStep[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("multi_edit requires a non-empty edits array.");
+  }
+  return value.map((entry, index) => {
+    const step = requiredRecord(entry, `multi_edit edit ${index + 1} must be an object.`);
+    return {
+      oldString: requiredRawString(
+        step.old_string,
+        `multi_edit edit ${index + 1} requires old_string.`,
+      ),
+      newString: requiredRawString(
+        step.new_string,
+        `multi_edit edit ${index + 1} requires new_string.`,
+      ),
+      replaceAll: optionalBoolean(
+        step.replace_all,
+        false,
+        `multi_edit edit ${index + 1} replace_all must be a boolean.`,
+      ),
+    };
+  });
+}
+
+function requiredRecord(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(message);
+  }
+  return value as Record<string, unknown>;
 }
 
 function requiredString(value: unknown, message: string): string {

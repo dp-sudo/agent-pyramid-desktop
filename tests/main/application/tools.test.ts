@@ -258,6 +258,7 @@ describe("application tools", () => {
       "run_tests",
       "run_build",
       "start_command_session",
+      "list_command_sessions",
       "read_command_session",
       "write_command_session",
       "stop_command_session",
@@ -270,6 +271,7 @@ describe("application tools", () => {
 
     expect(names).toEqual([
       "edit_file",
+      "multi_edit",
       "write_file",
       "delete_file",
       "apply_patch",
@@ -857,6 +859,101 @@ describe("application tools", () => {
     }
   });
 
+  it("applies multi_edit steps atomically through the coding write path", async () => {
+    const workspace = await makeTempDir("coding-tools-multi-edit-");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "multi.ts"), "alpha one\nalpha two\n", "utf8");
+      const readState = new FileReadStateStore();
+      const fileHistory = new FileHistoryStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState, fileHistory };
+
+      await registry.execute(
+        { id: "call-read-multi", name: "read_file", arguments: { path: "src/multi.ts" } },
+        context,
+      );
+      const edited = await registry.execute(
+        {
+          id: "call-multi-edit",
+          name: "multi_edit",
+          arguments: {
+            path: "src/multi.ts",
+            edits: [
+              { old_string: "one", new_string: "1" },
+              { old_string: "alpha", new_string: "const", replace_all: true },
+            ],
+          },
+        },
+        context,
+      );
+
+      expect(await fs.readFile(path.join(workspace, "src", "multi.ts"), "utf8"))
+        .toBe("const 1\nconst two\n");
+      expect(edited.displayResult).toMatchObject({
+        path: "src/multi.ts",
+        operation: "update",
+        diff: {
+          kind: "file_diff",
+          added: 2,
+          removed: 2,
+        },
+      });
+      expect(fileHistory.latest(path.join(workspace, "src", "multi.ts"))).toMatchObject({
+        toolName: "multi_edit",
+        operation: "update",
+        beforeContent: "alpha one\nalpha two\n",
+        afterContent: "const 1\nconst two\n",
+      });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("leaves files untouched when any multi_edit step fails", async () => {
+    const workspace = await makeTempDir("coding-tools-multi-edit-fail-");
+    try {
+      const targetPath = path.join(workspace, "file.ts");
+      await fs.writeFile(targetPath, "alpha\nbeta\n", "utf8");
+      const readState = new FileReadStateStore();
+      const fileHistory = new FileHistoryStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState, fileHistory };
+
+      await registry.execute(
+        { id: "call-read-multi-fail", name: "read_file", arguments: { path: "file.ts" } },
+        context,
+      );
+      await expect(
+        registry.execute(
+          {
+            id: "call-multi-edit-fail",
+            name: "multi_edit",
+            arguments: {
+              path: "file.ts",
+              edits: [
+                { old_string: "alpha", new_string: "ALPHA" },
+                { old_string: "missing", new_string: "MISSING" },
+              ],
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("multi_edit edit 2 old_string was not found in file.ts.");
+
+      expect(await fs.readFile(targetPath, "utf8")).toBe("alpha\nbeta\n");
+      expect(fileHistory.latest(targetPath)).toBeUndefined();
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("records checkpoint snapshots before coding tools write files", async () => {
     const workspace = await makeTempDir("coding-tools-checkpoint-");
     type CheckpointRecorder =
@@ -877,6 +974,7 @@ describe("application tools", () => {
       await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value = 1;\n", "utf8");
       await fs.writeFile(path.join(workspace, "delete.ts"), "remove me\n", "utf8");
       await fs.writeFile(path.join(workspace, "patch.ts"), "old\n", "utf8");
+      await fs.writeFile(path.join(workspace, "multi.ts"), "alpha\nbeta\n", "utf8");
       const readState = new FileReadStateStore();
       const registry = new InMemoryToolRegistry([
         ...createWorkspaceTools(),
@@ -911,6 +1009,24 @@ describe("application tools", () => {
           id: "call-write-checkpoint",
           name: "write_file",
           arguments: { path: "src/new.ts", content: "created\n" },
+        },
+        context,
+      );
+      await registry.execute(
+        { id: "call-read-multi", name: "read_file", arguments: { path: "multi.ts" } },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "call-multi-edit-checkpoint",
+          name: "multi_edit",
+          arguments: {
+            path: "multi.ts",
+            edits: [
+              { old_string: "alpha", new_string: "ALPHA" },
+              { old_string: "beta", new_string: "BETA" },
+            ],
+          },
         },
         context,
       );
@@ -967,6 +1083,13 @@ describe("application tools", () => {
           beforeContent: null,
           afterContent: "created\n",
           contentAtCapture: null,
+        },
+        {
+          path: "multi.ts",
+          operation: "update",
+          beforeContent: "alpha\nbeta\n",
+          afterContent: "ALPHA\nBETA\n",
+          contentAtCapture: "alpha\nbeta\n",
         },
         {
           path: "delete.ts",
@@ -3551,6 +3674,43 @@ describe("application tools", () => {
       sessionId = start.sessionId;
       expect(start.status).toBe("running");
 
+      const crossThreadList = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-cross-thread-list",
+              name: "list_command_sessions",
+              arguments: {},
+            },
+            { threadId: "thread-2", turnId: "turn-2", workspace },
+          )
+        ).content,
+      ) as { sessionCount: number; sessions: unknown[] };
+      expect(crossThreadList).toEqual({ sessionCount: 0, sessions: [] });
+
+      const listed = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-list",
+              name: "list_command_sessions",
+              arguments: {},
+            },
+            context,
+          )
+        ).content,
+      ) as {
+        sessionCount: number;
+        sessions: Array<{ sessionId: string; command: string; status: string; stdout?: unknown }>;
+      };
+      expect(listed.sessionCount).toBe(1);
+      expect(listed.sessions[0]).toMatchObject({
+        sessionId,
+        status: "running",
+      });
+      expect(listed.sessions[0].command).toContain("node");
+      expect(listed.sessions[0].stdout).toBeUndefined();
+
       await expect(
         registry.execute(
           {
@@ -3594,6 +3754,23 @@ describe("application tools", () => {
         ) as { stdout: { text: string } };
         return read.stdout.text.includes("ready") && read.stdout.text.includes("echo: ping ");
       });
+
+      const listedWithOutput = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-list-output",
+              name: "list_command_sessions",
+              arguments: { include_output: true, tail_bytes: 1024 },
+            },
+            context,
+          )
+        ).content,
+      ) as { sessions: Array<{ sessionId: string; stdout: { text: string } }> };
+      expect(listedWithOutput.sessions).toHaveLength(1);
+      expect(listedWithOutput.sessions[0].sessionId).toBe(sessionId);
+      expect(listedWithOutput.sessions[0].stdout.text).toContain("ready");
+      expect(listedWithOutput.sessions[0].stdout.text).toContain("echo: ping ");
 
       const stopped = JSON.parse(
         (

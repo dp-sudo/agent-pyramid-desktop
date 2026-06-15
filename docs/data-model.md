@@ -210,9 +210,15 @@ Fields:
 - `mode`
 - `goalMode`
 - `usage`
+- `toolCatalog`
 
 `goalMode` is optional but must be boolean when present. JSONL runtime event
 replay rejects `turn_started.turn` records where `goalMode` has another shape.
+`toolCatalog` is optional and is present on runtime-created turns. It contains
+`{ fingerprint, toolCount, toolNames }` for the model-visible tool catalog after
+turn/mode/runtime-preference filtering. The fingerprint is a diagnostic value
+over canonical tool definitions; it explains tool catalog drift without
+persisting tool schemas in the turn record.
 
 `TurnStatus` values:
 
@@ -429,6 +435,8 @@ The shared `isRuntimeEvent()` guard requires repeated top-level fields to stay
 aligned with nested records: `turn_started.threadId/turnId/startedAt` must match
 `turn.threadId/id/startedAt`, and `item_appended` / `item_updated` must match
 the nested `item.threadId/turnId`.
+When present, `turn_started.turn.toolCatalog.toolNames.length` must equal
+`toolCatalog.toolCount`, and tool names must be non-empty strings.
 Usage data lives on `turn_completed.usage` and is aggregated by `usage:daily`.
 Daily usage buckets use local calendar-date stepping instead of fixed 24-hour
 millisecond offsets, so daylight-saving time transitions cannot duplicate or
@@ -559,6 +567,10 @@ Key semantics:
 - `toolAvailability` is currently consumed by `AgentRuntime` as a catalog-level
   tool switch. Disabled tools are omitted from LLM tool definitions and forced
   calls to disabled tools produce failed tool items.
+- Model-visible tool definitions are sorted and fingerprinted by
+  `ToolCatalogService` after catalog filtering. The resulting
+  `TurnRecord.toolCatalog` snapshot is diagnostic only; approval, sandbox and
+  permission checks still run immediately before execution.
 - `permissionRules` is an ordered array of `{ id, tool, pattern, effect }`
   records where `tool` is `command | write | mcp` and `effect` is
   `allow | ask | deny`. Updates replace the full rule array and must contain
@@ -567,8 +579,8 @@ Key semantics:
   instead of silently dropping a security rule.
 - Runtime evaluates `permissionRules` after hard `read-only` sandbox and
   `approvalPolicy: never` denials. Command rules match raw `command` arguments
-  for shell-like command tools; write rules match `path` arguments or
-  `apply_patch` target paths; MCP rules match `server/tool` derived from
+  for shell-like command tools; write rules match `path` arguments, including
+  `multi_edit`, or `apply_patch` target paths; MCP rules match `server/tool` derived from
   `mcp__<server>__<tool>` names. Matching effects resolve by
   `deny > ask > allow`; no match falls back to normal approval logic.
 - `mcpServers` is an array of external MCP server configs. Each config stores

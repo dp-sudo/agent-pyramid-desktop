@@ -218,6 +218,12 @@ export class AgentRuntime {
       mode: normalizedRequest.mode ?? "agent",
       goalMode: normalizedRequest.goalMode ?? Boolean(thread.goal && thread.goal.status === "active"),
     };
+    const initialToolDefinitions = this.toolCatalog.listDefinitionsForTurn(
+      turn,
+      thread,
+      runtimePreferences,
+    );
+    turn.toolCatalog = this.toolCatalog.describeDefinitions(initialToolDefinitions);
     this.inFlight.set(turn.id, turn);
 
     // Append the user item first.
@@ -468,14 +474,14 @@ export class AgentRuntime {
           toolCalls: response.toolCalls,
         });
 
-        for (const call of response.toolCalls) {
-          const result = await this.toolExecutor.execute(
-            turn,
-            thread,
-            call,
-            runtimePreferences,
-            modelConfig,
-          );
+        const toolResults = await this.executeToolCallsForRound(
+          turn,
+          thread,
+          response.toolCalls,
+          runtimePreferences,
+          modelConfig,
+        );
+        for (const result of toolResults) {
           messages.push({
             role: "tool",
             content: result.content,
@@ -513,6 +519,57 @@ export class AgentRuntime {
       await this.emitTurnFailed(turn, message);
       await this.markTurnStatus(turn, "failed");
     }
+  }
+
+  private async executeToolCallsForRound(
+    turn: TurnRecord,
+    thread: ThreadRecord,
+    calls: AgentToolCall[],
+    runtimePreferences: RuntimePreferences,
+    modelConfig: ModelConfig,
+  ): Promise<AgentToolResult[]> {
+    if (this.canExecuteToolCallsInParallel(calls)) {
+      return Promise.all(
+        calls.map((call) =>
+          this.toolExecutor.execute(
+            turn,
+            thread,
+            call,
+            runtimePreferences,
+            modelConfig,
+          ),
+        ),
+      );
+    }
+
+    const results: AgentToolResult[] = [];
+    for (const call of calls) {
+      results.push(
+        await this.toolExecutor.execute(
+          turn,
+          thread,
+          call,
+          runtimePreferences,
+          modelConfig,
+        ),
+      );
+      if (turn.status !== "in-flight") {
+        break;
+      }
+    }
+    return results;
+  }
+
+  private canExecuteToolCallsInParallel(calls: AgentToolCall[]): boolean {
+    return calls.length > 1 && calls.every((call) => this.isParallelSafeReadOnlyToolCall(call));
+  }
+
+  private isParallelSafeReadOnlyToolCall(call: AgentToolCall): boolean {
+    const tool = this.deps.registry.getTool(call.name);
+    if (!tool?.metadata?.isReadOnly) return false;
+    // run_skill can dispatch an isolated subagent LLM loop; keep parent and child
+    // model calls serialized on the thread-bound worker.
+    return call.name !== "run_skill";
   }
 
   private async appendBudgetExhaustedToolItems(
@@ -596,6 +653,7 @@ export class AgentRuntime {
   ): LlmRequest {
     const systemPrompt = this.buildSystemPrompt();
     const tools = this.toolCatalog.listDefinitionsForTurn(turn, thread, runtimePreferences);
+    turn.toolCatalog = this.toolCatalog.describeDefinitions(tools);
     return {
       protocol: modelConfig.protocol,
       provider: modelConfig.model_provide,
@@ -1290,6 +1348,7 @@ export class AgentRuntime {
     }
     this.deps.bus.emit("turn_completed", event);
     this.inFlight.delete(turn.id);
+    this.toolExecutor.clearReadOnlyToolRepeatStateForTurn(turn.id);
   }
 }
 

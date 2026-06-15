@@ -148,6 +148,7 @@ export const RUNTIME_TOOL_NAMES = [
   "search_files",
   "rg_search",
   "edit_file",
+  "multi_edit",
   "write_file",
   "delete_file",
   "apply_patch",
@@ -171,6 +172,7 @@ export const RUNTIME_TOOL_NAMES = [
   "run_tests",
   "run_build",
   "start_command_session",
+  "list_command_sessions",
   "read_command_session",
   "write_command_session",
   "stop_command_session",
@@ -194,6 +196,7 @@ export const RUNTIME_READ_ONLY_TOOL_NAMES = [
   "git_log",
   "git_branch",
   "package_scripts",
+  "list_command_sessions",
   "read_command_session",
   "detect_shell_environment",
   "diagnose_file",
@@ -460,6 +463,7 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     search_files: true,
     rg_search: true,
     edit_file: true,
+    multi_edit: true,
     write_file: true,
     delete_file: true,
     apply_patch: true,
@@ -483,6 +487,7 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     run_tests: true,
     run_build: true,
     start_command_session: true,
+    list_command_sessions: true,
     read_command_session: true,
     write_command_session: true,
     stop_command_session: true,
@@ -500,6 +505,7 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     search_files: true,
     rg_search: true,
     edit_file: false,
+    multi_edit: false,
     write_file: false,
     delete_file: false,
     apply_patch: false,
@@ -523,6 +529,7 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     run_tests: false,
     run_build: false,
     start_command_session: false,
+    list_command_sessions: false,
     read_command_session: false,
     write_command_session: false,
     stop_command_session: false,
@@ -648,6 +655,12 @@ export interface TokenUsage {
   cacheHitRate?: number | null;
 }
 
+export interface RuntimeToolCatalogSnapshot {
+  fingerprint: string;
+  toolCount: number;
+  toolNames: string[];
+}
+
 export interface TurnRecord {
   id: string;
   threadId: string;
@@ -660,6 +673,7 @@ export interface TurnRecord {
   mode: TurnMode;
   goalMode?: boolean;
   usage?: TokenUsage;
+  toolCatalog?: RuntimeToolCatalogSnapshot;
 }
 
 // ============================================================================
@@ -1791,7 +1805,20 @@ function isTurnRecord(value: unknown): value is TurnRecord {
     hasString(value, "mode") &&
     (value.mode === "agent" || value.mode === "plan") &&
     isOptionalBoolean(value.goalMode) &&
-    isOptionalTokenUsage(value.usage);
+    isOptionalTokenUsage(value.usage) &&
+    isOptionalRuntimeToolCatalogSnapshot(value.toolCatalog);
+}
+
+function isOptionalRuntimeToolCatalogSnapshot(
+  value: unknown,
+): value is RuntimeToolCatalogSnapshot | undefined {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return hasNonBlankString(value, "fingerprint") &&
+    isNonNegativeInteger(value.toolCount) &&
+    Array.isArray(value.toolNames) &&
+    value.toolNames.every((name) => typeof name === "string" && name.trim().length > 0) &&
+    value.toolNames.length === value.toolCount;
 }
 
 function isTurnStartedEventConsistent(value: Record<string, unknown>): boolean {

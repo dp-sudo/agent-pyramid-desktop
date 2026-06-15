@@ -176,7 +176,7 @@ flowchart TD
   Persist["persistModelOutput -> item_appended"]
   ToolCheck{"response.toolCalls.length > 0?"}
   Budget{"round >= maxToolRounds?"}
-  Execute["ToolCallExecutor.execute"]
+  Execute["executeToolCallsForRound\n-> ToolCallExecutor.execute"]
   PushTool["push assistant tool call + tool result into messages"]
   Complete["markTurnStatus(completed)"]
   NeedsContinuation["append budget warning\nmark needs_continuation"]
@@ -227,8 +227,13 @@ LLM request construction:
   `MiniMaxGateway` routes by protocol, while the OpenAI-compatible and
   Anthropic-compatible adapters own request body and SSE parsing differences.
 - Tool definitions are filtered by turn mode, goal/plan mode and
-  `RuntimePreferences.toolAvailability` before they are passed to
+  `RuntimePreferences.toolAvailability`, sorted by tool name, fingerprinted into
+  `TurnRecord.toolCatalog`, and then passed to
   `context-compaction.prepareMessagesForRequest()` and the worker pool.
+- `context-compaction.prepareMessagesForRequest()` first repairs the request-only
+  model history by dropping orphan tool results, duplicate tool results and
+  assistant tool calls that have no matching result. This keeps provider request
+  history protocol-valid without rewriting persisted `messages.jsonl`.
 - Context budget inputs still come from the selected model profile
   (`model_context_window`, `model_auto_compact_token_limit`, `max_tokens`),
   while automatic compaction enablement and strategy come from
@@ -346,6 +351,22 @@ Tool availability:
 - Other registered tools pass through `ToolCatalogService` tool access policy and
   persisted `RuntimePreferences.toolAvailability` before they are sent to the
   model or executed from a forced model tool call.
+- `ToolCatalogService` returns model-visible tool definitions in stable name
+  order and computes `TurnRecord.toolCatalog` from canonical tool definitions.
+  The snapshot contains only `fingerprint`, `toolCount`, and `toolNames`, so it
+  can diagnose catalog/cache drift without persisting full schemas.
+- `ToolCallExecutor` tracks read-only tool calls by tool name plus canonical
+  arguments within a single turn. From the third identical read-only call onward
+  it does not call `ToolRegistry.execute()`: it appends a failed `ToolItem` with
+  `reason: "repeat_read_only_tool_call"` and returns that visible tool result to
+  the model. The repeat state is cleared when the turn reaches a terminal status.
+- Parent-turn tool batches are parallelized only when every call in the model
+  response resolves to a registered `metadata.isReadOnly` tool and the call is
+  not `run_skill`. Mixed batches and write-capable tools stay sequential, so
+  write/read ordering, approval prompts, checkpoint recording and command
+  lifecycle stay deterministic. Parallel batches still execute through
+  `ToolCallExecutor`, and their results are appended to the next model request
+  in the original model tool-call order.
 - MCP tools are registered dynamically by `McpHost` using the
   `mcp__<server>__<tool>` namespace. Code threads can see them through the same
   catalog path as built-ins; Write threads hide them by default with the
@@ -403,11 +424,11 @@ stdout/stderr chunks; those calls become live-only `tool_progress` events on
 call. Final tool success/failure still arrives as the normal `item_updated`
 event with the completed `ToolItem.result`.
 
-Workspace tools require an absolute thread workspace path before resolving file paths. The shared workspace policy trims the workspace root once, then uses that same normalized string for absolute-path validation and path resolution. `list_files.path` and `search_files.path` reject non-string values instead of treating them as omitted root-path requests, and workspace string parameters reject NUL bytes before path resolution or search execution. `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, and `search_files.max_results` are strict integer ranges; invalid or out-of-range values fail instead of being silently clamped to defaults. `read_file`, `search_files`, `rg_search`, `edit_file`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. Final UTF-8 file writes for coding tools, Write IPC saves/creates, and checkpoint code restore use a no-follow open where supported, so a target replaced with a symbolic link after validation is rejected rather than followed; editable coding-tool reads and Write IPC Markdown reads/rename sources use the same no-follow final-component boundary before decoding source text. Single-file coding tools restore the original file content if post-write metadata collection fails before file history and read state are updated. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write or post-write metadata step fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the history entry belongs to another thread or the file no longer matches the latest agent-written content. Checkpoint code rewind builds a restore plan first, then re-checks the workspace path policy and symbolic-link boundary again immediately before each delete/write commit, including after parent directory creation. Session rewind first verifies the selected turn still exists in the current transcript before restoring code, then truncates messages/events and checkpoint records after code restore succeeds. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
+Workspace tools require an absolute thread workspace path before resolving file paths. The shared workspace policy trims the workspace root once, then uses that same normalized string for absolute-path validation and path resolution. `list_files.path` and `search_files.path` reject non-string values instead of treating them as omitted root-path requests, and workspace string parameters reject NUL bytes before path resolution or search execution. `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, and `search_files.max_results` are strict integer ranges; invalid or out-of-range values fail instead of being silently clamped to defaults. `read_file`, `search_files`, `rg_search`, `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. Final UTF-8 file writes for coding tools, Write IPC saves/creates, and checkpoint code restore use a no-follow open where supported, so a target replaced with a symbolic link after validation is rejected rather than followed; editable coding-tool reads and Write IPC Markdown reads/rename sources use the same no-follow final-component boundary before decoding source text. Single-file coding tools restore the original file content if post-write metadata collection fails before file history and read state are updated. `multi_edit` applies ordered exact replacements to one file in memory and writes once only after every step succeeds, so a later missing or ambiguous `old_string` leaves the file unchanged. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write or post-write metadata step fails. `rollback_file` uses the current runtime's in-memory file history and refuses to run if the history entry belongs to another thread or the file no longer matches the latest agent-written content. Checkpoint code rewind builds a restore plan first, then re-checks the workspace path policy and symbolic-link boundary again immediately before each delete/write commit, including after parent directory creation. Session rewind first verifies the selected turn still exists in the current transcript before restoring code, then truncates messages/events and checkpoint records after code restore succeeds. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
 
 `apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written. A patch may include multiple hunks for one file under a single file header, but duplicate file sections for the same resolved target are rejected so successful writes and failure rollback both have one authoritative pre-write snapshot per file. The parser treats `\ No newline at end of file` as part of the neighboring hunk line, so patches cannot silently add or remove the final newline. Existing lines keep their original LF or CRLF endings; added lines use the local file ending around the insertion point, falling back to LF for new files.
 
-File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `write_file`, `apply_patch`, and `rollback_file`; rollback is limited to the thread that produced the latest file history entry, and history is not replayed from JSONL after restart.
+File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `rollback_file`; rollback is limited to the thread that produced the latest file history entry, and history is not replayed from JSONL after restart.
 
 `run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. `shell_command`, `git_bash_command`, `powershell_command`, and `wsl_command` use the same foreground execution boundary while selecting an explicit shell. `shell_command` can use a custom `shell_path` and `shell_args`; `powershell_command` defaults to `pwsh` and, on Windows, falls back to Windows PowerShell when `pwsh` is absent from PATH; `wsl_command` converts Windows drive paths to `/mnt/<drive>/...` before entering the WSL shell. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Foreground command-backed tools report live stdout/stderr through `tool_progress`, throttled in the command process wrapper by time and byte thresholds before renderer updates. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start or exits unsuccessfully.
 
@@ -437,11 +458,14 @@ instead of silently falling back to lockfile-mutating `npm install`.
 candidates, PowerShell/pwsh, WSL, and workspace path conversion facts.
 
 Long-running command sessions are held in main-process memory by
-`start_command_session`, `read_command_session`, `write_command_session`, and
-`stop_command_session`. Starting a session returns a session id immediately
-while stdout/stderr are retained in bounded per-stream buffers that keep the
-latest bytes for long-running watcher/dev-server output. Read, write and stop
-calls must come from the same thread and workspace that created the session.
+`start_command_session`, `list_command_sessions`, `read_command_session`,
+`write_command_session`, and `stop_command_session`. Starting a session returns
+a session id immediately while stdout/stderr are retained in bounded per-stream
+buffers that keep the latest bytes for long-running watcher/dev-server output.
+List, read, write and stop calls are scoped to the same thread and workspace
+that created the session. `list_command_sessions` is read-only and returns the
+visible session ids/statuses, with optional UTF-8-safe stdout/stderr tails for
+recovering context before deciding which session to read or stop.
 `read_command_session` tail output is decoded on a UTF-8 character boundary, so
 byte-limited reads cannot introduce replacement characters into the retained
 stdout/stderr snapshot. `write_command_session` writes the provided input string

@@ -42,6 +42,10 @@ describe("RuntimePreferencesStore", () => {
     expect(raw.runtimePreferences).toEqual(DEFAULT_RUNTIME_PREFERENCES);
     expect(preferences.toolAvailability.write.apply_patch).toBe(false);
     expect(preferences.toolAvailability.code.apply_patch).toBe(true);
+    expect(preferences.toolAvailability.write.multi_edit).toBe(false);
+    expect(preferences.toolAvailability.code.multi_edit).toBe(true);
+    expect(preferences.toolAvailability.write.list_command_sessions).toBe(false);
+    expect(preferences.toolAvailability.code.list_command_sessions).toBe(true);
     expect(preferences.skills).toEqual(DEFAULT_RUNTIME_PREFERENCES.skills);
     expect(existsSync(path.join(userDataDir, "runtime-preferences.json"))).toBe(false);
   });

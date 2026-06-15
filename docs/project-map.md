@@ -109,7 +109,7 @@ flowchart LR
 | --- | --- | --- |
 | Main composition | `src/main/index.ts` | 创建 stores、event bus、worker pool、tool registry、AgentRuntime，注册 IPC handlers，创建窗口。 |
 | Runtime orchestration | `src/main/application/agent-runtime.ts`、`src/main/application/tool-call-executor.ts`、`src/main/application/runtime-event-persist.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、parent-turn 工具执行生命周期、approval gate、中断、item/event 持久化辅助和事件广播。 |
-| Tool system | `src/main/application/tools/*`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口和内置工具。 |
+| Tool system | `src/main/application/tools/*`、`src/main/application/tool-catalog.ts`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口、内置工具、模型可见工具目录过滤、稳定排序和 catalog fingerprint。 |
 | Skills system | `src/shared/skills/*`、`src/main/skills/skill-service.ts`、`src/main/application/tools/skill-tools.ts`、`src/main/ipc/skills-handlers.ts` | 发现 workspace skills、解析 `SKILL.md`、按 turn 匹配注入 inline 动态上下文，并通过只读 `list_skills` / `run_skill` 工具和 Settings `skills:list` IPC 暴露技能目录摘要、验证警告、inline 技能指令和 isolated read-only subagent 结果。 |
 | MCP host | `src/main/infrastructure/mcp/*`、`src/main/ipc/mcp-handlers.ts` | stdio / Streamable HTTP MCP client lifecycle、动态工具注册、cache/lazy schema、startup stats、auth diagnostics、prompts/resources surface 和 MCP IPC。 |
 | LLM worker | `src/main/infrastructure/llm-worker/*` | main 到 worker 的请求路由、流式 chunk 转发和取消。 |
@@ -201,6 +201,12 @@ flowchart TD
 - Parent-turn tool execution lifecycle goes through `ToolCallExecutor`, then
   approved calls reach `ToolRegistry.execute()`; direct tool bypass is not part
   of the architecture.
+- Parent-turn all-read-only tool batches may run concurrently, but mixed or
+  write-capable batches stay sequential; both paths still go through
+  `ToolCallExecutor`.
+- `ToolCallExecutor` also owns turn-scoped duplicate protection for read-only
+  tool calls: the third identical tool name plus canonical arguments is recorded
+  as a failed visible `ToolItem` and is not executed again in that turn.
 - `AgentToolContext` remains the registry execution boundary, but tool
   implementations should depend on the narrowest read/write/command/skill
   capability context that covers their inputs.
@@ -226,11 +232,13 @@ flowchart TD
   same `ToolRegistry`. Matching cached schema can expose lazy placeholders
   while the live server reconnects.
 - Read-only workspace tools skip approval.
-- `edit_file` / `write_file` / `apply_patch` require approval, strict UTF-8 text, and fresh read-state before writing existing files.
+- `edit_file` / `multi_edit` / `write_file` / `apply_patch` require approval, strict UTF-8 text, and fresh read-state before writing existing files.
 - `rollback_file` uses in-memory runtime file history to undo the latest agent write when the current file still matches that history entry.
 - `run_command`, `shell_command`, `git_bash_command`, `powershell_command`,
   `wsl_command`, package/task wrappers, Git commit, and command session write /
   stop tools run through the command approval boundary.
+- `list_command_sessions` and `read_command_session` are read-only command
+  session inspection tools; they still enforce same thread/workspace visibility.
 - Shell and package-manager invocation construction lives in
   `src/main/application/tools/command-invocation.ts`; foreground process
   execution and shared process-tree kill behavior live in
@@ -260,6 +268,9 @@ flowchart TD
   `RuntimePreferences.toolAvailability` to hide and reject Code-only
   coding/command tools by default; policy overrides can allow or deny
   individual tool names per thread mode before approval/sandbox checks run.
+- `ToolCatalogService` sorts model-visible tool definitions by name and records
+  `{ fingerprint, toolCount, toolNames }` on `TurnRecord.toolCatalog` for
+  catalog/cache drift diagnostics.
 - Per-call command/write/MCP permission rules live in
   `RuntimePreferences.permissionRules` and are evaluated by
   `src/main/application/permission-policy.ts` inside `ToolPolicyService`;

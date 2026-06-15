@@ -250,8 +250,8 @@ flowchart LR
   InMemory["InMemoryToolRegistry"]
   Plan["create_plan"]
   Workspace["list_files\nread_file\nsearch_files"]
-  Coding["edit_file\nwrite_file\napply_patch\nrollback_file"]
-  Command["run_command\ndiagnose_workspace\ndiagnose_file"]
+  Coding["edit_file\nmulti_edit\nwrite_file\napply_patch\nrollback_file"]
+  Command["run_command\ncommand sessions\ndiagnose_workspace\ndiagnose_file"]
   Mcp["MCP tools\nmcp__server__tool"]
   Goal["update_goal"]
   Approval["Approval gate"]
@@ -279,12 +279,13 @@ Tool availability is decided at the runtime boundary:
 - `update_goal`: exposed in goal mode or active-goal threads.
 - `list_files`, `read_file`, `search_files`: read-only workspace tools and do
   not require approval.
-- `edit_file`, `write_file`, `apply_patch`, `rollback_file`: workspace write tools that
+- `edit_file`, `multi_edit`, `write_file`, `apply_patch`, `rollback_file`: workspace write tools that
   require approval, strict UTF-8 text, fresh read-state for existing files, and
-  workspace path validation. `apply_patch` dry-runs all hunks before writing,
-  preserves no-newline-at-end markers, and can show a multi-file diff preview.
-  `rollback_file` restores the latest in-memory agent file history entry only
-  when current content still matches that entry.
+  workspace path validation. `multi_edit` applies ordered exact replacements in
+  memory and writes once only after every step succeeds. `apply_patch` dry-runs
+  all hunks before writing, preserves no-newline-at-end markers, and can show a
+  multi-file diff preview. `rollback_file` restores the latest in-memory agent
+  file history entry only when current content still matches that entry.
 - `run_command`: foreground command tool that runs inside the workspace,
   returns stdout/stderr/exit status, requires approval, and is aborted when the
   turn is interrupted.

@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import type { ToolRegistry } from "../domain/agent/ports.js";
 import type { AgentToolDefinition } from "../domain/agent/types.js";
 import type {
   RuntimePreferences,
+  RuntimeToolCatalogSnapshot,
   RuntimeToolName,
   ThreadRecord,
   TurnRecord,
@@ -44,6 +46,7 @@ export const COMMAND_TOOL_NAMES = [
   "run_tests",
   "run_build",
   "start_command_session",
+  "list_command_sessions",
   "read_command_session",
   "write_command_session",
   "stop_command_session",
@@ -56,6 +59,7 @@ const COMMAND_TOOL_NAME_SET = new Set<string>(COMMAND_TOOL_NAMES);
 
 export const CODE_ONLY_TOOL_NAMES = [
   "edit_file",
+  "multi_edit",
   "write_file",
   "delete_file",
   "apply_patch",
@@ -146,7 +150,17 @@ export class ToolCatalogService {
           runtimePreferences,
           definition,
         ),
-      );
+      )
+      .sort(compareToolDefinitions);
+  }
+
+  describeDefinitions(definitions: AgentToolDefinition[]): RuntimeToolCatalogSnapshot {
+    const normalized = normalizeToolDefinitions(definitions);
+    return {
+      fingerprint: hashToolCatalog(normalized),
+      toolCount: normalized.length,
+      toolNames: normalized.map((definition) => definition.name),
+    };
   }
 
   isToolAvailableForTurn(
@@ -215,4 +229,35 @@ export class ToolCatalogService {
     }
     return DEFAULT_TOOL_ACCESS_POLICY(input) !== "deny";
   }
+}
+
+function compareToolDefinitions(a: AgentToolDefinition, b: AgentToolDefinition): number {
+  return a.name.localeCompare(b.name);
+}
+
+function normalizeToolDefinitions(definitions: AgentToolDefinition[]): AgentToolDefinition[] {
+  return [...definitions]
+    .map((definition) => ({
+      name: definition.name,
+      description: definition.description,
+      inputSchema: canonicalizeJson(definition.inputSchema) as Record<string, unknown>,
+    }))
+    .sort(compareToolDefinitions);
+}
+
+function hashToolCatalog(definitions: AgentToolDefinition[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(definitions))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    out[key] = canonicalizeJson((value as Record<string, unknown>)[key]);
+  }
+  return out;
 }

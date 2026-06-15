@@ -95,6 +95,10 @@ describe("permission-policy", () => {
       tool: "write",
       value: "src/main/index.ts",
     });
+    expect(buildPermissionCandidate("multi_edit", { path: "./src/main/index.ts" })).toEqual({
+      tool: "write",
+      value: "src/main/index.ts",
+    });
     expect(buildPermissionCandidate("mcp__local-mcp__echo", {})).toEqual({
       tool: "mcp",
       value: "local-mcp/echo",

@@ -16,12 +16,13 @@ import {
 function createTool(
   name: string,
   metadata: AgentTool["metadata"] = {},
+  inputSchema: Record<string, unknown> = { type: "object" },
 ): AgentTool {
   return {
     definition: {
       name,
       description: `${name} test tool`,
-      inputSchema: { type: "object" },
+      inputSchema,
     },
     metadata,
     async execute() {
@@ -134,6 +135,71 @@ describe("ToolCatalogService", () => {
       createThread({ mode: "code" }),
       preferences,
     ).map((definition) => definition.name)).toEqual(["run_command"]);
+  });
+
+  it("keeps model-visible catalog ordering and fingerprints stable", () => {
+    const firstRegistry = new InMemoryToolRegistry([
+      createTool("zeta", {}, {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          limit: { type: "number" },
+        },
+      }),
+      createTool("alpha", {}, {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+        },
+      }),
+    ]);
+    const secondRegistry = new InMemoryToolRegistry([
+      createTool("alpha", {}, {
+        properties: {
+          query: { type: "string" },
+        },
+        type: "object",
+      }),
+      createTool("zeta", {}, {
+        properties: {
+          limit: { type: "number" },
+          path: { type: "string" },
+        },
+        type: "object",
+      }),
+    ]);
+    const changedRegistry = new InMemoryToolRegistry([
+      createTool("alpha", {}, {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+        },
+      }),
+      createTool("zeta", {}, {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          limit: { type: "integer" },
+        },
+      }),
+    ]);
+    const firstService = new ToolCatalogService({ registry: firstRegistry });
+    const secondService = new ToolCatalogService({ registry: secondRegistry });
+    const changedService = new ToolCatalogService({ registry: changedRegistry });
+    const turn = createTurn();
+    const thread = createThread();
+
+    const firstDefinitions = firstService.listDefinitionsForTurn(turn, thread, DEFAULT_RUNTIME_PREFERENCES);
+    const secondDefinitions = secondService.listDefinitionsForTurn(turn, thread, DEFAULT_RUNTIME_PREFERENCES);
+    const changedDefinitions = changedService.listDefinitionsForTurn(turn, thread, DEFAULT_RUNTIME_PREFERENCES);
+
+    expect(firstDefinitions.map((definition) => definition.name)).toEqual(["alpha", "zeta"]);
+    expect(firstService.describeDefinitions(firstDefinitions)).toEqual(
+      secondService.describeDefinitions(secondDefinitions),
+    );
+    expect(firstService.describeDefinitions(firstDefinitions).fingerprint).not.toBe(
+      changedService.describeDefinitions(changedDefinitions).fingerprint,
+    );
   });
 });
 

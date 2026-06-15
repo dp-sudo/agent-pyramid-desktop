@@ -6,7 +6,10 @@ import { CheckpointStore } from "../persistence/checkpoint-store.js";
 import { RuntimeEventBus } from "../event-bus.js";
 import { FileReadStateStore } from "./tools/file-read-state.js";
 import { FileHistoryStore } from "./tools/file-history-state.js";
-import { ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS } from "./constants.js";
+import {
+  ACTIVE_TOOL_INTERRUPT_SETTLE_TIMEOUT_MS,
+  READ_ONLY_TOOL_REPEAT_SUPPRESSION_THRESHOLD,
+} from "./constants.js";
 import { ApprovalCoordinator } from "./approval-coordinator.js";
 import { ToolCatalogService, isCommandToolName } from "./tool-catalog.js";
 import { ToolPolicyService } from "./tool-policy.js";
@@ -66,6 +69,7 @@ export interface ToolCallExecutorDeps {
  */
 export class ToolCallExecutor {
   private readonly activeToolExecutions = new Map<string, Set<ActiveToolExecution>>();
+  private readonly readOnlyToolRepeatCounts = new Map<string, Map<string, number>>();
   private readonly toolPolicy: ToolPolicyService;
   private readonly approvals: ApprovalCoordinator;
 
@@ -130,6 +134,31 @@ export class ToolCallExecutor {
         "tool_not_found",
         `Tool "${call.name}" is not available in this turn.`,
       );
+      return {
+        toolCallId: call.id,
+        name: call.name,
+        content: JSON.stringify(toolItem.result),
+      };
+    }
+
+    // Read-only retries are safe to suppress because they cannot mutate the
+    // workspace; the visible failed ToolItem keeps the model/user audit trail.
+    const repeatInspection = this.inspectReadOnlyToolRepeat(turn.id, call);
+    if (repeatInspection.suppressed) {
+      toolItem.status = "failed";
+      toolItem.result = {
+        suppressed: true,
+        reason: "repeat_read_only_tool_call",
+        count: repeatInspection.count,
+        threshold: repeatInspection.threshold,
+        message: [
+          `Tool "${call.name}" was called with identical arguments ${repeatInspection.count} time(s) in this turn.`,
+          "The duplicate read-only call was not executed; reuse the earlier result or change the arguments.",
+        ].join(" "),
+      };
+      await this.deps.store.appendItem(turn.threadId, toolItem);
+      this.emitToolItemUpdated(turn, toolItem);
+      this.unregisterActiveToolExecution(turn.id, activeExecution);
       return {
         toolCallId: call.id,
         name: call.name,
@@ -276,6 +305,10 @@ export class ToolCallExecutor {
     }
   }
 
+  clearReadOnlyToolRepeatStateForTurn(turnId: string): void {
+    this.readOnlyToolRepeatCounts.delete(turnId);
+  }
+
   async interruptActiveToolExecutionsForTurn(turn: TurnRecord): Promise<void> {
     const executions = this.activeToolExecutions.get(turn.id);
     if (!executions) return;
@@ -304,6 +337,30 @@ export class ToolCallExecutor {
     if (!await waitForInterruptedToolExecutions(settling)) {
       this.deps.reportRuntimeError(turn, "internal", "Timed out waiting for interrupted tools to settle.");
     }
+  }
+
+  private inspectReadOnlyToolRepeat(
+    turnId: string,
+    call: AgentToolCall,
+  ): { suppressed: boolean; count: number; threshold: number } {
+    const tool = this.deps.registry.getTool(call.name);
+    if (!tool?.metadata?.isReadOnly) {
+      return {
+        suppressed: false,
+        count: 0,
+        threshold: READ_ONLY_TOOL_REPEAT_SUPPRESSION_THRESHOLD,
+      };
+    }
+    const key = `${call.name}:${stableJsonStringify(call.arguments)}`;
+    const repeatCounts = this.readOnlyToolRepeatCounts.get(turnId) ?? new Map<string, number>();
+    const count = (repeatCounts.get(key) ?? 0) + 1;
+    repeatCounts.set(key, count);
+    this.readOnlyToolRepeatCounts.set(turnId, repeatCounts);
+    return {
+      suppressed: count >= READ_ONLY_TOOL_REPEAT_SUPPRESSION_THRESHOLD,
+      count,
+      threshold: READ_ONLY_TOOL_REPEAT_SUPPRESSION_THRESHOLD,
+    };
   }
 
   private async buildApprovalPreview(
@@ -424,5 +481,23 @@ function isFileDiffLine(value: unknown): boolean {
   return (
     (line.type === "context" || line.type === "added" || line.type === "removed") &&
     typeof line.text === "string"
+  );
+}
+
+function stableJsonStringify(value: unknown): string {
+  return JSON.stringify(canonicalizeJson(value));
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeJson);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => [key, canonicalizeJson(nestedValue)]),
   );
 }

@@ -205,6 +205,7 @@ describe("shared agent contracts", () => {
 
   it("keeps runtime preferences defaults and guards as a shared contract", () => {
     expect(RUNTIME_TOOL_NAMES).toContain("apply_patch");
+    expect(RUNTIME_TOOL_NAMES).toContain("multi_edit");
     expect(RUNTIME_TOOL_NAMES).toContain("run_command");
     expect(RUNTIME_TOOL_NAMES).toContain("list_skills");
     expect(RUNTIME_TOOL_NAMES).toContain("run_skill");
@@ -218,6 +219,7 @@ describe("shared agent contracts", () => {
       "git_log",
       "git_branch",
       "package_scripts",
+      "list_command_sessions",
       "read_command_session",
       "detect_shell_environment",
       "diagnose_file",
@@ -259,6 +261,10 @@ describe("shared agent contracts", () => {
     expect(DEFAULT_RUNTIME_PREFERENCES.permissionRules).toEqual([]);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.apply_patch).toBe(true);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.apply_patch).toBe(false);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.multi_edit).toBe(true);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.multi_edit).toBe(false);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.list_command_sessions).toBe(true);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_command_sessions).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_command).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_skills).toBe(true);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_skill).toBe(true);
@@ -1209,6 +1215,11 @@ describe("shared agent contracts", () => {
         startedAt: "2026-06-08T00:00:00.000Z",
         model: "MiniMax-M3",
         mode: "agent",
+        toolCatalog: {
+          fingerprint: "catalog-a",
+          toolCount: 2,
+          toolNames: ["read_file", "write_file"],
+        },
       },
     };
     expect(isRuntimeEvent(validTurnStarted)).toBe(true);
@@ -1223,6 +1234,28 @@ describe("shared agent contracts", () => {
     expect(isRuntimeEvent({
       ...validTurnStarted,
       turn: { ...validTurnStarted.turn, startedAt: "2026-06-08T00:00:01.000Z" },
+    })).toBe(false);
+    expect(isRuntimeEvent({
+      ...validTurnStarted,
+      turn: {
+        ...validTurnStarted.turn,
+        toolCatalog: {
+          fingerprint: "catalog-a",
+          toolCount: 3,
+          toolNames: ["read_file", "write_file"],
+        },
+      },
+    })).toBe(false);
+    expect(isRuntimeEvent({
+      ...validTurnStarted,
+      turn: {
+        ...validTurnStarted.turn,
+        toolCatalog: {
+          fingerprint: "catalog-a",
+          toolCount: 1,
+          toolNames: [""],
+        },
+      },
     })).toBe(false);
     const validItemEvent = {
       kind: "item_appended",

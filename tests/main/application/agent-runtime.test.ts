@@ -142,6 +142,12 @@ function expectRecord(value: unknown, message: string): Record<string, unknown> 
   return value as Record<string, unknown>;
 }
 
+type ToolTimelineItem = Extract<Item, { kind: "tool" }>;
+
+function isToolItemNamed(name: string): (item: Item) => item is ToolTimelineItem {
+  return (item): item is ToolTimelineItem => item.kind === "tool" && item.name === name;
+}
+
 describe("AgentRuntime", () => {
   let userDataDir: string;
   let store: JsonlThreadStore;
@@ -283,6 +289,56 @@ describe("AgentRuntime", () => {
     }
     expect(replayed.map((item) => item.kind)).toEqual(["user", "reasoning", "assistant"]);
     expect(replayed.at(-1)).toMatchObject({ kind: "assistant", text: "Hello" });
+  });
+
+  it("records the model-visible tool catalog snapshot on turn start", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "zeta",
+          description: "Zeta tool",
+          inputSchema: { type: "object" },
+        },
+        async execute() {
+          return "zeta";
+        },
+      },
+      {
+        definition: {
+          name: "alpha",
+          description: "Alpha tool",
+          inputSchema: { type: "object" },
+        },
+        async execute() {
+          return "alpha";
+        },
+      },
+    ]);
+
+    const runtime = createRuntime(registry);
+    const turn = await runtime.startTurn({
+      threadId: thread.id,
+      text: "Run",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(fakePool.requests[0].tools.map((tool) => tool.name)).toEqual(["alpha", "zeta"]);
+    expect(turn.toolCatalog).toEqual({
+      fingerprint: expect.any(String),
+      toolCount: 2,
+      toolNames: ["alpha", "zeta"],
+    });
+    expect(events.find((event) => event.kind === "turn_started")).toMatchObject({
+      kind: "turn_started",
+      turn: {
+        toolCatalog: turn.toolCatalog,
+      },
+    });
   });
 
   it("uses Code and Write default model profiles when no explicit profile is supplied", async () => {
@@ -1425,6 +1481,429 @@ describe("AgentRuntime", () => {
         expect.objectContaining({ kind: "assistant", text: "The file contains the entrypoint." }),
       ]),
     );
+  });
+
+  it("executes all-read-only tool batches concurrently and preserves model result order", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    let activeExecutions = 0;
+    let maxActiveExecutions = 0;
+    const createReadTool = (name: string, delayMs: number): AgentTool => ({
+      definition: {
+        name,
+        description: `Read ${name}`,
+        inputSchema: { type: "object" },
+      },
+      metadata: { isReadOnly: true },
+      async execute() {
+        activeExecutions += 1;
+        maxActiveExecutions = Math.max(maxActiveExecutions, activeExecutions);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        activeExecutions -= 1;
+        return `${name} result`;
+      },
+    });
+    const registry = new InMemoryToolRegistry([
+      createReadTool("read_a", 40),
+      createReadTool("read_b", 5),
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          { id: "call-a", name: "read_a", arguments: {} },
+          { id: "call-b", name: "read_b", arguments: {} },
+        ],
+        raw: {},
+      },
+      {
+        text: "Done.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Read both",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(maxActiveExecutions).toBe(2);
+    expect(fakePool.requests[1].messages.filter((message) => message.role === "tool")).toEqual([
+      { role: "tool", content: "read_a result", toolCallId: "call-a" },
+      { role: "tool", content: "read_b result", toolCallId: "call-b" },
+    ]);
+  });
+
+  it("keeps mixed read and mutation tool batches sequential", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    await store.updateThread(thread.id, { approvalPolicy: "auto" });
+    let activeExecutions = 0;
+    let maxActiveExecutions = 0;
+    const executionTrace: string[] = [];
+    const createTool = (
+      name: string,
+      metadata: NonNullable<AgentTool["metadata"]>,
+    ): AgentTool => ({
+      definition: {
+        name,
+        description: `Tool ${name}`,
+        inputSchema: { type: "object" },
+      },
+      metadata,
+      async execute() {
+        executionTrace.push(`${name}:start`);
+        activeExecutions += 1;
+        maxActiveExecutions = Math.max(maxActiveExecutions, activeExecutions);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        activeExecutions -= 1;
+        executionTrace.push(`${name}:end`);
+        return `${name} result`;
+      },
+    });
+    const registry = new InMemoryToolRegistry([
+      createTool("read_context", { isReadOnly: true }),
+      createTool("update_context", { isDestructive: false }),
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          { id: "call-read", name: "read_context", arguments: {} },
+          { id: "call-update", name: "update_context", arguments: {} },
+        ],
+        raw: {},
+      },
+      {
+        text: "Done.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Read then update",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(maxActiveExecutions).toBe(1);
+    expect(executionTrace).toEqual([
+      "read_context:start",
+      "read_context:end",
+      "update_context:start",
+      "update_context:end",
+    ]);
+  });
+
+  it("suppresses the third identical read-only tool call in a turn", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const executeRead = vi.fn(async () => "read result");
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_context",
+          description: "Read context",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isReadOnly: true },
+        execute: executeRead,
+      },
+    ]);
+    const canonicalArgs = {
+      path: "src/main/index.ts",
+      range: { start: 1, end: 20 },
+    };
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read-1", name: "read_context", arguments: canonicalArgs }],
+        raw: {},
+      },
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          {
+            id: "call-read-2",
+            name: "read_context",
+            arguments: { range: { end: 20, start: 1 }, path: "src/main/index.ts" },
+          },
+        ],
+        raw: {},
+      },
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read-3", name: "read_context", arguments: canonicalArgs }],
+        raw: {},
+      },
+      {
+        text: "Finished.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Read the same context repeatedly",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(executeRead).toHaveBeenCalledTimes(2);
+    expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+    expect(fakePool.requests).toHaveLength(4);
+    const suppressedToolMessage = fakePool.requests[3].messages.find(
+      (message) => message.role === "tool" && message.toolCallId === "call-read-3",
+    );
+    expect(suppressedToolMessage?.content).toEqual(
+      expect.stringContaining("repeat_read_only_tool_call"),
+    );
+
+    const replayed: Item[] = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    const toolItems = finalItems(replayed).filter(isToolItemNamed("read_context"));
+    expect(toolItems).toHaveLength(3);
+    expect(toolItems[0]).toMatchObject({ status: "completed" });
+    expect(toolItems[1]).toMatchObject({ status: "completed" });
+    expect(toolItems[2]).toMatchObject({
+      status: "failed",
+      result: {
+        suppressed: true,
+        reason: "repeat_read_only_tool_call",
+        count: 3,
+        threshold: 3,
+      },
+    });
+  });
+
+  it("does not suppress read-only tool calls when arguments differ", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const executeRead = vi.fn(async () => "read result");
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_context",
+          description: "Read context",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isReadOnly: true },
+        execute: executeRead,
+      },
+    ]);
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read-1", name: "read_context", arguments: { path: "a.ts" } }],
+        raw: {},
+      },
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read-2", name: "read_context", arguments: { path: "b.ts" } }],
+        raw: {},
+      },
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [
+          { id: "call-read-3", name: "read_context", arguments: { path: "a.ts", offset: 1 } },
+        ],
+        raw: {},
+      },
+      {
+        text: "Finished.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Read different context",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(executeRead).toHaveBeenCalledTimes(3);
+    const replayed: Item[] = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    const toolItems = finalItems(replayed).filter(isToolItemNamed("read_context"));
+    expect(toolItems).toHaveLength(3);
+    expect(toolItems.every((item) => item.status === "completed")).toBe(true);
+    expect(
+      toolItems.some((item) =>
+        Boolean(
+          item.result &&
+          typeof item.result === "object" &&
+          "suppressed" in item.result,
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("clears read-only repeat counts after a turn completes", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    const executeRead = vi.fn(async () => "read result");
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "read_context",
+          description: "Read context",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isReadOnly: true },
+        execute: executeRead,
+      },
+    ]);
+    const runtime = createRuntime(registry);
+    const args = { path: "src/main/index.ts" };
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read-1", name: "read_context", arguments: args }],
+        raw: {},
+      },
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read-2", name: "read_context", arguments: args }],
+        raw: {},
+      },
+      {
+        text: "First turn done.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Read twice",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+    expect(executeRead).toHaveBeenCalledTimes(2);
+
+    events.length = 0;
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-read-3", name: "read_context", arguments: args }],
+        raw: {},
+      },
+      {
+        text: "Second turn done.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await runtime.startTurn({
+      threadId: thread.id,
+      text: "Read again",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(executeRead).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not suppress repeated non-read-only tool calls", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    await store.updateThread(thread.id, { approvalPolicy: "auto" });
+    const executeTool = vi.fn(async () => "updated result");
+    const registry = new InMemoryToolRegistry([
+      {
+        definition: {
+          name: "update_context",
+          description: "Update context",
+          inputSchema: { type: "object" },
+        },
+        metadata: { isDestructive: false },
+        execute: executeTool,
+      },
+    ]);
+    const args = { path: "state.json" };
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-update-1", name: "update_context", arguments: args }],
+        raw: {},
+      },
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-update-2", name: "update_context", arguments: args }],
+        raw: {},
+      },
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-update-3", name: "update_context", arguments: args }],
+        raw: {},
+      },
+      {
+        text: "Finished.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await createRuntime(registry).startTurn({
+      threadId: thread.id,
+      text: "Update repeatedly",
+    });
+    await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+
+    expect(executeTool).toHaveBeenCalledTimes(3);
+    const replayed: Item[] = [];
+    for await (const item of store.replayItems(thread.id)) {
+      replayed.push(item);
+    }
+    const toolItems = finalItems(replayed).filter(isToolItemNamed("update_context"));
+    expect(toolItems).toHaveLength(3);
+    expect(toolItems.every((item) => item.status === "completed")).toBe(true);
   });
 
   it("requests approval with a structured diff preview for file edits", async () => {

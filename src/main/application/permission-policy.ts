@@ -23,6 +23,7 @@ const COMMAND_POLICY_TOOL_NAMES = new Set([
 
 const WRITE_POLICY_TOOL_NAMES = new Set([
   "edit_file",
+  "multi_edit",
   "write_file",
   "delete_file",
   "apply_patch",

@@ -158,6 +158,7 @@ export function createCommandTools(): AgentTool[] {
     runTestsTool,
     runBuildTool,
     startCommandSessionTool,
+    listCommandSessionsTool,
     readCommandSessionTool,
     writeCommandSessionTool,
     stopCommandSessionTool,
@@ -737,6 +738,36 @@ const startCommandSessionTool: AgentTool = {
   },
   async execute(input, context) {
     const result = await commandSessionManager.start(input, context);
+    return JSON.stringify(result);
+  },
+};
+
+const listCommandSessionsTool: AgentTool = {
+  metadata: {
+    category: "command",
+    isReadOnly: true,
+    isDestructive: false,
+  },
+  definition: {
+    name: "list_command_sessions",
+    description:
+      "List long-running command sessions created by the current thread and workspace. Use this to recover session ids before reading, writing, or stopping sessions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        include_output: {
+          type: "boolean",
+          description: "Include retained stdout/stderr tails for each session. Defaults to false.",
+        },
+        tail_bytes: {
+          type: "number",
+          description: `When include_output is true, return only this many trailing bytes per stream. Defaults to ${DEFAULT_COMMAND_SESSION_TAIL_BYTES}.`,
+        },
+      },
+    },
+  },
+  async execute(input, context) {
+    const result = commandSessionManager.list(input, context);
     return JSON.stringify(result);
   },
 };
@@ -1905,6 +1936,30 @@ class CommandSessionManager {
     return this.snapshot(session, DEFAULT_COMMAND_SESSION_TAIL_BYTES);
   }
 
+  list(input: Record<string, unknown>, context: AgentToolContext): CommandSessionListResult {
+    const workspace = requireWorkspace(context);
+    const includeOutput = input.include_output === undefined
+      ? false
+      : requiredBoolean(input.include_output, "include_output");
+    const tailBytes = numberInRange(
+      input.tail_bytes,
+      1,
+      MAX_COMMAND_SESSION_BUFFER_BYTES,
+      DEFAULT_COMMAND_SESSION_TAIL_BYTES,
+      "tail_bytes",
+    );
+    const sessions = [...this.sessions.values()]
+      .filter((session) =>
+        session.threadId === context.threadId && isSamePath(session.workspace, workspace)
+      )
+      .map((session) => this.listEntry(session, includeOutput, tailBytes));
+
+    return {
+      sessionCount: sessions.length,
+      sessions,
+    };
+  }
+
   read(input: Record<string, unknown>, context: AgentToolContext): CommandSessionSnapshot {
     const session = this.requireSession(input.session_id, context, "read_command_session");
     const tailBytes = numberInRange(
@@ -2149,6 +2204,32 @@ class CommandSessionManager {
       stderr: session.stderr.snapshot(tailBytes),
     };
   }
+
+  private listEntry(
+    session: CommandSession,
+    includeOutput: boolean,
+    tailBytes: number,
+  ): CommandSessionListEntry {
+    const entry: CommandSessionListEntry = {
+      sessionId: session.id,
+      command: session.command,
+      cwd: session.cwd,
+      shell: session.shell,
+      shellFile: session.invocation.file,
+      pid: session.child.pid ?? null,
+      status: session.status,
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt,
+      exitCode: session.exitCode,
+      signal: session.signal,
+      error: session.error,
+    };
+    if (includeOutput) {
+      entry.stdout = session.stdout.snapshot(tailBytes);
+      entry.stderr = session.stderr.snapshot(tailBytes);
+    }
+    return entry;
+  }
 }
 
 interface CommandSession {
@@ -2187,6 +2268,28 @@ interface CommandSessionSnapshot {
   error?: string;
   stdout: StreamCapture;
   stderr: StreamCapture;
+}
+
+interface CommandSessionListResult {
+  sessionCount: number;
+  sessions: CommandSessionListEntry[];
+}
+
+interface CommandSessionListEntry {
+  sessionId: string;
+  command: string;
+  cwd: string;
+  shell: ShellKind;
+  shellFile: string;
+  pid: number | null;
+  status: CommandSession["status"];
+  startedAt: string;
+  updatedAt: string;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: string;
+  stdout?: StreamCapture;
+  stderr?: StreamCapture;
 }
 
 const commandSessionManager = new CommandSessionManager();

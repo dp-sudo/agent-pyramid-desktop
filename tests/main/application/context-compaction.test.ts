@@ -106,4 +106,44 @@ describe("prepareMessagesForRequest", () => {
     expect(nested.query).toContain("[context budget: omitted long argument tail]");
     expect(prepared[prepared.length - 1]).toMatchObject({ role: "user", content: "Continue" });
   });
+
+  it("repairs orphaned and incomplete tool history before sending a model request", () => {
+    const messages: AgentMessage[] = [
+      { role: "tool", toolCallId: "orphan", content: "orphan result" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "call-keep", name: "read_file", arguments: { path: "README.md" } },
+          { id: "call-missing", name: "read_file", arguments: { path: "missing.md" } },
+        ],
+      },
+      { role: "tool", toolCallId: "call-keep", content: "kept result" },
+      { role: "tool", toolCallId: "call-keep", content: "duplicate result" },
+      { role: "tool", toolCallId: "unknown", content: "unknown result" },
+      {
+        role: "assistant",
+        content: "This text is still useful.",
+        toolCalls: [
+          { id: "call-no-result", name: "search_files", arguments: { query: "needle" } },
+        ],
+      },
+      { role: "user", content: "Continue" },
+    ];
+
+    const prepared = prepare(messages);
+
+    expect(prepared).toEqual([
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "call-keep", name: "read_file", arguments: { path: "README.md" } },
+        ],
+      },
+      { role: "tool", toolCallId: "call-keep", content: "kept result" },
+      { role: "assistant", content: "This text is still useful." },
+      { role: "user", content: "Continue" },
+    ]);
+  });
 });
