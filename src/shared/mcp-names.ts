@@ -67,6 +67,14 @@ function isMcpFacadeCallToolSegment(toolSegment: string): boolean {
 }
 
 function tryMcpNameSegment(value: string): string | null {
-  const normalized = value.trim().replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  const normalized = value
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    // Collapse internal `_+` runs to a single `_` so a server/tool name cannot
+    // smuggle the `__` separator that namespaces use (mcp__<server>__<tool>).
+    // Without this, a server named `foo__bar` would produce segment `foo__bar`
+    // and visually collide with the namespace boundary (L-8).
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return normalized && MCP_NAME_SEGMENT_PATTERN.test(normalized) ? normalized : null;
 }

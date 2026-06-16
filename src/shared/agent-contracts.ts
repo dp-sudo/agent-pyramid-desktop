@@ -1843,7 +1843,7 @@ function isMcpToolInfo(value: unknown): value is McpToolInfo {
     typeof value.readOnly === "boolean";
 }
 
-function isHttpUrl(value: unknown): value is string {
+export function isHttpUrl(value: unknown): value is string {
   if (!isNonBlankStringWithoutNul(value)) return false;
   try {
     const parsed = new URL(value);
@@ -1852,6 +1852,32 @@ function isHttpUrl(value: unknown): value is string {
     void error;
     return false;
   }
+}
+
+// Model `base_url` is the LLM provider endpoint. Unlike MCP URLs (which the
+// user fully controls), a malicious base_url can leak the `Authorization:
+// Bearer` API key to an attacker-influenced host (see H-1). We require http(s)
+// and reject file:/data:/javascript:/blob:/ftp: unconditionally. Plain `http:`
+// is only accepted for loopback hosts and only behind an explicit opt-in flag
+// (AGENT_ALLOW_INSECURE_BASE_URL=1); this keeps local dev/test providers
+// usable without weakening the production default.
+export function isAllowedModelBaseUrl(
+  value: unknown,
+  options: { allowInsecureLocalhost?: boolean } = {},
+): value is string {
+  if (!isNonBlankStringWithoutNul(value)) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    void error;
+    return false;
+  }
+  if (parsed.protocol === "https:") return true;
+  if (parsed.protocol !== "http:") return false;
+  if (!options.allowInsecureLocalhost) return false;
+  const host = parsed.hostname;
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
 }
 
 function isNullableProfileId(value: unknown): value is string | null {
