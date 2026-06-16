@@ -208,6 +208,9 @@ function requiredString(value: unknown, message: string): string {
   if (typeof value !== "string") {
     throw new Error(message);
   }
+  if (value.includes("\0")) {
+    throw new Error(message.replace("must be a string.", "cannot contain NUL bytes."));
+  }
   return value;
 }
 

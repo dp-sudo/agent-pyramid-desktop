@@ -108,6 +108,15 @@ describe("write handlers helpers", () => {
       prefix: "- first task",
       suffix: false,
     })).toThrow("Write complete suffix must be a string.");
+    expect(() => parseWriteListRequest({ workspace: "/workspace", search: `guide${"\0"}` }))
+      .toThrow("Write list search cannot contain NUL bytes.");
+    expect(() => parseWriteGetRequest({ workspace: "/workspace", path: `notes.md${"\0"}` }))
+      .toThrow("Write get path cannot contain NUL bytes.");
+    expect(() => parseWritePutRequest({
+      workspace: "/workspace",
+      path: "notes.md",
+      content: `draft${"\0"}`,
+    })).toThrow("Write put content cannot contain NUL bytes.");
   });
 
   it("lists markdown files while excluding skipped project and build directories", async () => {

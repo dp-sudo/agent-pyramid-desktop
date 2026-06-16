@@ -14,6 +14,7 @@ import {
   resolveWorkspacePathForAccess,
   toWorkspaceRelative,
 } from "./workspace-policy.js";
+import { parseUnifiedDiffFilePath } from "../unified-diff-path.js";
 import {
   decodeUtf8TextBuffer,
   openTextFileNoFollow,
@@ -1046,15 +1047,7 @@ function isPatchFileHeaderAt(lines: string[], index: number): boolean {
 }
 
 function parsePatchPath(raw: string): string | undefined {
-  const token = raw.trim().split(/\s+/)[0];
-  if (token === "/dev/null") return undefined;
-  const normalized = token.startsWith("a/") || token.startsWith("b/")
-    ? token.slice(2)
-    : token;
-  if (!normalized || normalized.includes("\0")) {
-    throw new Error("apply_patch file path is invalid.");
-  }
-  return normalized;
+  return parseUnifiedDiffFilePath(raw, "apply_patch file path is invalid.");
 }
 
 function parseHunkHeader(header: string): Omit<ParsedPatchHunk, "lines"> {

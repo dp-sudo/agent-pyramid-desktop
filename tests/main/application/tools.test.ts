@@ -18,6 +18,7 @@ import { FileReadStateStore } from "../../../src/main/application/tools/file-rea
 import { createGoalTools } from "../../../src/main/application/tools/goal-tools";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
 import { createSkillTools } from "../../../src/main/application/tools/skill-tools";
+import { openTextFileNoFollow } from "../../../src/main/application/tools/text-file";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
 import { SkillService } from "../../../src/main/skills/skill-service";
 import type {
@@ -1069,6 +1070,41 @@ describe("application tools", () => {
     }
   });
 
+  it("closes text read handles when the post-open symlink guard fails", async () => {
+    const noFollowDescriptor = Object.getOwnPropertyDescriptor(fsConstants, "O_NOFOLLOW");
+    const close = vi.fn<() => Promise<void>>(async () => undefined);
+    const fakeHandle = { close } as unknown as Awaited<ReturnType<typeof fs.open>>;
+    const openSpy = vi.spyOn(fs, "open").mockResolvedValue(fakeHandle);
+    const lstatSpy = vi.spyOn(fs, "lstat").mockResolvedValue({
+      isSymbolicLink: () => true,
+    } as Awaited<ReturnType<typeof fs.lstat>>);
+
+    try {
+      Object.defineProperty(fsConstants, "O_NOFOLLOW", {
+        configurable: true,
+        value: undefined,
+      });
+
+      await expect(
+        openTextFileNoFollow(path.join("workspace", "link.txt"), {
+          label: "Helper read",
+          relativePath: "link.txt",
+        }),
+      ).rejects.toThrow("Helper read target is a symbolic link: link.txt");
+      expect(openSpy).toHaveBeenCalledTimes(1);
+      expect(lstatSpy).toHaveBeenCalledTimes(1);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      openSpy.mockRestore();
+      lstatSpy.mockRestore();
+      if (noFollowDescriptor) {
+        Object.defineProperty(fsConstants, "O_NOFOLLOW", noFollowDescriptor);
+      } else {
+        Reflect.deleteProperty(fsConstants, "O_NOFOLLOW");
+      }
+    }
+  });
+
   it("edits and writes files only after a fresh read and returns structured diffs", async () => {
     const workspace = await makeTempDir("coding-tools-");
     try {
@@ -1725,6 +1761,87 @@ describe("application tools", () => {
           ],
         },
       });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("applies patches whose file headers contain spaces and C-style escapes", async () => {
+    const workspace = await makeTempDir("apply-patch-escaped-paths-");
+    try {
+      const utf8Name = Buffer.from([0xe6, 0xb5, 0x8b, 0xe8, 0xaf, 0x95]).toString("utf8");
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "My File.ts"), "old space\n", "utf8");
+      await fs.writeFile(path.join(workspace, "src", `${utf8Name}.ts`), "old utf8\n", "utf8");
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState };
+      await registry.execute(
+        { id: "call-read-space", name: "read_file", arguments: { path: "src/My File.ts" } },
+        context,
+      );
+      await registry.execute(
+        { id: "call-read-utf8", name: "read_file", arguments: { path: `src/${utf8Name}.ts` } },
+        context,
+      );
+
+      await registry.execute(
+        {
+          id: "call-patch-escaped-paths",
+          name: "apply_patch",
+          arguments: {
+            patch: [
+              "diff --git a/src/My File.ts b/src/My File.ts",
+              "--- a/src/My File.ts",
+              "+++ b/src/My File.ts",
+              "@@ -1 +1 @@",
+              "-old space",
+              "+new space",
+              "diff --git \"a/src/\\346\\265\\213\\350\\257\\225.ts\" \"b/src/\\346\\265\\213\\350\\257\\225.ts\"",
+              "--- \"a/src/\\346\\265\\213\\350\\257\\225.ts\"\t2026-01-01 00:00:00",
+              "+++ \"b/src/\\346\\265\\213\\350\\257\\225.ts\"\t2026-01-01 00:00:00",
+              "@@ -1 +1 @@",
+              "-old utf8",
+              "+new utf8",
+            ].join("\n"),
+          },
+        },
+        context,
+      );
+
+      expect(await fs.readFile(path.join(workspace, "src", "My File.ts"), "utf8"))
+        .toBe("new space\n");
+      expect(await fs.readFile(path.join(workspace, "src", `${utf8Name}.ts`), "utf8"))
+        .toBe("new utf8\n");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects apply_patch file headers with invalid target paths before filesystem access", async () => {
+    const workspace = await makeTempDir("apply-patch-invalid-path-");
+    try {
+      const registry = new InMemoryToolRegistry(createCodingTools());
+      await expect(
+        registry.execute(
+          {
+            id: "call-patch-invalid-path",
+            name: "apply_patch",
+            arguments: {
+              patch: [
+                "--- /dev/null",
+                `+++ b/src/created.ts${"\0"}`,
+                "@@ -0,0 +1 @@",
+                "+created",
+              ].join("\n"),
+            },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace },
+        ),
+      ).rejects.toThrow("apply_patch file path is invalid.");
     } finally {
       await removeTempDir(workspace);
     }
@@ -3353,6 +3470,69 @@ describe("application tools", () => {
     } finally {
       await removeTempDir(workspace);
       await removeTempDir(outside);
+    }
+  });
+
+  it("rejects NUL bytes in command optional string parameters", async () => {
+    const workspace = await makeTempDir("command-tools-nul-strings-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+
+      await expect(
+        registry.execute(
+          {
+            id: "command-nul-cwd",
+            name: "run_command",
+            arguments: {
+              command: nodeCommand("process.stdout.write('x')"),
+              cwd: `src${"\0"}index`,
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("optional string value cannot contain NUL bytes.");
+      await expect(
+        registry.execute(
+          {
+            id: "command-nul-shell-path",
+            name: "shell_command",
+            arguments: {
+              command: "process.stdout.write('x')",
+              shell_path: `${process.execPath}${"\0"}`,
+              shell_args: ["-e", "{command}"],
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("optional string value cannot contain NUL bytes.");
+      await expect(
+        registry.execute(
+          {
+            id: "command-nul-distro",
+            name: "wsl_command",
+            arguments: {
+              command: "printf x",
+              distro: `Ubuntu${"\0"}next`,
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("optional string value cannot contain NUL bytes.");
+      await expect(
+        registry.execute(
+          {
+            id: "command-nul-detect-workspace-path",
+            name: "detect_shell_environment",
+            arguments: {
+              workspace_path: `${workspace}${"\0"}outside`,
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow("optional string value cannot contain NUL bytes.");
+    } finally {
+      await removeTempDir(workspace);
     }
   });
 

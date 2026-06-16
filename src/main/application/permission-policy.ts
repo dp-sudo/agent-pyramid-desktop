@@ -7,6 +7,7 @@ import {
   mcpPermissionValueFromFacadeCall,
   mcpPermissionValueFromToolName,
 } from "../../shared/mcp-names.js";
+import { parseUnifiedDiffFilePath } from "./unified-diff-path.js";
 
 export type PermissionPolicyDecision = RuntimePermissionRuleEffect | "none";
 
@@ -81,13 +82,18 @@ export function buildPermissionCandidate(
       : null;
   }
   if (!WRITE_POLICY_TOOL_NAMES.has(toolName)) {
-  return buildMcpPermissionCandidate(toolName, args);
-}
+    return buildMcpPermissionCandidate(toolName, args);
+  }
   if (toolName === "apply_patch") {
     if (typeof args.patch !== "string") {
       return null;
     }
-    const paths = extractUnifiedDiffTargetPaths(args.patch);
+    let paths: string[];
+    try {
+      paths = extractUnifiedDiffTargetPaths(args.patch);
+    } catch {
+      return null;
+    }
     return paths.length > 0 ? { tool: "write", value: paths.join("\n") } : null;
   }
   return typeof args.path === "string"
@@ -194,13 +200,7 @@ export function extractUnifiedDiffTargetPaths(patch: string): string[] {
 }
 
 function parsePatchPathToken(raw: string): string | null {
-  const token = raw.trim().split(/\s+/)[0];
-  if (!token || token === "/dev/null") {
-    return null;
-  }
-  return token.startsWith("a/") || token.startsWith("b/")
-    ? token.slice(2)
-    : token;
+  return parseUnifiedDiffFilePath(raw, "apply_patch file path is invalid.") ?? null;
 }
 
 function normalizeCommandValue(command: string): string {

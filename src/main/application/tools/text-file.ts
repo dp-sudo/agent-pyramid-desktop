@@ -79,10 +79,22 @@ export async function openTextFileNoFollow(
   const useNoFollowFlag = noFollowFlag();
   try {
     const handle = await fs.open(filePath, fsConstants.O_RDONLY | useNoFollowFlag);
-    if (useNoFollowFlag === 0) {
-      await assertOpenedTargetNotSymlink(filePath, options);
+    try {
+      if (useNoFollowFlag === 0) {
+        await assertOpenedTargetNotSymlink(filePath, options);
+      }
+      return handle;
+    } catch (error) {
+      try {
+        await handle.close();
+      } catch (closeError) {
+        throw new Error(
+          `${messageOf(error)}; close failed: ${messageOf(closeError)}`,
+          { cause: error },
+        );
+      }
+      throw error;
     }
-    return handle;
   } catch (error) {
     if (getNodeErrorCode(error) === "ELOOP") {
       throw new Error(`${options.label} target is a symbolic link: ${options.relativePath}`);
@@ -96,7 +108,7 @@ export async function openTextFileNoFollow(
  * workspace realpath/lstat checks. O_NOFOLLOW binds the last path component to
  * the open operation on supporting platforms. On platforms without it (Windows)
  * fs.open silently follows a swapped symlink, and O_TRUNC would truncate the
- * linked target before any guard can run — so there we open without O_TRUNC,
+ * linked target before any guard can run, so there we open without O_TRUNC,
  * re-lstat to detect the swap, and only then truncate+write once the target is
  * confirmed to be a regular file the workspace policy already approved.
  */
@@ -280,4 +292,8 @@ function getNodeErrorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code)
     : undefined;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -41,6 +41,7 @@ palette:
     skill: "#7c3aed"
     skill_soft: "rgba(124,58,237,0.12)"
     warning_soft: "rgba(245,158,11,0.14)"
+    warning: "#b8770a"
     selection: "rgba(0,136,255,0.18)"
     scrollbar_thumb: "rgba(95,104,120,0.22)"
     scrollbar_thumb_hover: "rgba(95,104,120,0.32)"
@@ -75,6 +76,7 @@ palette:
     skill: "#ad7bf9"
     skill_soft: "rgba(173,123,249,0.16)"
     warning_soft: "rgba(245,158,11,0.18)"
+    warning: "#e8a13a"
     selection: "rgba(51,156,255,0.24)"
     scrollbar_thumb: "rgba(170,170,170,0.28)"
     scrollbar_thumb_hover: "rgba(200,200,200,0.38)"
@@ -94,7 +96,17 @@ typography:
     title: 15
     title_lg: 18
     display: 24
-  weight_scale: [400, 500, 600, 700]
+  weight_scale: [400, 500, 600, 650, 700]
+  weight_alias:
+    regular: 400
+    medium: 500
+    semibold: 600
+    medium_strong: 650
+    bold: 700
+  font_weight_tokens:
+    medium: var(--ds-font-weight-medium)   # 500
+    medium_strong: var(--ds-font-weight-medium-strong)  # 650
+    strong: var(--ds-font-weight-strong)   # 700
   motion:
     micro_ms: 140
     standard_ms: 150
@@ -182,6 +194,17 @@ components:
     base: "rounded-xl border border-ds-border-muted bg-ds-card px-3 py-2 text-[13px] text-ds-text"
   approval_block:
     base: "rounded-md bg-ds-warning-soft border border-ds-border p-3"
+  brand_mark:
+    description: "Topbar 最左端的产品 brand mark，使用 BrandMark SVG 原语（pyramid 三层叠放）。颜色继承 currentColor，默认跟随 --ds-accent。"
+    wordmark: "Workbench（英文 brand 词，不参与 i18n 翻译）"
+  close_glyph:
+    description: "替代 ASCII \"x\" 的内联 SVG close icon（CloseGlyph 原语）。保证跨字体度量一致，避免编码降级。"
+    consumers: ["RightInspector close button", "WorkbenchErrorToast dismiss button"]
+  sidebar_workspace_row:
+    description: "Sidebar header 中合并 '切换工作区' 与 'workspace path 显示' 的单行组件：左侧 path（flex 1，截断省略），右侧 change button（inline icon-like 标签按钮）。"
+  workbench_error_toast_severity:
+    description: "WorkbenchErrorToast 支持 severity: 'error'（默认，danger-soft 底色）与 'warning'（warning-soft 底色）两态；通过 is-warning class 切换。"
+    current_state: "WorkbenchContext 仅承载 error；warning 通过 prop 接入以便未来调用方按需使用。"
 
 # ---------- 9. Layout grammar ----------
 grammar:
@@ -209,6 +232,9 @@ dont:
   - "Add Tailwind / Zustand / React Router — this project uses CSS Modules + useReducer + route field."
   - "Add emoji in production copy or as functional UI affordance."
   - "Use a font outside the three declared families."
+  - "Render close / dismiss controls as ASCII characters (\"x\", \"×\") — use CloseGlyph SVG primitive to keep metric and encoding stable."
+  - "Use raw font-weight numeric literals (e.g. 650) outside the declared weight_scale; consume --ds-font-weight-medium / medium-strong / strong tokens instead."
+  - "Spread font-size literals outside size_scale_px; always use --ds-size-* tokens."
   - "Use a border radius smaller than 6px on a clickable surface."
 ---
 

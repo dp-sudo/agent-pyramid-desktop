@@ -19,6 +19,31 @@ describe("command git helpers", () => {
     });
   });
 
+  it("decodes quoted short status paths before returning structured entries", () => {
+    const utf8Name = Buffer.from([0xe6, 0xb5, 0x8b, 0xe8, 0xaf, 0x95]).toString("utf8");
+
+    expect(parseGitStatusLine(" M \"docs/My File.md\"")).toEqual({
+      xy: " M",
+      path: "docs/My File.md",
+    });
+    expect(parseGitStatusLine(" M \"src/quote\\\"file.ts\"")).toEqual({
+      xy: " M",
+      path: "src/quote\"file.ts",
+    });
+    expect(parseGitStatusLine(" M \"src/\\346\\265\\213\\350\\257\\225.ts\"")).toEqual({
+      xy: " M",
+      path: `src/${utf8Name}.ts`,
+    });
+  });
+
+  it("splits rename payloads only on separators outside quoted paths", () => {
+    expect(parseGitStatusLine("R  \"old -> name.ts\" -> \"new name.ts\"")).toEqual({
+      xy: "R ",
+      originalPath: "old -> name.ts",
+      path: "new name.ts",
+    });
+  });
+
   it("builds pathspec argument separators only when needed", () => {
     expect(gitPathspecArgs([])).toEqual([]);
     expect(gitPathspecArgs(["src/app.ts"])).toEqual(["--", "src/app.ts"]);

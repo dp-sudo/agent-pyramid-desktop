@@ -676,6 +676,10 @@ Key semantics:
   snapshots and startup stats keyed by a fingerprint of the server runtime
   config. It is not the config authority, and malformed or stale cache entries
   are ignored in favor of a live MCP handshake.
+- Stdio MCP child processes inherit a credential-filtered base environment and
+  then apply explicit `McpServerConfig.env` overrides. Provider API keys from
+  the host process are not inherited unless the user configures them in that MCP
+  server env record.
 - Mode default profile ids are consumed by `AgentRuntime` when a turn request
   does not specify `modelProfileId`.
 - `defaultApprovalPolicy` and `defaultSandboxMode` are consumed by thread

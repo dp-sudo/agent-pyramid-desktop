@@ -5,6 +5,7 @@ import {
   MCP_MAX_MESSAGE_BYTES,
   MCP_STDERR_BUFFER_BYTES,
 } from "../../application/constants.js";
+import { buildCommandEnvironment } from "../../application/tools/command-environment.js";
 import {
   isJsonRpcNotification,
   isJsonRpcResponse,
@@ -61,7 +62,7 @@ export class StdioMcpTransport implements McpTransport {
     }
     const child = spawn(config.command, config.args, {
       cwd: config.cwd,
-      env: { ...process.env, ...config.env },
+      env: buildMcpStdioEnvironment(config.env),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -219,6 +220,16 @@ export class StdioMcpTransport implements McpTransport {
     }
     this.stderr = next;
   }
+}
+
+export function buildMcpStdioEnvironment(
+  configEnv: Record<string, string>,
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return {
+    ...buildCommandEnvironment(source),
+    ...configEnv,
+  };
 }
 
 function messageOf(error: unknown): string {

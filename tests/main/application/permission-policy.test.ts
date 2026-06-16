@@ -107,6 +107,61 @@ describe("permission-policy", () => {
     })).toBe("deny");
   });
 
+  it("extracts apply_patch targets with spaces, quotes, and C-style escapes", () => {
+    const utf8Name = Buffer.from([0xe6, 0xb5, 0x8b, 0xe8, 0xaf, 0x95]).toString("utf8");
+    const patch = [
+      "--- \"a/src/My File.ts\"\t2026-01-01 00:00:00",
+      "+++ \"b/src/My File.ts\"\t2026-01-01 00:00:00",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "--- \"a/src/quote\\\"name.ts\"",
+      "+++ \"b/src/quote\\\"name.ts\"",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "--- \"a/src/\\346\\265\\213\\350\\257\\225.ts\"",
+      "+++ \"b/src/\\346\\265\\213\\350\\257\\225.ts\"",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    expect(extractUnifiedDiffTargetPaths(patch)).toEqual([
+      "src/My File.ts",
+      "src/quote\"name.ts",
+      `src/${utf8Name}.ts`,
+    ]);
+    expect(evaluatePermission({
+      toolName: "apply_patch",
+      args: { patch },
+      rules: [
+        { id: "space-path", tool: "write", pattern: "src/My File.ts", effect: "allow" },
+      ],
+    })).toBe("allow");
+  });
+
+  it("does not build apply_patch permission candidates from invalid file paths", () => {
+    const patch = [
+      "--- a/src/file.ts",
+      `+++ b/src/file.ts${"\0"}`,
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    expect(() => extractUnifiedDiffTargetPaths(patch))
+      .toThrow("apply_patch file path is invalid.");
+    expect(buildPermissionCandidate("apply_patch", { patch })).toBeNull();
+    expect(evaluatePermission({
+      toolName: "apply_patch",
+      args: { patch },
+      rules: [
+        { id: "src", tool: "write", pattern: "src/*", effect: "allow" },
+      ],
+    })).toBe("none");
+  });
+
   it("returns none when no rule or no per-call candidate matches", () => {
     expect(evaluatePermission({
       toolName: "run_command",

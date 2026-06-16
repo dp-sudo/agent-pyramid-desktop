@@ -2694,6 +2694,9 @@ function optionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     throw new Error("optional string value must be a string.");
   }
+  if (value.includes("\0")) {
+    throw new Error("optional string value cannot contain NUL bytes.");
+  }
   return value.trim() || undefined;
 }
 

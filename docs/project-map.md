@@ -262,7 +262,9 @@ flowchart TD
   argument construction and package script validation live in
   `src/main/application/tools/command-package.ts`.
 - Git short-status parsing, plain pathspec argument construction and `git_log`
-  revision validation live in `src/main/application/tools/command-git.ts`.
+  revision validation live in `src/main/application/tools/command-git.ts`;
+  shared quoted/C-style path decoding lives in
+  `src/main/application/c-style-path.ts`.
 - Command session output buffering, newest-byte retention and UTF-8-safe tail
   snapshots live in `src/main/application/tools/command-session-capture.ts`.
 - One-shot command stdout/stderr capture and truncation live in
