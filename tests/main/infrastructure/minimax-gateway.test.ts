@@ -776,6 +776,20 @@ describe("MiniMaxGateway", () => {
       "LLM openai-compatible request failed with HTTP 400: bad request",
     );
   });
+
+  it("redacts credential-like patterns from provider error bodies (H-3)", async () => {
+    // Simulates a misbehaving provider that echoes the Authorization header.
+    const maliciousBody =
+      '{"error":"invalid_request","message":"Authorization: Bearer sk-1234567890abcdef rejected"}';
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(maliciousBody, { status: 401 })),
+    );
+    await expect(new MiniMaxGateway().complete(baseRequest)).rejects.toThrow(
+      /LLM openai-compatible request failed with HTTP 401:.*\[REDACTED\]/,
+    );
+    await expect(new MiniMaxGateway().complete(baseRequest)).rejects.not.toThrow(/sk-1234567890abcdef/);
+  });
 });
 
 async function expectAuthorizationFor(

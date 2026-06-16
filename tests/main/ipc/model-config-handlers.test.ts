@@ -88,6 +88,50 @@ describe("model config handlers", () => {
       .toThrow("max_tokens must be a positive integer.");
   });
 
+  it("rejects base_url that is not http(s) (H-1 SSRF guard)", () => {
+    expect(() => parseModelConfigUpdateRequest({ base_url: "file:///etc/passwd" }))
+      .toThrow("base_url must be an https URL");
+    expect(() => parseModelConfigUpdateRequest({ base_url: "data:text/html,<script>" }))
+      .toThrow("base_url must be an https URL");
+    expect(() => parseModelConfigUpdateRequest({ base_url: "javascript:alert(1)" }))
+      .toThrow("base_url must be an https URL");
+    expect(() => parseModelConfigUpdateRequest({ base_url: "ftp://evil.host/payload" }))
+      .toThrow("base_url must be an https URL");
+    expect(() => parseModelConfigUpdateRequest({ base_url: "not-a-url" }))
+      .toThrow("base_url must be an https URL");
+  });
+
+  it("accepts https base_url and rejects plain http without env flag (H-1)", () => {
+    expect(() => parseModelConfigUpdateRequest({ base_url: "https://api.example.test/v1" }))
+      .not.toThrow();
+    // Plain http is rejected unless AGENT_ALLOW_INSECURE_BASE_URL=1.
+    const prev = process.env.AGENT_ALLOW_INSECURE_BASE_URL;
+    try {
+      delete process.env.AGENT_ALLOW_INSECURE_BASE_URL;
+      expect(() => parseModelConfigUpdateRequest({ base_url: "http://localhost:8080/v1" }))
+        .toThrow("base_url must be an https URL");
+      expect(() => parseModelConfigUpdateRequest({ base_url: "http://127.0.0.1:8080/v1" }))
+        .toThrow("base_url must be an https URL");
+      // Env flag allows loopback http.
+      process.env.AGENT_ALLOW_INSECURE_BASE_URL = "1";
+      expect(() => parseModelConfigUpdateRequest({ base_url: "http://localhost:8080/v1" }))
+        .not.toThrow();
+      expect(() => parseModelConfigUpdateRequest({ base_url: "http://127.0.0.1:8080/v1" }))
+        .not.toThrow();
+      expect(() => parseModelConfigUpdateRequest({ base_url: "http://[::1]:8080/v1" }))
+        .not.toThrow();
+      // Non-loopback http is still rejected even with the env flag.
+      expect(() => parseModelConfigUpdateRequest({ base_url: "http://evil.example.com/v1" }))
+        .toThrow("base_url must be an https URL");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.AGENT_ALLOW_INSECURE_BASE_URL;
+      } else {
+        process.env.AGENT_ALLOW_INSECURE_BASE_URL = prev;
+      }
+    }
+  });
+
   it("parses profile id requests at the IPC boundary", () => {
     expect(parseModelConfigProfileIdRequest({ id: " profile-1 " })).toEqual({
       id: "profile-1",
