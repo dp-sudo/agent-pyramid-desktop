@@ -8,7 +8,7 @@ import {
   getRecentInspectorToolItems,
   getResetRightInspectorWidth,
   getRightInspectorResizerClassName,
-  RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT,
+  RIGHT_INSPECTOR_CLOSE_GLYPH_TESTID,
   RIGHT_INSPECTOR_REGION_ID,
   RIGHT_INSPECTOR_TITLE_ID,
   summarizeInspectorChanges,
@@ -41,8 +41,8 @@ describe("RightInspector helpers", () => {
     );
   });
 
-  it("uses stable ASCII visible text for the close button", () => {
-    expect(RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT).toBe("x");
+  it("exposes a stable testid for the SVG-based close glyph", () => {
+    expect(RIGHT_INSPECTOR_CLOSE_GLYPH_TESTID).toBe("ds-right-inspector-close");
   });
 
   it("uses stable ids for the controlled Inspector region and label", () => {

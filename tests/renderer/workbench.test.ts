@@ -7,7 +7,6 @@ import {
   clearResolvedApprovalResponses,
   copyWorkbenchErrorMessage,
   shouldShowWorkbenchErrorToast,
-  WORKBENCH_DISMISS_BUTTON_TEXT,
 } from "../../src/renderer/src/ui/Workbench";
 import {
   clampLeftSidebarWidth as clampSidebarWidth,
@@ -194,7 +193,6 @@ describe("Workbench", () => {
     expect(shouldShowWorkbenchErrorToast(null)).toBe(false);
     expect(shouldShowWorkbenchErrorToast("Runtime failed")).toBe(true);
     expect(shouldShowWorkbenchErrorToast("Runtime failed", false)).toBe(false);
-    expect(WORKBENCH_DISMISS_BUTTON_TEXT).toBe("x");
   });
 
   it("copies Workbench error toast text through the clipboard boundary", async () => {
