@@ -15,7 +15,10 @@ body,
   margin: 0;
   overflow: hidden;
   font-family: var(--ds-font-sans);
-  background: var(--ds-bg-main);
+  background:
+    radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--ds-surface-rail) 70%, transparent) 0, transparent 26rem),
+    radial-gradient(circle at 88% 8%, color-mix(in srgb, var(--ds-skill) 10%, transparent) 0, transparent 22rem),
+    var(--ds-bg-main);
   color: var(--ds-text);
   zoom: var(--ds-ui-scale);
 }
@@ -67,13 +70,27 @@ textarea:focus-visible {
 
 /* ---------- Workbench shell ---------- */
 .ds-workbench-shell {
+  position: relative;
   display: flex;
   height: 100%;
   min-height: 0;
   width: 100%;
   min-width: 0;
-  background: var(--ds-bg-main);
+  overflow: hidden;
+  background:
+    linear-gradient(115deg, color-mix(in srgb, var(--ds-bg-main) 96%, var(--ds-accent)) 0%, var(--ds-bg-main) 48%, color-mix(in srgb, var(--ds-bg-main) 96%, var(--ds-skill)) 100%);
   box-shadow: var(--ds-shadow-shell);
+}
+
+.ds-workbench-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent 0 34%, color-mix(in srgb, var(--ds-border-muted) 34%, transparent) 34% 34.06%, transparent 34.06% 100%),
+    radial-gradient(circle at 58% -12%, color-mix(in srgb, var(--ds-surface-rail-strong) 58%, transparent), transparent 28rem);
+  opacity: 0.64;
 }
 
 .ds-route-fallback {
@@ -91,7 +108,23 @@ textarea:focus-visible {
   flex: 1 1 0;
   flex-direction: column;
   overflow: hidden;
-  background: var(--ds-bg-canvas);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-bg-canvas) 97%, var(--ds-accent)) 0%, var(--ds-bg-canvas) 42%, color-mix(in srgb, var(--ds-bg-canvas) 98%, var(--ds-text)) 100%);
+}
+
+.ds-stage-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 9%, color-mix(in srgb, var(--ds-accent-soft) 54%, transparent), transparent 32rem);
+  opacity: 0.58;
+}
+
+.ds-stage-surface > * {
+  position: relative;
+  z-index: 1;
 }
 
 .ds-stage-inset {
@@ -139,19 +172,38 @@ textarea:focus-visible {
 
 /* ---------- Topbar ---------- */
 .ds-topbar-surface {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-radius: var(--ds-radius-2xl);
-  background: var(--ds-surface-card);
-  border: 1px solid var(--ds-border);
-  padding: 8px 16px;
-  box-shadow: var(--ds-shadow-card-soft);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ds-border) 70%, transparent);
+  border-radius: var(--ds-radius-3xl);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 42%, transparent), transparent),
+    var(--ds-surface-glass);
+  backdrop-filter: blur(22px) saturate(150%);
+  padding: 10px 14px 10px 16px;
+  box-shadow:
+    var(--ds-shadow-card-soft),
+    0 1px 0 color-mix(in srgb, var(--ds-surface-elevated) 72%, transparent) inset;
+  animation: ds-surface-rise var(--ds-motion-deep) var(--ds-motion-ease) both;
+}
+
+.ds-topbar-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  pointer-events: none;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ds-surface-rail) 78%, transparent), transparent);
+  opacity: 0.66;
 }
 
 /* Brand mark 区：在第一行表达"这是 Agent Workbench"，color 跟随主题色。 */
 .ds-topbar-brand {
+  position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -163,7 +215,7 @@ textarea:focus-visible {
   color: var(--ds-text);
   font-size: var(--ds-size-body-lg);
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
 }
 
 .ds-topbar-session,
@@ -186,7 +238,7 @@ textarea:focus-visible {
   flex: 0 0 auto;
   color: var(--ds-text);
   font-size: var(--ds-size-title);
-  font-weight: 600;
+  font-weight: var(--ds-font-weight-medium-strong);
 }
 
 .ds-topbar-meta,
@@ -205,18 +257,20 @@ textarea:focus-visible {
 
 .ds-topbar-running {
   flex: 0 0 auto;
-  border: 1px solid var(--ds-border);
+  border: 1px solid color-mix(in srgb, var(--ds-warning) 38%, var(--ds-border));
   border-radius: var(--ds-radius-pill);
   background: var(--ds-warning-soft);
   color: var(--ds-text);
   font-size: var(--ds-size-body);
   padding: 6px 12px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ds-warning-soft) 55%, transparent);
+  animation: ds-status-breathe 1.8s ease-in-out infinite;
 }
 
 .ds-topbar-inspector-tabs {
-  flex: 0 1 260px;
-  width: min(260px, 32vw);
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex: 0 1 336px;
+  width: min(336px, 36vw);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .ds-topbar-inspector-tabs button:focus-visible {
@@ -226,19 +280,36 @@ textarea:focus-visible {
 
 /* ---------- Sidebar ---------- */
 .ds-sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  background: var(--ds-bg-sidebar);
-  border-right: 1px solid var(--ds-border-muted);
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-bg-sidebar) 96%, var(--ds-accent)) 0%, var(--ds-bg-sidebar) 46%, color-mix(in srgb, var(--ds-bg-sidebar) 96%, var(--ds-text)) 100%);
+  border-right: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+}
+
+.ds-sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 180px;
+  pointer-events: none;
+  background: radial-gradient(circle at 24px 0, color-mix(in srgb, var(--ds-surface-rail) 74%, transparent), transparent 11rem);
+}
+
+.ds-sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 
 .ds-sidebar-header {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 12px 8px;
+  gap: 10px;
+  padding: 14px 12px 10px;
 }
 
 .ds-sidebar-workspace-row {
@@ -246,9 +317,12 @@ textarea:focus-visible {
   min-width: 0;
   align-items: stretch;
   gap: 6px;
-  border: 1px solid var(--ds-border-muted);
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-surface-subtle);
+  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 80%, transparent);
+  border-radius: var(--ds-radius-lg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 26%, transparent), transparent),
+    var(--ds-surface-glass);
+  backdrop-filter: blur(14px);
 }
 
 .ds-sidebar-workspace-row .ds-sidebar-workspace {
@@ -269,7 +343,7 @@ textarea:focus-visible {
   min-height: 28px;
   border: 0;
   border-left: 1px solid var(--ds-border-muted);
-  border-radius: 0 var(--ds-radius-md) var(--ds-radius-md) 0;
+  border-radius: 0 var(--ds-radius-lg) var(--ds-radius-lg) 0;
   background: transparent;
   color: var(--ds-text-muted);
   cursor: pointer;
@@ -304,6 +378,7 @@ textarea:focus-visible {
   color: var(--ds-text-muted);
   cursor: pointer;
   font-size: var(--ds-size-caption);
+  padding: 0 8px;
   text-align: left;
 }
 
@@ -345,12 +420,18 @@ textarea:focus-visible {
 }
 
 .ds-sidebar-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-radius: var(--ds-radius-md);
-  transition: background-color var(--ds-motion-micro) var(--ds-motion-ease);
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-lg);
+  transition:
+    background-color var(--ds-motion-micro) var(--ds-motion-ease),
+    border-color var(--ds-motion-micro) var(--ds-motion-ease),
+    box-shadow var(--ds-motion-micro) var(--ds-motion-ease),
+    transform var(--ds-motion-micro) var(--ds-motion-ease);
   color: var(--ds-text);
   font-size: var(--ds-size-body);
 }
@@ -360,7 +441,8 @@ textarea:focus-visible {
 }
 
 .ds-sidebar-row:hover {
-  background: var(--ds-surface-hover);
+  background: color-mix(in srgb, var(--ds-surface-hover) 82%, transparent);
+  transform: translateX(1px);
 }
 
 .ds-sidebar-row:focus-within {
@@ -368,8 +450,12 @@ textarea:focus-visible {
 }
 
 .ds-sidebar-row.is-active {
-  background: var(--ds-accent-soft);
+  border-color: color-mix(in srgb, var(--ds-accent) 30%, var(--ds-border));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ds-accent-soft) 86%, transparent), color-mix(in srgb, var(--ds-surface-card) 82%, transparent));
   color: var(--ds-accent);
+  box-shadow:
+    inset 3px 0 0 var(--ds-accent),
+    0 1px 0 color-mix(in srgb, var(--ds-surface-elevated) 54%, transparent) inset;
 }
 
 .ds-sidebar-row.is-confirming-delete {
@@ -416,7 +502,7 @@ textarea:focus-visible {
   flex: 0 0 auto;
   color: var(--ds-text-faint);
   font-size: var(--ds-size-caption);
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
 }
 
 .ds-sidebar-row-actions,
@@ -483,16 +569,16 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 6px;
-  border-top: 1px solid var(--ds-border-muted);
+  border-top: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
   padding: 12px;
 }
 
 .ds-sidebar-workbench-switch {
   display: inline-flex;
   margin-left: auto;
-  border: 1px solid var(--ds-border-muted);
+  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 82%, transparent);
   border-radius: var(--ds-radius-pill);
-  background: var(--ds-surface-card);
+  background: color-mix(in srgb, var(--ds-surface-glass) 86%, transparent);
   padding: 2px;
 }
 
@@ -506,6 +592,9 @@ textarea:focus-visible {
   cursor: pointer;
   font-size: var(--ds-size-caption);
   padding: 2px 10px;
+  transition:
+    background-color var(--ds-motion-micro) var(--ds-motion-ease),
+    color var(--ds-motion-micro) var(--ds-motion-ease);
 }
 
 .ds-sidebar-workbench-button:hover {
@@ -513,13 +602,14 @@ textarea:focus-visible {
 }
 
 .ds-sidebar-workbench-button.is-active {
-  background: var(--ds-accent-soft);
+  background: color-mix(in srgb, var(--ds-accent-soft) 86%, var(--ds-surface-elevated));
   color: var(--ds-accent);
   cursor: default;
 }
 
 /* ---------- Chat stage ---------- */
 .ds-chat-stage {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -529,7 +619,7 @@ textarea:focus-visible {
 
 .ds-chat-topbar-frame {
   flex: 0 0 auto;
-  padding: var(--ds-space-3);
+  padding: 14px 16px 10px;
 }
 
 .ds-chat-stage-body {
@@ -540,6 +630,7 @@ textarea:focus-visible {
 }
 
 .ds-chat-column {
+  position: relative;
   display: flex;
   min-height: 0;
   min-width: 0;
@@ -551,12 +642,13 @@ textarea:focus-visible {
   display: flex;
   flex: 0 0 auto;
   justify-content: center;
-  padding: 0 0 var(--ds-space-3);
+  padding: 0 0 18px;
 }
 
 .ds-chat-composer-frame {
   width: min(100%, var(--ds-chat-content-max-width));
   min-width: 0;
+  padding-inline: clamp(0.75rem, 3vw, 2rem);
 }
 
 .ds-error-toast {
@@ -656,10 +748,41 @@ textarea:focus-visible {
   position: relative;
   width: 100%;
   overflow: visible;
-  background: var(--ds-surface-elevated);
-  border: 1px solid var(--ds-border-strong);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 36%, transparent), transparent),
+    var(--ds-surface-glass);
+  border: 1px solid color-mix(in srgb, var(--ds-border-strong) 70%, transparent);
   border-radius: var(--ds-radius-composer);
-  box-shadow: var(--ds-shadow-composer);
+  backdrop-filter: blur(24px) saturate(150%);
+  box-shadow:
+    var(--ds-shadow-composer),
+    0 1px 0 color-mix(in srgb, var(--ds-surface-elevated) 72%, transparent) inset;
+  transition:
+    border-color var(--ds-motion-standard) var(--ds-motion-ease),
+    box-shadow var(--ds-motion-standard) var(--ds-motion-ease),
+    transform var(--ds-motion-standard) var(--ds-motion-ease);
+  animation: ds-composer-arrive var(--ds-motion-deep) var(--ds-motion-ease) both;
+}
+
+.ds-composer-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--ds-surface-rail) 46%, transparent), transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 14%, transparent), transparent);
+  opacity: 0.66;
+}
+
+.ds-composer-shell:focus-within {
+  border-color: color-mix(in srgb, var(--ds-accent) 42%, var(--ds-border-strong));
+  box-shadow:
+    var(--ds-shadow-composer),
+    0 0 0 4px color-mix(in srgb, var(--ds-accent-soft) 72%, transparent),
+    0 1px 0 color-mix(in srgb, var(--ds-surface-elevated) 72%, transparent) inset;
+  transform: translateY(-1px);
 }
 
 .ds-composer-shell.is-write {
@@ -669,6 +792,8 @@ textarea:focus-visible {
 }
 
 .ds-composer-shell textarea {
+  position: relative;
+  z-index: 1;
   width: 100%;
   border: 0;
   background: transparent;
@@ -686,10 +811,12 @@ textarea:focus-visible {
 }
 
 .ds-composer-toolbar {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  border-top: 1px solid var(--ds-border-muted);
+  border-top: 1px solid color-mix(in srgb, var(--ds-border-muted) 76%, transparent);
   padding: 6px 10px 10px;
 }
 
@@ -709,12 +836,23 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   min-height: 28px;
-  border: 1px solid var(--ds-border);
+  border: 1px solid color-mix(in srgb, var(--ds-border) 82%, transparent);
   border-radius: var(--ds-radius-pill);
-  background: var(--ds-surface-card);
+  background: color-mix(in srgb, var(--ds-surface-card) 88%, transparent);
   color: var(--ds-text);
   cursor: pointer;
   font-size: var(--ds-size-label);
+  transition:
+    background-color var(--ds-motion-micro) var(--ds-motion-ease),
+    border-color var(--ds-motion-micro) var(--ds-motion-ease),
+    transform var(--ds-motion-micro) var(--ds-motion-ease);
+}
+
+.ds-composer-tool-button:hover,
+.ds-composer-model-button:hover {
+  border-color: color-mix(in srgb, var(--ds-accent) 34%, var(--ds-border));
+  background: color-mix(in srgb, var(--ds-surface-elevated) 92%, transparent);
+  transform: translateY(-1px);
 }
 
 .ds-composer-tool-button {
@@ -763,10 +901,12 @@ textarea:focus-visible {
   gap: 10px;
   overflow: auto;
   border: 1px solid var(--ds-border);
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-surface-elevated);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-glass);
+  backdrop-filter: blur(22px) saturate(150%);
   box-shadow: var(--ds-shadow-panel);
   padding: 8px;
+  animation: ds-popover-open var(--ds-motion-standard) var(--ds-motion-ease) both;
 }
 
 .ds-composer-popover.is-menu {
@@ -831,7 +971,7 @@ textarea:focus-visible {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   border-radius: var(--ds-radius-md);
-  background: var(--ds-surface-subtle);
+  background: color-mix(in srgb, var(--ds-surface-subtle) 70%, transparent);
   padding: 4px;
 }
 
@@ -843,12 +983,20 @@ textarea:focus-visible {
   color: var(--ds-text-muted);
   cursor: pointer;
   font-size: var(--ds-size-caption);
+  transition:
+    background-color var(--ds-motion-micro) var(--ds-motion-ease),
+    color var(--ds-motion-micro) var(--ds-motion-ease),
+    transform var(--ds-motion-micro) var(--ds-motion-ease);
 }
 
 .ds-segmented-control button.is-active {
-  background: var(--ds-surface-elevated);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 96%, transparent), color-mix(in srgb, var(--ds-surface-card) 86%, transparent));
   color: var(--ds-text);
-  box-shadow: var(--ds-shadow-card-soft);
+  box-shadow:
+    var(--ds-shadow-card-soft),
+    0 1px 0 color-mix(in srgb, var(--ds-surface-elevated) 82%, transparent) inset;
+  transform: translateY(-1px);
 }
 
 .ds-composer-attachments,
@@ -1002,15 +1150,30 @@ textarea:focus-visible {
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-block: 18px 150px;
+  padding-block: 22px 160px;
 }
 
 .ds-message-timeline-empty {
+  position: relative;
   flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--ds-text-faint);
+  animation: ds-surface-rise var(--ds-motion-deep) var(--ds-motion-ease) both;
+}
+
+.ds-message-timeline-empty::before {
+  content: "";
+  position: absolute;
+  width: min(44vw, 460px);
+  height: min(44vw, 460px);
+  border: 1px solid color-mix(in srgb, var(--ds-surface-rail) 42%, transparent);
+  border-radius: var(--ds-radius-pill);
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--ds-surface-rail) 36%, transparent), transparent 58%);
+  opacity: 0.58;
+  pointer-events: none;
 }
 
 .ds-message-jump-bottom {
@@ -1066,21 +1229,36 @@ textarea:focus-visible {
 }
 
 .ds-message-timeline-content {
+  position: relative;
   display: flex;
   width: min(100%, var(--ds-chat-content-max-width));
   min-width: 0;
   flex-direction: column;
-  gap: 22px;
+  gap: 26px;
   margin: 0 auto;
   padding-inline: clamp(0.75rem, 3vw, 2rem);
 }
 
+.ds-message-timeline-content::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 10px;
+  left: clamp(1rem, 3vw, 2.25rem);
+  width: 1px;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, var(--ds-surface-rail-strong) 14%, var(--ds-border-muted) 74%, transparent);
+  opacity: 0.72;
+}
+
 .ds-message-turn {
+  position: relative;
   display: flex;
   min-width: 0;
   max-width: 100%;
   flex-direction: column;
   gap: 10px;
+  animation: ds-surface-rise var(--ds-motion-deep) var(--ds-motion-ease) both;
 }
 
 .ds-message-block {
@@ -1103,13 +1281,16 @@ textarea:focus-visible {
   min-width: 0;
   max-width: min(82%, 560px);
   overflow-wrap: anywhere;
-  border-radius: var(--ds-radius-lg);
-  background: var(--ds-bubble-user);
+  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 62%, transparent);
+  border-radius: var(--ds-radius-2xl);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--ds-bubble-user) 86%, var(--ds-accent-soft)), var(--ds-bubble-user));
   color: var(--ds-bubble-user-fg);
   font-size: var(--ds-size-body);
   line-height: 1.58;
-  padding: 8px 12px;
+  padding: 9px 13px;
   white-space: pre-wrap;
+  box-shadow: var(--ds-shadow-card-soft);
 }
 
 .ds-message-block.assistant {
@@ -1511,8 +1692,9 @@ textarea:focus-visible {
 .ds-process-entry {
   min-width: 0;
   max-width: 100%;
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-surface-subtle);
+  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 76%, transparent);
+  border-radius: var(--ds-radius-lg);
+  background: color-mix(in srgb, var(--ds-surface-subtle) 78%, transparent);
   color: var(--ds-text-muted);
   font-size: var(--ds-size-caption);
   padding: 8px 10px;
@@ -1707,6 +1889,59 @@ textarea:focus-visible {
   100% { opacity: 0.25; }
 }
 
+@keyframes ds-surface-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ds-panel-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes ds-composer-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes ds-popover-open {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes ds-status-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ds-warning-soft) 42%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--ds-warning-soft) 72%, transparent);
+  }
+}
+
 .ds-process-tool.is-running {
   background: var(--ds-accent-soft);
 }
@@ -1738,7 +1973,7 @@ textarea:focus-visible {
 .ds-process-tool-row {
   min-width: 0;
   max-width: 100%;
-  border-radius: var(--ds-radius-md);
+  border-radius: var(--ds-radius-lg);
   color: var(--ds-text-muted);
   font-size: var(--ds-size-caption);
   padding: 4px 8px;
@@ -1830,7 +2065,8 @@ textarea:focus-visible {
    danger tint only the label so the row stays quiet at rest. A run of failed
    commands must not flood the timeline with red blocks. */
 .ds-process-tool-row.is-running {
-  background: var(--ds-accent-soft);
+  background: linear-gradient(90deg, var(--ds-accent-soft), transparent);
+  box-shadow: inset 2px 0 0 var(--ds-accent);
 }
 
 .ds-process-tool-row.is-success .ds-process-tool-row-summary-label {
@@ -1848,8 +2084,9 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 8px;
   border: 1px solid var(--ds-border-muted);
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-surface-card);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-glass);
+  backdrop-filter: blur(16px);
   padding: 12px 14px;
   color: var(--ds-text);
   font-size: var(--ds-size-body);
@@ -1877,19 +2114,28 @@ textarea:focus-visible {
 }
 
 .ds-empty-session {
+  position: relative;
   display: flex;
   width: min(100%, 420px);
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  padding: 16px;
+  padding: 18px 16px;
   text-align: center;
+}
+
+.ds-empty-session::before {
+  content: "";
+  width: 42px;
+  height: 3px;
+  border-radius: var(--ds-radius-pill);
+  background: linear-gradient(90deg, transparent, var(--ds-surface-rail-strong), transparent);
 }
 
 .ds-empty-session-title {
   color: var(--ds-text);
   font-size: var(--ds-size-title-lg);
-  font-weight: 650;
+  font-weight: var(--ds-font-weight-medium-strong);
 }
 
 .ds-empty-session-subtitle {
@@ -1902,13 +2148,14 @@ textarea:focus-visible {
   grid-template-columns: repeat(7, 14px);
   grid-auto-rows: 14px;
   grid-auto-flow: column;
-  gap: 4px;
-  margin-top: 6px;
+  gap: 5px;
+  margin-top: 8px;
 }
 
 .ds-usage-cell {
-  border-radius: 4px;
+  border-radius: var(--ds-radius-sm);
   background: var(--ds-accent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--ds-surface-elevated) 52%, transparent) inset;
 }
 
 .ds-usage-legend {
@@ -1963,8 +2210,9 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 8px;
   border: 1px solid var(--ds-border);
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-warning-soft);
+  border-radius: var(--ds-radius-lg);
+  background:
+    linear-gradient(135deg, var(--ds-warning-soft), color-mix(in srgb, var(--ds-surface-card) 78%, transparent));
   padding: 12px 14px;
   font-size: var(--ds-size-body);
 }
@@ -2175,8 +2423,11 @@ textarea:focus-visible {
   height: 100%;
   min-height: 0;
   flex: 0 0 auto;
-  background: var(--ds-bg-sidebar);
-  border-left: 1px solid var(--ds-border-muted);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-bg-sidebar) 92%, var(--ds-accent)) 0%, var(--ds-bg-sidebar) 42%, color-mix(in srgb, var(--ds-bg-sidebar) 94%, var(--ds-text)) 100%);
+  border-left: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  box-shadow: -20px 0 60px color-mix(in srgb, var(--ds-text) 5%, transparent);
+  animation: ds-panel-slide-in var(--ds-motion-deep) var(--ds-motion-ease) both;
 }
 
 .ds-right-inspector-resizer {
@@ -2215,8 +2466,8 @@ textarea:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ds-border-muted);
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
 }
 
 .ds-right-inspector-title {
@@ -2232,7 +2483,7 @@ textarea:focus-visible {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  padding: 18px;
 }
 
 .ds-inspector-empty {
@@ -2251,11 +2502,13 @@ textarea:focus-visible {
 
 .ds-inspector-change-item {
   min-width: 0;
-  border: 1px solid var(--ds-border-muted);
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-surface-card);
+  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 76%, transparent);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-glass);
+  backdrop-filter: blur(14px);
   color: var(--ds-text);
   padding: 10px;
+  box-shadow: var(--ds-shadow-card-soft);
 }
 
 .ds-inspector-change-item.is-running {
@@ -2339,10 +2592,11 @@ textarea:focus-visible {
   min-width: 0;
   flex-direction: column;
   gap: 8px;
-  border: 1px solid var(--ds-border-muted);
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-surface-card);
+  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 76%, transparent);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-glass);
   padding: 10px;
+  box-shadow: var(--ds-shadow-card-soft);
 }
 
 .ds-checkpoint-header {
@@ -2514,16 +2768,35 @@ textarea:focus-visible {
   flex: 1 1 0;
   min-height: 0;
   min-width: 0;
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--ds-bg-canvas) 98%, var(--ds-accent)) 0%, var(--ds-bg-canvas) 52%, color-mix(in srgb, var(--ds-bg-canvas) 98%, var(--ds-skill)) 100%);
 }
 
 .ds-write-sidebar {
+  position: relative;
   display: flex;
   min-height: 0;
   min-width: 180px;
   max-width: 420px;
   flex-direction: column;
-  border-right: 1px solid var(--ds-border-muted);
-  background: var(--ds-bg-sidebar);
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-bg-sidebar) 96%, var(--ds-accent)) 0%, var(--ds-bg-sidebar) 48%);
+}
+
+.ds-write-sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 160px;
+  pointer-events: none;
+  background: radial-gradient(circle at 28px 0, color-mix(in srgb, var(--ds-surface-rail) 74%, transparent), transparent 11rem);
+}
+
+.ds-write-sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 
 .ds-write-sidebar-divider {
@@ -2533,8 +2806,8 @@ textarea:focus-visible {
 .ds-write-route-actions {
   display: flex;
   gap: 6px;
-  border-bottom: 1px solid var(--ds-border-muted);
-  padding: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  padding: 14px 12px 12px;
 }
 
 .ds-write-route-actions .ds-pill {
@@ -2553,7 +2826,7 @@ textarea:focus-visible {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  border-bottom: 1px solid var(--ds-border-muted);
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
 }
 
 .ds-write-sidebar-section:last-of-type {
@@ -2753,21 +3026,31 @@ textarea:focus-visible {
   min-width: 0;
   align-items: center;
   gap: 8px;
-  border-radius: var(--ds-radius-md);
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-lg);
   background: transparent;
   color: var(--ds-text);
   padding: 8px 10px;
-  transition: background-color var(--ds-motion-micro) var(--ds-motion-ease);
+  transition:
+    background-color var(--ds-motion-micro) var(--ds-motion-ease),
+    border-color var(--ds-motion-micro) var(--ds-motion-ease),
+    box-shadow var(--ds-motion-micro) var(--ds-motion-ease),
+    transform var(--ds-motion-micro) var(--ds-motion-ease);
 }
 
 .ds-write-file-row:hover,
 .ds-write-file-row:focus-within {
   background: var(--ds-surface-hover);
+  transform: translateX(1px);
 }
 
 .ds-write-file-row.is-active {
-  background: var(--ds-accent-soft);
+  border-color: color-mix(in srgb, var(--ds-accent) 30%, var(--ds-border));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ds-accent-soft) 86%, transparent), color-mix(in srgb, var(--ds-surface-card) 82%, transparent));
   color: var(--ds-accent);
+  box-shadow:
+    inset 3px 0 0 var(--ds-accent),
+    0 1px 0 color-mix(in srgb, var(--ds-surface-elevated) 54%, transparent) inset;
 }
 
 .ds-write-file-row.is-confirming-delete {
@@ -2914,7 +3197,7 @@ textarea:focus-visible {
   flex: 1 1 0;
   min-height: 0;
   min-width: 0;
-  background: var(--ds-bg-canvas);
+  background: transparent;
 }
 
 .ds-write-editor {
@@ -2938,7 +3221,11 @@ textarea:focus-visible {
   position: relative;
   min-height: 0;
   min-width: 0;
-  border-right: 1px solid var(--ds-border-muted);
+  border-right: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, var(--ds-surface-rail) 28%, transparent) 50%, transparent),
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 18%, transparent), transparent 42%),
+    transparent;
 }
 
 .ds-write-editor textarea {
@@ -3007,7 +3294,9 @@ textarea:focus-visible {
   position: relative;
   min-width: 0;
   overflow: auto;
-  background: var(--ds-bg-canvas);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 22%, transparent), transparent 34%),
+    color-mix(in srgb, var(--ds-bg-canvas) 88%, var(--ds-surface-card));
   padding: 48px clamp(1rem, 4vw, 3rem) 32px;
 }
 
@@ -3023,8 +3312,9 @@ textarea:focus-visible {
   gap: var(--ds-space-2);
   margin-bottom: var(--ds-space-3);
   border: 1px solid var(--ds-border-muted);
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-surface-card);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-glass);
+  backdrop-filter: blur(14px);
   color: var(--ds-text-faint);
   font-size: var(--ds-size-caption);
   padding: 8px 10px;
@@ -3044,8 +3334,9 @@ textarea:focus-visible {
   min-height: 160px;
   align-items: center;
   justify-content: center;
-  border: 1px dashed var(--ds-border-muted);
-  border-radius: var(--ds-radius-md);
+  border: 1px dashed color-mix(in srgb, var(--ds-border-muted) 82%, transparent);
+  border-radius: var(--ds-radius-2xl);
+  background: color-mix(in srgb, var(--ds-surface-card) 36%, transparent);
   color: var(--ds-text-faint);
   font-size: var(--ds-size-body);
   text-align: center;
@@ -3059,7 +3350,8 @@ textarea:focus-visible {
   padding: 8px 16px;
   font-size: var(--ds-size-caption);
   color: var(--ds-text-faint);
-  border-top: 1px solid var(--ds-border-muted);
+  border-top: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  background: color-mix(in srgb, var(--ds-surface-glass) 72%, transparent);
 }
 
 .ds-write-status-message {
@@ -3078,14 +3370,48 @@ textarea:focus-visible {
 }
 
 .ds-write-assistant {
+  position: relative;
   display: flex;
   width: clamp(300px, 28vw, 420px);
   min-width: 280px;
   min-height: 0;
   flex: 0 0 clamp(300px, 28vw, 420px);
   flex-direction: column;
-  border-left: 1px solid var(--ds-border-muted);
-  background: var(--ds-surface-card);
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-bg-canvas) 97%, var(--ds-accent)) 0%, var(--ds-surface-glass) 38%, color-mix(in srgb, var(--ds-surface-glass) 88%, var(--ds-bg-main)) 100%);
+  backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: -20px 0 60px color-mix(in srgb, var(--ds-text) 4%, transparent);
+}
+
+.ds-write-assistant::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 220px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 24px 0, color-mix(in srgb, var(--ds-surface-rail) 74%, transparent), transparent 12rem),
+    linear-gradient(90deg, color-mix(in srgb, var(--ds-surface-rail) 38%, transparent), transparent 42%);
+  opacity: 0.66;
+}
+
+.ds-write-assistant::after {
+  content: "";
+  position: absolute;
+  top: 74px;
+  bottom: 112px;
+  left: 24px;
+  width: 1px;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--ds-surface-rail-strong) 72%, transparent) 18%, var(--ds-border-muted) 78%, transparent);
+  opacity: 0.48;
+}
+
+.ds-write-assistant > * {
+  position: relative;
+  z-index: 1;
 }
 
 .ds-write-assistant-header {
@@ -3093,8 +3419,9 @@ textarea:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  border-bottom: 1px solid var(--ds-border-muted);
-  padding: 14px 16px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  background: color-mix(in srgb, var(--ds-surface-glass) 80%, transparent);
+  padding: 16px 18px 14px;
 }
 
 .ds-write-assistant-header div {
@@ -3120,13 +3447,14 @@ textarea:focus-visible {
 }
 
 .ds-write-assistant-messages {
+  position: relative;
   display: flex;
   min-height: 0;
   flex: 1 1 0;
   flex-direction: column;
   gap: 14px;
   overflow-y: auto;
-  padding: 16px;
+  padding: 22px 18px 20px;
 }
 
 .ds-write-assistant-timeline {
@@ -3148,16 +3476,36 @@ textarea:focus-visible {
 }
 
 .ds-write-assistant-empty {
-  margin: auto;
+  position: relative;
+  width: min(100%, 274px);
+  margin: auto auto 32%;
+  border: 1px solid color-mix(in srgb, var(--ds-border-muted) 76%, transparent);
+  border-radius: var(--ds-radius-3xl);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--ds-surface-elevated) 76%, transparent), color-mix(in srgb, var(--ds-surface-glass) 70%, transparent));
+  box-shadow: var(--ds-shadow-card-soft);
   color: var(--ds-text-faint);
   font-size: var(--ds-size-body);
   line-height: 1.55;
+  padding: 20px 18px 18px;
   text-align: center;
 }
 
+.ds-write-assistant-empty::before {
+  content: "";
+  display: block;
+  width: 34px;
+  height: 3px;
+  margin: 0 auto 12px;
+  border-radius: var(--ds-radius-pill);
+  background: linear-gradient(90deg, transparent, var(--ds-surface-rail-strong), transparent);
+}
+
 .ds-write-assistant-composer {
-  border-top: 1px solid var(--ds-border-muted);
-  padding: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-glass) 20%, transparent), color-mix(in srgb, var(--ds-bg-canvas) 82%, transparent));
+  padding: 14px 14px 16px;
 }
 
 /* ---------- Pill button primitive ---------- */
@@ -3172,11 +3520,17 @@ textarea:focus-visible {
   color: var(--ds-text);
   font-size: var(--ds-size-label);
   cursor: pointer;
-  transition: background-color var(--ds-motion-micro) var(--ds-motion-ease);
+  transition:
+    background-color var(--ds-motion-micro) var(--ds-motion-ease),
+    border-color var(--ds-motion-micro) var(--ds-motion-ease),
+    color var(--ds-motion-micro) var(--ds-motion-ease),
+    transform var(--ds-motion-micro) var(--ds-motion-ease);
 }
 
 .ds-pill:hover {
   background: var(--ds-surface-hover);
+  border-color: color-mix(in srgb, var(--ds-accent) 26%, var(--ds-border));
+  transform: translateY(-1px);
 }
 
 .ds-pill.is-accent {
@@ -3240,20 +3594,41 @@ textarea:focus-visible {
 
 /* ---------- Settings ---------- */
 .ds-settings-root {
+  position: relative;
   display: flex;
   min-height: 0;
   min-width: 0;
   flex: 1 1 0;
-  background: var(--ds-bg-main);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 76% 0%, color-mix(in srgb, var(--ds-surface-rail) 72%, transparent), transparent 23rem),
+    var(--ds-bg-main);
 }
 
 .ds-settings-sidebar {
+  position: relative;
   display: flex;
   width: 248px;
   min-width: 248px;
   flex-direction: column;
-  border-right: 1px solid var(--ds-border-muted);
-  background: var(--ds-bg-sidebar);
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-bg-sidebar) 96%, var(--ds-accent)) 0%, var(--ds-bg-sidebar) 48%);
+}
+
+.ds-settings-sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 180px;
+  pointer-events: none;
+  background: radial-gradient(circle at 28px 0, color-mix(in srgb, var(--ds-surface-rail) 74%, transparent), transparent 12rem);
+}
+
+.ds-settings-sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 
 .ds-settings-sidebar-top {
@@ -3316,8 +3691,11 @@ textarea:focus-visible {
   gap: 12px;
   margin: 0 12px 12px;
   border: 1px solid var(--ds-border-muted);
-  border-radius: var(--ds-radius-lg);
-  background: var(--ds-surface-card);
+  border-radius: var(--ds-radius-xl);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 22%, transparent), transparent),
+    var(--ds-surface-glass);
+  backdrop-filter: blur(14px);
   padding: 10px 12px;
 }
 
@@ -3372,18 +3750,26 @@ textarea:focus-visible {
   cursor: pointer;
   padding: 10px;
   text-align: left;
+  transition:
+    background-color var(--ds-motion-micro) var(--ds-motion-ease),
+    border-color var(--ds-motion-micro) var(--ds-motion-ease),
+    box-shadow var(--ds-motion-micro) var(--ds-motion-ease),
+    transform var(--ds-motion-micro) var(--ds-motion-ease);
 }
 
 .ds-settings-nav-item:hover {
   background: var(--ds-surface-hover);
   color: var(--ds-text);
+  transform: translateX(1px);
 }
 
 .ds-settings-nav-item.is-active {
-  border-color: var(--ds-border-muted);
-  background: var(--ds-surface-card);
+  border-color: color-mix(in srgb, var(--ds-accent) 30%, var(--ds-border));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ds-accent-soft) 84%, transparent), color-mix(in srgb, var(--ds-surface-card) 82%, transparent));
   color: var(--ds-text);
-  box-shadow: var(--ds-shadow-card-soft);
+  box-shadow:
+    inset 3px 0 0 var(--ds-accent),
+    var(--ds-shadow-card-soft);
 }
 
 .ds-settings-nav-marker {
@@ -3428,7 +3814,7 @@ textarea:focus-visible {
   gap: 10px;
   align-items: center;
   margin-top: auto;
-  border-top: 1px solid var(--ds-border-muted);
+  border-top: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
   padding: 14px;
   color: var(--ds-text-muted);
 }
@@ -3468,22 +3854,29 @@ textarea:focus-visible {
   flex: 1 1 0;
   flex-direction: column;
   overflow-y: auto;
-  background: var(--ds-bg-main);
+  background: transparent;
 }
 
 .ds-settings-content {
-  width: min(100%, 820px);
+  width: min(100%, 900px);
   margin: 0 auto;
   padding: 32px clamp(20px, 5vw, 48px) 40px;
+  animation: ds-surface-rise var(--ds-motion-deep) var(--ds-motion-ease) both;
 }
 
 .ds-settings-page-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px 20px;
   align-items: center;
-  border-bottom: 1px solid var(--ds-border-muted);
-  background: var(--ds-bg-main);
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 16%, transparent), transparent),
+    color-mix(in srgb, var(--ds-bg-main) 88%, transparent);
+  backdrop-filter: blur(22px) saturate(140%);
   padding: 22px clamp(20px, 5vw, 48px) 14px;
 }
 
@@ -3521,9 +3914,12 @@ textarea:focus-visible {
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  border: 1px solid var(--ds-border);
+  border: 1px solid color-mix(in srgb, var(--ds-border) 82%, transparent);
   border-radius: var(--ds-radius-xl);
-  background: var(--ds-surface-card);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 18%, transparent), transparent),
+    var(--ds-surface-glass);
+  backdrop-filter: blur(14px);
   color: var(--ds-text-muted);
   cursor: pointer;
   padding: 7px 14px;
@@ -3531,18 +3927,21 @@ textarea:focus-visible {
   transition:
     border-color var(--ds-motion-micro) var(--ds-motion-ease),
     background-color var(--ds-motion-micro) var(--ds-motion-ease),
-    color var(--ds-motion-micro) var(--ds-motion-ease);
+    color var(--ds-motion-micro) var(--ds-motion-ease),
+    transform var(--ds-motion-micro) var(--ds-motion-ease);
 }
 
 .ds-settings-section-tab:hover {
   background: var(--ds-surface-hover);
   color: var(--ds-text);
+  transform: translateY(-1px);
 }
 
 .ds-settings-section-tab.is-active {
   border-color: color-mix(in srgb, var(--ds-accent) 45%, var(--ds-border));
-  background: var(--ds-accent-soft);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--ds-accent-soft) 84%, transparent), color-mix(in srgb, var(--ds-surface-card) 78%, transparent));
   color: var(--ds-accent);
+  box-shadow: var(--ds-shadow-card-soft);
 }
 
 .ds-settings-section-tab span,
@@ -3664,15 +4063,24 @@ textarea:focus-visible {
 }
 
 .ds-settings-card {
+  position: relative;
   overflow: hidden;
-  border: 1px solid var(--ds-border);
-  border-radius: var(--ds-radius-2xl);
-  background: var(--ds-surface-card);
+  border: 1px solid color-mix(in srgb, var(--ds-border) 82%, transparent);
+  border-radius: var(--ds-radius-3xl);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ds-surface-elevated) 18%, transparent), transparent),
+    var(--ds-surface-glass);
+  backdrop-filter: blur(18px) saturate(140%);
   box-shadow: var(--ds-shadow-card-soft);
 }
 
+.ds-settings-card > * {
+  position: relative;
+  z-index: 1;
+}
+
 .ds-settings-card-header {
-  border-bottom: 1px solid var(--ds-border-muted);
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-border-muted) 72%, transparent);
   padding: 16px 18px 14px;
 }
 
@@ -3695,12 +4103,36 @@ textarea:focus-visible {
   flex-direction: column;
 }
 
+.ds-settings-card:has(.ds-profile-grid) {
+  border-color: color-mix(in srgb, var(--ds-accent) 18%, var(--ds-border));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--ds-surface-glass) 96%, var(--ds-accent)), var(--ds-surface-glass) 58%, color-mix(in srgb, var(--ds-surface-glass) 97%, var(--ds-skill)));
+  box-shadow: var(--ds-shadow-card-strong);
+}
+
+.ds-settings-card:has(.ds-profile-grid)::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 170px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 0, color-mix(in srgb, var(--ds-surface-rail) 70%, transparent), transparent 16rem),
+    linear-gradient(90deg, color-mix(in srgb, var(--ds-surface-rail) 32%, transparent), transparent 58%);
+  opacity: 0.58;
+}
+
+.ds-settings-card:has(.ds-profile-grid) .ds-settings-card-header {
+  border-bottom-color: color-mix(in srgb, var(--ds-border-muted) 54%, transparent);
+  padding: 20px 24px 16px;
+}
+
 .ds-setting-row {
   display: flex;
   gap: 28px;
   align-items: flex-start;
   justify-content: space-between;
-  border-top: 1px solid var(--ds-border-muted);
+  border-top: 1px solid color-mix(in srgb, var(--ds-border-muted) 82%, transparent);
   padding: 16px 18px;
 }
 
@@ -4196,26 +4628,33 @@ textarea:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  border-bottom: 1px solid var(--ds-border-muted);
-  padding: 14px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-border-muted) 64%, transparent);
+  background: color-mix(in srgb, var(--ds-surface-glass) 52%, transparent);
+  padding: 0 24px 18px;
 }
 
 .ds-profile-action,
 .ds-profile-card-actions button {
   min-height: 32px;
-  border: 1px solid var(--ds-border);
+  border: 1px solid color-mix(in srgb, var(--ds-border) 82%, transparent);
   border-radius: var(--ds-radius-pill);
-  background: var(--ds-surface-elevated);
+  background: color-mix(in srgb, var(--ds-surface-elevated) 82%, transparent);
   color: var(--ds-text);
   cursor: pointer;
   font-size: var(--ds-size-label);
   font-weight: 650;
   padding: 0 12px;
+  transition:
+    background-color var(--ds-motion-micro) var(--ds-motion-ease),
+    border-color var(--ds-motion-micro) var(--ds-motion-ease),
+    transform var(--ds-motion-micro) var(--ds-motion-ease);
 }
 
 .ds-profile-action:hover,
 .ds-profile-card-actions button:hover {
   background: var(--ds-surface-hover);
+  border-color: color-mix(in srgb, var(--ds-accent) 28%, var(--ds-border));
+  transform: translateY(-1px);
 }
 
 .ds-profile-action:disabled,
@@ -4228,9 +4667,9 @@ textarea:focus-visible {
 
 .ds-profile-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 12px;
-  padding: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 14px;
+  padding: 20px 24px 24px;
 }
 
 .ds-profile-card {
@@ -4240,15 +4679,44 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 10px;
   overflow: hidden;
-  border: 1px solid var(--ds-border);
-  border-radius: var(--ds-radius-xl);
-  background: var(--ds-surface-elevated);
-  padding: 12px;
+  min-height: 116px;
+  border: 1px solid color-mix(in srgb, var(--ds-border) 82%, transparent);
+  border-radius: var(--ds-radius-2xl);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--ds-surface-elevated) 92%, transparent), color-mix(in srgb, var(--ds-surface-card) 84%, transparent));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--ds-surface-elevated) 70%, transparent) inset;
+  padding: 14px;
+  transition:
+    border-color var(--ds-motion-standard) var(--ds-motion-ease),
+    box-shadow var(--ds-motion-standard) var(--ds-motion-ease),
+    transform var(--ds-motion-standard) var(--ds-motion-ease);
+}
+
+.ds-profile-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ds-surface-rail-strong) 86%, transparent), transparent);
+  opacity: 0;
+  transition: opacity var(--ds-motion-standard) var(--ds-motion-ease);
+}
+
+.ds-profile-card:hover {
+  border-color: color-mix(in srgb, var(--ds-accent) 24%, var(--ds-border));
+  box-shadow: var(--ds-shadow-card-soft);
+  transform: translateY(-1px);
 }
 
 .ds-profile-card.is-active {
   border-color: color-mix(in srgb, var(--ds-accent) 45%, var(--ds-border));
-  box-shadow: inset 3px 0 0 var(--ds-accent), var(--ds-shadow-card-soft);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--ds-accent-soft) 34%, var(--ds-surface-elevated)), color-mix(in srgb, var(--ds-surface-card) 86%, transparent));
+  box-shadow: inset 3px 0 0 var(--ds-accent), var(--ds-shadow-card-strong);
+}
+
+.ds-profile-card.is-active::before {
+  opacity: 1;
 }
 
 .ds-profile-card.is-confirming-delete {
@@ -4260,7 +4728,7 @@ textarea:focus-visible {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -4273,6 +4741,7 @@ textarea:focus-visible {
   overflow: hidden;
   font-size: var(--ds-size-body-lg);
   font-weight: 700;
+  letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4313,6 +4782,7 @@ textarea:focus-visible {
 .ds-profile-card-actions {
   display: flex;
   gap: 6px;
+  margin-top: auto;
 }
 
 .ds-profile-delete-confirm {

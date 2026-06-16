@@ -3,6 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Defense-in-depth CSP fallback (H-4): onHeadersReceived may not fire for
+      the main `file://` document in a packaged build, so this meta tag still
+      enforces script/style/connect rules. It cannot express frame-ancestors or
+      sandbox; the main-process header (content-security-policy.ts) is the
+      authoritative source for those. Keep this in sync with the production
+      policy branch. style-src keeps 'unsafe-inline' because inline <style> /
+      style-attribute patterns are still used by the renderer.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'"
+    />
     <title>Agent Pyramid Runtime</title>
   </head>
   <body>

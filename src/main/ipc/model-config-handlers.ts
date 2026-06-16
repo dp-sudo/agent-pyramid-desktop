@@ -19,6 +19,7 @@ import type {
 import {
   err,
   isAgentAutonomyLevel,
+  isAllowedModelBaseUrl,
   isLlmProtocol,
   isModelReasoningEffort,
   ok,
@@ -186,7 +187,7 @@ export function parseModelConfigUpdateRequest(
     parsed.protocol = value.protocol;
   }
   if (value.base_url !== undefined) {
-    parsed.base_url = requiredTrimmedString(value.base_url, "base_url");
+    parsed.base_url = requiredHttpBaseUrl(value.base_url);
   }
   if (value.OPENAI_API_KEY !== undefined) {
     if (typeof value.OPENAI_API_KEY !== "string") {
@@ -238,6 +239,19 @@ function requiredTrimmedString(value: unknown, field: string): string {
     throw new Error(`${field} is required.`);
   }
   return value.trim();
+}
+
+// base_url is validated at the IPC boundary (see H-1) so a malicious profile
+// cannot exfiltrate the API key to file:// or an attacker host. The store-level
+// assertHttpBaseUrl is the second authoritative check for non-IPC callers.
+function requiredHttpBaseUrl(value: unknown): string {
+  const trimmed = requiredTrimmedString(value, "base_url");
+  if (!isAllowedModelBaseUrl(trimmed, { allowInsecureLocalhost: process.env.AGENT_ALLOW_INSECURE_BASE_URL === "1" })) {
+    throw new Error(
+      "base_url must be an https URL (or http loopback with AGENT_ALLOW_INSECURE_BASE_URL=1).",
+    );
+  }
+  return trimmed;
 }
 
 function requiredPositiveInteger(value: unknown, field: string): number {

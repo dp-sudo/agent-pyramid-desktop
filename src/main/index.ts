@@ -109,7 +109,7 @@ function createWindow(): void {
     height: 760,
     minWidth: 960,
     minHeight: 640,
-    backgroundColor: "#f5f7fa",
+    backgroundColor: "#eaf0f6",
     title: "Agent Workbench",
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
