@@ -47,6 +47,9 @@ $RECYCLE.BIN/
 .cache/
 .temp/
 .tmp/
+.tmp-*.png
+.tmp-*.jpg
+.tmp-*.jpeg
 .eslintcache
 .parcel-cache
 
@@ -64,6 +67,7 @@ DeepSeek
 .claude
 .codegraph
 .reasonix
+.antigravitycli/
 
 # Stray local binaries
 Agent.rar
