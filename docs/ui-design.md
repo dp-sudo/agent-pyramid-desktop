@@ -11,13 +11,16 @@ themes: [light, dark]
 # ---------- 1. Palette (raw hex from --ds-* tokens) ----------
 palette:
   light:
-    bg_main: "#f5f7fa"
-    bg_sidebar: "#f4f7fb"
-    bg_canvas: "#fbfcfe"
-    surface_card: "rgba(255,255,255,0.9)"
-    surface_elevated: "rgba(255,255,255,0.98)"
-    surface_subtle: "#eef2f7"
-    surface_hover: "rgba(15,23,42,0.055)"
+    bg_main: "#eaf0f6"
+    bg_sidebar: "#eef4fa"
+    bg_canvas: "#f8fbfd"
+    surface_card: "rgba(255,255,255,0.86)"
+    surface_elevated: "rgba(255,255,255,0.96)"
+    surface_subtle: "rgba(225,233,241,0.72)"
+    surface_hover: "rgba(15,23,42,0.06)"
+    surface_glass: "rgba(255,255,255,0.72)"
+    surface_rail: "rgba(0,120,220,0.12)"
+    surface_rail_strong: "rgba(0,120,220,0.28)"
     border: "rgba(15,23,42,0.12)"
     border_muted: "rgba(15,23,42,0.08)"
     border_strong: "rgba(15,23,42,0.18)"
@@ -25,9 +28,9 @@ palette:
     text_muted: "#5f6878"
     text_faint: "#8a93a4"
     text_placeholder: "#949dad"
-    accent: "#0088ff"
-    accent_soft: "rgba(0,136,255,0.14)"
-    focus_ring: "0 0 0 3px rgba(0,136,255,0.18)"
+    accent: "#0077d9"
+    accent_soft: "rgba(0,119,217,0.13)"
+    focus_ring: "0 0 0 3px rgba(0,119,217,0.18)"
     bubble_user: "rgba(0,0,0,0.06)"
     bubble_user_fg: "#222222"
     success: "#128a4a"
@@ -42,17 +45,20 @@ palette:
     skill_soft: "rgba(124,58,237,0.12)"
     warning_soft: "rgba(245,158,11,0.14)"
     warning: "#b8770a"
-    selection: "rgba(0,136,255,0.18)"
+    selection: "rgba(0,119,217,0.18)"
     scrollbar_thumb: "rgba(95,104,120,0.22)"
     scrollbar_thumb_hover: "rgba(95,104,120,0.32)"
   dark:
-    bg_main: "#101010"
-    bg_sidebar: "#141414"
-    bg_canvas: "#181818"
-    surface_card: "rgba(24,24,24,0.92)"
-    surface_elevated: "#202020"
-    surface_subtle: "#202020"
-    surface_hover: "rgba(255,255,255,0.10)"
+    bg_main: "#0d1013"
+    bg_sidebar: "#111519"
+    bg_canvas: "#15191e"
+    surface_card: "rgba(28,33,39,0.82)"
+    surface_elevated: "rgba(32,38,45,0.96)"
+    surface_subtle: "rgba(47,55,64,0.72)"
+    surface_hover: "rgba(255,255,255,0.08)"
+    surface_glass: "rgba(24,29,35,0.72)"
+    surface_rail: "rgba(63,154,230,0.16)"
+    surface_rail_strong: "rgba(63,154,230,0.34)"
     border: "rgba(255,255,255,0.10)"
     border_muted: "rgba(255,255,255,0.10)"
     border_strong: "rgba(255,255,255,0.16)"
@@ -60,9 +66,9 @@ palette:
     text_muted: "#c7c7c7"
     text_faint: "#858585"
     text_placeholder: "#7a7a7a"
-    accent: "#339cff"
-    accent_soft: "rgba(51,156,255,0.18)"
-    focus_ring: "0 0 0 3px rgba(51,156,255,0.24)"
+    accent: "#4aa3f7"
+    accent_soft: "rgba(74,163,247,0.18)"
+    focus_ring: "0 0 0 3px rgba(74,163,247,0.24)"
     bubble_user: "rgba(255,255,255,0.08)"
     bubble_user_fg: "#ffffff"
     success: "#40c977"
@@ -77,7 +83,7 @@ palette:
     skill_soft: "rgba(173,123,249,0.16)"
     warning_soft: "rgba(245,158,11,0.18)"
     warning: "#e8a13a"
-    selection: "rgba(51,156,255,0.24)"
+    selection: "rgba(74,163,247,0.24)"
     scrollbar_thumb: "rgba(170,170,170,0.28)"
     scrollbar_thumb_hover: "rgba(200,200,200,0.38)"
 
@@ -127,7 +133,7 @@ spacing:
     right_inspector_min_px: 280
     right_inspector_max_px: 760
     chat_frame_padding_px: 12
-    chat_content_max_width_px: 920
+    chat_content_max_width_px: 980
 
 # ---------- 4. Border radius ----------
 radius:
@@ -152,17 +158,17 @@ radius:
 # ---------- 5. Elevation ----------
 elevation:
   light:
-    card_soft: "0 10px 28px rgba(15,23,42,0.06)"
-    card_strong: "0 14px 36px rgba(15,23,42,0.09)"
-    panel: "0 16px 44px rgba(15,23,42,0.06)"
-    shell: "0 12px 30px rgba(15,23,42,0.08)"
-    composer: "0 18px 46px rgba(15,23,42,0.10), 0 5px 16px rgba(15,23,42,0.06)"
+    card_soft: "0 12px 30px rgba(15,23,42,0.065)"
+    card_strong: "0 20px 46px rgba(15,23,42,0.10)"
+    panel: "0 24px 64px rgba(15,23,42,0.095)"
+    shell: "0 18px 48px rgba(15,23,42,0.11)"
+    composer: "0 22px 64px rgba(15,23,42,0.12), 0 5px 16px rgba(15,23,42,0.065), 0 0 0 1px rgba(255,255,255,0.62) inset"
   dark:
-    card_soft: "0 16px 42px rgba(0,0,0,0.22)"
-    card_strong: "0 22px 56px rgba(0,0,0,0.30)"
-    panel: "0 22px 58px rgba(0,0,0,0.35)"
-    shell: "0 38px 96px rgba(0,0,0,0.55)"
-    composer: "0 28px 78px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06)"
+    card_soft: "0 18px 46px rgba(0,0,0,0.26)"
+    card_strong: "0 30px 74px rgba(0,0,0,0.38)"
+    panel: "0 32px 84px rgba(0,0,0,0.45)"
+    shell: "0 42px 110px rgba(0,0,0,0.62)"
+    composer: "0 32px 88px rgba(0,0,0,0.52), 0 0 0 1px rgba(255,255,255,0.08), 0 0 0 1px rgba(255,255,255,0.05) inset"
 
 # ---------- 6. Z-index ----------
 z_index:
@@ -252,7 +258,7 @@ dont:
 Agent Workbench 是本仓库的桌面客户端。底座是 `AgentRuntime`（主进程内多 turn 编排器），通过 `window.agentApi` 暴露给渲染端。
 
 Two workbenches plus settings:
-- **Code**（默认）—— Sidebar 列出 thread、Center 渲染 MessageTimeline + FloatingComposer、Right Inspector 选 changes/todo/plan。
+- **Code**（默认）—— Sidebar 列出 thread、Center 渲染 MessageTimeline + FloatingComposer、Right Inspector 选 changes/checkpoints/todo/plan。
 - **Write** —— 打开 workspace 后，左侧按工作台导航、workspace 控制、writing sessions 和 Markdown 文档管理分区，中间 Markdown 源码/预览分栏 + 状态条，右侧 Write assistant 面板承载显式写作请求、Write thread 时间线和审批闭环。
 - **Settings** —— two-level settings center: top category tabs, left
   sub-navigation for the active category, constrained detail column, card
@@ -281,8 +287,8 @@ Two workbenches plus settings:
   │    └─ Right Inspector (optional, drag-resizable)
 ```
 
-Right Inspector content is derived from the current timeline items: Changes lists tool activity with status and details, Todo surfaces pending approvals, failed tools, runtime errors, and unfinished latest-plan steps, and Plan shows latest-plan progress plus per-step status.
-Topbar exposes the Right Inspector modes as a segmented control for Changes / Todo / Plan, with a separate Open / Close action; active mode buttons must set `aria-pressed` and keep the workspace path truncated inside the available title row.
+Right Inspector content is derived from the current timeline items and checkpoint store: Changes lists tool activity with status and details, Checkpoints lists rewind snapshots for the active code thread, Todo surfaces pending approvals, failed tools, runtime errors, and unfinished latest-plan steps, and Plan shows latest-plan progress plus per-step status.
+Topbar exposes the Right Inspector modes as a segmented control for Changes / Checkpoints / Todo / Plan, with a separate Open / Close action; active mode buttons must set `aria-pressed` and keep the workspace path truncated inside the available title row.
 Workbench runtime failure toasts must keep the full error text visible, provide copy-to-clipboard with explicit copied/failed feedback, and retain a separate dismiss control with localized `aria-label` and `title`.
 
 ## 3. Token usage
@@ -347,6 +353,7 @@ Workbench runtime failure toasts must keep the full error text visible, provide 
 - Write assistant composer must support text paste, image paste/upload when
   attachment preferences allow it, attachment thumbnails and quick model
   switching. Plan and goal controls remain hidden in Write mode.
+- Write assistant 空态不能呈现为大面积无层级空白；右侧面板使用轻量 rail、玻璃底色和有界空态提示，让输入器、历史时间线和未选择文件状态保持同一视觉系统。
 - Write source editing must keep very large Markdown files responsive: large
   documents use source performance mode with no soft wrapping or spellcheck,
   and the textarea avoids React-controlled whole-document rewrites on every
@@ -379,6 +386,7 @@ Workbench runtime failure toasts must keep the full error text visible, provide 
   token；stdio 与 Streamable HTTP 字段在入口层按 transport 分流，状态、
   tools/prompts/resources surface 作为同一卡片内的紧凑辅助信息展示。
 - 模型 profile 删除必须使用卡片内行内确认态，不使用系统 `confirm`，并提供明确的确认、取消和删除中状态。
+- 模型 profile 列表是模型设置页的主焦点：外层 `SettingsCard` 可以使用更强的 glass/rail 背景，profile 卡片保持三列优先、窄窗自适应折行，当前 profile 以 active rail、顶部细线和更强阴影表达。
 - 模型 profile 表单处于 dirty 状态时，切换/创建/复制/删除 profile 或返回工作台必须先提示保存，不能静默丢弃未保存修改。
 - Settings 返回工作台必须回到进入设置前的最近 code/write 工作台；模型 token 表单提交前必须在 renderer 做本地化正整数与上下限校验。
 - Code composer 的 MCP prompt/resource 输入解析不增加独立营销式说明面板；

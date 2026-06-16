@@ -44,6 +44,9 @@ Global visual system:
 
 - Design tokens live in `tokens.css` and use `--ds-*`.
 - Structural and component styles live in `shell.css`.
+- The shell uses a restrained glass/rail system: low-saturation blue rails,
+  soft inset highlights and reduced backdrop glow carry hierarchy without
+  competing with dense work content.
 - Theme is controlled by `<html data-theme>` and `agent.theme` local storage
   logic in `src/renderer/src/i18n/index.ts`.
 - Basic UI preferences live under `agent-pyramid.basicPreferences`.
@@ -203,7 +206,7 @@ Purpose:
 - Show short thread id.
 - Show workspace path.
 - Show running indicator.
-- Open inspector modes: changes, todo, plan.
+- Open inspector modes: changes, checkpoints, todo, plan.
 - Toggle inspector open/closed.
 
 Key classes:
@@ -220,7 +223,7 @@ Key classes:
 
 Inspector controls:
 
-- Modes: `changes`, `todo`, `plan`.
+- Modes: `changes`, `checkpoints`, `todo`, `plan`.
 - Toggle label comes from `getInspectorToggleLabel()`.
 - Mode buttons and the open/close toggle use `aria-controls` to target the
   shared `RightInspector` region; the open/close toggle also reflects
@@ -265,6 +268,9 @@ Scroll behavior:
 
 - Timeline content max width uses `min(100%, --ds-chat-content-max-width)`,
   the same outer width as the Code composer frame.
+- Empty Code sessions use a subdued local glow plus usage heatmap, so the first
+  screen has a visual anchor without adding a full-stage center line or becoming
+  a landing page.
 - Sticky threshold: `96px`.
 - When the user scrolls away from latest output, `MessageTimeline` shows a
   localized `ds-message-jump-bottom` button. Activating it restores the scroll
@@ -455,6 +461,9 @@ States:
 - The model picker popover is exposed as a dialog and marks active model profile
   / reasoning effort buttons with pressed state, matching the visual `is-active`
   state.
+- The composer shell uses glass material with an inset highlight and restrained
+  focus lift; focus changes should clarify affordance without visually
+  overpowering the timeline.
 - When enabled, clipboard paste filters to PNG/JPEG/WebP/GIF files, creates the
   same renderer attachment records as the picker path, generates a bounded
   thumbnail for the composer preview, and keeps normal text paste behavior when
@@ -822,6 +831,11 @@ Key classes:
 
 Behavior:
 
+- The empty assistant state is a bounded prompt surface inside the right rail,
+  not free-floating text in a blank panel. The rail and composer share the same
+  glass/rail material so the assistant reads as an active work area before a
+  writing request exists. The empty prompt uses a narrow top rail and rounded
+  glass surface rather than a generic card block.
 - Submit is handled by `FloatingComposer variant="write"` and is enabled only
   when there is an open workspace, text or image attachments to send, and no
   active Write assistant turn.
@@ -1145,6 +1159,10 @@ Primary save button:
   cannot submit the outer Settings form.
 - Active model profile cards use `is-active`; the card's main button also uses
   `aria-current="true"` while it represents the active profile.
+- The profile list card is the visual anchor of the model settings category:
+  the surrounding settings card may use a stronger but muted rail/glass
+  background, and profile cards prefer a three-column desktop rhythm while
+  wrapping at narrow widths.
 - Model profile input controls are disabled when the preload API is unavailable,
   while profile data is loading/saving, and while create/activate/duplicate/delete
   profile operations are busy. This prevents delayed profile responses from
