@@ -43,6 +43,7 @@
   --ds-skill: #7c3aed;
   --ds-skill-soft: rgba(124, 58, 237, 0.12);
   --ds-warning-soft: rgba(245, 158, 11, 0.14);
+  --ds-warning: #b8770a;
   --ds-diff-added: #128a4a;
   --ds-diff-added-soft: rgba(18, 138, 74, 0.1);
   --ds-diff-removed: #c92a2a;
@@ -90,6 +91,13 @@
   --ds-size-title-lg: 18px;
   --ds-size-display: 24px;
 
+  /* Font weights: scale_px 中 600 与 700 之间的 650 是设计层刻意选择的
+   * "medium-strong" 档，用于 pill / tag / 卡片标题；用 token 固化避免散落
+   * 字面量与 frontmatter 不一致。 */
+  --ds-font-weight-medium: 500;
+  --ds-font-weight-medium-strong: 650;
+  --ds-font-weight-strong: 700;
+
   /* Window chrome */
   --ds-window-controls-safe-block: 0px;
   --ds-window-controls-safe-inset: 0px;
@@ -133,6 +141,7 @@
   --ds-skill: #ad7bf9;
   --ds-skill-soft: rgba(173, 123, 249, 0.16);
   --ds-warning-soft: rgba(245, 158, 11, 0.18);
+  --ds-warning: #e8a13a;
   --ds-diff-added: #40c977;
   --ds-diff-added-soft: rgba(64, 201, 119, 0.16);
   --ds-diff-removed: #fa423e;

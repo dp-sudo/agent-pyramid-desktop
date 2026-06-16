@@ -6,6 +6,7 @@ import {
   type RightPanelMode,
 } from "../../store/WorkbenchContext";
 import { RIGHT_INSPECTOR_REGION_ID } from "../inspector/RightInspector";
+import { BrandMark } from "../primitives/BrandMark";
 
 export function WorkbenchTopBar(): ReactElement {
   const { t } = useTranslation();
@@ -19,15 +20,19 @@ export function WorkbenchTopBar(): ReactElement {
   ];
   return (
     <header className="ds-topbar-surface">
+      <div className="ds-topbar-brand">
+        <BrandMark size={18} />
+        <span className="ds-topbar-brand-wordmark">Workbench</span>
+      </div>
       <div className="ds-topbar-session">
-        <span className="ds-topbar-title">
+        <span
+          className="ds-topbar-title"
+          title={state.activeThreadId
+            ? t("chat.threadId", { id: state.activeThreadId })
+            : undefined}
+        >
           {state.activeThreadId ? t("chat.activeSession") : t("chat.noSession")}
         </span>
-        {state.activeThreadId ? (
-          <span className="ds-topbar-meta">
-            {t("chat.threadId", { id: state.activeThreadId.slice(0, 8) })}
-          </span>
-        ) : null}
         {state.workspaceRoot ? (
           <span className="ds-topbar-workspace" title={state.workspaceRoot}>
             {state.workspaceRoot}

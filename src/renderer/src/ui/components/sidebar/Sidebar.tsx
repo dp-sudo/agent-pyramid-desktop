@@ -58,16 +58,22 @@ export function Sidebar({
         >
           {t("threads.newChat")}
         </button>
-        <button
-          type="button"
-          className="ds-pill"
-          onClick={onPickWorkspace}
-          style={{ width: "100%", justifyContent: "center" }}
-        >
-          {t("threads.changeWorkspace")}
-        </button>
-        <div className="ds-sidebar-workspace" title={workspaceRoot || t("threads.noWorkspace")}>
-          {workspaceRoot || t("threads.noWorkspace")}
+        <div className="ds-sidebar-workspace-row">
+          <div
+            className="ds-sidebar-workspace"
+            title={workspaceRoot || t("threads.noWorkspace")}
+          >
+            {workspaceRoot || t("threads.noWorkspace")}
+          </div>
+          <button
+            type="button"
+            className="ds-sidebar-workspace-change"
+            onClick={onPickWorkspace}
+            aria-label={t("threads.changeWorkspace")}
+            title={t("threads.changeWorkspace")}
+          >
+            {t("threads.changeWorkspace")}
+          </button>
         </div>
         <button
           type="button"

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+import { CloseGlyph } from "../primitives/CloseGlyph";
 
-export const WORKBENCH_DISMISS_BUTTON_TEXT = "x";
 const WORKBENCH_ERROR_COPY_RESET_MS = 1600;
 
 type WorkbenchErrorCopyState = "idle" | "copied" | "failed";
@@ -11,11 +11,17 @@ export type WorkbenchErrorCopyResult =
   | { ok: true }
   | { ok: false; reason: WorkbenchErrorCopyFailureReason; error?: unknown };
 
+export type WorkbenchErrorToastSeverity = "error" | "warning";
+
 export interface WorkbenchErrorToastProps {
   message: string | null;
   enabled?: boolean;
   onDismiss: () => void;
   floating?: boolean;
+  // severity: "error"（默认，使用 danger-soft 底色 + danger 左边框）
+  //         "warning"（warning-soft 底色 + warning 左边框）
+  // 当前 store 仅承载 error；保留 prop 以便未来 warning 调用方按需接入。
+  severity?: WorkbenchErrorToastSeverity;
 }
 
 export function WorkbenchErrorToast({
@@ -23,6 +29,7 @@ export function WorkbenchErrorToast({
   enabled = true,
   onDismiss,
   floating = false,
+  severity = "error",
 }: WorkbenchErrorToastProps): ReactElement | null {
   const { t } = useTranslation();
   const [copyState, setCopyState] = useState<WorkbenchErrorCopyState>("idle");
@@ -59,7 +66,13 @@ export function WorkbenchErrorToast({
         ? t("common.copyFailed")
         : t("common.copy");
 
-  const toastClassName = floating ? "ds-error-toast is-floating" : "ds-error-toast";
+  const toastClassName = [
+    "ds-error-toast",
+    floating ? "is-floating" : null,
+    severity === "warning" ? "is-warning" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div className={toastClassName} role="status">
@@ -81,7 +94,7 @@ export function WorkbenchErrorToast({
           aria-label={t("common.dismiss")}
           title={t("common.dismiss")}
         >
-          {WORKBENCH_DISMISS_BUTTON_TEXT}
+          <CloseGlyph />
         </button>
       </div>
     </div>

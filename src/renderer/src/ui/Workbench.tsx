@@ -71,7 +71,6 @@ export {
 export {
   copyWorkbenchErrorMessage,
   shouldShowWorkbenchErrorToast,
-  WORKBENCH_DISMISS_BUTTON_TEXT,
   type WorkbenchErrorCopyResult,
 } from "./components/workbench/WorkbenchErrorToast";
 

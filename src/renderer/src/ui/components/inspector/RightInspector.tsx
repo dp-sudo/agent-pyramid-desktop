@@ -7,6 +7,7 @@ import {
   RIGHT_INSPECTOR_MAX_WIDTH,
   RIGHT_INSPECTOR_MIN_WIDTH,
 } from "../../preferences";
+import { CloseGlyph } from "../primitives/CloseGlyph";
 import { summarizeToolItemHeader, summarizeToolItemPreview } from "../chat/timeline-model";
 import type {
   CheckpointMeta,
@@ -21,7 +22,8 @@ const RIGHT_INSPECTOR_CHANGE_LIMIT = 80;
 const RIGHT_INSPECTOR_CHANGE_DETAIL_MAX_CHARS = 2000;
 export const RIGHT_INSPECTOR_REGION_ID = "workbench-right-inspector";
 export const RIGHT_INSPECTOR_TITLE_ID = "workbench-right-inspector-title";
-export const RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT = "x";
+// 稳定导出供测试断言：close 控件渲染 CloseGlyph（内联 SVG）而非字符。
+export const RIGHT_INSPECTOR_CLOSE_GLYPH_TESTID = "ds-right-inspector-close";
 
 export function RightInspector(): ReactElement | null {
   const { t } = useTranslation();
@@ -77,12 +79,13 @@ export function RightInspector(): ReactElement | null {
         </strong>
         <button
           type="button"
-          className="ds-pill"
+          className="ds-pill ds-right-inspector-close"
           onClick={() => actions.closeRightPanel()}
           aria-label={t("inspector.close")}
           title={t("inspector.close")}
+          data-testid={RIGHT_INSPECTOR_CLOSE_GLYPH_TESTID}
         >
-          {RIGHT_INSPECTOR_CLOSE_BUTTON_TEXT}
+          <CloseGlyph />
         </button>
       </div>
       <div className="ds-right-inspector-body">

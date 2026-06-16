@@ -150,6 +150,22 @@ textarea:focus-visible {
   box-shadow: var(--ds-shadow-card-soft);
 }
 
+/* Brand mark 区：在第一行表达"这是 Agent Workbench"，color 跟随主题色。 */
+.ds-topbar-brand {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--ds-accent);
+}
+
+.ds-topbar-brand-wordmark {
+  color: var(--ds-text);
+  font-size: var(--ds-size-body-lg);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
 .ds-topbar-session,
 .ds-topbar-actions {
   display: flex;
@@ -225,6 +241,49 @@ textarea:focus-visible {
   padding: 12px 12px 8px;
 }
 
+.ds-sidebar-workspace-row {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: 6px;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-subtle);
+}
+
+.ds-sidebar-workspace-row .ds-sidebar-workspace {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  background: transparent;
+  border: 0;
+  color: var(--ds-text-faint);
+  font-size: var(--ds-size-caption);
+  padding: 6px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-sidebar-workspace-change {
+  flex: 0 0 auto;
+  min-height: 28px;
+  border: 0;
+  border-left: 1px solid var(--ds-border-muted);
+  border-radius: 0 var(--ds-radius-md) var(--ds-radius-md) 0;
+  background: transparent;
+  color: var(--ds-text-muted);
+  cursor: pointer;
+  font-size: var(--ds-size-caption);
+  font-weight: 500;
+  padding: 0 10px;
+}
+
+.ds-sidebar-workspace-change:hover,
+.ds-sidebar-workspace-change:focus-visible {
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+}
+
 .ds-sidebar-workspace {
   overflow: hidden;
   border: 1px solid var(--ds-border-muted);
@@ -289,7 +348,7 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border-radius: var(--ds-radius-md);
   transition: background-color var(--ds-motion-micro) var(--ds-motion-ease);
   color: var(--ds-text);
@@ -357,6 +416,7 @@ textarea:focus-visible {
   flex: 0 0 auto;
   color: var(--ds-text-faint);
   font-size: var(--ds-size-caption);
+  letter-spacing: 0.02em;
 }
 
 .ds-sidebar-row-actions,
@@ -512,6 +572,17 @@ textarea:focus-visible {
   padding: 6px 8px 6px 10px;
 }
 
+/* Warning 变体：与 error 共享 shell，仅替换底色与文字色；保持布局一致。 */
+.ds-error-toast.is-warning {
+  background: var(--ds-warning-soft);
+  color: var(--ds-warning);
+}
+
+.ds-error-toast.is-warning button:hover,
+.ds-error-toast.is-warning button:focus-visible {
+  background: var(--ds-warning-soft);
+}
+
 .ds-error-toast-message {
   flex: 1 1 auto;
   min-width: 0;
@@ -551,6 +622,18 @@ textarea:focus-visible {
 .ds-error-toast .ds-error-toast-dismiss-button {
   width: 20px;
   font-size: var(--ds-size-title);
+}
+
+/* close icon buttons (pill / toast dismiss) 不再渲染字符，统一用 CloseGlyph
+ * 占据固定尺寸的视觉空间，避免依赖字符度量。 */
+.ds-right-inspector-close {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
 
 .ds-error-toast button:hover,
@@ -1612,6 +1695,8 @@ textarea:focus-visible {
   margin-left: 4px;
   border-radius: var(--ds-radius-pill);
   background: currentColor;
+  /* 等待首个 token 的占位脉冲：节奏比 assistant bubble 的 shimmer 慢半拍，
+   * 避免 reasoning 摘要展开时与正在 streaming 的文本视觉拥挤。 */
   animation: ds-thinking-pulse 1.2s steps(1, end) infinite;
 }
 
@@ -1844,7 +1929,9 @@ textarea:focus-visible {
   font-size: var(--ds-size-caption);
 }
 
-/* Streaming shimmer (assistant live delta). */
+/* Streaming shimmer (assistant live delta) — 作用于已发出内容的 assistant
+ * bubble；与 reasoning 摘要中的 ds-thinking-indicator::after 脉冲属于两个独立
+ * 阶段（文本 streaming vs 等待首个 token），因此使用不同的节奏避免重叠。 */
 .ds-shiny-text {
   background-image: linear-gradient(
     90deg,
@@ -2127,8 +2214,8 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: 10px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--ds-border-muted);
 }
 
