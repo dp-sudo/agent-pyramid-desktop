@@ -32,6 +32,10 @@ export class HttpMcpTransport implements McpTransport {
     if (!config.url) {
       throw new Error(`MCP server ${config.name} requires a Streamable HTTP URL.`);
     }
+    // scheme/host is enforced at the persistence boundary (parseHttpUrl rejects
+    // file:/data:/javascript: and non-http(s) schemes before this transport
+    // ever receives the config). The transport stays transport-only and does
+    // not re-validate, to keep a single authoritative scheme check (H-2).
     return new HttpMcpTransport(config, config.url, config.headers);
   }
 

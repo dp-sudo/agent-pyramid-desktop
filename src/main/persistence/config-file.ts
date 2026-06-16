@@ -4,6 +4,7 @@ import * as path from "node:path";
 import {
   DEFAULT_MODEL_CONFIG,
   isAgentAutonomyLevel,
+  isAllowedModelBaseUrl,
   isIsoTimestampString,
   isLlmProtocol,
   isModelReasoningEffort,
@@ -330,7 +331,7 @@ export function parseModelConfigUpdateFields(
     parsed.protocol = update.protocol;
   }
   if (update.base_url !== undefined) {
-    parsed.base_url = assertNonEmptyString(update.base_url, "base_url");
+    parsed.base_url = assertHttpBaseUrl(update.base_url, "base_url");
   }
   if (update.OPENAI_API_KEY !== undefined) {
     if (typeof update.OPENAI_API_KEY !== "string") {
@@ -383,7 +384,7 @@ export function normalizeModelConfig(value: Partial<ModelConfig>): ModelConfig {
   if (!isLlmProtocol(value.protocol)) {
     throw new Error("protocol must be one of openai-compatible, anthropic-compatible.");
   }
-  const baseUrl = assertNonEmptyString(value.base_url, "base_url");
+  const baseUrl = assertHttpBaseUrl(value.base_url, "base_url");
   const apiKey = typeof value.OPENAI_API_KEY === "string" ? value.OPENAI_API_KEY : "";
   const contextWindow = assertPositiveInteger(
     value.model_context_window,
@@ -441,6 +442,19 @@ export function assertNonEmptyString(value: unknown, field: string): string {
     throw new Error(`${field} is required.`);
   }
   return value.trim();
+}
+
+// base_url is the LLM provider endpoint; an attacker-influenced value can
+// exfiltrate the `Authorization: Bearer` API key, so scheme/host is enforced
+// here (see isAllowedModelBaseUrl) at every write path, not just at request time.
+export function assertHttpBaseUrl(value: unknown, field: string): string {
+  const trimmed = assertNonEmptyString(value, field);
+  if (!isAllowedModelBaseUrl(trimmed, { allowInsecureLocalhost: process.env.AGENT_ALLOW_INSECURE_BASE_URL === "1" })) {
+    throw new Error(
+      `${field} must be an https URL (or http loopback with AGENT_ALLOW_INSECURE_BASE_URL=1).`,
+    );
+  }
+  return trimmed;
 }
 
 export function normalizeProfileActivate(value: unknown): boolean {
