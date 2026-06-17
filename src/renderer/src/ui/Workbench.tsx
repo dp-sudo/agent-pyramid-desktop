@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
   getActiveThreadInFlightTurn,
@@ -57,6 +57,7 @@ import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
 import { CodeWorkbenchStage } from "./components/workbench/CodeWorkbenchStage";
 import { WriteWorkbenchStage } from "./components/workbench/WriteWorkbenchStage";
 import type { ApprovalResponseChoice } from "./components/chat/ChatBlock";
+import type { ThreadSafetyUpdate } from "./components/topbar/WorkbenchTopBar";
 import { usePanelResizer } from "./hooks/usePanelResizer";
 import {
   createNewThread,
@@ -94,6 +95,7 @@ export function Workbench(): ReactElement {
   const toolProgressFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestItemUpdateByItemIdRef = useRef(new Map<string, Item>());
   const itemUpdateFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [threadSafetyUpdating, setThreadSafetyUpdating] = useState(false);
   const activeThreadArchived = state.activeThread?.status === "archived";
   const activeThreadInFlightTurn = getActiveThreadInFlightTurn(state);
   const codeThreads = filterThreadsForWorkbench(state.threads, "code");
@@ -510,6 +512,26 @@ export function Workbench(): ReactElement {
     [actions, refreshThreads],
   );
 
+  const onUpdateThreadSafety = useCallback(
+    async (patch: ThreadSafetyUpdate) => {
+      const threadId = activeThreadIdRef.current;
+      if (!threadId) return;
+      setThreadSafetyUpdating(true);
+      const result = await runWorkbenchIpc(() =>
+        window.agentApi.threads.update(threadId, patch),
+      );
+      setThreadSafetyUpdating(false);
+      if (result.ok) {
+        actions.updateActiveThread(result.value);
+        actions.setError(null);
+        void refreshThreads();
+        return;
+      }
+      actions.setError(result.message);
+    },
+    [actions, refreshThreads],
+  );
+
   const sendCodeComposerPayload = useCallback(async (
     payload: WorkbenchComposerSendPayload,
   ): Promise<boolean> => {
@@ -734,6 +756,9 @@ export function Workbench(): ReactElement {
       );
       if (result.ok) {
         actions.setError(null);
+        if (!result.value.accepted) {
+          clearApprovalResponse(approvalId);
+        }
       } else {
         actions.setError(result.message);
         clearApprovalResponse(approvalId);
@@ -835,6 +860,8 @@ export function Workbench(): ReactElement {
             onComposerRequestSend={onSend}
             onInterrupt={() => void onInterrupt()}
             composerDisabled={activeThreadArchived}
+            onUpdateThreadSafety={onUpdateThreadSafety}
+            safetyUpdating={threadSafetyUpdating}
             toastMessage={state.errorMessage}
             toastEnabled={state.runtimePreferences.approvalExperience.showFailureToasts}
             onDismissToast={() => actions.setError(null)}

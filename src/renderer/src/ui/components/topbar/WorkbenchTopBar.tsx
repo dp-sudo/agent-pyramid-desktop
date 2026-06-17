@@ -7,11 +7,31 @@ import {
 } from "../../store/WorkbenchContext";
 import { RIGHT_INSPECTOR_REGION_ID } from "../inspector/RightInspector";
 import { BrandMark } from "../primitives/BrandMark";
+import {
+  THREAD_APPROVAL_POLICIES,
+  THREAD_SANDBOX_MODES,
+  type ThreadApprovalPolicy,
+  type ThreadSandboxMode,
+} from "../../../../../shared/agent-contracts";
 
-export function WorkbenchTopBar(): ReactElement {
+export type ThreadSafetyUpdate =
+  | { approvalPolicy: ThreadApprovalPolicy }
+  | { sandboxMode: ThreadSandboxMode };
+
+export interface WorkbenchTopBarProps {
+  onUpdateThreadSafety?: (patch: ThreadSafetyUpdate) => void | Promise<void>;
+  safetyUpdating?: boolean;
+}
+
+export function WorkbenchTopBar(props: WorkbenchTopBarProps): ReactElement {
+  const { onUpdateThreadSafety, safetyUpdating = false } = props;
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
   const isBusy = getActiveThreadInFlightTurn(state) !== null;
+  const safetyControlsDisabled = !state.activeThread ||
+    isBusy ||
+    safetyUpdating ||
+    !onUpdateThreadSafety;
   const inspectorModes: Array<Exclude<RightPanelMode, null>> = [
     "changes",
     "checkpoints",
@@ -44,6 +64,48 @@ export function WorkbenchTopBar(): ReactElement {
           <span className="ds-topbar-running">
             {t("chat.running")}
           </span>
+        ) : null}
+        {state.activeThread ? (
+          <div className="ds-topbar-safety" aria-label={t("chat.safetyControls")}>
+            <select
+              className="ds-topbar-safety-select"
+              aria-label={t("chat.approvalPolicy")}
+              title={safetyControlsDisabled && isBusy
+                ? t("chat.safetyControlsBusy")
+                : t("chat.approvalPolicy")}
+              value={state.activeThread.approvalPolicy}
+              disabled={safetyControlsDisabled}
+              onChange={(event) =>
+                void onUpdateThreadSafety?.({
+                  approvalPolicy: event.currentTarget.value as ThreadApprovalPolicy,
+                })}
+            >
+              {THREAD_APPROVAL_POLICIES.map((policy) => (
+                <option key={policy} value={policy}>
+                  {t(`settings.approvalPolicies.${policy}`)}
+                </option>
+              ))}
+            </select>
+            <select
+              className="ds-topbar-safety-select"
+              aria-label={t("chat.sandboxMode")}
+              title={safetyControlsDisabled && isBusy
+                ? t("chat.safetyControlsBusy")
+                : t("chat.sandboxMode")}
+              value={state.activeThread.sandboxMode}
+              disabled={safetyControlsDisabled}
+              onChange={(event) =>
+                void onUpdateThreadSafety?.({
+                  sandboxMode: event.currentTarget.value as ThreadSandboxMode,
+                })}
+            >
+              {THREAD_SANDBOX_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {t(`settings.sandboxModes.${mode}`)}
+                </option>
+              ))}
+            </select>
+          </div>
         ) : null}
         <div className="ds-segmented-control ds-topbar-inspector-tabs" role="group">
           {inspectorModes.map((mode) => (

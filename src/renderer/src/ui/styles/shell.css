@@ -267,6 +267,36 @@ textarea:focus-visible {
   animation: ds-status-breathe 1.8s ease-in-out infinite;
 }
 
+.ds-topbar-safety {
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  border-radius: var(--ds-radius-md);
+  background: color-mix(in srgb, var(--ds-surface-subtle) 70%, transparent);
+  padding: 4px;
+}
+
+.ds-topbar-safety-select {
+  min-width: 104px;
+  max-width: 142px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--ds-radius-sm);
+  background: color-mix(in srgb, var(--ds-surface-elevated) 72%, transparent);
+  color: var(--ds-text-muted);
+  cursor: pointer;
+  font-size: var(--ds-size-caption);
+  padding: 0 8px;
+}
+
+.ds-topbar-safety-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .ds-topbar-inspector-tabs {
   flex: 0 1 336px;
   width: min(336px, 36vw);

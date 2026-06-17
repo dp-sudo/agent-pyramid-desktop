@@ -21,6 +21,10 @@
     "noSession": "No active session",
     "threadId": "id: {{id}}",
     "running": "Running",
+    "safetyControls": "Current session safety controls",
+    "safetyControlsBusy": "Stop the running turn before changing safety controls",
+    "approvalPolicy": "Approval policy",
+    "sandboxMode": "Sandbox mode",
     "jumpToLatest": "Jump to latest",
     "showOlderTurns": "Show {{count}} earlier turns",
     "workProcessOne": "Work process · 1 item",
@@ -435,7 +439,7 @@
       "allowComposerImagePaste": "Allow clipboard image files to become composer attachments without blocking regular text paste.",
       "defaultApprovalPolicy": "Default approval policy assigned to newly created threads.",
       "defaultSandboxMode": "Default sandbox mode assigned to newly created threads.",
-      "permissionRules": "Apply per-call rules to command text, write paths, or MCP tools. Matches resolve by deny, ask, then allow priority; unmatched calls fall back to existing approval and sandbox logic.",
+      "permissionRules": "Apply per-call rules to command text, write paths, or MCP tools. Deny and ask always win; allow skips prompts only outside untrusted policy and never bypasses sandbox or never policy.",
       "commandTimeout": "Default timeout and maximum tool-call timeout in milliseconds for run_command and diagnose_workspace.",
       "commandMaxOutput": "Maximum stdout and stderr bytes kept for command-backed tools.",
       "compactionEnabled": "Allow the runtime to compact or trim history before model requests.",
@@ -520,7 +524,7 @@
     "approvalPolicies": {
       "auto": "Auto",
       "on-request": "Ask when needed",
-      "untrusted": "Ask for untrusted work",
+      "untrusted": "Always ask for untrusted work",
       "never": "Never approve"
     },
     "sandboxModes": {

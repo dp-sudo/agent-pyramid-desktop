@@ -21,6 +21,10 @@
     "noSession": "无活动会话",
     "threadId": "id: {{id}}",
     "running": "运行中",
+    "safetyControls": "当前会话安全控制",
+    "safetyControlsBusy": "请先停止运行中的 turn，再修改安全控制",
+    "approvalPolicy": "审批策略",
+    "sandboxMode": "沙盒模式",
     "jumpToLatest": "跳到最新",
     "showOlderTurns": "显示更早的 {{count}} 个回合",
     "workProcessOne": "工作过程 · 1 项",
@@ -434,7 +438,7 @@
       "allowComposerImagePaste": "允许剪贴板图片成为 composer 附件，同时不影响普通文本粘贴。",
       "defaultApprovalPolicy": "分配给新建会话的默认审批策略。",
       "defaultSandboxMode": "分配给新建会话的默认沙盒模式。",
-      "permissionRules": "对命令文本、写入路径或 MCP tool 应用 per-call 规则。匹配后按 deny、ask、allow 优先级决定；未匹配则回退现有审批与沙盒逻辑。",
+      "permissionRules": "对命令文本、写入路径或 MCP tool 应用 per-call 规则。deny 和 ask 始终优先；allow 仅在非 untrusted 策略下跳过询问，且永远不能绕过沙盒或 never 策略。",
       "commandTimeout": "run_command 和 diagnose_workspace 的默认超时时间，也是工具调用可使用的最大超时时间，单位为毫秒。",
       "commandMaxOutput": "命令类工具保留的 stdout 和 stderr 最大字节数。",
       "compactionEnabled": "允许运行时在模型请求前压缩或裁剪历史。",
@@ -637,7 +641,7 @@
     "approvalPolicies": {
       "auto": "自动",
       "on-request": "需要时询问",
-      "untrusted": "不受信任时询问",
+      "untrusted": "不受信任时总是询问",
       "never": "从不审批"
     },
     "sandboxModes": {

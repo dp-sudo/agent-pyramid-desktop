@@ -10,7 +10,10 @@ import {
   type FloatingComposerRequestPayload,
 } from "../composer";
 import { RightInspector } from "../inspector/RightInspector";
-import { WorkbenchTopBar } from "../topbar/WorkbenchTopBar";
+import {
+  WorkbenchTopBar,
+  type ThreadSafetyUpdate,
+} from "../topbar/WorkbenchTopBar";
 import { WorkbenchErrorToast } from "./WorkbenchErrorToast";
 
 export interface CodeWorkbenchStageProps {
@@ -19,6 +22,8 @@ export interface CodeWorkbenchStageProps {
   onComposerRequestSend: (payload: FloatingComposerRequestPayload) => Promise<boolean>;
   onInterrupt: () => void;
   composerDisabled: boolean;
+  onUpdateThreadSafety?: (patch: ThreadSafetyUpdate) => void | Promise<void>;
+  safetyUpdating?: boolean;
   toastMessage: string | null;
   toastEnabled: boolean;
   onDismissToast: () => void;
@@ -30,6 +35,8 @@ export function CodeWorkbenchStage({
   onComposerRequestSend,
   onInterrupt,
   composerDisabled,
+  onUpdateThreadSafety,
+  safetyUpdating,
   toastMessage,
   toastEnabled,
   onDismissToast,
@@ -37,7 +44,10 @@ export function CodeWorkbenchStage({
   return (
     <section className="ds-chat-stage">
       <div className="ds-chat-topbar-frame">
-        <WorkbenchTopBar />
+        <WorkbenchTopBar
+          onUpdateThreadSafety={onUpdateThreadSafety}
+          safetyUpdating={safetyUpdating}
+        />
       </div>
       <div className="ds-chat-stage-body">
         <div className="ds-chat-column ds-chat-column-inset">
