@@ -58,7 +58,7 @@ export function isLlmWorkerError(error: unknown): error is LlmWorkerError {
 export class LlmWorkerPool {
   private readonly workers: PoolEntry[] = [];
   private readonly threadToWorker = new Map<string, PoolEntry>();
-  private readonly threadToCancel = new Map<string, WorkerInbound>();
+  private readonly threadToCancel = new Map<string, Set<WorkerInbound>>();
   private destroyed = false;
   private destroyPromise: Promise<void> | null = null;
 
@@ -133,7 +133,9 @@ export class LlmWorkerPool {
         entry.worker.off("error", errorHandler);
         entry.worker.off("exit", exitHandler);
         entry.activeRequests = Math.max(0, entry.activeRequests - 1);
-        if (this.threadToCancel.get(thread.id) === cancelMsg) {
+        const cancelMessages = this.threadToCancel.get(thread.id);
+        cancelMessages?.delete(cancelMsg);
+        if (cancelMessages?.size === 0) {
           this.threadToCancel.delete(thread.id);
         }
       };
@@ -141,7 +143,7 @@ export class LlmWorkerPool {
       entry.worker.on("message", messageHandler);
       entry.worker.on("error", errorHandler);
       entry.worker.on("exit", exitHandler);
-      this.threadToCancel.set(thread.id, cancelMsg);
+      this.registerThreadCancelMessage(thread.id, cancelMsg);
       try {
         entry.worker.postMessage(chatMsg);
       } catch (error) {
@@ -154,16 +156,18 @@ export class LlmWorkerPool {
     });
   }
 
-  /** Cancel the in-flight chat on the worker assigned to `threadId`. */
+  /** Cancel all in-flight chats on the worker assigned to `threadId`. */
   cancel(threadId: string): void {
     const entry = this.threadToWorker.get(threadId);
     if (!entry) return;
-    const cancelMsg = this.threadToCancel.get(threadId);
-    if (cancelMsg) {
+    const cancelMessages = this.threadToCancel.get(threadId);
+    if (!cancelMessages) return;
+    for (const cancelMsg of [...cancelMessages]) {
       try {
         entry.worker.postMessage(cancelMsg);
       } catch (error) {
-        if (this.threadToCancel.get(threadId) === cancelMsg) {
+        cancelMessages.delete(cancelMsg);
+        if (cancelMessages.size === 0) {
           this.threadToCancel.delete(threadId);
         }
         console.warn(`[llm-worker] failed to post cancel for thread ${threadId}:`, error);
@@ -186,6 +190,12 @@ export class LlmWorkerPool {
       this.threadToCancel.clear();
     });
     return this.destroyPromise;
+  }
+
+  private registerThreadCancelMessage(threadId: string, cancelMsg: WorkerInbound): void {
+    const cancelMessages = this.threadToCancel.get(threadId) ?? new Set<WorkerInbound>();
+    cancelMessages.add(cancelMsg);
+    this.threadToCancel.set(threadId, cancelMessages);
   }
 
   private acquireEntry(threadId: string): PoolEntry {

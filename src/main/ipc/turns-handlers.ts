@@ -23,9 +23,7 @@ export function registerTurnHandlers(
       return ok(await runtime.startTurn(request));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const code = message === IPC_ERROR_CODES.RUNTIME_TURN_BUSY
-        ? IPC_ERROR_CODES.RUNTIME_TURN_BUSY
-        : IPC_ERROR_CODES.TURN_START_FAILED;
+      const code = turnStartErrorCodeForMessage(message);
       return err(code, message);
     }
   });
@@ -56,6 +54,16 @@ export function registerTurnHandlers(
       return err(IPC_ERROR_CODES.TURN_GET_FAILED, messageOf(error));
     }
   });
+}
+
+export function turnStartErrorCodeForMessage(message: string): typeof IPC_ERROR_CODES.RUNTIME_TURN_BUSY | typeof IPC_ERROR_CODES.RUNTIME_THREAD_ARCHIVED | typeof IPC_ERROR_CODES.TURN_START_FAILED {
+  if (message === IPC_ERROR_CODES.RUNTIME_TURN_BUSY) {
+    return IPC_ERROR_CODES.RUNTIME_TURN_BUSY;
+  }
+  if (message === IPC_ERROR_CODES.RUNTIME_THREAD_ARCHIVED) {
+    return IPC_ERROR_CODES.RUNTIME_THREAD_ARCHIVED;
+  }
+  return IPC_ERROR_CODES.TURN_START_FAILED;
 }
 
 // Interrupt is a renderer IPC boundary: malformed payloads must fail visibly
