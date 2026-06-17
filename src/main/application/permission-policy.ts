@@ -91,7 +91,9 @@ export function buildPermissionCandidate(
     let paths: string[];
     try {
       paths = extractUnifiedDiffTargetPaths(args.patch);
-    } catch {
+    } catch (_error) {
+      // Invalid patch headers cannot be converted into a precise write rule candidate.
+      // Returning null keeps approval policy from granting access on ambiguous paths.
       return null;
     }
     return paths.length > 0 ? { tool: "write", value: paths.join("\n") } : null;

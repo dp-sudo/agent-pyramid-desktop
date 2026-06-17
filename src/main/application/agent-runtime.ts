@@ -32,7 +32,10 @@ import { prepareMessagesForRequest } from "./context-compaction.js";
 import { ToolCatalogService } from "./tool-catalog.js";
 import type { ToolAccessPolicy } from "./tool-catalog.js";
 import { ToolCallExecutor } from "./tool-call-executor.js";
-import { normalizeTurnStartRequest } from "./turn-start-request.js";
+import {
+  normalizeTurnStartRequest,
+  type NormalizedTurnStartRequest,
+} from "./turn-start-request.js";
 import { parsePlanToolContent } from "./plan-item-parser.js";
 import {
   normalizeThreadGoalUpdate,
@@ -131,6 +134,7 @@ const GOAL_MODE_INSTRUCTION = [
  */
 export class AgentRuntime {
   private readonly inFlight = new Map<string, TurnRecord>(); // turnId -> record
+  private readonly startingThreadIds = new Set<string>();
   private readonly readState = new FileReadStateStore();
   private readonly fileHistory = new FileHistoryStore();
   private readonly toolCatalog: ToolCatalogService;
@@ -187,6 +191,7 @@ export class AgentRuntime {
   }
 
   isThreadInFlight(threadId: string): boolean {
+    if (this.startingThreadIds.has(threadId)) return true;
     return Array.from(this.inFlight.values()).some(
       (turn) => turn.threadId === threadId,
     );
@@ -194,14 +199,29 @@ export class AgentRuntime {
 
   async startTurn(request: TurnStartRequest): Promise<TurnRecord> {
     const normalizedRequest = normalizeTurnStartRequest(request);
+    if (this.isThreadInFlight(normalizedRequest.threadId)) {
+      throw new Error("RUNTIME_TURN_BUSY");
+    }
+    this.startingThreadIds.add(normalizedRequest.threadId);
+    let turnStarted = false;
+    try {
+      const turn = await this.prepareTurnStart(normalizedRequest);
+      turnStarted = true;
+      return turn;
+    } finally {
+      if (!turnStarted) {
+        this.startingThreadIds.delete(normalizedRequest.threadId);
+      }
+    }
+  }
+
+  private async prepareTurnStart(
+    normalizedRequest: NormalizedTurnStartRequest,
+  ): Promise<TurnRecord> {
     const thread = await this.deps.store.getThread(normalizedRequest.threadId);
     if (!thread) throw new Error(`Thread ${normalizedRequest.threadId} not found`);
     if (thread.status === "archived") {
       throw new Error("RUNTIME_THREAD_ARCHIVED");
-    }
-
-    if (this.isThreadInFlight(normalizedRequest.threadId)) {
-      throw new Error("RUNTIME_TURN_BUSY");
     }
     const modelProfiles = await this.deps.modelConfigStore.listProfiles();
     const runtimePreferences = await this.resolveRuntimePreferences();
@@ -233,6 +253,7 @@ export class AgentRuntime {
     );
     turn.toolCatalog = this.toolCatalog.describeDefinitions(initialToolDefinitions);
     this.inFlight.set(turn.id, turn);
+    this.startingThreadIds.delete(turn.threadId);
 
     // Append the user item first.
     const userItem: UserItem = {
@@ -271,6 +292,7 @@ export class AgentRuntime {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.inFlight.delete(turn.id);
+      this.startingThreadIds.delete(turn.threadId);
       this.reportRuntimeError(turn, "persistence_error", message, error);
       await this.emitTurnFailed(turn, message);
       throw error;
@@ -1411,6 +1433,7 @@ export class AgentRuntime {
     }
     this.deps.bus.emit("turn_completed", event);
     this.inFlight.delete(turn.id);
+    this.startingThreadIds.delete(turn.threadId);
     this.toolExecutor.clearReadOnlyToolRepeatStateForTurn(turn.id);
   }
 }
