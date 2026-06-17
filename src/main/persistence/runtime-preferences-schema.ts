@@ -16,6 +16,7 @@ import {
   isRuntimePermissionRuleEffect,
   isRuntimePermissionRuleMatch,
   isRuntimePermissionRuleTool,
+  isRuntimePermissionRuleScope,
   isRuntimeToolName,
   isThreadApprovalPolicy,
   isThreadMode,
@@ -450,7 +451,11 @@ function parseRuntimePermissionRule(
   if (match !== undefined && !isRuntimePermissionRuleMatch(match)) {
     throw new Error(`permissionRules[${index}].match is invalid.`);
   }
-  return { id, tool, pattern, effect, ...(match ? { match } : {}) };
+  const scope = value.scope;
+  if (scope !== undefined && !isRuntimePermissionRuleScope(scope)) {
+    throw new Error(`permissionRules[${index}].scope is invalid.`);
+  }
+  return { id, tool, pattern, effect, ...(match ? { match } : {}), ...(scope ? { scope } : {}) };
 }
 
 function parsePermissionRuleId(value: unknown, index: number, ids: Set<string>): string {

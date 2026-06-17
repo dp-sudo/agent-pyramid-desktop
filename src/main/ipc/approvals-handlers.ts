@@ -1,7 +1,7 @@
 import { ipcMain } from "electron";
 import { APPROVAL_RESPOND_CHANNEL } from "../../shared/ipc.js";
 import { IPC_ERROR_CODES } from "../../shared/ipc-errors.js";
-import type { ApprovalRespondRequest } from "../../shared/agent-contracts.js";
+import type { ApprovalRespondRequest, ApprovalRespondResponse } from "../../shared/agent-contracts.js";
 import { err, isApprovalDecisionScope, ok } from "../../shared/agent-contracts.js";
 import type { AgentRuntime } from "../application/agent-runtime.js";
 import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
@@ -10,12 +10,8 @@ export function registerApprovalHandlers(runtime: AgentRuntime): void {
   ipcMain.handle(APPROVAL_RESPOND_CHANNEL, async (_event, request: unknown) => {
     try {
       const parsed = parseApprovalRespondRequest(request);
-      runtime.respondApproval(parsed);
-      return ok({
-        approvalId: parsed.approvalId,
-        decision: parsed.decision,
-        ...(parsed.scope ? { scope: parsed.scope } : {}),
-      });
+      const response: ApprovalRespondResponse = runtime.respondApproval(parsed);
+      return ok(response);
     } catch (error) {
       return err(IPC_ERROR_CODES.APPROVAL_RESPOND_FAILED, messageOf(error));
     }

@@ -9,6 +9,7 @@ import type {
   AttachmentDeleteResponse,
   AttachmentRecord,
   ApprovalRespondRequest,
+  ApprovalRespondResponse,
   CheckpointListRequest,
   CheckpointListResponse,
   CheckpointRewindRequest,
@@ -215,17 +216,9 @@ const sse = {
 const approvals = {
   respond(
     request: ApprovalRespondRequest,
-  ): Promise<IpcResult<{
-    approvalId: string;
-    decision: "allow" | "deny";
-    scope?: ApprovalRespondRequest["scope"];
-  }>> {
+  ): Promise<IpcResult<ApprovalRespondResponse>> {
     return ipcRenderer.invoke(APPROVAL_RESPOND_CHANNEL, request) as Promise<
-      IpcResult<{
-        approvalId: string;
-        decision: "allow" | "deny";
-        scope?: ApprovalRespondRequest["scope"];
-      }>
+      IpcResult<ApprovalRespondResponse>
     >;
   },
 };
