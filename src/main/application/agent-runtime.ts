@@ -51,6 +51,7 @@ import {
 } from "./runtime-event-persist.js";
 import type {
   ApprovalRespondRequest,
+  ApprovalRespondResponse,
   AssistantItem,
   AttachmentRecord,
   Item,
@@ -346,8 +347,8 @@ export class AgentRuntime {
     return this.deps.store.getThread(threadId);
   }
 
-  respondApproval(approval: ApprovalRespondRequest): void {
-    this.toolExecutor.respondApproval(approval);
+  respondApproval(approval: ApprovalRespondRequest): ApprovalRespondResponse {
+    return this.toolExecutor.respondApproval(approval);
   }
 
   async updateThreadGoal(
@@ -940,6 +941,7 @@ export class AgentRuntime {
         threadId: turn.threadId,
         turnId: turn.id,
         workspace: thread.workspace,
+        sandboxMode: thread.sandboxMode,
         signal,
         commandDefaults: runtimePreferences.command,
         runtimePreferences,
@@ -1493,7 +1495,13 @@ function arePermissionRulesEquivalent(
   return left.tool === right.tool &&
     left.pattern === right.pattern &&
     left.effect === right.effect &&
-    (left.match ?? "glob") === (right.match ?? "glob");
+    (left.match ?? "glob") === (right.match ?? "glob") &&
+    permissionRuleScopeKey(left) === permissionRuleScopeKey(right);
+}
+
+function permissionRuleScopeKey(rule: RuntimePermissionRule): string {
+  if (!rule.scope) return "global";
+  return `${rule.scope.kind}:${rule.scope.workspace}`;
 }
 
 function stableStringify(value: unknown): string {

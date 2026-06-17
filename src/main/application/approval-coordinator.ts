@@ -6,6 +6,7 @@ import type {
   ApprovalDecisionScope,
   ApprovalItem,
   ApprovalRespondRequest,
+  ApprovalRespondResponse,
   ThreadRecord,
   TurnRecord,
 } from "../../shared/agent-contracts.js";
@@ -38,19 +39,32 @@ export class ApprovalCoordinator {
 
   constructor(private readonly deps: ApprovalCoordinatorDeps) {}
 
-  respond(approval: ApprovalRespondRequest): void {
+  respond(approval: ApprovalRespondRequest): ApprovalRespondResponse {
     if (approval.decision !== "allow" && approval.decision !== "deny") {
       throw new Error("Approval decision must be allow or deny.");
     }
+    const scope = approval.scope ?? "once";
     const pending = this.pendingApprovals.get(approval.approvalId);
     if (!pending) {
-      throw new Error(`Approval ${approval.approvalId} is not pending.`);
+      return {
+        approvalId: approval.approvalId,
+        decision: approval.decision,
+        scope,
+        accepted: false,
+        reason: "not_pending",
+      };
     }
     void pending.resolve({
       decision: approval.decision,
-      scope: approval.scope ?? "once",
+      scope,
     });
     this.pendingApprovals.delete(approval.approvalId);
+    return {
+      approvalId: approval.approvalId,
+      decision: approval.decision,
+      scope,
+      accepted: true,
+    };
   }
 
   /**

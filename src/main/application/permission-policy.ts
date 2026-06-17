@@ -17,7 +17,7 @@ const DECISION_PRIORITY: Record<RuntimePermissionRuleEffect, number> = {
   deny: 3,
 };
 
-const COMMAND_POLICY_TOOL_NAMES = new Set([
+const SHELL_COMMAND_POLICY_TOOL_NAMES = new Set([
   "run_command",
   "shell_command",
   "git_bash_command",
@@ -25,6 +25,32 @@ const COMMAND_POLICY_TOOL_NAMES = new Set([
   "wsl_command",
   "start_command_session",
 ]);
+
+const GENERATED_COMMAND_POLICY_TOOL_NAMES = new Set([
+  "git_commit",
+  "package_install",
+  "package_test",
+  "package_build",
+  "run_lint",
+  "run_format",
+  "run_tests",
+  "run_build",
+  "write_command_session",
+  "stop_command_session",
+  "diagnose_workspace",
+]);
+
+const PACKAGE_SCRIPT_DEFAULTS: Record<string, string> = {
+  package_test: "test",
+  package_build: "build",
+};
+
+const TASK_COMMAND_LABELS: Record<string, string> = {
+  run_lint: "lint",
+  run_format: "format",
+  run_tests: "test",
+  run_build: "build",
+};
 
 const WRITE_POLICY_TOOL_NAMES = new Set([
   "edit_file",
@@ -76,10 +102,14 @@ export function buildPermissionCandidate(
   toolName: string,
   args: Record<string, unknown>,
 ): { tool: RuntimePermissionRule["tool"]; value: string } | null {
-  if (COMMAND_POLICY_TOOL_NAMES.has(toolName)) {
+  if (SHELL_COMMAND_POLICY_TOOL_NAMES.has(toolName)) {
     return typeof args.command === "string"
       ? { tool: "command", value: normalizeCommandValue(args.command) }
       : null;
+  }
+  if (GENERATED_COMMAND_POLICY_TOOL_NAMES.has(toolName)) {
+    const value = buildGeneratedCommandPermissionValue(toolName, args);
+    return value ? { tool: "command", value: normalizeCommandValue(value) } : null;
   }
   if (!WRITE_POLICY_TOOL_NAMES.has(toolName)) {
     return buildMcpPermissionCandidate(toolName, args);
@@ -101,6 +131,128 @@ export function buildPermissionCandidate(
   return typeof args.path === "string"
     ? { tool: "write", value: normalizePermissionPath(args.path) }
     : null;
+}
+
+function buildGeneratedCommandPermissionValue(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  switch (toolName) {
+    case "git_commit":
+      return buildGitCommitPermissionValue(args);
+    case "package_install":
+      return buildPackageInstallPermissionValue(args);
+    case "package_test":
+    case "package_build":
+      return buildPackageScriptPermissionValue(toolName, args);
+    case "run_lint":
+    case "run_format":
+    case "run_tests":
+    case "run_build":
+      return buildTaskCommandPermissionValue(toolName, args);
+    case "write_command_session":
+      return buildCommandSessionPermissionValue("write_command_session", args);
+    case "stop_command_session":
+      return buildCommandSessionPermissionValue("stop_command_session", args);
+    case "diagnose_workspace":
+      return appendOptionalCwd("diagnose_workspace", args);
+    default:
+      return null;
+  }
+}
+
+function buildGitCommitPermissionValue(args: Record<string, unknown>): string {
+  const segments = ["git commit"];
+  if (args.all === true) {
+    segments.push("--stage=all");
+  } else {
+    const pathspecs = optionalPermissionStringArray(args.pathspecs);
+    if (pathspecs && pathspecs.length > 0) {
+      segments.push(`--stage=${pathspecs.map(normalizePermissionPath).join(",")}`);
+    }
+  }
+  segments.push("-m=<message>");
+  return appendOptionalCwd(segments.join(" "), args);
+}
+
+function buildPackageInstallPermissionValue(args: Record<string, unknown>): string {
+  const segments = ["package install"];
+  const manager = optionalPackageManagerValue(args.manager);
+  if (manager) {
+    segments.push(`--manager=${manager}`);
+  }
+  if (args.frozen_lockfile === true) {
+    segments.push("--frozen-lockfile");
+  }
+  return appendOptionalCwd(segments.join(" "), args);
+}
+
+function buildPackageScriptPermissionValue(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  const defaultScript = PACKAGE_SCRIPT_DEFAULTS[toolName];
+  if (!defaultScript) {
+    return null;
+  }
+  return buildPackageRunPermissionValue(
+    optionalNonBlankString(args.script) ?? defaultScript,
+    args,
+  );
+}
+
+function buildTaskCommandPermissionValue(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  const task = TASK_COMMAND_LABELS[toolName];
+  return task ? buildPackageRunPermissionValue(task, args) : null;
+}
+
+function buildPackageRunPermissionValue(
+  script: string,
+  args: Record<string, unknown>,
+): string {
+  const segments = ["package run", script];
+  const manager = optionalPackageManagerValue(args.manager);
+  if (manager) {
+    segments.push(`--manager=${manager}`);
+  }
+  return appendOptionalCwd(segments.join(" "), args);
+}
+
+function buildCommandSessionPermissionValue(
+  action: "write_command_session" | "stop_command_session",
+  args: Record<string, unknown>,
+): string | null {
+  const sessionId = optionalNonBlankString(args.session_id);
+  return sessionId ? `${action}:${sessionId}` : null;
+}
+
+function appendOptionalCwd(value: string, args: Record<string, unknown>): string {
+  const cwd = optionalNonBlankString(args.cwd);
+  return cwd ? `${value} @ ${normalizePermissionPath(cwd)}` : value;
+}
+
+function optionalPackageManagerValue(value: unknown): string | null {
+  return value === "npm" || value === "pnpm" || value === "yarn" || value === "bun"
+    ? value
+    : null;
+}
+
+function optionalNonBlankString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function optionalPermissionStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const entries = value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return entries.length > 0 ? entries : null;
 }
 
 function buildMcpPermissionCandidate(

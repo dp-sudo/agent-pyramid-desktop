@@ -16,9 +16,11 @@ import { buildExactPermissionRuleForCall } from "./permission-policy.js";
 import { ToolCatalogService, isCommandToolName } from "./tool-catalog.js";
 import { ToolPolicyService } from "./tool-policy.js";
 import { validateToolInputSchema } from "./tools/tool-schema.js";
+import { CommandSandboxUnavailableError } from "./tools/command-sandbox.js";
 import type {
   ApprovalItem,
   ApprovalRespondRequest,
+  ApprovalRespondResponse,
   ModelConfig,
   RuntimePermissionRule,
   RuntimeErrorEvent,
@@ -96,8 +98,8 @@ export class ToolCallExecutor {
     });
   }
 
-  respondApproval(approval: ApprovalRespondRequest): void {
-    this.approvals.respond(approval);
+  respondApproval(approval: ApprovalRespondRequest): ApprovalRespondResponse {
+    return this.approvals.respond(approval);
   }
 
   resolvePendingApprovalsForTurn(turnId: string, decision: "allow" | "deny"): Promise<void> {
@@ -337,8 +339,11 @@ export class ToolCallExecutor {
         return interruptedToolResult(call, toolItem);
       }
       const message = error instanceof Error ? error.message : String(error);
+      const failureCode: ToolFailureCode = error instanceof CommandSandboxUnavailableError
+        ? "tool_sandbox_unavailable"
+        : "tool_execution_failed";
       toolItem.status = "failed";
-      toolItem.result = toolFailureResult("tool_execution_failed", message);
+      toolItem.result = toolFailureResult(failureCode, message);
       await this.deps.store.appendItem(turn.threadId, toolItem);
       this.emitToolItemUpdated(turn, toolItem);
       this.unregisterActiveToolExecution(turn.id, activeExecution);
@@ -470,7 +475,13 @@ export class ToolCallExecutor {
       return;
     }
     try {
-      await this.deps.persistApprovalPermissionRule(rule);
+      await this.deps.persistApprovalPermissionRule({
+        ...rule,
+        scope: {
+          kind: "workspace",
+          workspace: thread.workspace,
+        },
+      });
     } catch (error) {
       this.deps.reportRuntimeError(
         turn,
