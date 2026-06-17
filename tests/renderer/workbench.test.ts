@@ -421,6 +421,22 @@ describe("Workbench", () => {
     expect(approveSource).toContain("scope: response.scope");
   });
 
+  it("persists active thread safety changes through the thread update IPC", () => {
+    const source = readFileSync(
+      new URL("../../src/renderer/src/ui/Workbench.tsx", import.meta.url),
+      "utf8",
+    );
+    const safetyStart = source.indexOf("const onUpdateThreadSafety = useCallback");
+    const safetyEnd = source.indexOf("const sendCodeComposerPayload", safetyStart);
+    const safetySource = source.slice(safetyStart, safetyEnd);
+
+    expect(safetyStart).toBeGreaterThanOrEqual(0);
+    expect(safetyEnd).toBeGreaterThan(safetyStart);
+    expect(safetySource).toContain("window.agentApi.threads.update(threadId, patch)");
+    expect(safetySource).toContain("actions.updateActiveThread(result.value)");
+    expect(source).toContain("onUpdateThreadSafety={onUpdateThreadSafety}");
+  });
+
   it("prefers the latest active thread that matches workspace and route mode", () => {
     const threads = [
       makeThreadSummary("write-older", "/workspace", "write", "2026-06-08T07:00:00.000Z"),

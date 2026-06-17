@@ -131,6 +131,7 @@ describe("shared agent contracts", () => {
       "tool_policy_denied",
       "tool_approval_denied",
       "tool_interrupted",
+      "tool_sandbox_unavailable",
       "tool_execution_failed",
       "tool_budget_exhausted",
     ]);
@@ -371,6 +372,43 @@ describe("shared agent contracts", () => {
         { id: "exact", tool: "command", pattern: "npm test", effect: "allow", match: "exact" },
       ],
     })).toBe(true);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      permissionRules: [
+        {
+          id: "workspace-exact",
+          tool: "command",
+          pattern: "npm test",
+          effect: "allow",
+          match: "exact",
+          scope: { kind: "workspace", workspace: "/workspace" },
+        },
+      ],
+    })).toBe(true);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      permissionRules: [
+        {
+          id: "bad-scope-kind",
+          tool: "command",
+          pattern: "npm test",
+          effect: "allow",
+          scope: { kind: "thread", workspace: "/workspace" },
+        },
+      ],
+    })).toBe(false);
+    expect(isRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      permissionRules: [
+        {
+          id: "bad-scope-workspace",
+          tool: "command",
+          pattern: "npm test",
+          effect: "allow",
+          scope: { kind: "workspace", workspace: "" },
+        },
+      ],
+    })).toBe(false);
     expect(isRuntimePreferences({
       ...DEFAULT_RUNTIME_PREFERENCES,
       permissionRules: [
