@@ -676,6 +676,13 @@ export function SettingsView(): ReactElement {
     });
   }
 
+  function markMcpStatusError(status: McpServerStatusRecord): boolean {
+    if (!status.lastError) return false;
+    setRuntimeSaveState("error");
+    setRuntimeError(status.lastError);
+    return true;
+  }
+
   async function handleMcpConnect(serverId: string): Promise<void> {
     if (!window.agentApi) return;
     setRuntimeError("");
@@ -686,6 +693,7 @@ export function SettingsView(): ReactElement {
       return;
     }
     setMcpServerStatuses((current) => ({ ...current, [result.value.id]: result.value }));
+    if (markMcpStatusError(result.value)) return;
     setRuntimeSaveState("saved");
   }
 
@@ -712,9 +720,15 @@ export function SettingsView(): ReactElement {
       return;
     }
     setMcpServerStatuses((current) => ({ ...current, [result.value.id]: result.value }));
+    if (markMcpStatusError(result.value)) return;
     const surface = await window.agentApi.mcp.refreshSurface({ serverId });
     if (surface.ok) {
       setMcpServerStatuses((current) => ({ ...current, [surface.value.id]: surface.value }));
+      if (markMcpStatusError(surface.value)) return;
+    } else {
+      setRuntimeSaveState("error");
+      setRuntimeError(surface.message);
+      return;
     }
     setRuntimeSaveState("saved");
   }

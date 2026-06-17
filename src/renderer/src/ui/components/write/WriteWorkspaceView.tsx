@@ -19,6 +19,7 @@ import {
   LEFT_SIDEBAR_MAX_WIDTH,
   LEFT_SIDEBAR_MIN_WIDTH,
 } from "../../preferences";
+import { CloseGlyph } from "../primitives/CloseGlyph";
 import {
   clampLeftSidebarWidth,
   getNextLeftSidebarWidth,
@@ -62,7 +63,6 @@ import {
   shouldSaveWriteFileBeforeSwitch,
   shouldUseSelectedWriteWorkspace,
   shouldWarnBeforeLeavingWriteDocument,
-  WRITE_SEARCH_CLEAR_BUTTON_TEXT,
   type WriteAssistantPromptPayload,
   type WriteDocumentViewState,
   type WriteEditorSelectionState,
@@ -1008,7 +1008,7 @@ export function WriteWorkspaceView({
                 aria-label={t("write.clearSearch")}
                 title={t("write.clearSearch")}
               >
-                {WRITE_SEARCH_CLEAR_BUTTON_TEXT}
+                <CloseGlyph size={10} />
               </button>
             ) : null}
           </div>

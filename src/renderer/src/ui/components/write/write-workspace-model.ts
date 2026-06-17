@@ -17,8 +17,6 @@ const WRITE_CONTEXT_MENU_HEIGHT_PX = 124;
 const WRITE_CONTEXT_MENU_VIEWPORT_MARGIN_PX = 8;
 const WRITE_MARKDOWN_EXTENSIONS = [".md", ".mdx", ".markdown"] as const;
 
-export const WRITE_SEARCH_CLEAR_BUTTON_TEXT = "x";
-
 export type WriteStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
 export interface WriteEditorSelectionState {

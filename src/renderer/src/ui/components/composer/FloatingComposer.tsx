@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent, type ReactElement } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
   getActiveThreadInFlightTurn,
@@ -61,6 +61,7 @@ export function FloatingComposer({
   } = useComposerDraft();
   const [sendPending, setSendPending] = useState(false);
   const popovers = useComposerPopovers();
+  const controlsLocked = disabled || runtimeBusy || sendPending;
   const attachments = useComposerAttachments({
     disabled,
     runtimeBusy,
@@ -82,6 +83,17 @@ export function FloatingComposer({
     attachmentPending: attachments.attachmentPending,
   });
   const composerPlaceholder = placeholder ?? t("composer.placeholder");
+
+  useEffect(() => {
+    if (!shouldCloseComposerPopoversOnLock({
+      controlsLocked,
+      menuOpen: popovers.menuOpen,
+      pickerOpen: popovers.pickerOpen,
+    })) {
+      return;
+    }
+    popovers.closePopovers();
+  }, [controlsLocked, popovers]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     if (attachmentsEnabled) {
@@ -184,4 +196,16 @@ export function FloatingComposer({
       />
     </div>
   );
+}
+
+export function shouldCloseComposerPopoversOnLock({
+  controlsLocked,
+  menuOpen,
+  pickerOpen,
+}: {
+  controlsLocked: boolean;
+  menuOpen: boolean;
+  pickerOpen: boolean;
+}): boolean {
+  return controlsLocked && (menuOpen || pickerOpen);
 }

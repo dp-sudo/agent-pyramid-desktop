@@ -10,6 +10,7 @@ export const STARTUP_VIEWS: readonly DefaultStartupView[] = ["code", "write"];
 export const DEFAULT_INSPECTOR_MODES: readonly DefaultInspectorMode[] = [
   null,
   "changes",
+  "checkpoints",
   "todo",
   "plan",
 ];
@@ -58,6 +59,13 @@ export function toDefaultInspectorModeValue(mode: DefaultInspectorMode): string 
 }
 
 export function toDefaultInspectorMode(value: string): DefaultInspectorMode {
-  if (value === "changes" || value === "todo" || value === "plan") return value;
+  if (
+    value === "changes" ||
+    value === "checkpoints" ||
+    value === "todo" ||
+    value === "plan"
+  ) {
+    return value;
+  }
   return null;
 }

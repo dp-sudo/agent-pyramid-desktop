@@ -106,8 +106,11 @@ function CheckpointsPanel(): ReactElement {
   const [loading, setLoading] = useState(false);
   const [pendingTurnId, setPendingTurnId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusTone, setStatusTone] = useState<"success" | "error">("success");
 
-  const loadCheckpoints = useCallback(async (): Promise<void> => {
+  const loadCheckpoints = useCallback(async (
+    options: { preserveStatusOnSuccess?: boolean } = {},
+  ): Promise<void> => {
     if (!activeThread) {
       setCheckpoints([]);
       return;
@@ -117,9 +120,19 @@ function CheckpointsPanel(): ReactElement {
       const result = await window.agentApi.checkpoints.list({ threadId: activeThread.id });
       if (result.ok) {
         setCheckpoints(result.value.checkpoints);
+        if (!options.preserveStatusOnSuccess) {
+          setStatusMessage(null);
+        }
       } else {
+        setStatusTone("error");
+        setStatusMessage(result.message);
         actions.setError(result.message);
       }
+    } catch (error) {
+      const message = messageOfInspectorError(error);
+      setStatusTone("error");
+      setStatusMessage(message);
+      actions.setError(message);
     } finally {
       setLoading(false);
     }
@@ -141,10 +154,13 @@ function CheckpointsPanel(): ReactElement {
           rewindSession,
         });
         if (!result.ok) {
+          setStatusTone("error");
+          setStatusMessage(result.message);
           actions.setError(result.message);
           return;
         }
         actions.setError(null);
+        setStatusTone("success");
         setStatusMessage(t("checkpoints.rewindSuccess", {
           restored: result.value.restoredPaths.length,
           deleted: result.value.deletedPaths.length,
@@ -154,10 +170,17 @@ function CheckpointsPanel(): ReactElement {
           if (itemsResult.ok) {
             actions.selectThread(activeThread, itemsResult.value.items);
           } else {
+            setStatusTone("error");
+            setStatusMessage(itemsResult.message);
             actions.setError(itemsResult.message);
           }
         }
-        await loadCheckpoints();
+        await loadCheckpoints({ preserveStatusOnSuccess: true });
+      } catch (error) {
+        const message = messageOfInspectorError(error);
+        setStatusTone("error");
+        setStatusMessage(message);
+        actions.setError(message);
       } finally {
         setPendingTurnId(null);
       }
@@ -169,15 +192,31 @@ function CheckpointsPanel(): ReactElement {
     return <div className="ds-inspector-empty">{t("checkpoints.codeOnly")}</div>;
   }
   if (loading && checkpoints.length === 0) {
-    return <div className="ds-inspector-empty">{t("checkpoints.loading")}</div>;
+    return (
+      <div className="ds-checkpoint-panel">
+        {statusMessage ? (
+          <p className={`ds-checkpoint-status is-${statusTone}`}>{statusMessage}</p>
+        ) : null}
+        <div className="ds-inspector-empty">{t("checkpoints.loading")}</div>
+      </div>
+    );
   }
   if (checkpoints.length === 0) {
-    return <div className="ds-inspector-empty">{t("checkpoints.empty")}</div>;
+    return (
+      <div className="ds-checkpoint-panel">
+        {statusMessage ? (
+          <p className={`ds-checkpoint-status is-${statusTone}`}>{statusMessage}</p>
+        ) : null}
+        <div className="ds-inspector-empty">{t("checkpoints.empty")}</div>
+      </div>
+    );
   }
 
   return (
     <div className="ds-checkpoint-panel">
-      {statusMessage ? <p className="ds-checkpoint-status">{statusMessage}</p> : null}
+      {statusMessage ? (
+        <p className={`ds-checkpoint-status is-${statusTone}`}>{statusMessage}</p>
+      ) : null}
       <ul className="ds-checkpoint-list">
         {checkpoints.map((checkpoint) => (
           <li key={checkpoint.turnId} className="ds-checkpoint-item">
@@ -406,13 +445,28 @@ export function getRecentInspectorToolItems(
 ): ToolItem[] {
   const normalizedLimit = Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 1));
   const tools: ToolItem[] = [];
-  for (let index = items.length - 1; index >= 0 && tools.length < normalizedLimit; index -= 1) {
-    const item = items[index];
+  const sortedItems = items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const timeDelta = getInspectorItemTime(right.item) - getInspectorItemTime(left.item);
+      return timeDelta !== 0 ? timeDelta : right.index - left.index;
+    });
+  for (const { item } of sortedItems) {
+    if (tools.length >= normalizedLimit) break;
     if (item.kind === "tool") {
       tools.push(item);
     }
   }
   return tools.reverse();
+}
+
+function getInspectorItemTime(item: Item): number {
+  const timestamp = Date.parse(item.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function messageOfInspectorError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function deriveInspectorTodos(

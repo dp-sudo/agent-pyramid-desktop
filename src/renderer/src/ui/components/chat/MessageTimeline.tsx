@@ -400,7 +400,7 @@ export function summarizeReadOnlyToolSummary(
     .filter((title) => title.trim().length > 0);
 
   return {
-    text: titles.join(" · "),
+    text: titles.join(" - "),
     hiddenCount: Math.max(0, items.length - normalizedLimit),
   };
 }

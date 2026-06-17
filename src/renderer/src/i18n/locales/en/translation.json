@@ -590,6 +590,7 @@
     "inspectorDefaults": {
       "closed": "Closed",
       "changes": "Changes",
+      "checkpoints": "Checkpoints",
       "todo": "Todo",
       "plan": "Plan"
     },
@@ -692,8 +693,8 @@
       "tools": "Tools",
       "prompts": "Prompts",
       "resources": "Resources",
-      "startupStats": "Last startup {{duration}} ms · {{successes}} ok · {{failures}} failed",
-      "statusSummary": "{{status}} · {{tools}} tools · {{prompts}} prompts · {{resources}} resources"
+      "startupStats": "Last startup {{duration}} ms - {{successes}} ok - {{failures}} failed",
+      "statusSummary": "{{status}} - {{tools}} tools - {{prompts}} prompts - {{resources}} resources"
     },
     "mcpTransports": {
       "stdio": "stdio",

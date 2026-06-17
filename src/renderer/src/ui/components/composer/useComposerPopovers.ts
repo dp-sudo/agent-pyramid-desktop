@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 export interface ComposerPopoverState {
   shellRef: RefObject<HTMLDivElement | null>;
@@ -15,10 +15,10 @@ export function useComposerPopovers(): ComposerPopoverState {
   const [menuOpen, setMenuOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  function closePopovers(): void {
+  const closePopovers = useCallback((): void => {
     setMenuOpen(false);
     setPickerOpen(false);
-  }
+  }, []);
 
   useEffect(() => {
     if (!menuOpen && !pickerOpen) return undefined;
@@ -43,21 +43,21 @@ export function useComposerPopovers(): ComposerPopoverState {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [menuOpen, pickerOpen]);
+  }, [closePopovers, menuOpen, pickerOpen]);
 
   return {
     shellRef,
     menuOpen,
     pickerOpen,
     closePopovers,
-    closeMenu: () => setMenuOpen(false),
-    toggleMenu: () => {
+    closeMenu: useCallback(() => setMenuOpen(false), []),
+    toggleMenu: useCallback(() => {
       setMenuOpen((value) => !value);
       setPickerOpen(false);
-    },
-    togglePicker: () => {
+    }, []),
+    togglePicker: useCallback(() => {
       setPickerOpen((value) => !value);
       setMenuOpen(false);
-    },
+    }, []),
   };
 }

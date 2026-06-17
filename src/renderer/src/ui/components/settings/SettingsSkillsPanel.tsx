@@ -216,7 +216,7 @@ export function SettingsSkillsPanel({
                     <strong>{t("settings.skills.roots")}</strong>
                     {skillCatalog.roots.map((root) => (
                       <span key={`${root.scope}:${root.path}`}>
-                        {t(`settings.skillScopes.${root.scope}`)} · {root.path}
+                        {t(`settings.skillScopes.${root.scope}`)} - {root.path}
                       </span>
                     ))}
                   </div>
@@ -235,7 +235,7 @@ export function SettingsSkillsPanel({
                             <span>{skill.id}</span>
                           </div>
                           <span>
-                            {t(`settings.skillScopes.${skill.scope}`)} ·{" "}
+                            {t(`settings.skillScopes.${skill.scope}`)} -{" "}
                             {t(`settings.skillRunModes.${skill.runAs}`)}
                           </span>
                         </div>
@@ -299,5 +299,5 @@ export function formatSkillTriggerSummary(
       values: skill.trigger.fileTypes.join(", "),
     }));
   }
-  return parts.length > 0 ? parts.join(" · ") : t("settings.skills.noTriggers");
+  return parts.length > 0 ? parts.join(" - ") : t("settings.skills.noTriggers");
 }

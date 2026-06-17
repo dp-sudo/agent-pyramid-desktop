@@ -1,6 +1,6 @@
 export type ThemePreference = "light" | "dark";
 export type DefaultStartupView = "code" | "write";
-export type DefaultInspectorMode = "changes" | "todo" | "plan" | null;
+export type DefaultInspectorMode = "changes" | "checkpoints" | "todo" | "plan" | null;
 
 export interface WorkbenchBasicPreferences {
   theme: ThemePreference;
@@ -193,5 +193,9 @@ function isDefaultStartupView(value: unknown): value is DefaultStartupView {
 }
 
 function isDefaultInspectorMode(value: unknown): value is DefaultInspectorMode {
-  return value === null || value === "changes" || value === "todo" || value === "plan";
+  return value === null ||
+    value === "changes" ||
+    value === "checkpoints" ||
+    value === "todo" ||
+    value === "plan";
 }

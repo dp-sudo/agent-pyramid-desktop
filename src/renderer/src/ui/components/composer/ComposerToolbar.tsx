@@ -56,6 +56,7 @@ export function ComposerToolbar({
   const { state, actions } = useWorkbench();
   const showImagePicker = attachmentsEnabled && state.basicPreferences.allowComposerImageUpload;
   const showMenuButton = showImagePicker || modeControlsEnabled;
+  const controlsLocked = disabled || runtimeBusy || sendPending;
 
   function handleSelectModel(profile: ModelConfigProfile): void {
     actions.setComposerModel(profile.config.model, profile.id);
@@ -84,7 +85,7 @@ export function ComposerToolbar({
                 type="button"
                 className="ds-composer-tool-button"
                 onClick={onToggleMenu}
-                disabled={disabled || runtimeBusy || sendPending}
+                disabled={controlsLocked}
                 title={t("composer.more")}
                 aria-label={t("composer.more")}
                 aria-expanded={menuOpen}
@@ -155,6 +156,7 @@ export function ComposerToolbar({
                   aria-expanded={pickerOpen}
                   aria-haspopup="dialog"
                   {...(pickerOpen ? { "aria-controls": "composer-model-picker" } : {})}
+                  disabled={controlsLocked}
                   onClick={onTogglePicker}
                 >
                   <span>{state.composer.model}</span>

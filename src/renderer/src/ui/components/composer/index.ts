@@ -1,5 +1,6 @@
 export {
   FloatingComposer,
+  shouldCloseComposerPopoversOnLock,
   type FloatingComposerRequestPayload,
   type FloatingComposerVariant,
 } from "./FloatingComposer";

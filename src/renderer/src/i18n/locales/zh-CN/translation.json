@@ -520,6 +520,7 @@
     "inspectorDefaults": {
       "closed": "关闭",
       "changes": "变更",
+      "checkpoints": "回滚点",
       "todo": "待办",
       "plan": "计划"
     },
@@ -541,8 +542,8 @@
       "tools": "Tools",
       "prompts": "Prompts",
       "resources": "Resources",
-      "startupStats": "最近启动 {{duration}} ms · {{successes}} 次成功 · {{failures}} 次失败",
-      "statusSummary": "{{status}} · {{tools}} tools · {{prompts}} prompts · {{resources}} resources"
+      "startupStats": "最近启动 {{duration}} ms - {{successes}} 次成功 - {{failures}} 次失败",
+      "statusSummary": "{{status}} - {{tools}} tools - {{prompts}} prompts - {{resources}} resources"
     },
     "permissionRules": {
       "empty": "暂无按调用规则。未匹配的命令和写入仍使用默认审批与沙盒策略。"
@@ -593,7 +594,6 @@
       "deleteMcpServer": "删除",
       "connectMcpServer": "连接",
       "disconnectMcpServer": "断开",
-      "refreshMcpTools": "刷新工具",
       "refreshMcpServer": "刷新"
     },
     "efforts": {

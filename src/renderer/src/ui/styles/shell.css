@@ -2570,12 +2570,21 @@ textarea:focus-visible {
 
 .ds-checkpoint-status {
   margin: 0;
-  border: 1px solid var(--ds-success-soft);
   border-radius: var(--ds-radius-md);
-  background: var(--ds-success-soft);
-  color: var(--ds-text);
   font-size: var(--ds-size-caption);
   padding: 8px 10px;
+}
+
+.ds-checkpoint-status.is-success {
+  border: 1px solid var(--ds-success-soft);
+  background: var(--ds-success-soft);
+  color: var(--ds-text);
+}
+
+.ds-checkpoint-status.is-error {
+  border: 1px solid var(--ds-danger-soft);
+  background: var(--ds-danger-soft);
+  color: var(--ds-danger);
 }
 
 .ds-checkpoint-list {

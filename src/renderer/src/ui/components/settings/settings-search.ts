@@ -41,6 +41,7 @@ const SETTINGS_CATEGORY_SEARCH_KEY_PATHS: Record<SettingsCategory, readonly stri
     "settings.descriptions.openReasoningByDefault",
     "settings.inspectorDefaults.closed",
     "settings.inspectorDefaults.changes",
+    "settings.inspectorDefaults.checkpoints",
     "settings.inspectorDefaults.todo",
     "settings.inspectorDefaults.plan",
   ],
