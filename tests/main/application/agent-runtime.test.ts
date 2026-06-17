@@ -577,6 +577,34 @@ describe("AgentRuntime", () => {
       .toEqual(["First"]);
   });
 
+  it("reserves the thread while a turn is being prepared", async () => {
+    const thread = await store.createThread({
+      title: "Runtime",
+      workspace: "/workspace",
+      mode: "code",
+    });
+    fakePool.delayMs = 50;
+    const runtime = createRuntime();
+
+    const firstStart = runtime.startTurn({
+      threadId: thread.id,
+      text: "First",
+    });
+    const secondStart = runtime.startTurn({
+      threadId: thread.id,
+      text: "Second",
+    });
+
+    await expect(secondStart).rejects.toThrow("RUNTIME_TURN_BUSY");
+    const firstTurn = await firstStart;
+    expect(firstTurn.threadId).toBe(thread.id);
+    await waitFor(() => !runtime.isThreadInFlight(thread.id));
+
+    const replayed = await collectThreadItems(thread.id);
+    expect(replayed.filter((item) => item.kind === "user").map((item) => item.text))
+      .toEqual(["First"]);
+  });
+
   it("emits turn_failed when the worker chat fails before completion", async () => {
     const thread = await store.createThread({
       title: "Runtime",

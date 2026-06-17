@@ -262,6 +262,42 @@ describe("LlmWorkerPool", () => {
     await expect(promise).rejects.toThrow("cancelled");
   });
 
+  it("posts cancel messages for every in-flight request on the same thread", async () => {
+    const worker = new FakeWorker();
+    const pool = createPoolWithWorker(worker);
+    await pool.start();
+
+    const firstPromise = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+    const firstChat = worker.posted[0];
+    if (firstChat.type !== "chat") throw new Error("Expected first chat message.");
+    const secondPromise = pool.chat({ id: "thread-1" }, baseRequest, vi.fn());
+    const secondChat = worker.posted[1];
+    if (secondChat.type !== "chat") throw new Error("Expected second chat message.");
+
+    pool.cancel("thread-1");
+
+    expect(worker.posted.slice(2)).toEqual([
+      { type: "cancel", requestId: firstChat.requestId },
+      { type: "cancel", requestId: secondChat.requestId },
+    ]);
+
+    worker.emit("message", {
+      kind: "error",
+      requestId: firstChat.requestId,
+      message: "first cancelled",
+      code: "internal",
+    } satisfies WorkerOutbound);
+    worker.emit("message", {
+      kind: "error",
+      requestId: secondChat.requestId,
+      message: "second cancelled",
+      code: "internal",
+    } satisfies WorkerOutbound);
+
+    await expect(firstPromise).rejects.toThrow("first cancelled");
+    await expect(secondPromise).rejects.toThrow("second cancelled");
+  });
+
   it("keeps cancellation best-effort when posting the cancel message fails", async () => {
     const worker = new FakeWorker();
     const pool = createPoolWithWorker(worker);

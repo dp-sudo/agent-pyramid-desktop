@@ -3,12 +3,14 @@ import {
   parseTurnGetRequest,
   parseTurnInterruptRequest,
   registerTurnHandlers,
+  turnStartErrorCodeForMessage,
 } from "../../../src/main/ipc/turns-handlers";
 import {
   TURN_GET_CHANNEL,
   TURN_INTERRUPT_CHANNEL,
+  TURN_START_CHANNEL,
 } from "../../../src/shared/ipc";
-import type { Item } from "../../../src/shared/agent-contracts";
+import type { Item, TurnRecord } from "../../../src/shared/agent-contracts";
 import type { AgentRuntime } from "../../../src/main/application/agent-runtime";
 import type { JsonlThreadStore } from "../../../src/main/persistence/index";
 
@@ -47,6 +49,19 @@ function createStore(items: Item[] = []): JsonlThreadStore {
   } as unknown as JsonlThreadStore;
 }
 
+function createTurn(overrides: Partial<TurnRecord> = {}): TurnRecord {
+  return {
+    id: "turn-1",
+    threadId: "thread-1",
+    status: "in-flight",
+    startedAt: "2026-06-07T00:00:00.000Z",
+    model: "MiniMax-M3",
+    mode: "agent",
+    goalMode: false,
+    ...overrides,
+  };
+}
+
 describe("turn handlers", () => {
   beforeEach(() => {
     electronMock.handlers.clear();
@@ -71,6 +86,59 @@ describe("turn handlers", () => {
     expect(() => parseTurnGetRequest({ threadId: "thread-1" })).toThrow(
       "Turn get requires a threadId string.",
     );
+  });
+
+  it("maps turn start runtime errors to stable IPC codes", () => {
+    expect(turnStartErrorCodeForMessage("RUNTIME_TURN_BUSY")).toBe("RUNTIME_TURN_BUSY");
+    expect(turnStartErrorCodeForMessage("RUNTIME_THREAD_ARCHIVED")).toBe("RUNTIME_THREAD_ARCHIVED");
+    expect(turnStartErrorCodeForMessage("Turn text is required.")).toBe("TURN_START_FAILED");
+  });
+
+  it("returns a turn record for a valid start request", async () => {
+    const runtime = createRuntime();
+    const turn = createTurn();
+    vi.mocked(runtime.startTurn).mockResolvedValue(turn);
+    registerTurnHandlers(runtime, createStore());
+    const handler = electronMock.handlers.get(TURN_START_CHANNEL);
+    if (!handler) throw new Error("Expected turn start handler.");
+
+    const request = { threadId: "thread-1", text: "Run" };
+    const result = await handler({}, request);
+
+    expect(result).toEqual({ ok: true, value: turn });
+    expect(runtime.startTurn).toHaveBeenCalledWith(request);
+  });
+
+  it("returns a busy error envelope when runtime rejects a concurrent start", async () => {
+    const runtime = createRuntime();
+    vi.mocked(runtime.startTurn).mockRejectedValue(new Error("RUNTIME_TURN_BUSY"));
+    registerTurnHandlers(runtime, createStore());
+    const handler = electronMock.handlers.get(TURN_START_CHANNEL);
+    if (!handler) throw new Error("Expected turn start handler.");
+
+    const result = await handler({}, { threadId: "thread-1", text: "Run" });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "RUNTIME_TURN_BUSY",
+      message: "RUNTIME_TURN_BUSY",
+    });
+  });
+
+  it("returns an archived-thread error envelope when runtime rejects a start", async () => {
+    const runtime = createRuntime();
+    vi.mocked(runtime.startTurn).mockRejectedValue(new Error("RUNTIME_THREAD_ARCHIVED"));
+    registerTurnHandlers(runtime, createStore());
+    const handler = electronMock.handlers.get(TURN_START_CHANNEL);
+    if (!handler) throw new Error("Expected turn start handler.");
+
+    const result = await handler({}, { threadId: "thread-1", text: "Run" });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "RUNTIME_THREAD_ARCHIVED",
+      message: "RUNTIME_THREAD_ARCHIVED",
+    });
   });
 
   it("returns an error envelope for malformed interrupt requests", async () => {
