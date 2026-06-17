@@ -345,7 +345,9 @@ function isSkillTokenBoundary(char: string | undefined): boolean {
 function safePatternMatches(pattern: string, prompt: string): boolean {
   try {
     return new RegExp(pattern, "iu").test(prompt);
-  } catch {
+  } catch (_error) {
+    // Skill trigger patterns are optional match hints; malformed patterns fail closed
+    // so one bad skill cannot block loading or matching the rest of the catalog.
     return false;
   }
 }
