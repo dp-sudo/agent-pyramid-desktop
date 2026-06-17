@@ -834,7 +834,7 @@ async function preparePatch(
   }
   const files = parseUnifiedDiff(patchText);
   const changes: PreparedFileChange[] = [];
-  const seenTargets = new Set<string>();
+  const seenTargets: string[] = [];
 
   for (const file of files) {
     const targetPath = file.newPath ?? file.oldPath;
@@ -844,10 +844,10 @@ async function preparePatch(
     const operation: FileChangeResult["operation"] = file.oldPath === undefined ? "create" : "update";
     const filePath = await resolveWorkspacePathForAccess(workspace, targetPath, operation === "create" ? "write" : "read");
     await assertNoSymlinkInPath(workspace, targetPath, operation === "create" ? "write" : "read", "Coding tools");
-    if (seenTargets.has(filePath)) {
+    if (seenTargets.some((seenTarget) => isSamePath(seenTarget, filePath))) {
       throw new Error(`apply_patch contains duplicate file sections for ${targetPath}.`);
     }
-    seenTargets.add(filePath);
+    seenTargets.push(filePath);
     let original = "";
     if (operation === "update") {
       const { content } = await readEditableTextFile(filePath, targetPath);
@@ -1278,13 +1278,12 @@ function parseEditPlanFiles(value: unknown, workspace: string): EditPlanFile[] {
     throw new Error("create_edit_plan requires at least two planned files.");
   }
   const files = value.map((entry, index) => parseEditPlanFile(entry, index, workspace));
-  const seen = new Set<string>();
+  const seen: string[] = [];
   for (const file of files) {
-    const key = file.path.toLocaleLowerCase();
-    if (seen.has(key)) {
+    if (seen.some((seenPath) => isSamePath(seenPath, file.path))) {
       throw new Error(`create_edit_plan file path is duplicated: ${file.path}`);
     }
-    seen.add(key);
+    seen.push(file.path);
   }
   return files;
 }

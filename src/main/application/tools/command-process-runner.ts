@@ -15,7 +15,7 @@ import {
   COMMAND_KILL_GRACE_MS,
 } from "../constants.js";
 import {
-  createCommandSpawnOptions,
+  createCommandSpawnSpec,
 } from "./command-sandbox.js";
 import type { ThreadSandboxMode } from "../../../shared/agent-contracts.js";
 
@@ -71,13 +71,15 @@ export async function spawnWorkspaceProcess(
     const progress = createCommandProgressReporter(reportProgress);
     let timedOut = false;
     let settled = false;
+    let spawned = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
 
-    const child = spawn(invocation.file, invocation.args, createCommandSpawnOptions({
+    const spawnSpec = createCommandSpawnSpec(invocation, {
       cwd,
       sandboxMode,
       stdin: "ignore",
-    }));
+    });
+    const child = spawn(spawnSpec.file, spawnSpec.args, spawnSpec.options);
 
     const killChild = (killSignal: NodeJS.Signals): void => {
       killProcessTree(child, killSignal);
@@ -126,7 +128,14 @@ export async function spawnWorkspaceProcess(
       stderr.collect(data);
       progress?.collect(data, "stderr");
     });
+    child.on("spawn", () => {
+      spawned = true;
+    });
     child.on("error", (error) => {
+      if (!spawned) {
+        settleReject(new Error(`Command failed to start: ${error.message}`));
+        return;
+      }
       settleReject(error);
     });
     child.on("close", (exitCode, childSignal) => {

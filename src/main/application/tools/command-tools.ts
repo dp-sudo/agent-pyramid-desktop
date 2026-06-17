@@ -65,7 +65,7 @@ import {
   type StreamCapture,
 } from "./command-output-capture.js";
 import {
-  createCommandSpawnOptions,
+  createCommandSpawnSpec,
   describeCommandSandbox,
   type CommandSandboxReport,
 } from "./command-sandbox.js";
@@ -2082,11 +2082,12 @@ class CommandSessionManager {
       throw new Error("Command was interrupted.");
     }
     const progress = createCommandProgressReporter(context.reportProgress);
-    const child = spawn(invocation.file, invocation.args, createCommandSpawnOptions({
+    const spawnSpec = createCommandSpawnSpec(invocation, {
       cwd: cwdPath,
       sandboxMode: context.sandboxMode,
       stdin: "pipe",
-    }));
+    });
+    const child = spawn(spawnSpec.file, spawnSpec.args, spawnSpec.options);
     const now = new Date().toISOString();
     const session: CommandSession = {
       id: randomUUID(),

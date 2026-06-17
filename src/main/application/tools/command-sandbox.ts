@@ -2,8 +2,24 @@ import type {
   SpawnOptions,
   StdioOptions,
 } from "node:child_process";
+import { existsSync } from "node:fs";
+import * as path from "node:path";
 import type { ThreadSandboxMode } from "../../../shared/agent-contracts.js";
+import type { ShellInvocation } from "./command-invocation.js";
 import { buildCommandEnvironment } from "./command-environment.js";
+
+export const WINDOWS_COMMAND_SANDBOX_HELPER_ENV = "AGENT_WINDOWS_COMMAND_SANDBOX_HELPER";
+
+export class CommandSandboxUnavailableError extends Error {
+  readonly code = "tool_sandbox_unavailable";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "CommandSandboxUnavailableError";
+  }
+}
+
+type CommandSandboxEngineName = "direct" | "windows-helper";
 
 export interface CommandSandboxReport {
   mode: ThreadSandboxMode;
@@ -13,8 +29,12 @@ export interface CommandSandboxReport {
   shell: "explicit";
   processCleanup: "windows-taskkill-tree" | "posix-process-group";
   osJail: {
-    enabled: false;
-    reason: string;
+    enabled: boolean;
+    required: boolean;
+    available: boolean;
+    engine: CommandSandboxEngineName;
+    reason?: string;
+    helperPath?: string;
   };
 }
 
@@ -22,46 +42,225 @@ export interface CommandSpawnSandboxOptions {
   cwd: string;
   sandboxMode?: ThreadSandboxMode;
   stdin: "ignore" | "pipe";
+  platform?: NodeJS.Platform;
+  engine?: CommandSandboxEngine;
+}
+
+export interface CommandSpawnSpec {
+  file: string;
+  args: string[];
+  options: SpawnOptions;
+  sandbox: CommandSandboxReport;
+}
+
+export interface CommandSandboxEngine {
+  readonly name: CommandSandboxEngineName;
+  describe(request: CommandSandboxEngineRequest): CommandSandboxReport;
+  createSpawnSpec(
+    invocation: ShellInvocation,
+    request: CommandSandboxEngineRequest,
+  ): CommandSpawnSpec;
+}
+
+interface CommandSandboxEngineRequest {
+  cwd: string;
+  mode: ThreadSandboxMode;
+  stdin: "ignore" | "pipe";
+  platform: NodeJS.Platform;
 }
 
 /**
  * Command sandboxing is enforced at spawn time, after ToolPolicyService has
- * made the approval/sandbox decision. Node/Electron does not provide a native
- * cross-platform OS jail, so this boundary keeps the supported guarantees
- * explicit and shared by foreground commands and long-running sessions.
+ * made the approval/sandbox decision. The engine seam keeps helper/native jail
+ * details out of foreground command and long-running session implementations.
  */
+export function createCommandSpawnSpec(
+  invocation: ShellInvocation,
+  options: CommandSpawnSandboxOptions,
+): CommandSpawnSpec {
+  const request = createSandboxEngineRequest(options);
+  const engine = options.engine ?? selectDefaultSandboxEngine(request);
+  return engine.createSpawnSpec(invocation, request);
+}
+
 export function createCommandSpawnOptions(
   options: CommandSpawnSandboxOptions,
 ): SpawnOptions {
-  return {
-    cwd: options.cwd,
-    env: buildCommandEnvironment(),
-    shell: false,
-    detached: process.platform !== "win32",
-    stdio: commandStdio(options.stdin),
-    windowsHide: true,
-  };
+  return createDirectSpawnOptions(createSandboxEngineRequest(options));
 }
 
 export function describeCommandSandbox(
   sandboxMode: ThreadSandboxMode | undefined,
   platform: NodeJS.Platform = process.platform,
 ): CommandSandboxReport {
+  const request = createSandboxEngineRequest({
+    cwd: ".",
+    stdin: "ignore",
+    sandboxMode,
+    platform,
+  });
+  return selectDefaultSandboxEngine(request).describe(request);
+}
+
+export function createWindowsHelperCommandSandboxEngine(
+  helperPath = process.env[WINDOWS_COMMAND_SANDBOX_HELPER_ENV],
+): CommandSandboxEngine {
   return {
-    mode: sandboxMode ?? "workspace-write",
+    name: "windows-helper",
+    describe(request) {
+      return createBaseReport(request, createWindowsHelperJailState(helperPath));
+    },
+    createSpawnSpec(invocation, request) {
+      const jail = createWindowsHelperJailState(helperPath);
+      if (!jail.available || !jail.helperPath) {
+        throw new CommandSandboxUnavailableError(windowsHelperUnavailableMessage(jail.reason));
+      }
+      const payload = Buffer.from(JSON.stringify({
+        version: 1,
+        cwd: request.cwd,
+        command: {
+          file: invocation.file,
+          args: invocation.args,
+        },
+        stdin: request.stdin,
+      }), "utf8").toString("base64");
+      return {
+        file: jail.helperPath,
+        args: ["run", "--request-base64", payload],
+        options: createDirectSpawnOptions(request),
+        sandbox: createBaseReport(request, jail),
+      };
+    },
+  };
+}
+
+function createSandboxEngineRequest(options: CommandSpawnSandboxOptions): CommandSandboxEngineRequest {
+  return {
+    cwd: options.cwd,
+    mode: options.sandboxMode ?? "workspace-write",
+    stdin: options.stdin,
+    platform: options.platform ?? process.platform,
+  };
+}
+
+function selectDefaultSandboxEngine(request: CommandSandboxEngineRequest): CommandSandboxEngine {
+  if (request.platform === "win32" && request.mode === "workspace-write") {
+    return createWindowsHelperCommandSandboxEngine();
+  }
+  return directCommandSandboxEngine;
+}
+
+const directCommandSandboxEngine: CommandSandboxEngine = {
+  name: "direct",
+  describe(request) {
+    return createBaseReport(request, {
+      enabled: false,
+      required: false,
+      available: true,
+      engine: "direct",
+      reason: directSandboxReason(request),
+    });
+  },
+  createSpawnSpec(invocation, request) {
+    return {
+      file: invocation.file,
+      args: invocation.args,
+      options: createDirectSpawnOptions(request),
+      sandbox: this.describe(request),
+    };
+  },
+};
+
+function createDirectSpawnOptions(request: CommandSandboxEngineRequest): SpawnOptions {
+  return {
+    cwd: request.cwd,
+    env: buildCommandEnvironment(),
+    shell: false,
+    detached: request.platform !== "win32",
+    stdio: commandStdio(request.stdin),
+    windowsHide: true,
+  };
+}
+
+function isAbsoluteHelperPath(helperPath: string): boolean {
+  return path.isAbsolute(helperPath) || path.win32.isAbsolute(helperPath);
+}
+
+function createWindowsHelperJailState(
+  helperPath: string | undefined,
+): CommandSandboxReport["osJail"] {
+  const normalizedHelperPath = helperPath?.trim();
+  if (!normalizedHelperPath) {
+    return {
+      enabled: false,
+      required: true,
+      available: false,
+      engine: "windows-helper",
+      reason: `Windows command sandbox helper is not configured. Set ${WINDOWS_COMMAND_SANDBOX_HELPER_ENV} to the helper executable path.`,
+    };
+  }
+  if (!isAbsoluteHelperPath(normalizedHelperPath)) {
+    return {
+      enabled: false,
+      required: true,
+      available: false,
+      engine: "windows-helper",
+      helperPath: normalizedHelperPath,
+      reason: `Windows command sandbox helper path must be absolute: ${normalizedHelperPath}`,
+    };
+  }
+  if (!existsSync(normalizedHelperPath)) {
+    return {
+      enabled: false,
+      required: true,
+      available: false,
+      engine: "windows-helper",
+      helperPath: normalizedHelperPath,
+      reason: `Windows command sandbox helper was not found: ${normalizedHelperPath}`,
+    };
+  }
+  return {
+    enabled: true,
+    required: true,
+    available: true,
+    engine: "windows-helper",
+    helperPath: normalizedHelperPath,
+  };
+}
+
+function createBaseReport(
+  request: CommandSandboxEngineRequest,
+  osJail: CommandSandboxReport["osJail"],
+): CommandSandboxReport {
+  return {
+    mode: request.mode,
     cwdBoundary: "workspace-realpath",
     environment: "credential-filtered",
     stdio: "not-inherited",
     shell: "explicit",
-    processCleanup: platform === "win32"
+    processCleanup: request.platform === "win32"
       ? "windows-taskkill-tree"
       : "posix-process-group",
-    osJail: {
-      enabled: false,
-      reason:
-        "Node/Electron has no built-in cross-platform OS command jail; use read-only sandbox to deny command tools, and workspace-write/danger-full-access with approval for spawned commands.",
-    },
+    osJail,
   };
+}
+
+function directSandboxReason(request: CommandSandboxEngineRequest): string {
+  if (request.mode === "danger-full-access") {
+    return "danger-full-access permits host command execution without an OS jail after policy and approval checks.";
+  }
+  if (request.mode === "read-only") {
+    return "read-only mode only allows tools marked read-only; command write-capable tools are denied before spawn.";
+  }
+  return "Non-Windows workspace-write command execution keeps the existing cwd/env/stdio/process-cleanup boundary until an OS jail engine is explicitly supported.";
+}
+
+function windowsHelperUnavailableMessage(reason: string | undefined): string {
+  return [
+    "Windows command sandbox helper is unavailable; refusing workspace-write command execution.",
+    reason,
+    "Switch the thread to danger-full-access only if host command execution is intended.",
+  ].filter(Boolean).join(" ");
 }
 
 function commandStdio(stdin: "ignore" | "pipe"): StdioOptions {
