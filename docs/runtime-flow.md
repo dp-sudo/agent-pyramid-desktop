@@ -115,9 +115,15 @@ Important behavior:
 
 Failure mapping:
 
-- Same-thread concurrency throws `RUNTIME_TURN_BUSY`; `turns-handlers.ts` maps it to IPC error code `RUNTIME_TURN_BUSY`.
+- Same-thread concurrency throws `RUNTIME_TURN_BUSY`; runtime reserves the
+  thread before async model/profile/attachment preparation so parallel start
+  requests cannot both append user items.
+- `turns-handlers.ts` maps same-thread concurrency to IPC error code
+  `RUNTIME_TURN_BUSY`.
+- Archived threads throw `RUNTIME_THREAD_ARCHIVED`; IPC maps them to
+  `RUNTIME_THREAD_ARCHIVED` so renderer flows can distinguish archived-state
+  failures from generic start failures.
 - Other start failures are returned as `TURN_START_FAILED`.
-- Archived thread currently throws `RUNTIME_THREAD_ARCHIVED`; IPC maps it to `TURN_START_FAILED` with that message.
 - `AgentRuntime.startTurn()` validates public request field shapes before model
   profile resolution or item append: `text` must be string, `mode` must be
   `agent | plan`, `reasoningEffort` must be a supported effort,
@@ -646,6 +652,10 @@ Notes:
 - The interrupted turn remains in the in-flight map until the background run loop
   has persisted partial output/tool cleanup and emitted the terminal event, so a
   new same-thread turn cannot start while the old stream cleanup is still active.
+- `LlmWorkerPool.cancel(threadId)` sends cancel messages for every in-flight
+  worker request registered to that thread. This covers nested read-only
+  subagent/model requests without letting a later request overwrite the parent
+  turn's cancel message.
 
 ## Turn Completion And Failure
 

@@ -125,13 +125,16 @@ Notes:
 
 | Channel | Preload Method | Request | Success Value | Error Codes |
 | --- | --- | --- | --- | --- |
-| `turn:start` | `turns.start(request)` | `TurnStartRequest` | `TurnRecord` | `RUNTIME_TURN_BUSY`, `TURN_START_FAILED` |
+| `turn:start` | `turns.start(request)` | `TurnStartRequest` | `TurnRecord` | `RUNTIME_TURN_BUSY`, `RUNTIME_THREAD_ARCHIVED`, `TURN_START_FAILED` |
 | `turn:interrupt` | `turns.interrupt(turnId)` | `string` | `{ turnId: string }` | `TURN_INTERRUPT_FAILED` |
 | `turn:get` | `turns.get(threadId)` | `string` | `{ threadId: string; items: Item[] }` | `TURN_GET_FAILED` |
 
 Notes:
 
 - `turn:start` returns while the turn is still running.
+- Same-thread concurrency is rejected as `RUNTIME_TURN_BUSY` while an existing
+  turn is running or while a new turn is still being prepared.
+- Starting a turn on an archived thread returns `RUNTIME_THREAD_ARCHIVED`.
 - Completion and streamed output are delivered through SSE runtime events.
 - `turn:get` replays JSONL and dedupes by item id, keeping the latest version.
 - `turn:start` delegates to `AgentRuntime.startTurn()`, whose request

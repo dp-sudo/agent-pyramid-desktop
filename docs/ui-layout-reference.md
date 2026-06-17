@@ -1044,7 +1044,7 @@ Layout:
 
 - Remember left sidebar width.
 - Remember right sidebar width.
-- Default inspector mode: none, changes, todo, plan.
+- Default inspector mode: none, changes, checkpoints, todo, plan.
 - Code block fold line count.
 - Open completed reasoning by default.
 
