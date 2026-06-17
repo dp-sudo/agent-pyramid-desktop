@@ -68,6 +68,7 @@ DeepSeek
 .codegraph
 .reasonix
 .antigravitycli/
+.cursor/
 
 # Stray local binaries
 Agent.rar
