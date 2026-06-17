@@ -64,6 +64,12 @@ describe("workbench basic preferences", () => {
     }).codeBlockCollapseLineThreshold).toBe(42);
   });
 
+  it("preserves the checkpoints Inspector default when persisted", () => {
+    expect(normalizeBasicPreferences({
+      defaultInspectorMode: "checkpoints",
+    }).defaultInspectorMode).toBe("checkpoints");
+  });
+
   it("preserves the completed reasoning default-open preference when valid", () => {
     expect(normalizeBasicPreferences({
       openReasoningByDefault: true,

@@ -105,6 +105,21 @@ describe("RightInspector helpers", () => {
     ]);
   });
 
+  it("keeps recent tool changes stable when runtime events arrive out of order", () => {
+    const older = toolItem("tool-older", "read_file", "completed");
+    const newer = {
+      ...toolItem("tool-newer", "write_file", "completed"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+    };
+    const middle = {
+      ...toolItem("tool-middle", "search_files", "completed"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+
+    expect(getRecentInspectorToolItems([newer, older, middle], 2).map((item) => item.id))
+      .toEqual(["tool-middle", "tool-newer"]);
+  });
+
   it("uses bounded detail previews for long change summaries", () => {
     const item: ToolItem = {
       ...toolItem("tool-1", "read_file", "completed"),

@@ -3,6 +3,10 @@ import en from "../../src/renderer/src/i18n/locales/en/translation.json";
 import zhCN from "../../src/renderer/src/i18n/locales/zh-CN/translation.json";
 
 describe("settings i18n resources", () => {
+  it("keeps English and Simplified Chinese resource keys aligned", () => {
+    expect(flattenKeys(en)).toEqual(flattenKeys(zhCN));
+  });
+
   it("keeps first-priority Settings control labels readable in both locales", () => {
     const paths = [
       "settings.subtitles.agent",
@@ -143,6 +147,15 @@ describe("settings i18n resources", () => {
     expect(zhCN.settings.sections.sessionDesc).not.toContain("删除确认");
   });
 });
+
+function flattenKeys(source: unknown, prefix = ""): string[] {
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return [prefix];
+  }
+  return Object.entries(source)
+    .flatMap(([key, value]) => flattenKeys(value, prefix ? `${prefix}.${key}` : key))
+    .sort();
+}
 
 function getStringPath(source: unknown, path: string): string {
   let value: unknown = source;

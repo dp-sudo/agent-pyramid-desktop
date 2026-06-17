@@ -14,6 +14,7 @@ import {
   nextAttachmentPendingCount,
   normalizeSupportedComposerImageMimeType,
   partitionComposerImageFilesBySize,
+  shouldCloseComposerPopoversOnLock,
   shouldSubmitComposerKeyboardEvent,
   syncComposerTextareaHeight,
 } from "../../src/renderer/src/ui/components/composer";
@@ -81,6 +82,55 @@ describe("FloatingComposer", () => {
     expect(html).toContain("ds-composer-tool-button");
     expect(html).toContain("ds-composer-model-button");
     expect(html).not.toContain("ds-composer-mode-chip");
+  });
+
+  it("locks composer popover entry points while the composer is disabled", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(FloatingComposer, {
+          disabled: true,
+          onRequestSend: async () => true,
+          onInterrupt: () => undefined,
+        }),
+      ),
+    );
+
+    expect(html).toContain("ds-composer-tool-button");
+    expect(html).toContain("ds-composer-model-button");
+    expect(html.match(/disabled=""/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("closes open composer popovers when their entry controls become locked", () => {
+    expect(
+      shouldCloseComposerPopoversOnLock({
+        controlsLocked: true,
+        menuOpen: true,
+        pickerOpen: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldCloseComposerPopoversOnLock({
+        controlsLocked: true,
+        menuOpen: false,
+        pickerOpen: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldCloseComposerPopoversOnLock({
+        controlsLocked: false,
+        menuOpen: true,
+        pickerOpen: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldCloseComposerPopoversOnLock({
+        controlsLocked: true,
+        menuOpen: false,
+        pickerOpen: false,
+      }),
+    ).toBe(false);
   });
 
   it("allows attachment-only drafts to be submitted", () => {

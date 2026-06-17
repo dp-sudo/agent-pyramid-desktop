@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   formatSkillTriggerSummary,
@@ -169,7 +170,9 @@ describe("SettingsView helpers", () => {
     expect(isDefaultStartupViewSetting("settings")).toBe(false);
     expect(toDefaultInspectorModeValue(null)).toBe("closed");
     expect(toDefaultInspectorModeValue("changes")).toBe("changes");
+    expect(toDefaultInspectorModeValue("checkpoints")).toBe("checkpoints");
     expect(toDefaultInspectorMode("closed")).toBeNull();
+    expect(toDefaultInspectorMode("checkpoints")).toBe("checkpoints");
     expect(toDefaultInspectorMode("todo")).toBe("todo");
     expect(toDefaultInspectorMode("unknown")).toBeNull();
   });
@@ -218,6 +221,12 @@ describe("SettingsView helpers", () => {
     expect(toolKeywords).toEqual(
       RUNTIME_TOOL_NAMES.map((toolName) => `settings.toolNames.${toolName}`).sort(),
     );
+  });
+
+  it("keeps Checkpoints searchable from layout settings", () => {
+    const keywords = getSettingsCategorySearchKeywords("layout", testT);
+
+    expect(keywords).toContain("Checkpoints");
   });
 
   it("identifies advanced Settings categories and keeps safe fallbacks visible", () => {
@@ -399,7 +408,7 @@ describe("SettingsView helpers", () => {
     };
 
     expect(formatSkillTriggerSummary(skill, testT)).toBe(
-      "Manual · Commands: /review · Keywords: review · Prompt patterns: audit · File types: .ts",
+      "Manual - Commands: /review - Keywords: review - Prompt patterns: audit - File types: .ts",
     );
     expect(formatSkillTriggerSummary({
       ...skill,
@@ -685,7 +694,7 @@ describe("SettingsView helpers", () => {
       toolCount: 3,
       promptCount: 2,
       resourceCount: 1,
-    }, testT)).toBe("Connected · 3 tools · 2 prompts · 1 resources");
+    }, testT)).toBe("Connected - 3 tools - 2 prompts - 1 resources");
   });
 
   it("lets later queued runtime preference updates override the same field", () => {
@@ -742,6 +751,45 @@ describe("SettingsView helpers", () => {
     expect(messageOfUnknownError(new Error("IPC channel failed"))).toBe("IPC channel failed");
     expect(messageOfUnknownError("renderer bridge unavailable")).toBe(
       "renderer bridge unavailable",
+    );
+  });
+
+  it("keeps MCP refresh failures visible after refreshing tools", () => {
+    const source = readFileSync(
+      new URL("../../src/renderer/src/ui/SettingsView.tsx", import.meta.url),
+      "utf8",
+    );
+    const connectStart = source.indexOf("async function handleMcpConnect");
+    const connectEnd = source.indexOf("async function handleMcpDisconnect", connectStart);
+    const connectSource = source.slice(connectStart, connectEnd);
+    const refreshStart = source.indexOf("async function handleMcpRefreshTools");
+    const refreshEnd = source.indexOf("async function refreshSkillCatalog", refreshStart);
+    const refreshSource = source.slice(refreshStart, refreshEnd);
+
+    expect(connectStart).toBeGreaterThanOrEqual(0);
+    expect(connectEnd).toBeGreaterThan(connectStart);
+    expect(refreshStart).toBeGreaterThanOrEqual(0);
+    expect(refreshEnd).toBeGreaterThan(refreshStart);
+
+    expect(source).toContain("function markMcpStatusError(status: McpServerStatusRecord)");
+    expect(source).toContain("setRuntimeError(status.lastError)");
+    expect(connectSource).toContain("if (markMcpStatusError(result.value)) return;");
+    expect(connectSource.indexOf("if (markMcpStatusError(result.value)) return;"))
+      .toBeLessThan(connectSource.lastIndexOf("setRuntimeSaveState(\"saved\")"));
+
+    expect(refreshSource).toContain("const surface = await window.agentApi.mcp.refreshSurface");
+    expect(refreshSource).toContain("setRuntimeError(surface.message)");
+    expect(refreshSource).toContain("if (markMcpStatusError(result.value)) return;");
+    expect(refreshSource).toContain("if (markMcpStatusError(surface.value)) return;");
+    expect(refreshSource.indexOf("if (surface.ok)")).toBeLessThan(
+      refreshSource.indexOf("setRuntimeError(surface.message)"),
+    );
+    expect(refreshSource.indexOf("if (markMcpStatusError(result.value)) return;"))
+      .toBeLessThan(refreshSource.indexOf("const surface = await window.agentApi.mcp.refreshSurface"));
+    expect(refreshSource.indexOf("if (markMcpStatusError(surface.value)) return;"))
+      .toBeLessThan(refreshSource.lastIndexOf("setRuntimeSaveState(\"saved\")"));
+    expect(refreshSource.indexOf("setRuntimeError(surface.message)")).toBeLessThan(
+      refreshSource.lastIndexOf("setRuntimeSaveState(\"saved\")"),
     );
   });
 
@@ -869,6 +917,7 @@ function testT(key: string, options?: Record<string, unknown>): string {
   if (key === "settings.fields.codeBlockCollapseLineThreshold") {
     return "Code block fold line count";
   }
+  if (key === "settings.inspectorDefaults.checkpoints") return "Checkpoints";
   if (key === "settings.errors.positiveInteger") {
     return `${String(options?.field)} must be a positive whole number.`;
   }
@@ -911,7 +960,7 @@ function testT(key: string, options?: Record<string, unknown>): string {
     return `Last startup ${String(options?.duration)} ms, ${String(options?.successes)} ok, ${String(options?.failures)} failed`;
   }
   if (key === "settings.mcpServers.statusSummary") {
-    return `${String(options?.status)} · ${String(options?.tools)} tools · ${String(options?.prompts)} prompts · ${String(options?.resources)} resources`;
+    return `${String(options?.status)} - ${String(options?.tools)} tools - ${String(options?.prompts)} prompts - ${String(options?.resources)} resources`;
   }
   if (key === "settings.mcpStatuses.connected") return "Connected";
   return key;
