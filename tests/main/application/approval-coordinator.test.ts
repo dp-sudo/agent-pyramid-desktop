@@ -105,7 +105,12 @@ describe("ApprovalCoordinator", () => {
     });
     expect((await replayItems(store, thread.id)).filter((item) => item.kind === "approval")).toHaveLength(1);
 
-    coordinator.respond({ approvalId: requestEvent.approvalId, decision: "allow" });
+    expect(coordinator.respond({ approvalId: requestEvent.approvalId, decision: "allow" })).toEqual({
+      approvalId: requestEvent.approvalId,
+      decision: "allow",
+      scope: "once",
+      accepted: true,
+    });
     await expect(decision).resolves.toEqual({ decision: "allow", scope: "once" });
 
     const approvalItems = (await replayItems(store, thread.id)).filter((item) => item.kind === "approval");
@@ -169,7 +174,7 @@ describe("ApprovalCoordinator", () => {
     });
   });
 
-  it("rejects invalid or stale approval responses", () => {
+  it("returns a stable response for invalid or stale approval responses", () => {
     const coordinator = new ApprovalCoordinator({
       store,
       bus,
@@ -178,9 +183,13 @@ describe("ApprovalCoordinator", () => {
       },
     });
 
-    expect(() =>
-      coordinator.respond({ approvalId: "missing", decision: "allow" }),
-    ).toThrow("Approval missing is not pending.");
+    expect(coordinator.respond({ approvalId: "missing", decision: "allow" })).toEqual({
+      approvalId: "missing",
+      decision: "allow",
+      scope: "once",
+      accepted: false,
+      reason: "not_pending",
+    });
 
     const invalidDecision = {
       approvalId: "missing",

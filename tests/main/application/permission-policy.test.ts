@@ -192,6 +192,51 @@ describe("permission-policy", () => {
       tool: "write",
       value: "src/main/index.ts",
     });
+    expect(buildPermissionCandidate("git_commit", {
+      all: true,
+      cwd: "packages/app",
+      message: "ship",
+    })).toEqual({
+      tool: "command",
+      value: "git commit --stage=all -m=<message> @ packages/app",
+    });
+    expect(buildPermissionCandidate("package_install", {
+      manager: "pnpm",
+      frozen_lockfile: true,
+      cwd: "packages/app",
+    })).toEqual({
+      tool: "command",
+      value: "package install --manager=pnpm --frozen-lockfile @ packages/app",
+    });
+    expect(buildPermissionCandidate("run_tests", { manager: "npm" })).toEqual({
+      tool: "command",
+      value: "package run test --manager=npm",
+    });
+    expect(buildPermissionCandidate("diagnose_workspace", { cwd: "src" })).toEqual({
+      tool: "command",
+      value: "diagnose_workspace @ src",
+    });
+    expect(buildPermissionCandidate("write_command_session", {
+      session_id: "session-1",
+      input: "q",
+    })).toEqual({
+      tool: "command",
+      value: "write_command_session:session-1",
+    });
+    expect(evaluatePermission({
+      toolName: "run_tests",
+      args: { manager: "npm" },
+      rules: [
+        { id: "allow-run-tests", tool: "command", pattern: "package run test:*", effect: "allow" },
+      ],
+    })).toBe("allow");
+    expect(evaluatePermission({
+      toolName: "package_install",
+      args: { manager: "pnpm", frozen_lockfile: true },
+      rules: [
+        { id: "deny-install", tool: "command", pattern: "package install*", effect: "deny" },
+      ],
+    })).toBe("deny");
     expect(buildPermissionCandidate("mcp__local-mcp__echo", {})).toEqual({
       tool: "mcp",
       value: "local-mcp/echo",

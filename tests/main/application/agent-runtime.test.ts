@@ -53,6 +53,22 @@ function nodeCommand(script: string): string {
   return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`;
 }
 
+async function withPlatformAsync<T>(platform: NodeJS.Platform, fn: () => Promise<T>): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    enumerable: true,
+    value: platform,
+  });
+  try {
+    return await fn();
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  }
+}
+
 class FakePool {
   readonly requests: LlmRequest[] = [];
   readonly canceledThreads: string[] = [];
@@ -2286,6 +2302,83 @@ describe("AgentRuntime", () => {
     }
   });
 
+  it("records sandbox-unavailable failure for Windows workspace-write command execution", async () => {
+    const workspace = await makeTempDir("runtime-command-sandbox-");
+    try {
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+        sandboxMode: "workspace-write",
+        approvalPolicy: "on-request",
+      });
+      await runtimePreferencesStore.update({
+        permissionRules: [
+          {
+            id: "allow-echo",
+            tool: "command",
+            pattern: "echo sandbox",
+            effect: "allow",
+            match: "exact",
+            scope: { kind: "workspace", workspace },
+          },
+        ],
+      });
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-command",
+              name: "run_command",
+              arguments: { command: "echo sandbox" },
+            },
+          ],
+          raw: {},
+        },
+        {
+          text: "Command blocked by sandbox.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      await withPlatformAsync("win32", async () => {
+        await createRuntime(registry).startTurn({
+          threadId: thread.id,
+          text: "Run command",
+        });
+        await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+      });
+
+      expect(events.some((event) => event.kind === "approval_requested")).toBe(false);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "runtime_error",
+            code: "tool_failed",
+            message: expect.stringContaining("Windows command sandbox helper is unavailable"),
+          }),
+        ]),
+      );
+      const replayed = await collectThreadItems(thread.id);
+      expect(
+        finalItems(replayed).find((item) => item.kind === "tool" && item.name === "run_command"),
+      ).toMatchObject({
+        status: "failed",
+        result: {
+          code: "tool_sandbox_unavailable",
+          message: expect.stringContaining("Windows command sandbox helper is unavailable"),
+        },
+      });
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("requests approval with a multi-file diff preview for apply_patch", async () => {
     const workspace = await makeTempDir("runtime-apply-patch-");
     try {
@@ -2728,6 +2821,7 @@ describe("AgentRuntime", () => {
         title: "Runtime",
         workspace,
         mode: "code",
+        sandboxMode: "danger-full-access",
       });
       await store.updateThread(thread.id, { approvalPolicy: "auto" });
       const registry = new InMemoryToolRegistry(createCommandTools());
@@ -2830,6 +2924,7 @@ describe("AgentRuntime", () => {
         title: "Runtime",
         workspace,
         mode: "code",
+        sandboxMode: "danger-full-access",
       });
       const registry = new InMemoryToolRegistry([
         ...createWorkspaceTools(),
@@ -2938,6 +3033,7 @@ describe("AgentRuntime", () => {
         title: "Runtime",
         workspace,
         mode: "code",
+        sandboxMode: "danger-full-access",
       });
       const command = nodeCommand("process.stdout.write('allowed command');");
       await runtimePreferencesStore.update({
@@ -2983,7 +3079,65 @@ describe("AgentRuntime", () => {
     }
   });
 
-  it("uses session-scoped approval grants for repeated command subjects without bypassing never policy", async () => {
+  it("asks for matching command calls in untrusted mode even when permission rules allow them", async () => {
+    const workspace = await makeTempDir("runtime-command-untrusted-permission-rules-");
+    try {
+      const thread = await store.createThread({
+        title: "Runtime",
+        workspace,
+        mode: "code",
+      });
+      await store.updateThread(thread.id, { approvalPolicy: "untrusted" });
+      const command = nodeCommand("process.stdout.write('untrusted command');");
+      await runtimePreferencesStore.update({
+        permissionRules: [
+          { id: "allow-node", tool: "command", pattern: command, effect: "allow" },
+        ],
+      });
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      fakePool.responses = [
+        {
+          text: "",
+          reasoning: "",
+          toolCalls: [
+            {
+              id: "call-command",
+              name: "run_command",
+              arguments: { command },
+            },
+          ],
+          raw: {},
+        },
+        {
+          text: "Command finished.",
+          reasoning: "",
+          toolCalls: [],
+          raw: {},
+        },
+      ];
+
+      const runtime = createRuntime(registry);
+      await runtime.startTurn({
+        threadId: thread.id,
+        text: "Run command",
+      });
+      await waitFor(() => events.some((event) => event.kind === "approval_requested"));
+      const approval = events.find((event) => event.kind === "approval_requested");
+      expect(approval).toMatchObject({
+        kind: "approval_requested",
+        toolName: "run_command",
+      });
+      if (!approval || approval.kind !== "approval_requested") {
+        throw new Error("Expected command approval request.");
+      }
+      runtime.respondApproval({ approvalId: approval.approvalId, decision: "allow" });
+      await waitFor(() => events.some((event) => event.kind === "turn_completed"));
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("uses session-scoped approval grants for repeated command subjects without bypassing deny rules or never policy", async () => {
     const thread = await store.createThread({
       title: "Runtime",
       workspace: "/workspace",
@@ -3030,6 +3184,53 @@ describe("AgentRuntime", () => {
     const firstTurnItems = finalItems(await collectThreadItems(thread.id));
     expect(firstTurnItems.filter(isToolItemNamed("run_command"))).toHaveLength(2);
 
+    await runtimePreferencesStore.update({
+      permissionRules: [
+        {
+          id: "deny-repeated-command",
+          tool: "command",
+          pattern: command,
+          effect: "deny",
+          match: "exact",
+        },
+      ],
+    });
+    const approvalCountBeforeDenyTurn = events.filter(
+      (event) => event.kind === "approval_requested",
+    ).length;
+    fakePool.responses = [
+      {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: "call-command-deny", name: "run_command", arguments: { command } }],
+        raw: {},
+      },
+      {
+        text: "Denied.",
+        reasoning: "",
+        toolCalls: [],
+        raw: {},
+      },
+    ];
+
+    await runtime.startTurn({ threadId: thread.id, text: "Run command denied by rule" });
+    await waitFor(() =>
+      events.filter((event) => event.kind === "turn_completed").length >= 2
+    );
+
+    expect(events.filter((event) => event.kind === "approval_requested")).toHaveLength(
+      approvalCountBeforeDenyTurn,
+    );
+    expect(finalItems(await collectThreadItems(thread.id)).find(
+      (item) =>
+        item.kind === "tool" &&
+        item.name === "run_command" &&
+        item.toolCallId === "call-command-deny",
+    )).toMatchObject({
+      status: "failed",
+      result: { denied: true },
+    });
+
     await store.updateThread(thread.id, { approvalPolicy: "never" });
     const approvalCountBeforeNeverTurn = events.filter(
       (event) => event.kind === "approval_requested",
@@ -3051,7 +3252,7 @@ describe("AgentRuntime", () => {
 
     await runtime.startTurn({ threadId: thread.id, text: "Run command under never" });
     await waitFor(() =>
-      events.filter((event) => event.kind === "turn_completed").length >= 2
+      events.filter((event) => event.kind === "turn_completed").length >= 3
     );
 
     expect(events.filter((event) => event.kind === "approval_requested")).toHaveLength(
@@ -3113,6 +3314,7 @@ describe("AgentRuntime", () => {
         pattern: command,
         effect: "allow",
         match: "exact",
+        scope: { kind: "workspace", workspace: "/workspace" },
       }),
     ]);
   });
@@ -3133,6 +3335,7 @@ describe("AgentRuntime", () => {
         title: "Runtime",
         workspace,
         mode: "code",
+        sandboxMode: "danger-full-access",
       });
       const registry = new InMemoryToolRegistry(createCommandTools());
       fakePool.responses = [
@@ -3969,6 +4172,7 @@ describe("AgentRuntime", () => {
         title: "Runtime",
         workspace,
         mode: "code",
+        sandboxMode: "danger-full-access",
       });
       const startedPath = path.join(workspace, "started.txt");
       const registry = new InMemoryToolRegistry(createCommandTools());
@@ -5485,12 +5689,16 @@ describe("AgentRuntime", () => {
     appendItem.mockRestore();
   });
 
-  it("rejects invalid or stale approval responses instead of treating them as success", () => {
+  it("returns stable responses for invalid or stale approval responses", () => {
     const runtime = createRuntime();
 
-    expect(() =>
-      runtime.respondApproval({ approvalId: "missing", decision: "allow" }),
-    ).toThrow("Approval missing is not pending.");
+    expect(runtime.respondApproval({ approvalId: "missing", decision: "allow" })).toEqual({
+      approvalId: "missing",
+      decision: "allow",
+      scope: "once",
+      accepted: false,
+      reason: "not_pending",
+    });
 
     const invalidDecision = {
       approvalId: "missing",

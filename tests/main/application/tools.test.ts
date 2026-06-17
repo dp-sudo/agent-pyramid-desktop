@@ -451,7 +451,7 @@ describe("application tools", () => {
             verification: ["npm test -- runtime"],
           },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         title: string;
@@ -485,7 +485,7 @@ describe("application tools", () => {
     const workspace = await makeTempDir("create-edit-plan-tool-guard-");
     try {
       const registry = new InMemoryToolRegistry(createCodingTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(
@@ -529,6 +529,24 @@ describe("application tools", () => {
             },
           },
           context,
+        ),
+      ).rejects.toThrow("create_edit_plan file path is duplicated: src/runtime.ts");
+
+      await expect(
+        withPlatformAsync("win32", () =>
+          registry.execute(
+            {
+              id: "call-edit-plan-windows-case-duplicate",
+              name: "create_edit_plan",
+              arguments: {
+                files: [
+                  { path: "src/Runtime.ts", action: "update" },
+                  { path: "src/runtime.ts", action: "update" },
+                ],
+              },
+            },
+            context,
+          )
         ),
       ).rejects.toThrow("create_edit_plan file path is duplicated: src/runtime.ts");
 
@@ -750,7 +768,7 @@ describe("application tools", () => {
         (
           await registry.execute(
             { id: "call-list", name: "list_files", arguments: { path: "." } },
-            { threadId: "thread-1", turnId: "turn-1", workspace },
+            { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
           )
         ).content,
       ) as { entries: Array<{ path: string; type: string }> };
@@ -791,7 +809,7 @@ describe("application tools", () => {
         (
           await registry.execute(
             { id: "call-read-small", name: "read_file", arguments: { path: "src/large.txt", max_bytes: 3 } },
-            { threadId: "thread-1", turnId: "turn-1", workspace },
+            { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
           )
         ).content,
       ) as {
@@ -819,7 +837,7 @@ describe("application tools", () => {
               name: "read_file",
               arguments: { path: "src/large.txt", offset_bytes: 3, max_bytes: 3 },
             },
-            { threadId: "thread-1", turnId: "turn-1", workspace },
+            { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
           )
         ).content,
       ) as {
@@ -843,7 +861,7 @@ describe("application tools", () => {
             name: "read_file",
             arguments: { path: "src/unicode.txt", max_bytes: 2 },
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ),
       ).rejects.toThrow("read_file max_bytes ended before a complete UTF-8 character: src/unicode.txt");
       const unicodeRead = JSON.parse(
@@ -854,7 +872,7 @@ describe("application tools", () => {
               name: "read_file",
               arguments: { path: "src/unicode.txt", max_bytes: 3 },
             },
-            { threadId: "thread-1", turnId: "turn-1", workspace },
+            { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
           )
         ).content,
       ) as { content: string; bytesRead: number; truncated: boolean };
@@ -868,7 +886,7 @@ describe("application tools", () => {
         (
           await registry.execute(
             { id: "call-search", name: "search_files", arguments: { query: "marker" } },
-            { threadId: "thread-1", turnId: "turn-1", workspace },
+            { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
           )
         ).content,
       ) as {
@@ -891,7 +909,7 @@ describe("application tools", () => {
               name: "search_files",
               arguments: { query: "marker", path: "src/index.ts" },
             },
-            { threadId: "thread-1", turnId: "turn-1", workspace },
+            { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
           )
         ).content,
       ) as {
@@ -913,19 +931,19 @@ describe("application tools", () => {
       await expect(
         registry.execute(
           { id: "call-escape", name: "read_file", arguments: { path: "../outside.ts" } },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ),
       ).rejects.toThrow("Path escapes workspace: ../outside.ts");
       await expect(
         registry.execute(
           { id: "call-hidden", name: "read_file", arguments: { path: ".hidden.ts" } },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ),
       ).rejects.toThrow("Path is skipped by workspace tool policy: .hidden.ts");
       await expect(
         registry.execute(
           { id: "call-deepseek", name: "read_file", arguments: { path: "DeepSeek/reference.ts" } },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ),
       ).rejects.toThrow("Path is skipped by workspace tool policy: DeepSeek/reference.ts");
       await expect(
@@ -935,7 +953,7 @@ describe("application tools", () => {
             name: "read_file",
             arguments: { path: "src/external-references/reference.ts" },
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ),
       ).rejects.toThrow(
         "Path is skipped by workspace tool policy: src/external-references/reference.ts",
@@ -949,7 +967,7 @@ describe("application tools", () => {
             name: "read_file",
             arguments: { path: "src/invalid-utf8.txt" },
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ),
       ).rejects.toThrow("read_file path is not valid UTF-8: src/invalid-utf8.txt");
       await expect(
@@ -959,7 +977,7 @@ describe("application tools", () => {
             name: "search_files",
             arguments: { query: "marker", path: "src/invalid-utf8.txt" },
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ),
       ).rejects.toThrow("search_files path is not valid UTF-8: src/invalid-utf8.txt");
     } finally {
@@ -973,7 +991,7 @@ describe("application tools", () => {
     try {
       await fs.writeFile(path.join(workspace, "file.txt"), "marker\n", "utf8");
       const registry = new InMemoryToolRegistry(createWorkspaceTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(
@@ -1014,7 +1032,7 @@ describe("application tools", () => {
     try {
       await fs.writeFile(path.join(workspace, "file.txt"), "marker\n", "utf8");
       const registry = new InMemoryToolRegistry(createWorkspaceTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(
@@ -1043,7 +1061,7 @@ describe("application tools", () => {
     try {
       await fs.writeFile(path.join(workspace, "file.txt"), "marker\n", "utf8");
       const registry = new InMemoryToolRegistry(createWorkspaceTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(
@@ -1839,7 +1857,7 @@ describe("application tools", () => {
               ].join("\n"),
             },
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ),
       ).rejects.toThrow("apply_patch file path is invalid.");
     } finally {
@@ -2465,6 +2483,34 @@ describe("application tools", () => {
         .toBe("const value = 1;\n");
 
       await expect(
+        withPlatformAsync("win32", () =>
+          registry.execute(
+            {
+              id: "call-duplicate-target-windows-case",
+              name: "apply_patch",
+              arguments: {
+                patch: [
+                  "--- a/src/index.ts",
+                  "+++ b/src/index.ts",
+                  "@@ -1 +1 @@",
+                  "-const value = 1;",
+                  "+const value = 2;",
+                  "--- a/SRC/INDEX.ts",
+                  "+++ b/SRC/INDEX.ts",
+                  "@@ -1 +1 @@",
+                  "-const value = 1;",
+                  "+const value = 3;",
+                ].join("\n"),
+              },
+            },
+            context,
+          )
+        ),
+      ).rejects.toThrow("apply_patch contains duplicate file sections for SRC/INDEX.ts.");
+      expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
+        .toBe("const value = 1;\n");
+
+      await expect(
         registry.execute(
           {
             id: "call-escape",
@@ -3006,7 +3052,7 @@ describe("application tools", () => {
             cwd: "src",
           },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         cwd: string;
@@ -3056,7 +3102,7 @@ describe("application tools", () => {
             ),
           },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as { stdout: string };
       const envSnapshot = JSON.parse(parsed.stdout) as {
@@ -3110,6 +3156,7 @@ describe("application tools", () => {
           threadId: "thread-1",
           turnId: "turn-1",
           workspace,
+          sandboxMode: "danger-full-access" as const,
           reportProgress: (chunk, stream) => {
             progress.push({ chunk, stream });
           },
@@ -3184,7 +3231,7 @@ describe("application tools", () => {
             cwd: "src",
           },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         cwd: string;
@@ -3195,6 +3242,30 @@ describe("application tools", () => {
       expect(parsed.cwd).toBe("src");
       expect(path.resolve(parsed.stdout)).toBe(path.join(workspace, "src"));
       expect(parsed.shellFile).toBe(process.execPath);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("reports foreground command spawn failures before treating the command as executed", async () => {
+    const workspace = await makeTempDir("shell-command-spawn-failure-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-shell-spawn-failure",
+            name: "shell_command",
+            arguments: {
+              command: "echo unreachable",
+              shell_path: path.join(workspace, "missing-shell"),
+              shell_args: ["-c", "{command}"],
+            },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
+        ),
+      ).rejects.toThrow("Command failed to start:");
     } finally {
       await removeTempDir(workspace);
     }
@@ -3323,7 +3394,7 @@ describe("application tools", () => {
             path: "src",
           },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         results: Array<{ path: string; line: number; column: number; match: string }>;
@@ -3359,7 +3430,7 @@ describe("application tools", () => {
             path: ".",
           },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         results: Array<{ path: string; text: string }>;
@@ -3384,7 +3455,7 @@ describe("application tools", () => {
       await fs.mkdir(path.join(workspace, "src"), { recursive: true });
       await fs.writeFile(path.join(workspace, "src", "file.txt"), "not a directory", "utf8");
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(
@@ -3477,7 +3548,7 @@ describe("application tools", () => {
     const workspace = await makeTempDir("command-tools-nul-strings-");
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(
@@ -3570,6 +3641,7 @@ describe("application tools", () => {
             threadId: "thread-1",
             turnId: "turn-1",
             workspace,
+            sandboxMode: "danger-full-access" as const,
             commandDefaults: {
               timeoutMs: 100,
               maxOutputBytes: 2048,
@@ -3623,6 +3695,7 @@ describe("application tools", () => {
         threadId: "thread-1",
         turnId: "turn-1",
         workspace,
+        sandboxMode: "danger-full-access" as const,
         commandDefaults: {
           timeoutMs: 100,
           maxOutputBytes: 2048,
@@ -3709,6 +3782,7 @@ describe("application tools", () => {
           threadId: "thread-1",
           turnId: "turn-1",
           workspace,
+          sandboxMode: "danger-full-access" as const,
           commandDefaults: {
             timeoutMs: 30_000,
             maxOutputBytes: 1024,
@@ -3779,7 +3853,7 @@ describe("application tools", () => {
     const workspace = await makeTempDir("git-tools-");
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await registry.execute(
         { id: "git-init", name: "run_command", arguments: { command: "git init" } },
@@ -3882,7 +3956,7 @@ describe("application tools", () => {
     const workspace = await makeTempDir("git-diff-safe-tools-");
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
       const markerPath = path.join(workspace, "external-ran.txt");
       const externalScriptPath = path.join(workspace, "external-diff.cjs");
       await fs.writeFile(
@@ -3952,7 +4026,7 @@ describe("application tools", () => {
     const workspace = await makeTempDir("git-commit-add-failure-tools-");
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
       await registry.execute(
         { id: "git-init", name: "run_command", arguments: { command: "git init" } },
         context,
@@ -4019,7 +4093,7 @@ describe("application tools", () => {
     const workspace = await makeTempDir("git-deleted-pathspec-tools-");
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
       await registry.execute(
         { id: "git-init", name: "run_command", arguments: { command: "git init" } },
         context,
@@ -4104,7 +4178,7 @@ describe("application tools", () => {
     const workspace = await makeTempDir("git-log-ref-tools-");
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       for (const ref of ["--all", "-n1", ":(glob)*", "HEAD name"]) {
         await expect(
@@ -4139,7 +4213,7 @@ describe("application tools", () => {
         "utf8",
       );
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       const scripts = JSON.parse(
         (
@@ -4237,7 +4311,7 @@ describe("application tools", () => {
       process.env.PATH = `${fakeBin}${path.delimiter}${originalPath ?? ""}`;
       process.env.Path = `${fakeBin}${path.delimiter}${originalPathCapitalized ?? originalPath ?? ""}`;
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(
@@ -4308,6 +4382,7 @@ describe("application tools", () => {
         threadId: "thread-1",
         turnId: "turn-1",
         workspace,
+        sandboxMode: "danger-full-access" as const,
         reportProgress(chunk: string, stream: ToolProgressStream): void {
           progressEvents.push({ chunk, stream });
         },
@@ -4469,7 +4544,7 @@ describe("application tools", () => {
             name: "stop_command_session",
             arguments: { session_id: sessionId },
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ).catch((error: unknown) => {
           if (error instanceof Error && error.message.includes("Command session not found")) return;
           throw error;
@@ -4513,7 +4588,7 @@ describe("application tools", () => {
               name: "list_command_sessions",
               arguments: {},
             },
-            { threadId: "thread-1", turnId: "turn-1", workspace },
+            { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
           )
         ).content,
       ) as { sessionCount: number };
@@ -4527,7 +4602,7 @@ describe("application tools", () => {
     const workspace = await makeTempDir("command-session-shutdown-");
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
       const start = JSON.parse(
         (
           await registry.execute(
@@ -4609,7 +4684,7 @@ describe("application tools", () => {
       process.env.AGENT_PYRAMID_TEST_TOKEN = "secret-agent-token";
       process.env.PATH = originalPath ?? path.dirname(process.execPath);
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
       const start = JSON.parse(
         (
           await registry.execute(
@@ -4682,7 +4757,7 @@ describe("application tools", () => {
             name: "stop_command_session",
             arguments: { session_id: sessionId },
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ).catch((error: unknown) => {
           if (error instanceof Error && error.message.includes("Command session not found")) return;
           throw error;
@@ -4712,7 +4787,7 @@ describe("application tools", () => {
     let sessionId: string | undefined;
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
       const start = JSON.parse(
         (
           await registry.execute(
@@ -4773,7 +4848,7 @@ describe("application tools", () => {
             name: "stop_command_session",
             arguments: { session_id: sessionId },
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ).catch((error: unknown) => {
           if (error instanceof Error && error.message.includes("Command session not found")) return;
           throw error;
@@ -4788,7 +4863,7 @@ describe("application tools", () => {
     let sessionId: string | undefined;
     try {
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
       const script = [
         "process.stdout.write('old' + '你' + 'x'.repeat(1016) + 'latest');",
         "setInterval(() => undefined, 1000);",
@@ -4853,7 +4928,7 @@ describe("application tools", () => {
             name: "stop_command_session",
             arguments: { session_id: sessionId },
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ).catch((error: unknown) => {
           if (error instanceof Error && error.message.includes("Command session not found")) return;
           throw error;
@@ -4870,7 +4945,7 @@ describe("application tools", () => {
     try {
       process.env[envKey] = path.join(workspace, "missing-shell");
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
       await expect(
         registry.execute(
           {
@@ -4927,7 +5002,7 @@ describe("application tools", () => {
           name: "diagnose_workspace",
           arguments: {},
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         command: string;
@@ -4975,7 +5050,7 @@ describe("application tools", () => {
           name: "diagnose_workspace",
           arguments: {},
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         command: string;
@@ -5007,7 +5082,7 @@ describe("application tools", () => {
             name: "diagnose_workspace",
             arguments: {},
           },
-          { threadId: "thread-1", turnId: "turn-1", workspace },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
         ),
       ).rejects.toThrow("diagnose_workspace package.json is invalid");
     } finally {
@@ -5052,7 +5127,7 @@ describe("application tools", () => {
           name: "diagnose_workspace",
           arguments: { cwd: "packages/app" },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         cwd: string;
@@ -5103,7 +5178,7 @@ describe("application tools", () => {
           name: "diagnose_workspace",
           arguments: {},
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         diagnostics: Array<{ path: string; message: string }>;
@@ -5156,7 +5231,7 @@ describe("application tools", () => {
           name: "diagnose_file",
           arguments: { path: "src/a.ts" },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         path: string;
@@ -5211,7 +5286,7 @@ describe("application tools", () => {
           name: "diagnose_file",
           arguments: { path: "src/index.ts" },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         diagnostics: Array<{ path: string; code: string }>;
@@ -5236,7 +5311,7 @@ describe("application tools", () => {
       await fs.mkdir(path.join(workspace, "src"), { recursive: true });
       await fs.writeFile(path.join(workspace, "src", "file.ts"), "const value = 1;\n", "utf8");
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(
@@ -5312,7 +5387,7 @@ describe("application tools", () => {
           name: "list_symbols",
           arguments: { path: "src/index.ts", max_results: 10 },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         path: string;
@@ -5407,7 +5482,7 @@ describe("application tools", () => {
           name: "search_symbols",
           arguments: { query: "runner", max_results: 10 },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         query: string;
@@ -5471,7 +5546,7 @@ describe("application tools", () => {
           name: "search_symbols",
           arguments: { path: "src/a", max_results: 1 },
         },
-        { threadId: "thread-1", turnId: "turn-1", workspace },
+        { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
       );
       const parsed = JSON.parse(result.content) as {
         fileCount: number;
@@ -5497,7 +5572,7 @@ describe("application tools", () => {
       await fs.mkdir(path.join(workspace, "src"), { recursive: true });
       await fs.writeFile(path.join(workspace, "src", "file.ts"), "export const value = 1;\n", "utf8");
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(
@@ -5543,7 +5618,7 @@ describe("application tools", () => {
       await fs.mkdir(path.join(workspace, "src"), { recursive: true });
       await fs.writeFile(path.join(workspace, "src", "file.ts"), "export const value = 1;\n", "utf8");
       const registry = new InMemoryToolRegistry(createCommandTools());
-      const context = { threadId: "thread-1", turnId: "turn-1", workspace };
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
 
       await expect(
         registry.execute(

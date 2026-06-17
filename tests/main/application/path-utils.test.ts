@@ -25,6 +25,7 @@ describe("main path utils", () => {
   it("uses Windows case-insensitive path containment semantics", () => {
     withPlatform("win32", () => {
       expect(isSamePath("C:\\Workspace", "c:\\workspace")).toBe(true);
+      expect(isSamePath("src/Runtime.ts", "src/runtime.ts")).toBe(true);
       expect(isPathInsideOrEqual("C:\\Workspace", "c:\\workspace\\src\\index.ts")).toBe(true);
       expect(isPathInsideOrEqual("C:\\Workspace", "C:\\WorkspaceSibling\\file.ts")).toBe(false);
       expect(toPortableRelativePath("C:\\Workspace", "c:\\workspace\\docs\\Guide.md"))
@@ -35,6 +36,7 @@ describe("main path utils", () => {
   it("uses POSIX case-sensitive path containment semantics", () => {
     withPlatform("linux", () => {
       expect(isSamePath("/workspace", "/Workspace")).toBe(false);
+      expect(isSamePath("src/Runtime.ts", "src/runtime.ts")).toBe(false);
       expect(isPathInsideOrEqual("/workspace", "/workspace/src/index.ts")).toBe(true);
       expect(isPathInsideOrEqual("/workspace", "/workspace-sibling/file.ts")).toBe(false);
       expect(toPortableRelativePath("/workspace", "/workspace/docs/guide.md"))

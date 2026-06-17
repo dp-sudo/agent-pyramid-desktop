@@ -66,6 +66,12 @@ describe("approval handlers", () => {
 
   it("responds to valid approval requests", async () => {
     const runtime = createRuntime();
+    vi.mocked(runtime.respondApproval).mockReturnValue({
+      approvalId: "approval-1",
+      decision: "deny",
+      scope: "persist_rule",
+      accepted: true,
+    });
     registerApprovalHandlers(runtime);
     const handler = electronMock.handlers.get(APPROVAL_RESPOND_CHANNEL);
     if (!handler) throw new Error("Expected approval respond handler.");
@@ -78,12 +84,47 @@ describe("approval handlers", () => {
 
     expect(result).toEqual({
       ok: true,
-      value: { approvalId: "approval-1", decision: "deny", scope: "persist_rule" },
+      value: {
+        approvalId: "approval-1",
+        decision: "deny",
+        scope: "persist_rule",
+        accepted: true,
+      },
     });
     expect(runtime.respondApproval).toHaveBeenCalledWith({
       approvalId: "approval-1",
       decision: "deny",
       scope: "persist_rule",
+    });
+  });
+
+  it("returns a stable envelope for stale approval responses", async () => {
+    const runtime = createRuntime();
+    vi.mocked(runtime.respondApproval).mockReturnValue({
+      approvalId: "approval-1",
+      decision: "allow",
+      scope: "once",
+      accepted: false,
+      reason: "not_pending",
+    });
+    registerApprovalHandlers(runtime);
+    const handler = electronMock.handlers.get(APPROVAL_RESPOND_CHANNEL);
+    if (!handler) throw new Error("Expected approval respond handler.");
+
+    const result = await handler({}, {
+      approvalId: "approval-1",
+      decision: "allow",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        approvalId: "approval-1",
+        decision: "allow",
+        scope: "once",
+        accepted: false,
+        reason: "not_pending",
+      },
     });
   });
 

@@ -255,6 +255,18 @@ describe("ToolPolicyService", () => {
       isToolAvailable: true,
     })).toBe("allow");
     expect(service.resolve({
+      call: createCall("run_command", { command: "npm test" }),
+      turn,
+      thread: createThread({ approvalPolicy: "untrusted" }),
+      runtimePreferences: {
+        ...DEFAULT_RUNTIME_PREFERENCES,
+        permissionRules: [
+          { id: "allow-tests", tool: "command", pattern: "npm:*", effect: "allow" },
+        ],
+      },
+      isToolAvailable: true,
+    })).toBe("ask");
+    expect(service.resolve({
       call: createCall("run_command", { command: "npm test && npm run build" }),
       turn,
       thread,
@@ -278,6 +290,126 @@ describe("ToolPolicyService", () => {
       turn,
       thread,
       runtimePreferences: DEFAULT_RUNTIME_PREFERENCES,
+      isToolAvailable: true,
+    })).toBe("ask");
+  });
+
+  it("lets explicit MCP rules override read-only default allow", () => {
+    const registry = new InMemoryToolRegistry([
+      createTool("mcp__local__read", { isReadOnly: true, isDestructive: false }),
+    ]);
+    const service = new ToolPolicyService(registry);
+    const turn = createTurn();
+    const thread = createThread();
+
+    expect(service.resolve({
+      call: createCall("mcp__local__read"),
+      turn,
+      thread,
+      runtimePreferences: {
+        ...DEFAULT_RUNTIME_PREFERENCES,
+        permissionRules: [
+          { id: "deny-read", tool: "mcp", pattern: "local/read", effect: "deny" },
+        ],
+      },
+      isToolAvailable: true,
+    })).toBe("deny");
+    expect(service.resolve({
+      call: createCall("mcp__local__read"),
+      turn,
+      thread,
+      runtimePreferences: {
+        ...DEFAULT_RUNTIME_PREFERENCES,
+        permissionRules: [
+          { id: "ask-read", tool: "mcp", pattern: "local/read", effect: "ask" },
+        ],
+      },
+      isToolAvailable: true,
+    })).toBe("ask");
+    expect(service.resolve({
+      call: createCall("mcp__local__read"),
+      turn,
+      thread: createThread({ approvalPolicy: "never" }),
+      runtimePreferences: {
+        ...DEFAULT_RUNTIME_PREFERENCES,
+        permissionRules: [
+          { id: "ask-read", tool: "mcp", pattern: "local/read", effect: "ask" },
+        ],
+      },
+      isToolAvailable: true,
+    })).toBe("deny");
+  });
+
+  it("applies workspace-scoped permission rules only in the matching workspace", () => {
+    const registry = new InMemoryToolRegistry([
+      createTool("run_command", { isDestructive: true }),
+    ]);
+    const service = new ToolPolicyService(registry);
+    const turn = createTurn();
+    const preferences: RuntimePreferences = {
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      permissionRules: [
+        {
+          id: "allow-tests-workspace",
+          tool: "command",
+          pattern: "npm test",
+          effect: "allow",
+          match: "exact",
+          scope: { kind: "workspace", workspace: "/workspace" },
+        },
+      ],
+    };
+
+    expect(service.resolve({
+      call: createCall("run_command", { command: "npm test" }),
+      turn,
+      thread: createThread({ workspace: "/workspace" }),
+      runtimePreferences: preferences,
+      isToolAvailable: true,
+    })).toBe("allow");
+    expect(service.resolve({
+      call: createCall("run_command", { command: "npm test" }),
+      turn,
+      thread: createThread({ workspace: "/other-workspace" }),
+      runtimePreferences: preferences,
+      isToolAvailable: true,
+    })).toBe("ask");
+  });
+
+  it("keeps deny and ask rules authoritative over scoped approval grants and auto policy", () => {
+    const registry = new InMemoryToolRegistry([
+      createTool("run_command", { isDestructive: true }),
+      createTool("write_file", { isDestructive: false }),
+    ]);
+    const service = new ToolPolicyService(registry);
+    const turn = createTurn();
+    const thread = createThread({ approvalPolicy: "auto" });
+
+    expect(service.resolve({
+      call: createCall("run_command", { command: "npm test" }),
+      turn,
+      thread,
+      runtimePreferences: {
+        ...DEFAULT_RUNTIME_PREFERENCES,
+        permissionRules: [
+          { id: "deny-tests", tool: "command", pattern: "npm test", effect: "deny" },
+        ],
+      },
+      scopedPermissionRules: [
+        { id: "session-allow-tests", tool: "command", pattern: "npm test", effect: "allow", match: "exact" },
+      ],
+      isToolAvailable: true,
+    })).toBe("deny");
+    expect(service.resolve({
+      call: createCall("write_file", { path: "src/index.ts" }),
+      turn,
+      thread,
+      runtimePreferences: {
+        ...DEFAULT_RUNTIME_PREFERENCES,
+        permissionRules: [
+          { id: "ask-preview", tool: "write", pattern: "src/*", effect: "ask" },
+        ],
+      },
       isToolAvailable: true,
     })).toBe("ask");
   });

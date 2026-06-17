@@ -111,6 +111,7 @@ describe("RuntimePreferencesStore", () => {
           pattern: "npm test*",
           effect: "allow",
           match: "exact",
+          scope: { kind: "workspace", workspace: "/workspace" },
         },
         {
           id: "ask-src",
@@ -148,6 +149,7 @@ describe("RuntimePreferencesStore", () => {
         pattern: "npm test*",
         effect: "allow",
         match: "exact",
+        scope: { kind: "workspace", workspace: "/workspace" },
       },
       {
         id: "ask-src",
