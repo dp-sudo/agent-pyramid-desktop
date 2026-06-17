@@ -350,7 +350,8 @@ Tool failure results:
 - Stable `ToolFailureCode` values live in `src/shared/agent-contracts.ts` as
   `TOOL_FAILURE_CODES`. They cover unavailable tools, missing registry entries,
   schema validation, repeat read-only suppression, policy or approval denial,
-  interruption, execution failure, and automatic tool-budget exhaustion.
+  interruption, sandbox unavailability, execution failure, and automatic
+  tool-budget exhaustion.
 - Successful tool results remain tool-specific payloads; do not force them into
   the failure result shape.
 
@@ -642,23 +643,35 @@ Key semantics:
   `TurnRecord.toolCatalog` snapshot is diagnostic only; approval, sandbox and
   permission checks still run immediately before execution.
 - `permissionRules` is an ordered array of
-  `{ id, tool, pattern, effect, match? }` records where `tool` is
-  `command | write | mcp`, `effect` is `allow | ask | deny`, and optional
-  `match` is `glob | exact` (default `glob`). Updates replace the full rule
-  array and must contain unique non-empty ids, non-empty patterns without NUL
-  bytes, and valid enum values. If the persisted field exists but is malformed,
+  `{ id, tool, pattern, effect, match?, scope? }` records where `tool` is
+  `command | write | mcp`, `effect` is `allow | ask | deny`, optional
+  `match` is `glob | exact` (default `glob`), and optional `scope` is
+  `{ kind: "workspace", workspace }`. Updates replace the full rule array and
+  must contain unique non-empty ids, non-empty patterns without NUL bytes, valid
+  enum values, and valid absolute workspace paths when a scope is present. Older
+  rules without `scope` remain global for backward compatibility. If the
+  persisted field exists but is malformed,
   config loading fails instead of silently dropping a security rule.
-- Runtime evaluates `permissionRules` after hard `read-only` sandbox and
-  `approvalPolicy: never` denials. Command rules match raw `command` arguments
-  for shell-like command tools; write rules match `path` arguments, including
-  `multi_edit`, or `apply_patch` target paths; MCP rules match `server/tool` derived from
-  `mcp__<server>__<tool>` names. Matching effects resolve by
-  `deny > ask > allow`; no match falls back to normal approval logic. Glob
-  command patterns ending in `:*` are conservative prefix scopes: ordinary
-  arguments after the prefix still match, but shell control, redirection,
-  substitution, or newline-separated continuations do not. Exact rules compare
-  literal normalized candidates; for multi-value write candidates such as
-  `apply_patch`, every target path must be covered by the exact pattern set.
+- Runtime evaluates `permissionRules` together with in-memory session approval
+  grants after hard `read-only` sandbox and `approvalPolicy: never` denials for
+  non-read-only tools. Read-only tools still default to allow, but matching
+  persisted `deny` and `ask` rules are evaluated before that default; `ask` on a
+  read-only tool becomes deny only when the thread approval policy is `never`.
+  Workspace-scoped rules only apply when their scope workspace matches the
+  thread workspace using the shared path comparison; unscoped rules apply
+  globally. Command rules match raw `command` arguments for shell-like command
+  tools; write rules match `path` arguments, including `multi_edit`, or
+  `apply_patch` target paths; MCP rules match `server/tool` derived from
+  `mcp__<server>__<tool>` names and facade `tool_name` arguments. Matching
+  effects resolve across scoped and persisted rules by `deny > ask > allow`; no
+  match falls back to normal approval logic. `approvalPolicy: untrusted` still
+  asks for non-read-only tools when the only matching effect is `allow`, while
+  explicit `deny` and `ask` rules remain authoritative. Glob command patterns
+  ending in `:*` are conservative prefix scopes: ordinary arguments after the
+  prefix still match, but shell control, redirection, substitution, or
+  newline-separated continuations do not. Exact rules compare literal normalized
+  candidates; for multi-value write candidates such as `apply_patch`, every
+  target path must be covered by the exact pattern set.
 - `mcpServers` is an array of external MCP server configs. Each config stores
   `id`, `name`, `transport`, optional stdio fields (`command`, `args`, `env`,
   `cwd`), optional Streamable HTTP fields (`url`, `headers`), `enabled`,

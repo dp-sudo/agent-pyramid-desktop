@@ -206,6 +206,9 @@ Purpose:
 - Show short thread id.
 - Show workspace path.
 - Show running indicator.
+- Show current thread approval policy and sandbox mode selectors when a Code
+  thread is active. These controls update the selected thread through
+  `threads.update`; Settings still owns defaults for newly created threads.
 - Open inspector modes: changes, checkpoints, todo, plan.
 - Toggle inspector open/closed.
 
@@ -218,6 +221,8 @@ Key classes:
 - `ds-topbar-workspace`
 - `ds-topbar-actions`
 - `ds-topbar-running`
+- `ds-topbar-safety`
+- `ds-topbar-safety-select`
 - `ds-segmented-control`
 - `ds-topbar-inspector-tabs`
 
@@ -228,6 +233,9 @@ Inspector controls:
 - Mode buttons and the open/close toggle use `aria-controls` to target the
   shared `RightInspector` region; the open/close toggle also reflects
   `aria-expanded`.
+- Approval/sandbox selectors are disabled while the active thread has an
+  in-flight turn, so users do not see a mid-run policy change that cannot affect
+  already-started tool decisions.
 
 ### Timeline
 
@@ -1196,8 +1204,10 @@ Skills:
 
 Permissions:
 
-- Default approval policy for newly created threads.
-- Default sandbox mode for newly created threads.
+- Default approval policy for newly created threads. The current Code thread can
+  be changed from the topbar without changing this default.
+- Default sandbox mode for newly created threads. The current Code thread can be
+  changed from the topbar without changing this default.
 - Per-call permission rules table with tool type, pattern, effect and delete
   controls. The add button creates a command rule draft; pattern edits commit
   on blur or Enter and schema errors surface in the shared runtime settings

@@ -176,7 +176,7 @@ Notes:
 
 | Channel | Preload Method | Request | Success Value | Error Codes |
 | --- | --- | --- | --- | --- |
-| `approval:respond` | `approvals.respond(request)` | `ApprovalRespondRequest` | `{ approvalId; decision; scope? }` | `APPROVAL_RESPOND_FAILED` |
+| `approval:respond` | `approvals.respond(request)` | `ApprovalRespondRequest` | `ApprovalRespondResponse` | `APPROVAL_RESPOND_FAILED` |
 
 Notes:
 
@@ -187,7 +187,12 @@ Notes:
 - Omitted `scope` behaves as `once`. Scoped approvals are interpreted in main
   process from the pending tool name/arguments; renderer never supplies raw
   permission-rule patterns.
-- If the approval id is not pending, runtime throws and handler returns `APPROVAL_RESPOND_FAILED`.
+- If the approval id is still pending, runtime returns `accepted: true` with the
+  recorded decision and scope. Duplicate, stale, or unknown approval ids return
+  `ok({ accepted: false, reason: "not_pending", ... })` so renderer pending
+  button state can clear without treating an already-resolved approval as an IPC
+  failure. Invalid payloads and runtime persistence errors still return
+  `APPROVAL_RESPOND_FAILED`.
 
 ### Goals
 
@@ -400,6 +405,13 @@ Notes:
   `compaction` is consumed by runtime message preparation before model
   requests. Unsupported stored shapes normalize to defaults on read and
   malformed update payloads fail before store access.
+- `permissionRules` updates replace the full ordered rule list. Rules validate
+  non-empty unique ids, `tool: command | write | mcp`, `effect: allow | ask | deny`,
+  optional `match: glob | exact`, non-empty patterns without NUL bytes, and an
+  optional workspace scope `{ kind: "workspace", workspace }`. Scoped rules only
+  match threads whose workspace path is the same; unscoped legacy rules remain
+  global. Approvals persisted through `persist_rule` write workspace-scoped exact
+  rules derived in the main process rather than accepting raw renderer patterns.
 - `mcpServers` stores external MCP server configs. `stdio` servers require a
   command; `streamable-http` servers require an HTTP(S) URL and may carry
   request headers. Server `id` / `name` values must be unique, and `name` values

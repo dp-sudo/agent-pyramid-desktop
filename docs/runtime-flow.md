@@ -423,34 +423,52 @@ Tool availability:
 - Failed tool results use the shared `ToolFailureResult` payload
   `{ code, message, ...details }`. The code distinguishes catalog unavailability,
   registry misses, schema validation, repeat read-only suppression, policy or
-  approval denial, interruption, execution failure, and budget exhaustion while
-  preserving existing detail flags such as `denied` and `suppressed`.
+  approval denial, interruption, sandbox unavailability, execution failure, and
+  budget exhaustion while preserving existing detail flags such as `denied` and
+  `suppressed`.
 
 Approval policy resolved by `ToolPolicyService`:
 
-- Tools marked `metadata.isReadOnly` skip approval, including
-  `create_edit_plan`.
+- Tools marked `metadata.isReadOnly` default to approval-free `allow`, including
+  `create_edit_plan`, but matching permission rules are evaluated first. Explicit
+  `deny` rules deny read-only calls, and explicit `ask` rules request approval
+  unless the thread policy is `never`, in which case the call is denied. This
+  includes read-only MCP direct tools and read-only MCP facade calls.
 - Enabled `create_plan` and `update_goal` skip approval.
 - `create_plan` step statuses use shared `PLAN_STEP_STATUSES`; missing status
   defaults to `pending`, while unknown values fail instead of being silently
   downgraded.
 - `sandboxMode: "read-only"` denies non-read-only tools before execution.
 - `approvalPolicy: "never"` denies non-read-only tools before execution.
-- Session-scoped approval grants and `RuntimePreferences.permissionRules` then
-  evaluate per-call command text or write paths for command/write tool families,
-  and `server/tool` values for MCP tool names. Large-catalog MCP call facade
-  tools derive this value from `tool_name`, so a persisted grant targets the
-  selected remote tool rather than the facade. Matching rules resolve by
-  `deny > ask > allow`; unmatched calls fall back to the normal metadata-based
-  policy. Hard `read-only` and `never` denials run first, so scoped approval
-  grants and persisted allow rules cannot bypass them. Glob command rules ending
-  in `:*` are prefix scopes; they match ordinary argument continuations but
-  refuse appended shell control, redirection, substitution, or newline-separated
+- Session-scoped approval grants and `RuntimePreferences.permissionRules` are
+  evaluated together for per-call command text or write paths in command/write
+  tool families, and for `server/tool` values in MCP tool names. Large-catalog
+  MCP call facade tools derive this value from `tool_name`, so a persisted grant
+  targets the selected remote tool rather than the facade. Persisted rules may
+  carry `scope: { kind: "workspace", workspace }`; scoped rules only apply when
+  the active thread workspace matches that path, while older rules without
+  `scope` remain global for backward compatibility. Matching effects resolve
+  across both scoped and persisted rules by `deny > ask > allow`; unmatched calls
+  fall back to the thread approval policy. This means a later persisted deny or
+  ask rule can override a previously granted session allow. Hard `read-only` and
+  `never` denials run first for non-read-only tools, so scoped approval grants
+  and persisted allow rules cannot bypass them. Glob command rules ending in
+  `:*` are prefix scopes; they match ordinary argument continuations but refuse
+  appended shell control, redirection, substitution, or newline-separated
   commands so scoped approvals do not widen into unrelated follow-up commands.
   Exact rules compare literal normalized candidates and require all multi-value
   write candidates to be covered.
+- `approvalPolicy: "untrusted"` keeps the approval gate closed for non-read-only
+  tools: explicit deny/ask rules still apply, but allow rules do not skip the
+  prompt.
 - `approvalPolicy: "auto"` allows tools whose metadata sets `isDestructive: false`; shell-backed command tools must not use this bypass.
 - All remaining non-read-only tools require approval.
+
+`approvalPolicy` and `sandboxMode` are thread fields. Settings controls only
+the defaults assigned to newly created threads; the Code topbar can update the
+active thread through the existing `threads.update` IPC while no turn is
+running. `ToolPolicyService` still reads the persisted thread values at each
+tool call, so UI changes and runtime enforcement share the same source.
 
 When a tool call is approved for execution, `ToolCallExecutor.execute()`
 passes the full `AgentToolContext` through `ToolRegistry.execute()`, but that
@@ -466,13 +484,13 @@ stdout/stderr chunks; those calls become live-only `tool_progress` events on
 call. Final tool success/failure still arrives as the normal `item_updated`
 event with the completed `ToolItem.result`.
 
-Workspace tools require an absolute thread workspace path before resolving file paths. The shared workspace policy trims the workspace root once, then uses that same normalized string for absolute-path validation and path resolution. `list_files.path` and `search_files.path` reject non-string values instead of treating them as omitted root-path requests, and workspace string parameters reject NUL bytes before path resolution or search execution. Write IPC Markdown request strings also reject NUL bytes at request parsing before path resolution, completion, or file writes. `create_edit_plan` applies the same lexical workspace boundary to each planned file path before it appends a visible `PlanItem` for multi-file coordination. `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, `search_files.max_results`, `list_symbols.max_results`, and `search_symbols.max_results` are strict integer ranges; invalid or out-of-range values fail instead of being silently clamped to defaults. `read_file`, `search_files`, `rg_search`, `list_symbols`, `search_symbols`, `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. Final UTF-8 file writes for coding tools, Write IPC saves/creates, and checkpoint code restore use a no-follow open where supported, so a target replaced with a symbolic link after validation is rejected rather than followed; editable coding-tool reads and Write IPC Markdown reads/rename sources use the same no-follow final-component boundary before decoding source text, and close any opened handle if the post-open fallback guard rejects the target. Single-file coding tools restore the original file content if post-write metadata collection fails before file history and read state are updated. `multi_edit` applies ordered exact replacements to one file in memory and writes once only after every step succeeds, so a later missing or ambiguous `old_string` leaves the file unchanged. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write or post-write metadata step fails. `rollback_file` uses the current runtime's in-memory file history first; when that history is absent, it can fall back to the newest same-thread/workspace checkpoint file snapshot, but only if the current file state still matches the recorded post-write hash. Checkpoint code rewind builds a restore plan first, then re-checks the workspace path policy and symbolic-link boundary again immediately before each delete/write commit, including after parent directory creation. Session rewind first verifies the selected turn still exists in the current transcript before restoring code, then truncates messages/events and checkpoint records after code restore succeeds. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
+Workspace tools require an absolute thread workspace path before resolving file paths. The shared workspace policy trims the workspace root once, then uses that same normalized string for absolute-path validation and path resolution. `list_files.path` and `search_files.path` reject non-string values instead of treating them as omitted root-path requests, and workspace string parameters reject NUL bytes before path resolution or search execution. Write IPC Markdown request strings also reject NUL bytes at request parsing before path resolution, completion, or file writes. `create_edit_plan` applies the same lexical workspace boundary to each planned file path and rejects duplicate planned files with host path comparison semantics before it appends a visible `PlanItem` for multi-file coordination. `list_files.max_entries`, `read_file.max_bytes`, `read_file.offset_bytes`, `search_files.max_results`, `list_symbols.max_results`, and `search_symbols.max_results` are strict integer ranges; invalid or out-of-range values fail instead of being silently clamped to defaults. `read_file`, `search_files`, `rg_search`, `list_symbols`, `search_symbols`, `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `diagnose_file` operate on strict UTF-8 text and reject invalid byte sequences instead of replacing them. `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `rollback_file` are destructive workspace tools, so they request approval and can include structured diff previews. Before writing or deleting, coding tools re-check the workspace path policy and current file content so an external change between dry-run and commit cannot be overwritten silently. Destructive coding tools also reject target paths that contain existing symbolic-link components, keeping the workspace-relative path, read state, file history, and modified file object aligned. Final UTF-8 file writes for coding tools, Write IPC saves/creates, and checkpoint code restore use a no-follow open where supported, so a target replaced with a symbolic link after validation is rejected rather than followed; editable coding-tool reads and Write IPC Markdown reads/rename sources use the same no-follow final-component boundary before decoding source text, and close any opened handle if the post-open fallback guard rejects the target. Single-file coding tools restore the original file content if post-write metadata collection fails before file history and read state are updated. `multi_edit` applies ordered exact replacements to one file in memory and writes once only after every step succeeds, so a later missing or ambiguous `old_string` leaves the file unchanged. `apply_patch` returns a `multi_file_diff` preview when the patch touches more than one file, validates every hunk before writing, preserves `\ No newline at end of file` markers, and restores files already written in the same patch if a later write or post-write metadata step fails. `rollback_file` uses the current runtime's in-memory file history first; when that history is absent, it can fall back to the newest same-thread/workspace checkpoint file snapshot, but only if the current file state still matches the recorded post-write hash. Checkpoint code rewind builds a restore plan first, then re-checks the workspace path policy and symbolic-link boundary again immediately before each delete/write commit, including after parent directory creation. Session rewind first verifies the selected turn still exists in the current transcript before restoring code, then truncates messages/events and checkpoint records after code restore succeeds. Shell-backed command tools are treated as destructive because arbitrary shell commands can modify files or run workspace scripts; they request approval even when `approvalPolicy: "auto"` is set.
 
 `apply_patch` applies a restricted unified diff format for UTF-8 create/update hunks. Runtime preview and execution both perform a dry-run first; if any file hunk cannot be applied, no file is written. A patch may include multiple hunks for one file under a single file header, but duplicate file sections for the same resolved target are rejected so successful writes and failure rollback both have one authoritative pre-write snapshot per file. The parser treats `\ No newline at end of file` as part of the neighboring hunk line, so patches cannot silently add or remove the final newline. Existing lines keep their original LF or CRLF endings; added lines use the local file ending around the insertion point, falling back to LF for new files.
 
 File history is currently held in memory by `AgentRuntime`. It covers writes made in the current app process by `edit_file`, `multi_edit`, `write_file`, `apply_patch`, and `rollback_file`; rollback is limited to the thread that produced the latest file history entry. Because checkpoint JSONL is persisted separately, `rollback_file` may use the latest matching checkpoint file snapshot after restart when no in-memory history entry exists. Checkpoints are turn/file snapshots rather than a full per-write stack, so this fallback is guarded by `afterSha256` and fails if the live file no longer matches the recorded post-write content.
 
-`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. `shell_command`, `git_bash_command`, `powershell_command`, and `wsl_command` use the same foreground execution boundary while selecting an explicit shell. `shell_command` can use a custom `shell_path` and `shell_args`; `powershell_command` defaults to `pwsh` and, on Windows, falls back to Windows PowerShell when `pwsh` is absent from PATH; `wsl_command` converts Windows drive paths to `/mnt/<drive>/...` before entering the WSL shell. Command optional string parameters reject NUL bytes before path resolution, shell selection, WSL distro selection, or environment diagnostics. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Tool policy still denies command tools in read-only sandbox before spawn. After approval, foreground command-backed tools and long-running command sessions share `command-sandbox.ts` as the spawn-time enforcement layer: workspace-realpath cwd, an explicit child environment with credential-like variables removed (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, provider key prefixes, and related forms), `shell: false`, non-inherited stdio, hidden windows, and platform-specific process-tree cleanup. Node/Electron has no built-in cross-platform OS command jail, so `detect_shell_environment.sandbox.osJail.enabled` is currently `false` and reports that boundary instead of implying stronger isolation. Foreground command-backed tools report live stdout/stderr through `tool_progress`, throttled in the command process wrapper by time and byte thresholds before renderer updates. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start or exits unsuccessfully.
+`run_command` executes foreground shell commands inside the active workspace only. Its `cwd` is workspace-relative and goes through the shared realpath/path escape policy. `shell_command`, `git_bash_command`, `powershell_command`, and `wsl_command` use the same foreground execution boundary while selecting an explicit shell. `shell_command` can use a custom `shell_path` and `shell_args`; `powershell_command` defaults to `pwsh` and, on Windows, falls back to Windows PowerShell when `pwsh` is absent from PATH; `wsl_command` converts Windows drive paths to `/mnt/<drive>/...` before entering the WSL shell. Command optional string parameters reject NUL bytes before path resolution, shell selection, WSL distro selection, or environment diagnostics. Runtime injects config-backed `RuntimePreferences.command` as the default timeout and output limit; stricter tool-call overrides may reduce those limits. Tool policy still denies command tools in read-only sandbox before spawn. After approval, foreground command-backed tools and long-running command sessions share `command-sandbox.ts` as the spawn-time enforcement layer: workspace-realpath cwd, an explicit child environment with credential-like variables removed (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, provider key prefixes, and related forms), `shell: false`, non-inherited stdio, hidden windows, and platform-specific process-tree cleanup. The spawn layer returns a full command spawn spec, so foreground commands and command sessions both enter the same sandbox seam. In `sandboxMode: "workspace-write"` on Windows, the default engine requires the configured Windows command sandbox helper and fails closed with `tool_sandbox_unavailable` when the helper is missing, invalid, or unavailable; `sandboxMode: "danger-full-access"` keeps direct host execution and reports `osJail.enabled: false`. Non-Windows command execution currently keeps the direct spawn boundary unless a platform-specific jail engine is explicitly added. Foreground commands report a startup failure if the child process errors before the OS accepts the spawn, while commands that start successfully but exit non-zero still return ordinary command results. `detect_shell_environment.sandbox` reports the active profile, including whether an OS jail is required, available, and enabled. Foreground command-backed tools report live stdout/stderr through `tool_progress`, throttled in the command process wrapper by time and byte thresholds before renderer updates. Results include exit code, signal, timeout state, duration, stdout/stderr, byte counts, and truncation flags; non-zero exit codes are returned as command results rather than runtime exceptions. When stdout or stderr reaches the byte output limit, the stored text is trimmed on a UTF-8 character boundary so truncation cannot introduce replacement characters into the tool result. Interrupt and timeout cancellation terminate the spawned shell process tree: POSIX uses the detached process group, and Windows uses `taskkill /T /F` with a `child.kill()` fallback if `taskkill` cannot start or exits unsuccessfully.
 
 Structured developer command tools are registered independently from
 `run_command`. `rg_search` performs ripgrep-style regular expression search
@@ -590,14 +608,19 @@ sequenceDiagram
 Pending approvals are held in memory by `ApprovalCoordinator`. They are not
 resumed across app restart.
 
-Approval response `scope` defaults to `once`. `session` creates an in-memory
-thread/workspace scoped exact permission grant for the current app process;
-`persist_rule` writes an exact `RuntimePreferences.permissionRules` entry using
-the approved command/write/MCP subject. Unsupported scoped subjects and
-persistence failures emit `runtime_error` instead of silently degrading the
-decision. The renderer presents separate allow-once, allow-for-session, persist
-allow-rule, and deny actions, while the backend remains responsible for deriving
-the exact session grant or persisted rule from the pending tool subject.
+Approval response `scope` defaults to `once`. A response to a still-pending
+approval returns `accepted: true`; duplicate, stale, or unknown approval ids
+return the same success-shaped response with `accepted: false` and
+`reason: "not_pending"` rather than throwing. Runtime exceptions, invalid
+payloads, and persistence failures still surface as real errors. `session`
+creates an in-memory thread/workspace scoped exact permission grant for the
+current app process; `persist_rule` writes a workspace-scoped exact
+`RuntimePreferences.permissionRules` entry using the approved command/write/MCP
+subject. Unsupported scoped subjects and persistence failures emit
+`runtime_error` instead of silently degrading the decision. The renderer presents
+separate allow-once, allow-for-session, persist allow-rule, and deny actions,
+while the backend remains responsible for deriving the exact session grant or
+persisted rule from the pending tool subject.
 
 Approval items remain in the timeline for auditability. Renderer also shows
 the active thread's unresolved approvals in a composer-adjacent pending

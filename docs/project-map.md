@@ -108,8 +108,8 @@ flowchart LR
 | Area | Primary Files | Responsibility |
 | --- | --- | --- |
 | Main composition | `src/main/index.ts` | 创建 stores、event bus、worker pool、tool registry、AgentRuntime，注册 IPC handlers，创建窗口。 |
-| Runtime orchestration | `src/main/application/agent-runtime.ts`、`src/main/application/tool-call-executor.ts`、`src/main/application/completion-evidence.ts`、`src/main/application/runtime-event-persist.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、parent-turn 工具执行生命周期、completion evidence、approval gate、中断、item/event 持久化辅助和事件广播。 |
-| Tool system | `src/main/application/tools/*`、`src/main/application/tool-catalog.ts`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口、内置工具、模型可见工具目录过滤、稳定排序和 catalog fingerprint。 |
+| Runtime orchestration | `src/main/application/agent-runtime.ts`、`src/main/application/tool-call-executor.ts`、`src/main/application/tool-policy.ts`、`src/main/application/permission-policy.ts`、`src/main/application/completion-evidence.ts`、`src/main/application/runtime-event-persist.ts` | 多 turn 编排、模型 profile 解析、附件注入、上下文预算、LLM worker 调用、工具循环、parent-turn 工具执行生命周期、catalog 后执行策略、permission rule subject 生成、approval gate、中断、item/event 持久化辅助和事件广播。 |
+| Tool system | `src/main/application/tools/*`、`src/main/application/tool-catalog.ts`、`src/main/domain/agent/ports.ts` | 工具定义、注册、执行接口、内置工具、模型可见工具目录过滤、稳定排序、catalog fingerprint、workspace 文件边界和命令 spawn-time sandbox seam。 |
 | Skills system | `src/shared/skills/*`、`src/main/skills/skill-service.ts`、`src/main/application/tools/skill-tools.ts`、`src/main/ipc/skills-handlers.ts` | 发现 workspace skills、解析 `SKILL.md`、按 turn 匹配注入 inline 动态上下文，并通过只读 `list_skills` / `run_skill` 工具和 Settings `skills:list` IPC 暴露技能目录摘要、验证警告、inline 技能指令和 isolated read-only subagent 结果。 |
 | MCP host | `src/main/infrastructure/mcp/*`、`src/main/ipc/mcp-handlers.ts` | stdio / Streamable HTTP MCP client lifecycle、动态工具注册、cache/lazy schema、startup stats、auth diagnostics、prompts/resources surface 和 MCP IPC。 |
 | LLM worker | `src/main/infrastructure/llm-worker/*` | main 到 worker 的请求路由、流式 chunk 转发和取消。 |
@@ -233,7 +233,8 @@ flowchart TD
   register progressive search/describe/call facade tools while the renderer MCP
   surface still lists the full remote catalog. Matching cached schema can expose
   lazy placeholders or facade tools while the live server reconnects.
-- Read-only workspace tools skip approval.
+- Read-only workspace tools default to approval-free execution, but explicit
+  permission rules can still force `deny` or `ask` before that default.
 - `create_edit_plan` is a read-only Code-mode coding tool that appends a
   visible `PlanItem` for multi-file coordination before separate sequential
   edit/write/delete calls.
@@ -246,6 +247,10 @@ flowchart TD
   stop tools run through the command approval boundary.
 - `list_command_sessions` and `read_command_session` are read-only command
   session inspection tools; they still enforce same thread/workspace visibility.
+- Permission rules are approval shortcuts, not sandbox bypasses. `ToolPolicyService`
+  evaluates scoped session grants and persisted `RuntimePreferences.permissionRules`
+  immediately before execution, with effect priority `deny > ask > allow` and
+  workspace-scoped persisted rules only matching the active thread workspace.
 - Shell and package-manager invocation construction lives in
   `src/main/application/tools/command-invocation.ts`; foreground process
   execution and shared process-tree kill behavior live in
@@ -253,7 +258,11 @@ flowchart TD
   sandbox profile generation lives in
   `src/main/application/tools/command-sandbox.ts`; command sessions,
   diagnostics and tool definitions remain in
-  `src/main/application/tools/command-tools.ts`.
+  `src/main/application/tools/command-tools.ts`. Foreground commands and
+  long-running command sessions both request a `createCommandSpawnSpec()` before
+  spawning. On Windows, `workspace-write` command execution requires the
+  configured helper and fails closed when it is unavailable; `danger-full-access`
+  keeps explicit direct host execution.
 - Command child-process environment construction lives in
   `src/main/application/tools/command-environment.ts`; foreground commands and
   long-running sessions both use it to strip credential-like env vars while
@@ -291,12 +300,16 @@ flowchart TD
   catalog/cache drift diagnostics.
 - Per-call command/write/MCP permission rules live in
   `RuntimePreferences.permissionRules` and are evaluated by
-  `src/main/application/permission-policy.ts` inside `ToolPolicyService`;
-  hard read-only sandbox and `approvalPolicy: never` denials still run before
-  session-scoped approval grants and rule-based allow/ask/deny decisions.
-  Command `:*` prefix scopes match ordinary argument continuations but refuse
-  appended shell operators or newline-separated follow-up commands; generated
-  approval grants use exact matching so wildcard characters are not widened.
+  `src/main/application/permission-policy.ts` inside `ToolPolicyService`.
+  For non-read-only tools, hard read-only sandbox and `approvalPolicy: never`
+  denials still run before session-scoped approval grants and rule-based
+  allow/ask/deny decisions. Read-only tools default to allow, but explicit
+  deny/ask rules can override that default. Scoped and persisted rules share one
+  priority order (`deny > ask > allow`), and `approvalPolicy: untrusted` still
+  asks when only an allow rule matches. Command `:*` prefix scopes match
+  ordinary argument continuations but refuse appended shell operators or
+  newline-separated follow-up commands; generated approval grants use exact
+  matching so wildcard characters are not widened.
 - `create_plan` is only available in plan mode.
 - `update_goal` is only available in goal mode or when a thread has an active goal.
 - Model configuration profiles are persisted by `ModelConfigStore`; runtime
