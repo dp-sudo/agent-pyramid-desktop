@@ -417,12 +417,21 @@ export type RuntimePermissionRuleEffect = (typeof RUNTIME_PERMISSION_RULE_EFFECT
 export const RUNTIME_PERMISSION_RULE_MATCHES = ["glob", "exact"] as const;
 export type RuntimePermissionRuleMatch = (typeof RUNTIME_PERMISSION_RULE_MATCHES)[number];
 
+export const RUNTIME_PERMISSION_RULE_SCOPES = ["workspace"] as const;
+export type RuntimePermissionRuleScopeKind = (typeof RUNTIME_PERMISSION_RULE_SCOPES)[number];
+
+export interface RuntimePermissionRuleScope {
+  kind: RuntimePermissionRuleScopeKind;
+  workspace: string;
+}
+
 export interface RuntimePermissionRule {
   id: string;
   tool: RuntimePermissionRuleTool;
   pattern: string;
   effect: RuntimePermissionRuleEffect;
   match?: RuntimePermissionRuleMatch;
+  scope?: RuntimePermissionRuleScope;
 }
 
 export interface RuntimePreferences {
@@ -619,6 +628,24 @@ export function isRuntimePermissionRuleMatch(
 ): value is RuntimePermissionRuleMatch {
   return typeof value === "string" &&
     RUNTIME_PERMISSION_RULE_MATCHES.includes(value as RuntimePermissionRuleMatch);
+}
+
+export function isRuntimePermissionRuleScopeKind(
+  value: unknown,
+): value is RuntimePermissionRuleScopeKind {
+  return typeof value === "string" &&
+    RUNTIME_PERMISSION_RULE_SCOPES.includes(value as RuntimePermissionRuleScopeKind);
+}
+
+export function isRuntimePermissionRuleScope(
+  value: unknown,
+): value is RuntimePermissionRuleScope {
+  if (!isRecord(value)) return false;
+  const workspace = value.workspace;
+  return isRuntimePermissionRuleScopeKind(value.kind) &&
+    hasNonBlankString(value, "workspace") &&
+    typeof workspace === "string" &&
+    !workspace.includes("\0");
 }
 
 export function isApprovalDecisionScope(value: unknown): value is ApprovalDecisionScope {
@@ -825,6 +852,7 @@ export const TOOL_FAILURE_CODES = [
   "tool_policy_denied",
   "tool_approval_denied",
   "tool_interrupted",
+  "tool_sandbox_unavailable",
   "tool_execution_failed",
   "tool_budget_exhausted",
 ] as const;
@@ -1167,6 +1195,14 @@ export interface ApprovalRespondRequest {
   approvalId: string;
   decision: "allow" | "deny";
   scope?: ApprovalDecisionScope;
+}
+
+export interface ApprovalRespondResponse {
+  approvalId: string;
+  decision: "allow" | "deny";
+  scope?: ApprovalDecisionScope;
+  accepted: boolean;
+  reason?: "not_pending";
 }
 
 // ============================================================================
@@ -1784,7 +1820,8 @@ function isRuntimePermissionRules(value: unknown): value is RuntimePermissionRul
       !pattern.trim() ||
       pattern.includes("\0") ||
       !isRuntimePermissionRuleEffect(rule.effect) ||
-      (rule.match !== undefined && !isRuntimePermissionRuleMatch(rule.match))
+      (rule.match !== undefined && !isRuntimePermissionRuleMatch(rule.match)) ||
+      (rule.scope !== undefined && !isRuntimePermissionRuleScope(rule.scope))
     ) {
       return false;
     }

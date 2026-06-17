@@ -3,6 +3,7 @@ import type {
   AttachmentDeleteResponse,
   AttachmentRecord,
   ApprovalRespondRequest,
+  ApprovalRespondResponse,
   CheckpointListRequest,
   CheckpointListResponse,
   CheckpointRewindRequest,
@@ -96,11 +97,7 @@ export interface AgentDesktopApi {
   approvals: {
     respond(
       request: ApprovalRespondRequest,
-    ): Promise<IpcResult<{
-      approvalId: string;
-      decision: ApprovalRespondRequest["decision"];
-      scope?: ApprovalRespondRequest["scope"];
-    }>>;
+    ): Promise<IpcResult<ApprovalRespondResponse>>;
   };
   goals: {
     update(request: GoalUpdateRequest): Promise<IpcResult<ThreadRecord>>;
