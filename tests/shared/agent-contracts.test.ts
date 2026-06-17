@@ -98,10 +98,10 @@ describe("shared agent contracts", () => {
       ok: true,
       value: { id: "thread-1" },
     });
-    expect(err(IPC_ERROR_CODES.RUNTIME_TURN_BUSY, "Turn is already running.")).toEqual({
+    expect(err(IPC_ERROR_CODES.RUNTIME_THREAD_ARCHIVED, "RUNTIME_THREAD_ARCHIVED")).toEqual({
       ok: false,
-      code: "RUNTIME_TURN_BUSY",
-      message: "Turn is already running.",
+      code: "RUNTIME_THREAD_ARCHIVED",
+      message: "RUNTIME_THREAD_ARCHIVED",
     });
   });
 
