@@ -1336,6 +1336,28 @@ textarea:focus-visible {
   line-height: 1.68;
 }
 
+.ds-assistant-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.ds-assistant-actions button {
+  border: 1px solid var(--ds-border-muted);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-surface-card);
+  color: var(--ds-text-muted);
+  cursor: pointer;
+  font-size: var(--ds-size-caption);
+  padding: 3px 9px;
+}
+
+.ds-assistant-actions button:hover,
+.ds-assistant-actions button:focus-visible {
+  border-color: var(--ds-border-strong);
+  color: var(--ds-text);
+}
+
 .ds-message-block.system {
   align-items: center;
 }
@@ -1487,6 +1509,13 @@ textarea:focus-visible {
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+}
+
+.ds-code-block-lines {
+  flex: 0 0 auto;
+  color: var(--ds-text-faint);
+  font-family: var(--ds-font-sans);
+  text-transform: none;
 }
 
 .ds-code-block-header button {
@@ -1795,6 +1824,7 @@ textarea:focus-visible {
 .ds-process-entry-detail-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 6px;
 }
 
 .ds-process-entry-detail-actions button {

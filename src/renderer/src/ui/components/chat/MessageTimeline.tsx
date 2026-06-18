@@ -19,6 +19,7 @@ import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
 import {
   getTimelineItemTurnId,
   groupTimelineTurns,
+  getToolDisplayName,
   sortTimelineItems,
   summarizeToolItemHeader,
 } from "./timeline-model";
@@ -408,11 +409,27 @@ export function summarizeReadOnlyToolSummary(
     .slice(0, normalizedLimit)
     .map((item) => summarizeToolItemHeader(item, t).compactTitle)
     .filter((title) => title.trim().length > 0);
+  const toolCounts = summarizeReadOnlyToolCounts(items);
+  const countPrefix = toolCounts.length > 0
+    ? `${toolCounts
+        .map(({ name, count }) => `${getToolDisplayName(name, t)} x${count}`)
+        .join(" / ")}: `
+    : "";
 
   return {
-    text: titles.join(" - "),
+    text: `${countPrefix}${titles.join(" / ")}`.trim(),
     hiddenCount: Math.max(0, items.length - normalizedLimit),
   };
+}
+
+export function summarizeReadOnlyToolCounts(
+  items: readonly ToolItem[],
+): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([name, count]) => ({ name, count }));
 }
 
 export function shouldStickToTimelineBottom({

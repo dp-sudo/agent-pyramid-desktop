@@ -42,6 +42,8 @@ export interface WriteAssistantPromptPayload {
   threadTitle: string;
 }
 
+export type WriteWorkspaceSelectionResult = string | boolean | void;
+
 export interface WriteDocumentViewState {
   activePath: string | null;
   content: string;
@@ -122,7 +124,9 @@ export function shouldApplyWriteCompletionResult(input: {
 
 export async function shouldUseSelectedWriteWorkspace(
   workspace: string,
-  onWorkspaceSelected?: (workspace: string) => boolean | void | Promise<boolean | void>,
+  onWorkspaceSelected?: (
+    workspace: string
+  ) => WriteWorkspaceSelectionResult | Promise<WriteWorkspaceSelectionResult>,
 ): Promise<boolean> {
   return (await onWorkspaceSelected?.(workspace)) !== false;
 }

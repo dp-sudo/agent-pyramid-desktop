@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, memo, type FormEvent, type ReactElement } from "react";
+import { useEffect, useId, useRef, useState, memo, type FormEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   ApprovalDecisionScope,
@@ -14,6 +14,9 @@ import { useWorkbench } from "../../store/WorkbenchContext";
 export const TOOL_DETAIL_PREVIEW_MAX_CHARS = 4000;
 export const TOOL_DETAIL_PREVIEW_MAX_LINES = 80;
 const REASONING_COLLAPSED_PREVIEW_MAX_CHARS = 180;
+const COPY_STATE_RESET_MS = 1600;
+
+type CopyState = "idle" | "copied" | "failed";
 
 interface ChatBlockProps {
   item: Item;
@@ -98,16 +101,7 @@ export const ChatBlock = memo(function ChatBlock({
         </div>
       );
     case "assistant":
-      return (
-        <div className="ds-message-block assistant">
-          <div className={`ds-assistant-bubble ${isLive ? "ds-shiny-text" : ""}`}>
-            <AssistantMarkdownWithPreferences
-              text={item.text || (isLive ? "..." : "")}
-              streaming={isLive}
-            />
-          </div>
-        </div>
-      );
+      return <AssistantBlock item={item} isLive={isLive} />;
     case "reasoning":
       return (
         <ReasoningBlock
@@ -173,6 +167,50 @@ export const ChatBlock = memo(function ChatBlock({
     }
   }
 });
+
+function AssistantBlock({
+  item,
+  isLive,
+}: {
+  item: Extract<Item, { kind: "assistant" }>;
+  isLive?: boolean;
+}): ReactElement {
+  const { t } = useTranslation();
+  const copyText = item.text.trim();
+  const { copyState, copy } = useClipboardCopy();
+
+  async function copyAssistantText(): Promise<void> {
+    if (!copyText) return;
+    await copy(copyText, "[chat] failed to copy assistant response:");
+  }
+
+  return (
+    <div className="ds-message-block assistant">
+      <div className={`ds-assistant-bubble ${isLive ? "ds-shiny-text" : ""}`}>
+        {!isLive && copyText ? (
+          <div className="ds-assistant-actions">
+            <button
+              type="button"
+              aria-label={t("chat.copyAssistantResponse")}
+              title={t("chat.copyAssistantResponse")}
+              onClick={() => void copyAssistantText()}
+            >
+              {copyStateLabel(copyState, {
+                idle: t("chat.copyAssistantResponse"),
+                copied: t("chat.copyAssistantDone"),
+                failed: t("chat.copyAssistantFailed"),
+              })}
+            </button>
+          </div>
+        ) : null}
+        <AssistantMarkdownWithPreferences
+          text={item.text || (isLive ? "..." : "")}
+          streaming={isLive}
+        />
+      </div>
+    </div>
+  );
+}
 
 function UserInputBlock({
   item,
@@ -724,20 +762,13 @@ function ToolBlock({
                     })}
                   </small>
                 ) : null}
-                {hasLongDetail ? (
-                  <div className="ds-process-entry-detail-actions">
-                    <button
-                      type="button"
-                      aria-controls={detailId}
-                      aria-expanded={showFullDetail}
-                      onClick={() => setShowFullDetail((current) => !current)}
-                    >
-                      {showFullDetail
-                        ? t("chat.collapseToolDetail")
-                        : t("chat.expandToolDetail")}
-                    </button>
-                  </div>
-                ) : null}
+                <ToolDetailActions
+                  detail={display.detail}
+                  detailId={detailId}
+                  hasLongDetail={hasLongDetail}
+                  showFullDetail={showFullDetail}
+                  onToggleDetail={() => setShowFullDetail((current) => !current)}
+                />
               </>
             )}
           </div>
@@ -771,25 +802,73 @@ function ToolBlock({
                   })}
                 </small>
               ) : null}
-              {hasLongDetail ? (
-                <div className="ds-process-entry-detail-actions">
-                  <button
-                    type="button"
-                    aria-controls={detailId}
-                    aria-expanded={showFullDetail}
-                    onClick={() => setShowFullDetail((current) => !current)}
-                  >
-                    {showFullDetail
-                      ? t("chat.collapseToolDetail")
-                      : t("chat.expandToolDetail")}
-                  </button>
-                </div>
-              ) : null}
+              <ToolDetailActions
+                detail={display.detail}
+                detailId={detailId}
+                hasLongDetail={hasLongDetail}
+                showFullDetail={showFullDetail}
+                onToggleDetail={() => setShowFullDetail((current) => !current)}
+              />
             </>
           )}
         </div>
       ) : null}
     </details>
+  );
+}
+
+function ToolDetailActions({
+  detail,
+  detailId,
+  hasLongDetail,
+  showFullDetail,
+  onToggleDetail,
+}: {
+  detail: string;
+  detailId: string;
+  hasLongDetail: boolean;
+  showFullDetail: boolean;
+  onToggleDetail: () => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  const { copyState, copy } = useClipboardCopy();
+
+  if (!detail && !hasLongDetail) return <></>;
+
+  async function copyToolDetail(): Promise<void> {
+    if (!detail) return;
+    await copy(detail, "[chat] failed to copy tool detail:");
+  }
+
+  return (
+    <div className="ds-process-entry-detail-actions">
+      {hasLongDetail ? (
+        <button
+          type="button"
+          aria-controls={detailId}
+          aria-expanded={showFullDetail}
+          onClick={onToggleDetail}
+        >
+          {showFullDetail
+            ? t("chat.collapseToolDetail")
+            : t("chat.expandToolDetail")}
+        </button>
+      ) : null}
+      {detail ? (
+        <button
+          type="button"
+          aria-label={t("chat.copyToolDetail")}
+          title={t("chat.copyToolDetail")}
+          onClick={() => void copyToolDetail()}
+        >
+          {copyStateLabel(copyState, {
+            idle: t("chat.copyToolDetail"),
+            copied: t("chat.copyToolDetailDone"),
+            failed: t("chat.copyToolDetailFailed"),
+          })}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -835,6 +914,67 @@ export function resolveToolDetailDisplay(
     truncated,
     hiddenCharCount: truncated ? detail.length - text.length : 0,
   };
+}
+
+function useClipboardCopy(): {
+  copyState: CopyState;
+  copy: (text: string, warningPrefix: string) => Promise<void>;
+} {
+  const [copyState, setCopyState] = useState<CopyState>("idle");
+  const copyResetTimerRef = useRef<number | null>(null);
+
+  function clearCopyResetTimer(): void {
+    if (copyResetTimerRef.current === null) return;
+    window.clearTimeout(copyResetTimerRef.current);
+    copyResetTimerRef.current = null;
+  }
+
+  function resetCopyStateLater(): void {
+    clearCopyResetTimer();
+    copyResetTimerRef.current = window.setTimeout(() => {
+      copyResetTimerRef.current = null;
+      setCopyState("idle");
+    }, COPY_STATE_RESET_MS);
+  }
+
+  async function copy(text: string, warningPrefix: string): Promise<void> {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API is unavailable.");
+      }
+      await navigator.clipboard.writeText(text);
+      setCopyState("copied");
+      resetCopyStateLater();
+    } catch (error) {
+      console.warn(warningPrefix, error);
+      setCopyState("failed");
+      resetCopyStateLater();
+    }
+  }
+
+  // Keep the reset timer owned by the hook; caller-level cleanup would run on
+  // the re-render caused by setCopyState and clear the feedback timer early.
+  useEffect(() => {
+    return () => clearCopyResetTimer();
+  }, []);
+
+  return { copyState, copy };
+}
+
+export function copyStateLabel(
+  state: CopyState,
+  labels: { idle: string; copied: string; failed: string },
+): string {
+  switch (state) {
+    case "copied":
+      return labels.copied;
+    case "failed":
+      return labels.failed;
+    case "idle":
+      return labels.idle;
+    default:
+      return labels.idle;
+  }
 }
 
 function renderUnknownItemKind(_item: never): ReactElement {

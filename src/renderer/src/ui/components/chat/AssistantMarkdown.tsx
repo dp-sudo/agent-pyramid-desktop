@@ -206,11 +206,15 @@ function CodeBlock({
       <div className="ds-code-block-header">
         <span>{language ?? t("chat.codeBlock")}</span>
         <div className="ds-code-block-actions">
+          <span className="ds-code-block-lines">
+            {t("chat.codeLineCount", { count: codeLineCount })}
+          </span>
           {shouldStartCollapsed ? (
             <button
               type="button"
               aria-controls={codeContentId}
               aria-expanded={!collapsed}
+              aria-label={collapsed ? t("chat.expandCode") : t("chat.collapseCode")}
               onClick={() => {
                 setUserControlledCollapsed(true);
                 setCollapsed((current) => !current);

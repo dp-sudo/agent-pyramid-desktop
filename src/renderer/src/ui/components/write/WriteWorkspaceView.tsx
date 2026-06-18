@@ -62,11 +62,11 @@ import {
   shouldRequestWriteCompletion,
   shouldSaveWriteFileBeforeDocumentDelete,
   shouldSaveWriteFileBeforeSwitch,
-  shouldUseSelectedWriteWorkspace,
   shouldWarnBeforeLeavingWriteDocument,
   type WriteAssistantPromptPayload,
   type WriteDocumentViewState,
   type WriteEditorSelectionState,
+  type WriteWorkspaceSelectionResult,
   type WriteStatus,
 } from "./write-workspace-model";
 
@@ -83,7 +83,9 @@ export interface WriteWorkspaceViewProps {
     userInputId: string,
     response: UserInputResponseChoice,
   ) => Promise<void>;
-  onWorkspaceSelected?: (workspace: string) => boolean | void | Promise<boolean | void>;
+  onWorkspaceSelected?: (
+    workspace: string
+  ) => WriteWorkspaceSelectionResult | Promise<WriteWorkspaceSelectionResult>;
   onSendAssistantPrompt?: (payload: WriteAssistantPromptPayload) => Promise<boolean>;
   onInterruptAssistant?: () => void;
   assistantBusy?: boolean;
@@ -153,6 +155,7 @@ export function WriteWorkspaceView({
   const openFileRequestId = useRef(0);
   const activePathRef = useRef<string | null>(null);
   const workspaceRootRef = useRef("");
+  const activeWriteThreadIdRef = useRef<string | null>(null);
   const contentRef = useRef("");
   const savedContentRef = useRef("");
   const saveInFlightRef = useRef(false);
@@ -174,7 +177,17 @@ export function WriteWorkspaceView({
     workspaceRootRef.current = state.workspaceRoot;
     contentRef.current = content;
     savedContentRef.current = savedContent;
-  }, [activePath, content, savedContent, state.workspaceRoot]);
+    activeWriteThreadIdRef.current = state.activeThread?.mode === "write"
+      ? state.activeThreadId
+      : null;
+  }, [
+    activePath,
+    content,
+    savedContent,
+    state.activeThread,
+    state.activeThreadId,
+    state.workspaceRoot,
+  ]);
 
   const assistantItems = getWriteAssistantVisibleItems(state.items);
 
@@ -207,10 +220,14 @@ export function WriteWorkspaceView({
     }
     if (result.value.canceled || !result.value.path) return null;
     try {
-      if (!await shouldUseSelectedWriteWorkspace(result.value.path, onWorkspaceSelected)) {
+      const selectionResult = await onWorkspaceSelected?.(result.value.path);
+      if (selectionResult === false) {
         setErrorMessage(t("write.workspaceSelectionFailed"));
         setStatus("error");
         return null;
+      }
+      if (typeof selectionResult === "string") {
+        activeWriteThreadIdRef.current = selectionResult;
       }
     } catch (error) {
       setErrorMessage(messageOf(error));
@@ -219,6 +236,14 @@ export function WriteWorkspaceView({
     }
     actions.setWorkspaceRoot(result.value.path);
     return result.value.path;
+  }
+
+  function requireActiveWriteThreadId(): string | null {
+    const threadId = activeWriteThreadIdRef.current;
+    if (threadId) return threadId;
+    setErrorMessage(t("write.workspaceRequired"));
+    setStatus("error");
+    return null;
   }
 
   async function loadList(
@@ -242,10 +267,12 @@ export function WriteWorkspaceView({
       applyWriteDocumentState(clearedState, { invalidateOpenRequests: true });
     }
     listedWorkspaceRef.current = workspace;
+    const threadId = requireActiveWriteThreadId();
+    if (!threadId) return;
     setListLoading(true);
     setStatus("loading");
     try {
-      const result = await window.agentApi.write.list({ workspace, search: searchInput });
+      const result = await window.agentApi.write.list({ threadId, search: searchInput });
       if (requestId !== listRequestId.current) return;
       if (result.ok) {
         setFiles(result.value);
@@ -288,9 +315,11 @@ export function WriteWorkspaceView({
     if (!(await saveCurrentFileBeforeSwitch())) return;
     const requestId = openFileRequestId.current + 1;
     openFileRequestId.current = requestId;
+    const threadId = requireActiveWriteThreadId();
+    if (!threadId) return;
     setStatus("loading");
     try {
-      const result = await window.agentApi.write.get({ workspace, path });
+      const result = await window.agentApi.write.get({ threadId, path });
       // Protect the user's latest open-file intent: IPC responses can resolve out of order.
       if (!shouldApplyWriteOpenResult({
         requestId,
@@ -366,10 +395,12 @@ export function WriteWorkspaceView({
       return;
     }
     if (!(await saveCurrentFileBeforeSwitch())) return;
+    const threadId = requireActiveWriteThreadId();
+    if (!threadId) return;
     setDocumentAction({ kind: "create", path });
     setStatus("loading");
     try {
-      const result = await window.agentApi.write.create({ workspace, path, content: "" });
+      const result = await window.agentApi.write.create({ threadId, path, content: "" });
       if (!result.ok) {
         setErrorMessage(result.message);
         setStatus("error");
@@ -421,10 +452,12 @@ export function WriteWorkspaceView({
       return;
     }
     if (!(await saveCurrentFileBeforeSwitch())) return;
+    const threadId = requireActiveWriteThreadId();
+    if (!threadId) return;
     setDocumentAction({ kind: "rename", path, newPath });
     setStatus("loading");
     try {
-      const result = await window.agentApi.write.rename({ workspace, path, newPath });
+      const result = await window.agentApi.write.rename({ threadId, path, newPath });
       if (!result.ok) {
         setErrorMessage(result.message);
         setStatus("error");
@@ -463,10 +496,12 @@ export function WriteWorkspaceView({
       return;
     }
     if (!(await saveCurrentFileBeforeDocumentDelete(path))) return;
+    const threadId = requireActiveWriteThreadId();
+    if (!threadId) return;
     setDocumentAction({ kind: "delete", path });
     setStatus("loading");
     try {
-      const result = await window.agentApi.write.delete({ workspace, path });
+      const result = await window.agentApi.write.delete({ threadId, path });
       if (!result.ok) {
         setErrorMessage(result.message);
         setStatus("error");
@@ -672,6 +707,12 @@ export function WriteWorkspaceView({
       const savingPath = activePathRef.current;
       const savingWorkspace = workspaceRootRef.current;
       if (!savingPath || !savingWorkspace) return true;
+      const threadId = activeWriteThreadIdRef.current;
+      if (!threadId) {
+        setErrorMessage(t("write.workspaceRequired"));
+        setStatus("error");
+        return false;
+      }
       const nextContent = contentRef.current;
       if (nextContent === savedContentRef.current) return true;
 
@@ -679,7 +720,7 @@ export function WriteWorkspaceView({
       setStatus("saving");
       try {
         const result = await window.agentApi.write.put({
-          workspace: savingWorkspace,
+          threadId,
           path: savingPath,
           content: nextContent,
         });
@@ -723,9 +764,11 @@ export function WriteWorkspaceView({
       if (requestId === completionRequestId.current) setCompletion("");
       return;
     }
+    const threadId = requireActiveWriteThreadId();
+    if (!threadId) return;
     try {
       const result = await window.agentApi.write.complete({
-        workspace: requestedWorkspace,
+        threadId,
         path: requestedPath,
         prefix: completionContext.prefix,
         suffix: completionContext.suffix,

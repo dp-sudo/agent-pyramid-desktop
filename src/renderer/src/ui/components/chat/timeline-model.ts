@@ -442,7 +442,7 @@ function compactTitleForTool(
   }
   if (args.command) {
     return t("chat.tools.failedCommandPreview", {
-      tool: toolDisplayName(name, t),
+      tool: getToolDisplayName(name, t),
       command: previewSingleLine(args.command, COMPACT_COMMAND_PREVIEW_MAX_CHARS),
     });
   }
@@ -467,7 +467,7 @@ function compactTitleForChangeSummary(
   });
 }
 
-function toolDisplayName(
+export function getToolDisplayName(
   name: string,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {

@@ -8,6 +8,7 @@ import type {
 } from "../chat/ChatBlock";
 import { WorkbenchErrorToast } from "./WorkbenchErrorToast";
 import type { ThreadSummary } from "../../../../../shared/agent-contracts";
+import type { WriteWorkspaceSelectionResult } from "../write/write-workspace-model";
 
 export interface WriteWorkbenchStageProps {
   onApprove: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
@@ -16,7 +17,9 @@ export interface WriteWorkbenchStageProps {
     userInputId: string,
     response: UserInputResponseChoice,
   ) => Promise<void>;
-  onWorkspaceSelected: (workspace: string) => boolean | void | Promise<boolean | void>;
+  onWorkspaceSelected: (
+    workspace: string
+  ) => WriteWorkspaceSelectionResult | Promise<WriteWorkspaceSelectionResult>;
   onSendAssistantPrompt: (payload: WriteAssistantPromptPayload) => Promise<boolean>;
   onInterruptAssistant: () => void;
   assistantBusy: boolean;

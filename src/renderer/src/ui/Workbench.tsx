@@ -376,7 +376,7 @@ export function Workbench(): ReactElement {
   );
 
   const selectOrCreateThreadForWorkspace = useCallback(
-    async (workspace: string, mode: ThreadRecord["mode"]): Promise<boolean> => {
+    async (workspace: string, mode: ThreadRecord["mode"]): Promise<string | false> => {
       const threadsResult = await runWorkbenchIpc(() =>
         window.agentApi.threads.list({
           includeArchived: state.showArchivedThreads,
@@ -394,7 +394,9 @@ export function Workbench(): ReactElement {
         mode,
       );
       if (latestForWorkspace) {
-        return selectThreadById(latestForWorkspace.id);
+        return await selectThreadById(latestForWorkspace.id)
+          ? latestForWorkspace.id
+          : false;
       }
 
       const created = await runWorkbenchIpc(() =>
@@ -412,7 +414,7 @@ export function Workbench(): ReactElement {
       if (!await subscribeThreadEvents(created.value.id)) return false;
       actions.selectThread(created.value, []);
       void refreshThreads();
-      return true;
+      return created.value.id;
     },
     [
       actions,
