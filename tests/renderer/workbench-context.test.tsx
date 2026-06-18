@@ -11,8 +11,8 @@ import { DEFAULT_BASIC_PREFERENCES } from "../../src/renderer/src/ui/preferences
 import { DEFAULT_RUNTIME_PREFERENCES } from "../../src/shared/agent-contracts";
 import type {
   AssistantItem,
-  ModelConfig,
-  ModelConfigProfilesState,
+  RendererModelConfig,
+  RendererModelConfigProfilesState,
   ThreadRecord,
   ThreadSummary,
   ToolItem,
@@ -378,7 +378,7 @@ describe("WorkbenchContext reducer", () => {
   });
 
   it("keeps composer model state aligned with selected config and profile", () => {
-    const config: ModelConfig = {
+    const config: RendererModelConfig = {
       ...INITIAL_STATE.modelConfig,
       model: "agnes-2.0-flash",
       model_reasoning_effort: "high",
@@ -418,7 +418,7 @@ describe("WorkbenchContext reducer", () => {
   });
 
   it("falls back to the active profile when the selected profile is removed", () => {
-    const profiles: ModelConfigProfilesState = {
+    const profiles: RendererModelConfigProfilesState = {
       activeProfileId: "profile-2",
       profiles: [
         {
@@ -455,7 +455,7 @@ describe("WorkbenchContext reducer", () => {
       model: "selected-model",
       modelProfileId: "profile-1",
     });
-    const profiles: ModelConfigProfilesState = {
+    const profiles: RendererModelConfigProfilesState = {
       activeProfileId: "profile-2",
       profiles: [
         {
@@ -494,7 +494,7 @@ describe("WorkbenchContext reducer", () => {
   });
 
   it("syncs to the active profile when the active profile id changes", () => {
-    const initialProfiles: ModelConfigProfilesState = {
+    const initialProfiles: RendererModelConfigProfilesState = {
       activeProfileId: "profile-1",
       profiles: [
         {

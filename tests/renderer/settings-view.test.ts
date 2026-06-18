@@ -23,6 +23,7 @@ import {
   findActiveProfile,
   isLlmProtocolSetting,
   toFormState,
+  toProfileConfigUpdate,
   toUpdatePayload,
   validateModelSettingsForm,
   type SettingsFormState,
@@ -77,6 +78,7 @@ import {
   MIN_RUNTIME_COMMAND_TIMEOUT_MS,
   MIN_RUNTIME_SKILLS_ACTIVE_LIMIT,
   RUNTIME_TOOL_NAMES,
+  toRendererModelConfig,
   type McpServerConfig,
   type RuntimeEvent,
   type RuntimeSkillCatalogEntry,
@@ -269,6 +271,7 @@ describe("SettingsView helpers", () => {
     expect(toFormState(DEFAULT_DEEPSEEK_MODEL_CONFIG)).toMatchObject({
       model_provide: "DeepSeek",
       model: "deepseek-v4-flash",
+      OPENAI_API_KEY: "",
       protocol: DEFAULT_DEEPSEEK_MODEL_CONFIG.protocol,
       base_url: "https://api.deepseek.com",
       model_context_window: String(DEFAULT_DEEPSEEK_MODEL_CONFIG.model_context_window),
@@ -285,13 +288,28 @@ describe("SettingsView helpers", () => {
   it("includes the selected protocol in model profile update payloads", () => {
     expect(toUpdatePayload(modelForm({ protocol: "anthropic-compatible" })))
       .toMatchObject({ protocol: "anthropic-compatible" });
+    expect(toUpdatePayload(modelForm({ OPENAI_API_KEY: "sk-secret" })))
+      .not.toHaveProperty("OPENAI_API_KEY");
+    expect(toUpdatePayload(
+      modelForm({ OPENAI_API_KEY: "sk-secret" }),
+      { includeApiKey: true },
+    )).toMatchObject({ OPENAI_API_KEY: "sk-secret" });
+  });
+
+  it("copies only non-secret model profile fields for duplicate profiles", () => {
+    const rendererConfig = toRendererModelConfig({
+      ...DEFAULT_MODEL_CONFIG,
+      OPENAI_API_KEY: "sk-secret",
+    });
+
+    expect(toProfileConfigUpdate(rendererConfig)).not.toHaveProperty("OPENAI_API_KEY");
   });
 
   it("selects active model profiles with the first profile as a fallback", () => {
     const first = {
       id: "first",
       name: "First",
-      config: DEFAULT_MODEL_CONFIG,
+      config: toRendererModelConfig(DEFAULT_MODEL_CONFIG),
       createdAt: "2026-06-08T00:00:00.000Z",
       updatedAt: "2026-06-08T00:00:00.000Z",
     };
@@ -299,7 +317,7 @@ describe("SettingsView helpers", () => {
       ...first,
       id: "second",
       name: "Second",
-      config: DEFAULT_DEEPSEEK_MODEL_CONFIG,
+      config: toRendererModelConfig(DEFAULT_DEEPSEEK_MODEL_CONFIG),
     };
 
     expect(findActiveProfile({
@@ -730,7 +748,7 @@ describe("SettingsView helpers", () => {
     const activeProfile = {
       id: "profile-1",
       name: "MiniMax",
-      config: DEFAULT_MODEL_CONFIG,
+      config: toRendererModelConfig(DEFAULT_MODEL_CONFIG),
       createdAt: "2026-06-08T00:00:00.000Z",
       updatedAt: "2026-06-08T00:00:00.000Z",
     };
@@ -744,6 +762,12 @@ describe("SettingsView helpers", () => {
       activeProfile,
       "MiniMax",
       modelForm({ max_tokens: String(DEFAULT_MODEL_CONFIG.max_tokens + 1) }),
+    )).toBe(true);
+    expect(hasUnsavedProfileChanges(
+      activeProfile,
+      "MiniMax",
+      toFormState(DEFAULT_MODEL_CONFIG),
+      true,
     )).toBe(true);
   });
 

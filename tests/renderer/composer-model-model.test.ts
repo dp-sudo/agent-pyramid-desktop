@@ -6,8 +6,12 @@ import {
   selectComposerModel,
   type ComposerModelState,
 } from "../../src/renderer/src/ui/store/composer-model-model";
-import { DEFAULT_MODEL_CONFIG } from "../../src/shared/agent-contracts";
-import type { ModelConfigProfilesState } from "../../src/shared/agent-contracts";
+import {
+  DEFAULT_MODEL_CONFIG,
+  toRendererModelConfig,
+  toRendererModelConfigProfilesState,
+} from "../../src/shared/agent-contracts";
+import type { ModelConfigProfilesState, RendererModelConfigProfilesState } from "../../src/shared/agent-contracts";
 
 function composer(overrides: Partial<ComposerModelState> = {}): ComposerModelState {
   return {
@@ -18,8 +22,8 @@ function composer(overrides: Partial<ComposerModelState> = {}): ComposerModelSta
   };
 }
 
-function profiles(activeProfileId = "profile-2"): ModelConfigProfilesState {
-  return {
+function profiles(activeProfileId = "profile-2"): RendererModelConfigProfilesState {
+  const rawProfiles: ModelConfigProfilesState = {
     activeProfileId,
     profiles: [
       {
@@ -46,6 +50,7 @@ function profiles(activeProfileId = "profile-2"): ModelConfigProfilesState {
       },
     ],
   };
+  return toRendererModelConfigProfilesState(rawProfiles);
 }
 
 describe("composer model model", () => {
@@ -53,7 +58,7 @@ describe("composer model model", () => {
     expect(applyModelConfigToComposer(
       composer({ modelProfileId: "profile-1", modelProfileSelection: "explicit" }),
       {
-        ...DEFAULT_MODEL_CONFIG,
+        ...toRendererModelConfig(DEFAULT_MODEL_CONFIG),
         model: "configured-model",
         model_reasoning_effort: "high",
       },

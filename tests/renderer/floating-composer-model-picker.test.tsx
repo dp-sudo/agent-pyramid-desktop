@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { FloatingComposerModelPicker } from "../../src/renderer/src/ui/components/composer/FloatingComposerModelPicker";
-import type { ModelConfigProfile } from "../../src/shared/agent-contracts";
+import type { RendererModelConfigProfile } from "../../src/shared/agent-contracts";
 
 describe("FloatingComposerModelPicker", () => {
   it("exposes dialog and active selection semantics", () => {
@@ -35,7 +35,7 @@ function modelProfile(
   id: string,
   name: string,
   model: string,
-): ModelConfigProfile {
+): RendererModelConfigProfile {
   return {
     id,
     name,
@@ -44,7 +44,8 @@ function modelProfile(
       model,
       protocol: "openai-compatible",
       base_url: "https://example.invalid/v1",
-      OPENAI_API_KEY: "",
+      hasApiKey: false,
+      apiKeyPreview: "",
       model_context_window: 1000,
       model_auto_compact_token_limit: 900,
       max_tokens: 100,
