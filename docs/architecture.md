@@ -18,9 +18,9 @@ Authoritative source areas:
 
 Out of scope:
 
-- `/mnt/f/cc_src/DeepSeek` is a read-only design reference only when a task
-  explicitly asks to inspect DeepSeek GUI; it is not project source, a
-  dependency, an implementation input, or a build input.
+- External DeepSeek GUI reference source is read-only design input only when a
+  task explicitly asks to inspect it; it is not project source, a dependency,
+  an implementation input, or a build input.
 - `docs/external-references/` is not project source or project documentation
   for normal search, audit, build, test, or documentation maintenance.
 
@@ -484,7 +484,7 @@ Important state slices:
 - `inFlightTurnsByThreadId`, `activeTurnId`.
 - `composer`: text, model, profile, reasoning effort, mode, goal mode,
   attachment ids.
-- `rightPanelMode`: `changes | todo | plan | null`.
+- `rightPanelMode`: `changes | checkpoints | todo | plan | null`.
 - `basicPreferences`: theme, startup, sidebar widths, inspector default,
   archive visibility, last workspace, code/reasoning display defaults, composer
   image upload and paste entry points.

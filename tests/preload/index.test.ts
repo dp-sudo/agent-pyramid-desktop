@@ -84,28 +84,28 @@ describe("preload bridge", () => {
     const api = getAgentApi();
     electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true, value: { path: "notes.md" } });
 
-    await api.write.create({ workspace: "/workspace", path: "notes.md", content: "" });
+    await api.write.create({ threadId: "00000000-0000-4000-8000-000000000001", path: "notes.md", content: "" });
     await api.write.rename({
-      workspace: "/workspace",
+      threadId: "00000000-0000-4000-8000-000000000001",
       path: "notes.md",
       newPath: "drafts/notes.md",
     });
-    await api.write.delete({ workspace: "/workspace", path: "drafts/notes.md" });
+    await api.write.delete({ threadId: "00000000-0000-4000-8000-000000000001", path: "drafts/notes.md" });
 
     expect(electronMock.ipcRenderer.invoke).toHaveBeenNthCalledWith(
       1,
       WRITE_CREATE_CHANNEL,
-      { workspace: "/workspace", path: "notes.md", content: "" },
+      { threadId: "00000000-0000-4000-8000-000000000001", path: "notes.md", content: "" },
     );
     expect(electronMock.ipcRenderer.invoke).toHaveBeenNthCalledWith(
       2,
       WRITE_RENAME_CHANNEL,
-      { workspace: "/workspace", path: "notes.md", newPath: "drafts/notes.md" },
+      { threadId: "00000000-0000-4000-8000-000000000001", path: "notes.md", newPath: "drafts/notes.md" },
     );
     expect(electronMock.ipcRenderer.invoke).toHaveBeenNthCalledWith(
       3,
       WRITE_DELETE_CHANNEL,
-      { workspace: "/workspace", path: "drafts/notes.md" },
+      { threadId: "00000000-0000-4000-8000-000000000001", path: "drafts/notes.md" },
     );
   });
 

@@ -14,6 +14,7 @@
 | Model config access | `src/main/persistence/model-config-store.ts` |
 | Runtime preferences access | `src/main/persistence/runtime-preferences-store.ts` |
 | Checkpoint persistence | `src/main/persistence/checkpoint-store.ts` |
+| MCP cache persistence | `src/main/infrastructure/mcp/cache-store.ts` |
 | Runtime event emission | `src/main/application/agent-runtime.ts` and `src/main/event-bus.ts` |
 | Renderer state shape | `src/renderer/src/ui/store/WorkbenchContext.tsx` |
 | Renderer local preferences | `src/renderer/src/ui/preferences.ts` |
@@ -41,6 +42,8 @@ userData/
     <attachmentId>.bin
   checkpoints/
     <threadId>.jsonl
+  mcp/
+    cache.json
   config
 ```
 
@@ -52,9 +55,11 @@ flowchart TB
   ConfigStore["ModelConfigStore"]
   RuntimePreferencesStore["RuntimePreferencesStore"]
   CheckpointStore["CheckpointStore"]
+  McpCacheStore["McpCacheStore"]
   Threads["userData/threads"]
   Attachments["userData/attachments"]
   Checkpoints["userData/checkpoints"]
+  McpCache["userData/mcp/cache.json"]
   Config["userData/config"]
   Profiles["ModelConfigProfilesState"]
   RuntimePreferences["RuntimePreferences"]
@@ -65,6 +70,7 @@ flowchart TB
   Contracts --> ConfigStore --> Config
   Contracts --> RuntimePreferencesStore --> Config
   Contracts --> CheckpointStore --> Checkpoints
+  Contracts --> McpCacheStore --> McpCache
   Config --> Profiles
   Config --> RuntimePreferences
   Contracts --> Renderer
@@ -511,6 +517,9 @@ Current event kinds:
 - `item_updated`
 - `approval_requested`
 - `tool_progress`
+- `mcp_server_connection`
+- `mcp_tool_list_changed`
+- `mcp_surface_changed`
 - `tool_budget_reached`
 - `goal_updated`
 - `runtime_error`
@@ -519,6 +528,10 @@ Current event kinds:
 for live stdout/stderr chunks from a still-running tool. It is a live UI event
 only: command stdout/stderr remain persisted through the final `ToolItem.result`
 in `messages.jsonl`, and progress chunks are not appended to `events.jsonl`.
+
+`mcp_server_connection`, `mcp_tool_list_changed`, and `mcp_surface_changed` are
+process-level MCP surface events. They do not carry `threadId`, are forwarded by
+SSE subscriptions for live UI refresh, and are not timeline items.
 
 `runtime_error.code` is one of `worker_crashed`, `worker_timeout`,
 `provider_http`, `provider_error`, `schema_invalid`, `tool_not_found`,

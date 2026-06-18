@@ -164,11 +164,12 @@ Tool rules:
 
 - Tools implement `AgentTool` and are registered through `InMemoryToolRegistry` in `src/main/index.ts`.
 - `list_files`, `read_file` and `search_files` are read-only workspace tools and skip approval.
-- `edit_file`, `write_file`, `delete_file`, `apply_patch` and `rollback_file` are coding write tools; they require approval, workspace path validation and strict UTF-8 text handling. `rollback_file` uses in-memory runtime file history (`file-history-state`) to undo the latest agent write when the current file still matches that history entry.
+- `create_edit_plan` is a read-only Code-mode coordination tool. `edit_file`, `multi_edit`, `write_file`, `delete_file`, `apply_patch` and `rollback_file` are coding write tools; they require approval, workspace path validation and strict UTF-8 text handling. `rollback_file` uses in-memory runtime file history (`file-history-state`) to undo the latest agent write when the current file still matches that history entry.
 - `run_command`, `shell_command`, `git_bash_command`, `powershell_command`, `wsl_command`, package/task wrappers, Git commit, and command session write/stop tools all run workspace shell commands and require approval.
 - `diagnose_workspace` runs workspace TypeScript/typecheck diagnostics through command execution and requires approval. `diagnose_file` uses TypeScript Language Service for one file and remains read-only.
-- Read-only developer tools (`rg_search`, `git_status`, `git_diff`, `git_log`, `git_branch`, `package_scripts`, `read_command_session`, `detect_shell_environment`, `diagnose_file`) skip approval.
+- Read-only developer tools (`rg_search`, `list_symbols`, `search_symbols`, `git_status`, `git_diff`, `git_log`, `git_branch`, `package_scripts`, `list_command_sessions`, `read_command_session`, `detect_shell_environment`, `diagnose_file`) skip approval.
 - `list_skills` and `run_skill` are read-only skill tools. `list_skills` exposes catalog summaries and validation warnings; `run_skill` loads inline `SKILL.md` instructions. `runAs: subagent` skills are executed by `AgentRuntime` in an isolated read-only child loop.
+- `request_user_input` is a read-only interaction tool that appends a pending user-input item and waits for `agentApi.userInput.respond()`.
 - MCP tools are registered dynamically by `McpHost` as `mcp__<server>__<tool>`. Read-only MCP tools can skip approval; writer MCP tools use the same sandbox, approval and `RuntimePreferences.permissionRules` path as built-in tools.
 - `create_plan` is enabled only in plan mode and skips approval.
 - `update_goal` is enabled only in goal mode or active-goal threads and skips approval.
@@ -271,6 +272,7 @@ Current preload groups:
 - `turns`
 - `sse`
 - `approvals`
+- `userInput`
 - `goals`
 - `attachments`
 - `usage`

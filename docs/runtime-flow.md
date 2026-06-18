@@ -880,6 +880,10 @@ Defined in `src/shared/agent-contracts.ts`:
 - `item_appended`
 - `item_updated`
 - `approval_requested`
+- `tool_progress`
+- `mcp_server_connection`
+- `mcp_tool_list_changed`
+- `mcp_surface_changed`
 - `tool_budget_reached`
 - `goal_updated`
 - `runtime_error`

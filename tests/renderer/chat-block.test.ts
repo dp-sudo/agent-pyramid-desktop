@@ -10,6 +10,7 @@ import {
   isSameApprovalResponse,
   isReasoningOpenByDefault,
   isLongToolDetail,
+  copyStateLabel,
   resolveToolDetailDisplay,
   resolveNextApprovalDiffOpenState,
   resolveNextReasoningOpenState,
@@ -26,6 +27,14 @@ function writeRouteState() {
 }
 
 describe("ChatBlock approval helpers", () => {
+  it("labels copy controls from their current state", () => {
+    const labels = { idle: "copy", copied: "copied", failed: "failed" };
+
+    expect(copyStateLabel("idle", labels)).toBe("copy");
+    expect(copyStateLabel("copied", labels)).toBe("copied");
+    expect(copyStateLabel("failed", labels)).toBe("failed");
+  });
+
   it("previews long tool details without changing the full detail source", () => {
     const detail = `${"line\n".repeat(90)}tail`;
 
@@ -45,6 +54,51 @@ describe("ChatBlock approval helpers", () => {
       truncated: false,
       hiddenCharCount: 0,
     });
+  });
+
+  it("renders assistant responses with a copy affordance after streaming", () => {
+    const assistantItem: Extract<Item, { kind: "assistant" }> = {
+      kind: "assistant",
+      id: "assistant-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      text: "Final answer",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, { item: assistantItem }),
+      ),
+    );
+
+    expect(html).toContain("ds-assistant-actions");
+    expect(html).toContain("chat.copyAssistantResponse");
+    expect(html).toContain("Final answer");
+  });
+
+  it("does not show assistant copy actions while output is live", () => {
+    const assistantItem: Extract<Item, { kind: "assistant" }> = {
+      kind: "assistant",
+      id: "assistant-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      text: "Streaming answer",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, { item: assistantItem, isLive: true }),
+      ),
+    );
+
+    expect(html).not.toContain("ds-assistant-actions");
+    expect(html).not.toContain("chat.copyAssistantResponse");
   });
 
   it("renders long tool details as a preview with an expand control", () => {
@@ -74,6 +128,7 @@ describe("ChatBlock approval helpers", () => {
     expect(html).toContain("ds-process-entry-detail is-truncated");
     expect(html).toContain("chat.toolDetailTruncated");
     expect(html).toContain("chat.expandToolDetail");
+    expect(html).toContain("chat.copyToolDetail");
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("TAIL");
   });
@@ -175,6 +230,7 @@ describe("ChatBlock approval helpers", () => {
 
     expect(html).toContain("ds-process-entry ds-process-tool is-success");
     expect(html).toContain("chat.toolStatus.completed");
+    expect(html).toContain("chat.copyToolDetail");
     expect(html).not.toContain("ds-process-tool-row");
   });
 

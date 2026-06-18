@@ -47,8 +47,9 @@ Global visual system:
 - The shell uses a restrained glass/rail system: low-saturation blue rails,
   soft inset highlights and reduced backdrop glow carry hierarchy without
   competing with dense work content.
-- Theme is controlled by `<html data-theme>` and `agent.theme` local storage
-  logic in `src/renderer/src/i18n/index.ts`.
+- Theme is controlled by `<html data-theme>` and the `theme` /
+  `followSystemTheme` fields inside `agent-pyramid.basicPreferences`, applied
+  through `src/renderer/src/i18n/index.ts`.
 - Basic UI preferences live under `agent-pyramid.basicPreferences`.
 - Last workspace lives under `agent-pyramid.lastWorkspaceRoot`.
 

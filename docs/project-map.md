@@ -42,12 +42,12 @@ renderer React
 
 ```mermaid
 flowchart TB
-  Repo["/mnt/f/Agent repository"]
+  Repo["agent-pyramid-desktop repository"]
   Src["src/\nreal application source"]
   Tests["tests/\nVitest coverage"]
-  Docs["docs/\nproject docs and provider references"]
+  Docs["docs/\ncurrent project docs"]
   Config["package.json / tsconfig* / electron.vite.config.ts / vitest.config.ts"]
-  External["/mnt/f/cc_src/DeepSeek\nread-only design reference only when explicitly requested"]
+  External["External DeepSeek GUI reference\nread-only design reference only when explicitly requested"]
 
   Repo --> Src
   Repo --> Tests
@@ -63,12 +63,12 @@ flowchart TB
 - `src/renderer/`
 - `src/shared/`
 - `tests/`
-- `docs/`
+- `docs/` 中的当前项目文档（不含 `docs/external-references/`）
 - 根目录构建与测试配置文件
 
 禁止误判：
 
-- `/mnt/f/cc_src/DeepSeek` 不是本项目源码、依赖或构建输入；仅在任务明确要求参考 DeepSeek GUI 时可只读查看。
+- 仓库外 DeepSeek GUI 参考源码不是本项目源码、依赖或构建输入；仅在任务明确要求参考 DeepSeek GUI 时可只读查看。
 - `docs/external-references/` 及其子目录不是本项目源码或项目文档，不纳入普通搜索、审计、构建、测试或文档维护范围。
 - `out/`、`dist/`、`node_modules/` 是生成物或依赖目录，不应作为实现权威来源。
 

@@ -9,6 +9,8 @@ import {
   shouldShowTimelineJumpToBottom,
   shouldStickToTimelineBottom,
   shouldRecordTimelineProcessToggle,
+  summarizeReadOnlyToolCounts,
+  summarizeReadOnlyToolSummary,
 } from "../../src/renderer/src/ui/components/chat/MessageTimeline";
 import type { Item, ToolItem } from "../../src/shared/agent-contracts";
 
@@ -118,6 +120,30 @@ describe("MessageTimeline helpers", () => {
     });
     expect(displayItems[1]).toBe(failedRead);
     expect(displayItems[2]).toBe(writeFile);
+  });
+
+  it("summarizes read-only tool groups with counts and bounded previews", () => {
+    const readFile = toolItem("read_file", "completed");
+    const secondReadFile = toolItem("read_file", "completed", "turn-2");
+    const searchFiles = toolItem("search_files", "completed", "turn-3");
+    const t = (key: string, options?: Record<string, unknown>): string => {
+      if (key === "settings.toolNames.read_file") return "Read file";
+      if (key === "settings.toolNames.search_files") return "Search files";
+      return options ? `${key}:${JSON.stringify(options)}` : key;
+    };
+
+    expect(summarizeReadOnlyToolCounts([readFile, secondReadFile, searchFiles])).toEqual([
+      { name: "read_file", count: 2 },
+      { name: "search_files", count: 1 },
+    ]);
+    expect(summarizeReadOnlyToolSummary([
+      readFile,
+      secondReadFile,
+      searchFiles,
+    ], t, 2)).toMatchObject({
+      text: expect.stringContaining("Read file x2 / Search files x1:"),
+      hiddenCount: 1,
+    });
   });
 
   it("resolves shared pending approval decisions by approval id", () => {

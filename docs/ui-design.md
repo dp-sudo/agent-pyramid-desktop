@@ -235,7 +235,7 @@ dont:
   - "Add a second live agent runtime — the local AgentRuntime is the only one."
   - "Add a runtime switcher / connection status bar / runtime diagnostics dialog."
   - "Add a runtime / usage slash command that opens a runtime control panel."
-  - "Add Tailwind / Zustand / React Router — this project uses CSS Modules + useReducer + route field."
+  - "Add Tailwind / Zustand / React Router — this project uses shared CSS entries + useReducer + route field."
   - "Add emoji in production copy or as functional UI affordance."
   - "Use a font outside the three declared families."
   - "Render close / dismiss controls as ASCII characters (\"x\", \"×\") — use CloseGlyph SVG primitive to keep metric and encoding stable."
