@@ -38,6 +38,8 @@ describe("AssistantMarkdown", () => {
     expect(html).toContain("rel=\"noreferrer\"");
     expect(html).toContain("class=\"ds-code-block\"");
     expect(html).toContain("class=\"ds-code-block-header\"><span>ts</span>");
+    expect(html).toContain("class=\"ds-code-block-lines\"");
+    expect(html).toContain("chat.codeLineCount");
     expect(html).toContain(
       "<button type=\"button\" aria-label=\"chat.copyCode\" title=\"chat.copyCode\">chat.copyCode</button>",
     );

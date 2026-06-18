@@ -3,6 +3,7 @@ import type { Item, ToolItem } from "../../src/shared/agent-contracts";
 import { RUNTIME_TOOL_NAMES } from "../../src/shared/agent-contracts";
 import {
   extractToolDiffPreview,
+  getToolDisplayName,
   groupTimelineTurns,
   sortTimelineItems,
   summarizeToolChangeResult,
@@ -667,6 +668,11 @@ describe("timeline model", () => {
     ).toBe("tool:rg_search|query:AgentRuntime");
     expect(summarizeToolItemHeader(toolItem("custom_tool"), timelineTitleT).title)
       .toBe("custom tool");
+  });
+
+  it("uses localized display names for known tools and readable names for unknown tools", () => {
+    expect(getToolDisplayName("read_file", timelineTitleT)).toBe("tool:read_file");
+    expect(getToolDisplayName("custom_tool", timelineTitleT)).toBe("custom tool");
   });
 
   it("summarizes tool headers without formatting result detail", () => {

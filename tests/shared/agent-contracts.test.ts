@@ -966,13 +966,13 @@ describe("shared agent contracts", () => {
 
   it("keeps write put requests limited to the implemented plain write contract", () => {
     const request = {
-      workspace: "/workspace",
+      threadId: "00000000-0000-4000-8000-000000000001",
       path: "notes.md",
       content: "# Notes\n",
     } satisfies WritePutRequest;
 
     expect(request).toEqual({
-      workspace: "/workspace",
+      threadId: "00000000-0000-4000-8000-000000000001",
       path: "notes.md",
       content: "# Notes\n",
     });
