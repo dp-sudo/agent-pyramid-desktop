@@ -408,6 +408,34 @@ describe("MiniMaxGateway", () => {
     ]);
   });
 
+  it("redacts secrets from SSE error events before throwing", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            [
+              "event: error",
+              'data: {"error":{"type":"auth","code":"bad_key","message":"token_secret: sk-live-secret-123456"}}',
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 })),
+    );
+
+    await expect(async () => {
+      for await (const _chunk of new MiniMaxGateway().stream(baseRequest)) {
+        void _chunk;
+      }
+    }).rejects.toThrow("LLM stream error event: auth: bad_key: [REDACTED]");
+  });
+
   it("rejects streamed OpenAI-compatible tool calls without tool names", async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {

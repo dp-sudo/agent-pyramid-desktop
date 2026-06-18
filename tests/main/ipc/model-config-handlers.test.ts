@@ -7,12 +7,20 @@ import {
   registerModelConfigHandlers,
 } from "../../../src/main/ipc/model-config-handlers";
 import {
+  MODEL_CONFIG_GET_CHANNEL,
+  MODEL_CONFIG_PROFILES_LIST_CHANNEL,
   MODEL_CONFIG_UPDATE_CHANNEL,
   MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
   MODEL_CONFIG_PROFILES_DELETE_CHANNEL,
   MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
 } from "../../../src/shared/ipc";
 import type { ModelConfigStore } from "../../../src/main/persistence/model-config-store";
+import {
+  DEFAULT_MODEL_CONFIG,
+  type ModelConfig,
+  type ModelConfigProfile,
+  type ModelConfigProfilesState,
+} from "../../../src/shared/agent-contracts";
 
 type IpcHandler = (_event: unknown, request: unknown) => Promise<unknown>;
 
@@ -42,6 +50,25 @@ function createStore(): ModelConfigStore {
     listProfiles: vi.fn(),
     createProfile: vi.fn(),
   } as unknown as ModelConfigStore;
+}
+
+function modelConfig(overrides: Partial<ModelConfig> = {}): ModelConfig {
+  return {
+    ...DEFAULT_MODEL_CONFIG,
+    OPENAI_API_KEY: "sk-secret",
+    ...overrides,
+  };
+}
+
+function modelProfile(overrides: Partial<ModelConfigProfile> = {}): ModelConfigProfile {
+  return {
+    id: "profile-1",
+    name: "MiniMax",
+    config: modelConfig(),
+    createdAt: "2026-06-08T00:00:00.000Z",
+    updatedAt: "2026-06-08T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 describe("model config handlers", () => {
@@ -213,6 +240,66 @@ describe("model config handlers", () => {
       id: "profile-1",
       config: { OPENAI_API_KEY: false },
     })).toThrow("OPENAI_API_KEY must be a string.");
+  });
+
+  it("redacts stored API keys from renderer-facing model config responses", async () => {
+    const store = createStore();
+    const profile = modelProfile();
+    const state: ModelConfigProfilesState = {
+      activeProfileId: profile.id,
+      profiles: [profile],
+    };
+    vi.mocked(store.get).mockResolvedValue(profile.config);
+    vi.mocked(store.listProfiles).mockResolvedValue(state);
+    vi.mocked(store.updateProfile).mockResolvedValue(profile);
+    registerModelConfigHandlers(store);
+    const getHandler = electronMock.handlers.get(MODEL_CONFIG_GET_CHANNEL);
+    const listHandler = electronMock.handlers.get(MODEL_CONFIG_PROFILES_LIST_CHANNEL);
+    const updateHandler = electronMock.handlers.get(MODEL_CONFIG_PROFILES_UPDATE_CHANNEL);
+    if (!getHandler) throw new Error("Expected model config get handler.");
+    if (!listHandler) throw new Error("Expected model config profile list handler.");
+    if (!updateHandler) throw new Error("Expected model config profile update handler.");
+
+    const getResult = await getHandler({}, undefined);
+    const listResult = await listHandler({}, undefined);
+    const updateResult = await updateHandler({}, { id: profile.id, name: profile.name });
+
+    expect(getResult).toMatchObject({
+      ok: true,
+      value: {
+        model: profile.config.model,
+        hasApiKey: true,
+        apiKeyPreview: "********",
+      },
+    });
+    expect(getResult).not.toHaveProperty("value.OPENAI_API_KEY");
+    expect(listResult).toMatchObject({
+      ok: true,
+      value: {
+        activeProfileId: profile.id,
+        profiles: [
+          {
+            id: profile.id,
+            config: {
+              hasApiKey: true,
+              apiKeyPreview: "********",
+            },
+          },
+        ],
+      },
+    });
+    expect(listResult).not.toHaveProperty("value.profiles.0.config.OPENAI_API_KEY");
+    expect(updateResult).toMatchObject({
+      ok: true,
+      value: {
+        id: profile.id,
+        config: {
+          hasApiKey: true,
+          apiKeyPreview: "********",
+        },
+      },
+    });
+    expect(updateResult).not.toHaveProperty("value.config.OPENAI_API_KEY");
   });
 
   it("returns an error envelope for malformed config update requests before store access", async () => {

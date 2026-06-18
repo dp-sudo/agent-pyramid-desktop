@@ -106,11 +106,47 @@ describe("CheckpointStore", () => {
     expect(restored).toEqual({
       restoredPaths: ["a.txt"],
       deletedPaths: ["sub/b.txt"],
+      skippedPaths: [],
     });
     expect(await fs.readFile(path.join(workspace, "a.txt"), "utf8")).toBe("v1\n");
     await expect(fs.stat(path.join(workspace, "sub", "b.txt"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("skips restore entries when current content no longer matches the checkpoint after hash", async () => {
+    const store = new CheckpointStore(userDataDir);
+    await store.init();
+    await fs.writeFile(path.join(workspace, "a.txt"), "v1\n", "utf8");
+    await store.beginTurn({
+      threadId: THREAD_ID,
+      turnId: "turn-0",
+      workspace,
+      prompt: "edit",
+      createdAt: "2026-06-12T01:00:00.000Z",
+    });
+    await store.recordFileSnapshot({
+      threadId: THREAD_ID,
+      turnId: "turn-0",
+      workspace,
+      toolName: "edit_file",
+      relativePath: "a.txt",
+      operation: "update",
+      beforeContent: "v0\n",
+      afterContent: "v1\n",
+      beforeSha256: sha256("v0\n"),
+      afterSha256: sha256("v1\n"),
+    });
+    await fs.writeFile(path.join(workspace, "a.txt"), "external\n", "utf8");
+
+    const restored = await store.restoreCode(makeThread(), "turn-0");
+
+    expect(restored).toEqual({
+      restoredPaths: [],
+      deletedPaths: [],
+      skippedPaths: ["a.txt"],
+    });
+    expect(await fs.readFile(path.join(workspace, "a.txt"), "utf8")).toBe("external\n");
   });
 
   it("keeps only the first snapshot for a path in one turn", async () => {
@@ -347,6 +383,8 @@ describe("CheckpointStore", () => {
       );
       const parentPath = path.join(workspace, "drafts");
       const outsideTarget = path.join(outside, "note.md");
+      await fs.mkdir(parentPath, { recursive: true });
+      await fs.writeFile(path.join(parentPath, "note.md"), "changed\n", "utf8");
       const originalMkdir = fs.mkdir.bind(fs);
       const mkdirSpy = vi.spyOn(fs, "mkdir").mockImplementation((async (
         ...args: Parameters<typeof fs.mkdir>

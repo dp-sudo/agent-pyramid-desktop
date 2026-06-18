@@ -252,6 +252,7 @@ describe("checkpoint handlers", () => {
         rewindSession: true,
         restoredPaths: ["a.txt"],
         deletedPaths: [],
+        skippedPaths: [],
         itemsRemoved: 1,
         eventsRemoved: 1,
         checkpointsRemoved: 1,
