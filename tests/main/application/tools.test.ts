@@ -2596,6 +2596,84 @@ describe("application tools", () => {
     }
   });
 
+  it("discards checkpoint snapshots when apply_patch execution rolls back", async () => {
+    const userDataDir = await makeTempDir("apply-patch-checkpoint-discard-userdata-");
+    const workspace = await makeTempDir("apply-patch-checkpoint-discard-workspace-");
+    const failingPath = path.join(workspace, "locked", "new.ts");
+    try {
+      await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "src", "index.ts"), "const value = 1;\n", "utf8");
+      const checkpoint = new CheckpointStore(userDataDir);
+      await checkpoint.init();
+      await checkpoint.beginTurn({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        workspace,
+        prompt: "patch should fail",
+      });
+      const readState = new FileReadStateStore();
+      const registry = new InMemoryToolRegistry([
+        ...createWorkspaceTools(),
+        ...createCodingTools(),
+      ]);
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, readState, checkpoint };
+      await registry.execute(
+        { id: "call-read-index", name: "read_file", arguments: { path: "src/index.ts" } },
+        context,
+      );
+      const realOpen = fs.open.bind(fs);
+      const openSpy = vi.spyOn(fs, "open").mockImplementation((async (
+        ...args: Parameters<typeof fs.open>
+      ) => {
+        const targetPath = args[0];
+        if (typeof targetPath === "string" && path.resolve(targetPath) === failingPath) {
+          throw new Error("simulated write failure");
+        }
+        return realOpen(...args);
+      }) as typeof fs.open);
+
+      try {
+        await expect(
+          registry.execute(
+            {
+              id: "call-partial-patch",
+              name: "apply_patch",
+              arguments: {
+                patch: [
+                  "--- a/src/index.ts",
+                  "+++ b/src/index.ts",
+                  "@@ -1 +1 @@",
+                  "-const value = 1;",
+                  "+const value = 2;",
+                  "--- /dev/null",
+                  "+++ b/locked/new.ts",
+                  "@@ -0,0 +1 @@",
+                  "+created",
+                ].join("\n"),
+              },
+            },
+            context,
+          ),
+        ).rejects.toThrow("simulated write failure");
+      } finally {
+        openSpy.mockRestore();
+      }
+
+      expect(await fs.readFile(path.join(workspace, "src", "index.ts"), "utf8"))
+        .toBe("const value = 1;\n");
+      await expect(fs.access(failingPath)).rejects.toThrow();
+      expect(await checkpoint.list("thread-1")).toEqual([
+        expect.objectContaining({
+          turnId: "turn-1",
+          files: [],
+        }),
+      ]);
+    } finally {
+      await removeTempDir(userDataDir);
+      await removeTempDir(workspace);
+    }
+  });
+
   it("rolls back apply_patch writes when post-write metadata collection fails", async () => {
     const workspace = await makeTempDir("apply-patch-stat-failure-");
     const createdPath = path.join(workspace, "generated", "new.ts");
@@ -4169,6 +4247,112 @@ describe("application tools", () => {
           context,
         ),
       ).rejects.toThrow("git_diff pathspec must be a plain workspace-relative path");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("keeps Git pathspecs workspace-relative when cwd is a subdirectory", async () => {
+    const workspace = await makeTempDir("git-subdir-pathspec-tools-");
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
+      await registry.execute(
+        { id: "git-init-subdir", name: "run_command", arguments: { command: "git init" } },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-email-subdir",
+          name: "run_command",
+          arguments: { command: "git config user.email test@example.test" },
+        },
+        context,
+      );
+      await registry.execute(
+        {
+          id: "git-name-subdir",
+          name: "run_command",
+          arguments: { command: "git config user.name Tester" },
+        },
+        context,
+      );
+      await fs.mkdir(path.join(workspace, "packages", "app"), { recursive: true });
+      await fs.writeFile(path.join(workspace, "packages", "app", "file.txt"), "one\n", "utf8");
+      await fs.writeFile(path.join(workspace, "root.txt"), "root\n", "utf8");
+
+      const status = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "git-status-subdir",
+              name: "git_status",
+              arguments: { cwd: "packages/app", pathspecs: ["packages/app/file.txt"] },
+            },
+            context,
+          )
+        ).content,
+      ) as { command: string[]; entries: Array<{ xy: string; path: string }> };
+      expect(status.command).toEqual(expect.arrayContaining(["--", "file.txt"]));
+      expect(status.entries).toEqual([
+        expect.objectContaining({ xy: "??", path: "file.txt" }),
+      ]);
+
+      const commit = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "git-commit-subdir",
+              name: "git_commit",
+              arguments: {
+                cwd: "packages/app",
+                message: "subdir file",
+                pathspecs: ["packages/app/file.txt"],
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as { add: { command: string; exitCode: number | null }; commit: { exitCode: number | null } };
+      expect(commit.add.command).toBe("git add -- file.txt");
+      expect(commit.add.exitCode).toBe(0);
+      expect(commit.commit.exitCode).toBe(0);
+
+      await fs.writeFile(path.join(workspace, "packages", "app", "file.txt"), "two\n", "utf8");
+      const diff = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "git-diff-subdir",
+              name: "git_diff",
+              arguments: { cwd: "packages/app", pathspecs: ["packages/app/file.txt"] },
+            },
+            context,
+          )
+        ).content,
+      ) as { commandArgs: string[]; stdout: string };
+      expect(diff.commandArgs).toEqual(expect.arrayContaining(["--", "file.txt"]));
+      expect(diff.stdout).toContain("-one");
+      expect(diff.stdout).toContain("+two");
+
+      const log = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "git-log-subdir",
+              name: "git_log",
+              arguments: {
+                cwd: "packages/app",
+                max_count: 1,
+                pathspecs: ["packages/app/file.txt"],
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as { command: string[]; commits: Array<{ subject: string }> };
+      expect(log.command).toEqual(expect.arrayContaining(["--", "file.txt"]));
+      expect(log.commits).toEqual([expect.objectContaining({ subject: "subdir file" })]);
     } finally {
       await removeTempDir(workspace);
     }

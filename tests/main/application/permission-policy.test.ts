@@ -11,9 +11,9 @@ import type { RuntimePermissionRule } from "../../../src/shared/agent-contracts"
 describe("permission-policy", () => {
   it("applies deny over ask over allow regardless of rule order", () => {
     const rules: RuntimePermissionRule[] = [
-      { id: "allow-tests", tool: "command", pattern: "npm test:*", effect: "allow" },
-      { id: "deny-tests", tool: "command", pattern: "npm test:*", effect: "deny" },
-      { id: "ask-tests", tool: "command", pattern: "npm test:*", effect: "ask" },
+      { id: "allow-tests", tool: "command", pattern: "run_command command=\"npm test\":*", effect: "allow" },
+      { id: "deny-tests", tool: "command", pattern: "run_command command=\"npm test\":*", effect: "deny" },
+      { id: "ask-tests", tool: "command", pattern: "run_command command=\"npm test\":*", effect: "ask" },
     ];
 
     expect(evaluatePermission({
@@ -28,16 +28,46 @@ describe("permission-policy", () => {
       toolName: "run_command",
       args: { command: " npm   test -- --runInBand " },
       rules: [
-        { id: "test-prefix", tool: "command", pattern: "npm test*", effect: "allow" },
+        { id: "test-prefix", tool: "command", pattern: "run_command command=\"npm test*", effect: "allow" },
       ],
     })).toBe("allow");
+  });
+
+  it("keeps legacy bare command rules matching structured command candidates", () => {
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: { command: "npm test -- tests/main/application/permission-policy.test.ts" },
+      rules: [
+        { id: "legacy-prefix", tool: "command", pattern: "npm test:*", effect: "allow" },
+      ],
+    })).toBe("allow");
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: { command: "npm test && npm run build" },
+      rules: [
+        { id: "legacy-prefix", tool: "command", pattern: "npm test:*", effect: "allow" },
+      ],
+    })).toBe("none");
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: { command: "npm test" },
+      rules: [
+        {
+          id: "legacy-exact",
+          tool: "command",
+          pattern: "npm test",
+          effect: "deny",
+          match: "exact",
+        },
+      ],
+    })).toBe("deny");
   });
 
   it("keeps command prefix scopes from covering appended shell operators", () => {
     const prefixRule: RuntimePermissionRule = {
       id: "test-prefix",
       tool: "command",
-      pattern: "npm test:*",
+      pattern: "run_command command=\"npm test\":*",
       effect: "allow",
     };
 
@@ -68,6 +98,50 @@ describe("permission-policy", () => {
         rules: [prefixRule],
       })).toBe("none");
     }
+  });
+
+  it("keeps structured command prefix scopes inside the selected execution context", () => {
+    const prefixRule: RuntimePermissionRule = {
+      id: "test-prefix",
+      tool: "command",
+      pattern: "run_command command=\"npm test\":* cwd=packages/app",
+      effect: "allow",
+    };
+
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: {
+        command: "npm test -- tests/main/application/permission-policy.test.ts",
+        cwd: "packages/app",
+      },
+      rules: [prefixRule],
+    })).toBe("allow");
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: { command: "npm test -- tests/main/application/permission-policy.test.ts" },
+      rules: [prefixRule],
+    })).toBe("none");
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: {
+        command: "npm test -- tests/main/application/permission-policy.test.ts",
+        cwd: "packages/other",
+      },
+      rules: [prefixRule],
+    })).toBe("none");
+    expect(evaluatePermission({
+      toolName: "shell_command",
+      args: {
+        command: "npm test -- tests/main/application/permission-policy.test.ts",
+        cwd: "packages/app",
+      },
+      rules: [prefixRule],
+    })).toBe("none");
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: { command: "npm test && npm run build", cwd: "packages/app" },
+      rules: [prefixRule],
+    })).toBe("none");
   });
 
   it("matches workspace write path globs", () => {
@@ -107,6 +181,70 @@ describe("permission-policy", () => {
     })).toBe("deny");
   });
 
+  it("requires allow rules to cover every apply_patch target path", () => {
+    const patch = [
+      "--- a/src/main/old.ts",
+      "+++ b/src/main/new.ts",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "--- a/docs/old.md",
+      "+++ b/docs/new.md",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    expect(evaluatePermission({
+      toolName: "apply_patch",
+      args: { patch },
+      rules: [
+        { id: "src", tool: "write", pattern: "src/**/*.ts", effect: "allow" },
+      ],
+    })).toBe("none");
+    expect(evaluatePermission({
+      toolName: "apply_patch",
+      args: { patch },
+      rules: [
+        { id: "src", tool: "write", pattern: "src/**/*.ts", effect: "allow" },
+        { id: "docs", tool: "write", pattern: "docs/*.md", effect: "allow" },
+      ],
+    })).toBe("allow");
+  });
+
+  it("lets ask or deny rules override multi-target apply_patch allow coverage", () => {
+    const patch = [
+      "--- a/src/main/old.ts",
+      "+++ b/src/main/new.ts",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "--- a/docs/old.md",
+      "+++ b/docs/new.md",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    expect(evaluatePermission({
+      toolName: "apply_patch",
+      args: { patch },
+      rules: [
+        { id: "src", tool: "write", pattern: "src/**/*.ts", effect: "allow" },
+        { id: "docs", tool: "write", pattern: "docs/*.md", effect: "ask" },
+      ],
+    })).toBe("ask");
+    expect(evaluatePermission({
+      toolName: "apply_patch",
+      args: { patch },
+      rules: [
+        { id: "src", tool: "write", pattern: "src/**/*.ts", effect: "allow" },
+        { id: "docs-ask", tool: "write", pattern: "docs/*.md", effect: "ask" },
+        { id: "docs-deny", tool: "write", pattern: "docs/*.md", effect: "deny" },
+      ],
+    })).toBe("deny");
+  });
+
   it("extracts apply_patch targets with spaces, quotes, and C-style escapes", () => {
     const utf8Name = Buffer.from([0xe6, 0xb5, 0x8b, 0xe8, 0xaf, 0x95]).toString("utf8");
     const patch = [
@@ -138,6 +276,15 @@ describe("permission-policy", () => {
       rules: [
         { id: "space-path", tool: "write", pattern: "src/My File.ts", effect: "allow" },
       ],
+    })).toBe("none");
+    expect(evaluatePermission({
+      toolName: "apply_patch",
+      args: { patch },
+      rules: [
+        { id: "space-path", tool: "write", pattern: "src/My File.ts", effect: "allow" },
+        { id: "quote-path", tool: "write", pattern: "src/quote\"name.ts", effect: "allow" },
+        { id: "utf8-path", tool: "write", pattern: `src/${utf8Name}.ts`, effect: "allow" },
+      ],
     })).toBe("allow");
   });
 
@@ -167,7 +314,7 @@ describe("permission-policy", () => {
       toolName: "run_command",
       args: { command: "npm run build" },
       rules: [
-        { id: "tests", tool: "command", pattern: "npm test*", effect: "allow" },
+        { id: "tests", tool: "command", pattern: "run_command command=\"npm test*", effect: "allow" },
       ],
     })).toBe("none");
     expect(evaluatePermission({
@@ -180,9 +327,29 @@ describe("permission-policy", () => {
   });
 
   it("builds candidates only for command and write calls with matching arguments", () => {
-    expect(buildPermissionCandidate("shell_command", { command: "git status" })).toEqual({
+    expect(buildPermissionCandidate("run_command", {
+      command: "git status",
+      cwd: "packages/app",
+    })).toEqual({
       tool: "command",
-      value: "git status",
+      value: "run_command command=\"git status\" cwd=packages/app",
+    });
+    expect(buildPermissionCandidate("shell_command", {
+      command: "git status",
+      shell: "bash",
+      shell_path: "/bin/bash",
+      shell_args: ["-lc", "{command}"],
+      cwd: "packages/app",
+    })).toEqual({
+      tool: "command",
+      value: "shell_command command=\"git status\" cwd=packages/app shell=bash shell_path=/bin/bash shell_args=[\"-lc\",\"{command}\"]",
+    });
+    expect(buildPermissionCandidate("start_command_session", {
+      command: "npm run dev",
+      cwd: "packages/app",
+    })).toEqual({
+      tool: "command",
+      value: "start_command_session command=\"npm run dev\" cwd=packages/app",
     });
     expect(buildPermissionCandidate("edit_file", { path: "src\\main\\index.ts" })).toEqual({
       tool: "write",
@@ -221,7 +388,15 @@ describe("permission-policy", () => {
       input: "q",
     })).toEqual({
       tool: "command",
-      value: "write_command_session:session-1",
+      value: "write_command_session:session-1 input=\"q\" newline=lf",
+    });
+    expect(buildPermissionCandidate("write_command_session", {
+      session_id: "session-1",
+      input: "q",
+      newline: false,
+    })).toEqual({
+      tool: "command",
+      value: "write_command_session:session-1 input=\"q\" newline=none",
     });
     expect(evaluatePermission({
       toolName: "run_tests",
@@ -272,6 +447,68 @@ describe("permission-policy", () => {
     expect(buildPermissionCandidate("mcp__bad___echo", {})).toBeNull();
     expect(buildPermissionCandidate("mcp__bad__echo_", {})).toBeNull();
     expect(buildPermissionCandidate("write_command_session", { input: "q" })).toBeNull();
+    expect(buildPermissionCandidate("write_command_session", { session_id: "session-1" })).toBeNull();
+  });
+
+  it("scopes write_command_session permission to the exact stdin payload", () => {
+    const rules: RuntimePermissionRule[] = [
+      {
+        id: "allow-q",
+        tool: "command",
+        pattern: "write_command_session:session-1 input=\"q\" newline=lf",
+        effect: "allow",
+        match: "exact",
+      },
+    ];
+
+    expect(evaluatePermission({
+      toolName: "write_command_session",
+      args: { session_id: "session-1", input: "q" },
+      rules,
+    })).toBe("allow");
+    expect(evaluatePermission({
+      toolName: "write_command_session",
+      args: { session_id: "session-1", input: "quit" },
+      rules,
+    })).toBe("none");
+    expect(evaluatePermission({
+      toolName: "write_command_session",
+      args: { session_id: "session-1", input: "q", newline: false },
+      rules,
+    })).toBe("none");
+  });
+
+  it("scopes shell-like command permissions to tool and cwd context", () => {
+    const rules: RuntimePermissionRule[] = [
+      {
+        id: "allow-run-command-tests",
+        tool: "command",
+        pattern: "run_command command=\"npm test\" cwd=packages/app",
+        effect: "allow",
+        match: "exact",
+      },
+    ];
+
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: { command: "npm test", cwd: "packages/app" },
+      rules,
+    })).toBe("allow");
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: { command: "npm test" },
+      rules,
+    })).toBe("none");
+    expect(evaluatePermission({
+      toolName: "shell_command",
+      args: { command: "npm test", cwd: "packages/app" },
+      rules,
+    })).toBe("none");
+    expect(evaluatePermission({
+      toolName: "run_command",
+      args: { command: "npm test", cwd: "packages/other" },
+      rules,
+    })).toBe("none");
   });
 
   it("evaluates MCP facade call permission rules against the selected target tool", () => {
@@ -307,7 +544,7 @@ describe("permission-policy", () => {
         {
           id: "exact-test",
           tool: "command",
-          pattern: "npm test -- --name file?.ts",
+          pattern: "run_command command=\"npm test -- --name file?.ts\"",
           effect: "allow",
           match: "exact",
         },
@@ -320,7 +557,7 @@ describe("permission-policy", () => {
         {
           id: "exact-test",
           tool: "command",
-          pattern: "npm test -- --name file?.ts",
+          pattern: "run_command command=\"npm test -- --name file?.ts\"",
           effect: "allow",
           match: "exact",
         },

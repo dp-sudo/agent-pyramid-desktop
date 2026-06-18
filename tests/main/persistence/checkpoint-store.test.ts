@@ -157,6 +157,59 @@ describe("CheckpointStore", () => {
     expect((await store.list(THREAD_ID))[0].files).toHaveLength(1);
   });
 
+  it("discards selected file snapshots from a turn without deleting the checkpoint", async () => {
+    const store = new CheckpointStore(userDataDir);
+    await store.init();
+    await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+    await fs.writeFile(path.join(workspace, "src", "a.ts"), "a0\n", "utf8");
+    await store.beginTurn({
+      threadId: THREAD_ID,
+      turnId: "turn-0",
+      workspace,
+      prompt: "partial failure",
+      createdAt: "2026-06-12T01:00:00.000Z",
+    });
+    await store.recordFileSnapshot({
+      threadId: THREAD_ID,
+      turnId: "turn-0",
+      workspace,
+      toolName: "apply_patch",
+      relativePath: "src/a.ts",
+      operation: "update",
+      beforeContent: "a0\n",
+      afterContent: "a1\n",
+      beforeSha256: sha256("a0\n"),
+      afterSha256: sha256("a1\n"),
+    });
+    await store.recordFileSnapshot({
+      threadId: THREAD_ID,
+      turnId: "turn-0",
+      workspace,
+      toolName: "apply_patch",
+      relativePath: "src/b.ts",
+      operation: "create",
+      beforeContent: null,
+      afterContent: "b1\n",
+      beforeSha256: null,
+      afterSha256: sha256("b1\n"),
+    });
+
+    await expect(store.discardFileSnapshots({
+      threadId: THREAD_ID,
+      turnId: "turn-0",
+      workspace: path.join(workspace, "..", path.basename(workspace)),
+      relativePaths: ["./src/a.ts", "src/missing.ts"],
+    })).resolves.toBe(1);
+
+    const checkpoints = await store.list(THREAD_ID);
+    expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0]).toMatchObject({
+      turnId: "turn-0",
+      prompt: "partial failure",
+      files: [{ path: "src/b.ts", operation: "create" }],
+    });
+  });
+
   it("finds the latest same-workspace file snapshot for restart-safe rollback", async () => {
     const store = new CheckpointStore(userDataDir);
     await store.init();

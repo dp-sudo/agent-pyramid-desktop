@@ -3311,7 +3311,7 @@ describe("AgentRuntime", () => {
     expect(preferences.permissionRules).toEqual([
       expect.objectContaining({
         tool: "command",
-        pattern: command,
+        pattern: `run_command command=${JSON.stringify(command)}`,
         effect: "allow",
         match: "exact",
         scope: { kind: "workspace", workspace: "/workspace" },

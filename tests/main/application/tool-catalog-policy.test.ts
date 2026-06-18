@@ -249,7 +249,7 @@ describe("ToolPolicyService", () => {
       runtimePreferences: {
         ...DEFAULT_RUNTIME_PREFERENCES,
         permissionRules: [
-          { id: "allow-tests", tool: "command", pattern: "npm:*", effect: "allow" },
+          { id: "allow-tests", tool: "command", pattern: "run_command command=\"npm\":*", effect: "allow" },
         ],
       },
       isToolAvailable: true,
@@ -261,7 +261,7 @@ describe("ToolPolicyService", () => {
       runtimePreferences: {
         ...DEFAULT_RUNTIME_PREFERENCES,
         permissionRules: [
-          { id: "allow-tests", tool: "command", pattern: "npm:*", effect: "allow" },
+          { id: "allow-tests", tool: "command", pattern: "run_command command=\"npm\":*", effect: "allow" },
         ],
       },
       isToolAvailable: true,
@@ -273,7 +273,7 @@ describe("ToolPolicyService", () => {
       runtimePreferences: {
         ...DEFAULT_RUNTIME_PREFERENCES,
         permissionRules: [
-          { id: "allow-tests", tool: "command", pattern: "npm test:*", effect: "allow" },
+          { id: "allow-tests", tool: "command", pattern: "run_command command=\"npm test\":*", effect: "allow" },
         ],
       },
       isToolAvailable: true,
@@ -352,7 +352,7 @@ describe("ToolPolicyService", () => {
         {
           id: "allow-tests-workspace",
           tool: "command",
-          pattern: "npm test",
+          pattern: "run_command command=\"npm test\"",
           effect: "allow",
           match: "exact",
           scope: { kind: "workspace", workspace: "/workspace" },
@@ -392,11 +392,17 @@ describe("ToolPolicyService", () => {
       runtimePreferences: {
         ...DEFAULT_RUNTIME_PREFERENCES,
         permissionRules: [
-          { id: "deny-tests", tool: "command", pattern: "npm test", effect: "deny" },
+          { id: "deny-tests", tool: "command", pattern: "run_command command=\"npm test\"", effect: "deny" },
         ],
       },
       scopedPermissionRules: [
-        { id: "session-allow-tests", tool: "command", pattern: "npm test", effect: "allow", match: "exact" },
+        {
+          id: "session-allow-tests",
+          tool: "command",
+          pattern: "run_command command=\"npm test\"",
+          effect: "allow",
+          match: "exact",
+        },
       ],
       isToolAvailable: true,
     })).toBe("deny");

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AssistantMarkdown,
   closeDanglingCodeFence,
+  closeDanglingInlineBackticks,
   countCodeLines,
   extractCodeText,
   isCodeBlockCollapsedByDefault,
@@ -150,10 +151,10 @@ describe("AssistantMarkdown", () => {
     );
 
     expect(isCodeBlockCollapsedByDefault(code, 3)).toBe(true);
-    expect(isCodeBlockCollapsedByDefault(code, 4)).toBe(true);
+    expect(isCodeBlockCollapsedByDefault(code, 4)).toBe(false);
     expect(collapsedHtml).toContain("class=\"ds-code-block is-collapsed\"");
-    expect(openHtml).toContain("class=\"ds-code-block is-collapsed\"");
-    expect(openHtml).toContain("ds-code-block-collapse-note");
+    expect(openHtml).not.toContain("class=\"ds-code-block is-collapsed\"");
+    expect(openHtml).not.toContain("ds-code-block-collapse-note");
   });
 
   it("counts code block lines without treating a trailing newline as an extra line", () => {
@@ -202,12 +203,26 @@ describe("AssistantMarkdown", () => {
     const html = renderToStaticMarkup(<AssistantMarkdown text={text} streaming />);
 
     expect(closeDanglingCodeFence(text)).toBe(`${text}\n\`\`\``);
+    expect(closeDanglingInlineBackticks(text)).toBe(text);
     expect(html).toContain("class=\"ds-code-block\"");
     expect(html).toContain("<span>tsx</span>");
     // The dangling fence is closed before parsing, so the body is highlighted
     // and tokens render as spans rather than raw text.
     expect(html).toContain("hljs-keyword");
     expect(html).toContain("hljs-literal");
+  });
+
+  it("repairs dangling inline backticks without counting fenced code", () => {
+    expect(closeDanglingInlineBackticks("Use `src/main")).toBe("Use `src/main`");
+    expect(closeDanglingInlineBackticks([
+      "```txt",
+      "literal ` backtick",
+      "```",
+    ].join("\n"))).toBe([
+      "```txt",
+      "literal ` backtick",
+      "```",
+    ].join("\n"));
   });
 
   it("normalizes markdown links to the same safe navigation surface as Electron", () => {
