@@ -184,6 +184,7 @@ export const RUNTIME_TOOL_NAMES = [
   "diagnose_file",
   "list_skills",
   "run_skill",
+  "request_user_input",
   "create_plan",
   "update_goal",
 ] as const;
@@ -208,6 +209,7 @@ export const RUNTIME_READ_ONLY_TOOL_NAMES = [
   "diagnose_file",
   "list_skills",
   "run_skill",
+  "request_user_input",
 ] as const satisfies readonly RuntimeToolName[];
 export type RuntimeReadOnlyToolName = (typeof RUNTIME_READ_ONLY_TOOL_NAMES)[number];
 
@@ -518,6 +520,7 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     diagnose_file: true,
     list_skills: true,
     run_skill: true,
+    request_user_input: true,
     create_plan: true,
     update_goal: true,
   },
@@ -563,6 +566,7 @@ export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferenc
     diagnose_file: false,
     list_skills: true,
     run_skill: true,
+    request_user_input: true,
     create_plan: true,
     update_goal: true,
   },
@@ -949,9 +953,12 @@ export interface UserInputItem {
   id: string;
   threadId: string;
   turnId: string;
+  userInputId?: string;
   question: string;
   options?: string[];
   answer?: string;
+  cancelled?: boolean;
+  resolvedAt?: string;
   createdAt: string;
 }
 
@@ -1202,6 +1209,24 @@ export interface ApprovalRespondResponse {
   decision: "allow" | "deny";
   scope?: ApprovalDecisionScope;
   accepted: boolean;
+  reason?: "not_pending";
+}
+
+// ============================================================================
+// User input
+// ============================================================================
+
+export interface UserInputRespondRequest {
+  userInputId: string;
+  answer?: string;
+  cancelled?: boolean;
+}
+
+export interface UserInputRespondResponse {
+  userInputId: string;
+  accepted: boolean;
+  answer?: string;
+  cancelled?: boolean;
   reason?: "not_pending";
 }
 
@@ -1538,9 +1563,12 @@ export function isItem(value: unknown): value is Item {
         isOptionalIsoTimestampString(v.resolvedAt);
     case "user_input":
       return hasString(v, "turnId") &&
+        isOptionalString(v.userInputId) &&
         hasString(v, "question") &&
         isOptionalStringArray(v.options) &&
-        isOptionalString(v.answer);
+        isOptionalString(v.answer) &&
+        isOptionalBoolean(v.cancelled) &&
+        isOptionalIsoTimestampString(v.resolvedAt);
     case "plan":
       return hasString(v, "turnId") &&
         isOptionalString(v.title) &&

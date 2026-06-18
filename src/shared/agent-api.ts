@@ -42,6 +42,8 @@ import type {
   ThreadUpdatePatch,
   TurnRecord,
   TurnStartRequest,
+  UserInputRespondRequest,
+  UserInputRespondResponse,
   UsageDailyBucket,
   UsageDailyRequest,
   WorkspacePickDirectoryResponse,
@@ -98,6 +100,11 @@ export interface AgentDesktopApi {
     respond(
       request: ApprovalRespondRequest,
     ): Promise<IpcResult<ApprovalRespondResponse>>;
+  };
+  userInput: {
+    respond(
+      request: UserInputRespondRequest,
+    ): Promise<IpcResult<UserInputRespondResponse>>;
   };
   goals: {
     update(request: GoalUpdateRequest): Promise<IpcResult<ThreadRecord>>;

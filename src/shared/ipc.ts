@@ -22,6 +22,9 @@ export const SSE_PUSH_CHANNEL = "sse:push";
 // Approvals
 export const APPROVAL_RESPOND_CHANNEL = "approval:respond";
 
+// User input
+export const USER_INPUT_RESPOND_CHANNEL = "user-input:respond";
+
 // Goals
 export const GOAL_UPDATE_CHANNEL = "goal:update";
 
@@ -93,6 +96,7 @@ export const RENDERER_TO_MAIN_CHANNELS = [
   SSE_SUBSCRIBE_GLOBAL_CHANNEL,
   SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
   APPROVAL_RESPOND_CHANNEL,
+  USER_INPUT_RESPOND_CHANNEL,
   GOAL_UPDATE_CHANNEL,
   ATTACHMENT_CREATE_CHANNEL,
   ATTACHMENT_GET_CHANNEL,
