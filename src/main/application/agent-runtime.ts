@@ -71,6 +71,8 @@ import type {
   RuntimeErrorEvent,
   RuntimePermissionRule,
   TerminalTurnStatus,
+  UserInputRespondRequest,
+  UserInputRespondResponse,
   UserItem,
 } from "../../shared/agent-contracts.js";
 import { normalizeSkillId, type Skill, type SkillTurnResolution } from "../../shared/skills/index.js";
@@ -320,6 +322,7 @@ export class AgentRuntime {
     turn.status = "interrupted";
     await this.toolExecutor.interruptActiveToolExecutionsForTurn(turn);
     await this.toolExecutor.resolvePendingApprovalsForTurn(turnId, "deny");
+    await this.toolExecutor.resolvePendingUserInputsForTurn(turnId);
     this.deps.pool.cancel(turn.threadId);
     const item: SystemItem = {
       kind: "system",
@@ -349,6 +352,10 @@ export class AgentRuntime {
 
   respondApproval(approval: ApprovalRespondRequest): ApprovalRespondResponse {
     return this.toolExecutor.respondApproval(approval);
+  }
+
+  respondUserInput(request: UserInputRespondRequest): UserInputRespondResponse {
+    return this.toolExecutor.respondUserInput(request);
   }
 
   async updateThreadGoal(
@@ -601,7 +608,8 @@ export class AgentRuntime {
     if (!tool?.metadata?.isReadOnly) return false;
     // run_skill can dispatch an isolated subagent LLM loop; keep parent and child
     // model calls serialized on the thread-bound worker.
-    return call.name !== "run_skill";
+    // request_user_input suspends the turn for a human response and must stay ordered.
+    return call.name !== "run_skill" && call.name !== "request_user_input";
   }
 
   private async appendBudgetExhaustedToolItems(
@@ -1082,7 +1090,13 @@ export class AgentRuntime {
     return this.deps.registry
       .listDefinitions()
       .filter((definition) => {
-        if (!allowed.has(definition.name) || definition.name === "run_skill") return false;
+        if (
+          !allowed.has(definition.name) ||
+          definition.name === "run_skill" ||
+          definition.name === "request_user_input"
+        ) {
+          return false;
+        }
         const tool = this.deps.registry.getTool(definition.name);
         return Boolean(tool?.metadata?.isReadOnly);
       })

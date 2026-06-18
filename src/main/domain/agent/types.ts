@@ -69,6 +69,16 @@ export interface AgentRuntimePreferencesCapability {
   runtimePreferences?: RuntimePreferences;
 }
 
+export interface AgentUserInputCapability {
+  requestUserInput?(request: {
+    question: string;
+    options?: string[];
+  }): Promise<{
+    answer?: string;
+    cancelled?: boolean;
+  }>;
+}
+
 export interface AgentReadState {
   get(filePath: string): {
     content: string;
@@ -218,7 +228,8 @@ export interface AgentSkillToolContext
 export interface AgentToolContext
   extends AgentWriteWorkspaceToolContext,
     AgentCommandToolContext,
-    AgentSkillToolContext {}
+    AgentSkillToolContext,
+    AgentUserInputCapability {}
 
 export type AgentUsage = TokenUsage;
 
@@ -270,7 +281,7 @@ export interface AgentTool {
   metadata?: {
     isReadOnly?: boolean;
     isDestructive?: boolean;
-    category?: "workspace" | "plan" | "goal" | "command" | "skill";
+    category?: "workspace" | "plan" | "goal" | "command" | "skill" | "interaction";
   };
   preview?(input: Record<string, unknown>, context: AgentToolContext): Promise<unknown>;
   execute(input: Record<string, unknown>, context: AgentToolContext): Promise<string | AgentToolResult>;

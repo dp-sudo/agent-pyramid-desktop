@@ -15,6 +15,7 @@ import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
 import { createCodingTools } from "./application/tools/coding-tools.js";
 import { createCommandTools, shutdownCommandSessions } from "./application/tools/command-tools.js";
 import { createSkillTools } from "./application/tools/skill-tools.js";
+import { createUserInputTools } from "./application/tools/user-input-tools.js";
 import { InMemoryToolRegistry } from "./application/tools/in-memory-tool-registry.js";
 import { SkillService } from "./skills/skill-service.js";
 import { installContentSecurityPolicy } from "./infrastructure/content-security-policy.js";
@@ -26,6 +27,7 @@ import { registerThreadHandlers } from "./ipc/threads-handlers.js";
 import { registerTurnHandlers } from "./ipc/turns-handlers.js";
 import { registerSseHandlers } from "./ipc/sse-handlers.js";
 import { registerApprovalHandlers } from "./ipc/approvals-handlers.js";
+import { registerUserInputHandlers } from "./ipc/user-input-handlers.js";
 import { registerAttachmentHandlers } from "./ipc/attachments-handlers.js";
 import { registerGoalHandlers } from "./ipc/goals-handlers.js";
 import { registerUsageHandlers } from "./ipc/usage-handlers.js";
@@ -86,6 +88,9 @@ for (const tool of createCommandTools()) {
   registry.register(tool);
 }
 for (const tool of createSkillTools({ skillService })) {
+  registry.register(tool);
+}
+for (const tool of createUserInputTools()) {
   registry.register(tool);
 }
 for (const tool of createGoalTools({
@@ -170,6 +175,7 @@ app.whenReady().then(async () => {
   registerTurnHandlers(runtime, store);
   registerSseHandlers(bus);
   registerApprovalHandlers(runtime);
+  registerUserInputHandlers(runtime);
   registerAttachmentHandlers(attachmentStore);
   registerGoalHandlers(runtime);
   registerUsageHandlers(store);

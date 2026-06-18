@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentToolCall, AgentToolResult } from "../domain/agent/types.js";
+import type { AgentToolCall, AgentToolResult, AgentUserInputCapability } from "../domain/agent/types.js";
 import type { ToolRegistry } from "../domain/agent/ports.js";
 import { JsonlThreadStore } from "../persistence/index.js";
 import { CheckpointStore } from "../persistence/checkpoint-store.js";
@@ -11,6 +11,7 @@ import {
   READ_ONLY_TOOL_REPEAT_SUPPRESSION_THRESHOLD,
 } from "./constants.js";
 import { ApprovalCoordinator } from "./approval-coordinator.js";
+import { UserInputCoordinator } from "./user-input-coordinator.js";
 import { isSamePath } from "./path-utils.js";
 import { buildExactPermissionRuleForCall } from "./permission-policy.js";
 import { ToolCatalogService, isCommandToolName } from "./tool-catalog.js";
@@ -31,6 +32,8 @@ import type {
   ToolItem,
   ToolProgressStream,
   TurnRecord,
+  UserInputRespondRequest,
+  UserInputRespondResponse,
 } from "../../shared/agent-contracts.js";
 import { isNonNegativeInteger } from "../../shared/agent-contracts.js";
 
@@ -56,6 +59,8 @@ type SubagentSkillExecutor = (
   modelConfig: ModelConfig,
   signal: AbortSignal,
 ) => Promise<AgentToolResult> | null;
+
+type UserInputRequest = Parameters<NonNullable<AgentUserInputCapability["requestUserInput"]>>[0];
 
 interface ScopedApprovalGrant {
   threadId: string;
@@ -87,6 +92,7 @@ export class ToolCallExecutor {
   private readonly readOnlyToolRepeatCounts = new Map<string, Map<string, number>>();
   private readonly toolPolicy: ToolPolicyService;
   private readonly approvals: ApprovalCoordinator;
+  private readonly userInputs: UserInputCoordinator;
   private readonly scopedApprovalGrants: ScopedApprovalGrant[] = [];
 
   constructor(private readonly deps: ToolCallExecutorDeps) {
@@ -96,14 +102,26 @@ export class ToolCallExecutor {
       bus: deps.bus,
       previewProvider: (call, turn, thread) => this.buildApprovalPreview(call, turn, thread),
     });
+    this.userInputs = new UserInputCoordinator({
+      store: deps.store,
+      bus: deps.bus,
+    });
   }
 
   respondApproval(approval: ApprovalRespondRequest): ApprovalRespondResponse {
     return this.approvals.respond(approval);
   }
 
+  respondUserInput(request: UserInputRespondRequest): UserInputRespondResponse {
+    return this.userInputs.respond(request);
+  }
+
   resolvePendingApprovalsForTurn(turnId: string, decision: "allow" | "deny"): Promise<void> {
     return this.approvals.resolvePendingForTurn(turnId, decision);
+  }
+
+  resolvePendingUserInputsForTurn(turnId: string): Promise<void> {
+    return this.userInputs.resolvePendingForTurn(turnId);
   }
 
   async execute(
@@ -296,6 +314,7 @@ export class ToolCallExecutor {
         commandDefaults: runtimePreferences.command,
         runtimePreferences,
         reportProgress,
+        requestUserInput: (request: UserInputRequest) => this.userInputs.requestUserInput(turn, request),
         readState: this.deps.readState,
         fileHistory: this.deps.fileHistory,
         checkpoint: this.deps.checkpointStore,
@@ -390,6 +409,7 @@ export class ToolCallExecutor {
       }
       this.emitToolItemUpdated(turn, execution.item);
     }
+    await this.resolvePendingUserInputsForTurn(turn.id);
     if (!await waitForInterruptedToolExecutions(settling)) {
       this.deps.reportRuntimeError(turn, "internal", "Timed out waiting for interrupted tools to settle.");
     }
