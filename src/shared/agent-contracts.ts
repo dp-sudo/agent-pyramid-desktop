@@ -464,6 +464,61 @@ export interface RuntimePreferencesUpdate {
   mcpServers?: McpServerConfig[];
 }
 
+export const MCP_SECRET_VALUE_MASK = "********";
+const MCP_SECRET_KEY_PATTERN =
+  /(?:authorization|bearer|token|secret|password|passwd|credential|api[_-]?key|access[_-]?key|refresh[_-]?key|private[_-]?key|x-api-key|api-key|key)/i;
+
+export function isMcpSecretRecordKey(key: string): boolean {
+  return MCP_SECRET_KEY_PATTERN.test(key);
+}
+
+export function redactMcpStringRecordForRenderer(
+  record: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [
+      key,
+      value && isMcpSecretRecordKey(key) ? MCP_SECRET_VALUE_MASK : value,
+    ]),
+  );
+}
+
+export function redactMcpServerConfigForRenderer(
+  server: McpServerConfig,
+): McpServerConfig {
+  return {
+    ...server,
+    args: [...server.args],
+    env: redactMcpStringRecordForRenderer(server.env),
+    headers: redactMcpStringRecordForRenderer(server.headers),
+    readOnlyTools: [...server.readOnlyTools],
+  };
+}
+
+export function toRendererRuntimePreferences(
+  preferences: RuntimePreferences,
+): RuntimePreferences {
+  return {
+    ...preferences,
+    toolAvailability: {
+      code: { ...preferences.toolAvailability.code },
+      write: { ...preferences.toolAvailability.write },
+    },
+    approvalExperience: { ...preferences.approvalExperience },
+    command: { ...preferences.command },
+    compaction: { ...preferences.compaction },
+    skills: {
+      ...preferences.skills,
+      extraRoots: [...preferences.skills.extraRoots],
+    },
+    permissionRules: preferences.permissionRules.map((rule) => ({
+      ...rule,
+      ...(rule.scope ? { scope: { ...rule.scope } } : {}),
+    })),
+    mcpServers: preferences.mcpServers.map(redactMcpServerConfigForRenderer),
+  };
+}
+
 export const DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS = 30_000;
 export const MIN_RUNTIME_COMMAND_TIMEOUT_MS = 100;
 export const MAX_RUNTIME_COMMAND_TIMEOUT_MS = 120_000;
@@ -1301,41 +1356,41 @@ export interface WriteFileEntry {
 }
 
 export interface WriteListRequest {
-  workspace: string;
+  threadId: string;
   /** Glob substring, case-insensitive. */
   search?: string;
 }
 
 export interface WriteGetRequest {
-  workspace: string;
+  threadId: string;
   path: string;
 }
 
 export interface WritePutRequest {
-  workspace: string;
+  threadId: string;
   path: string;
   content: string;
 }
 
 export interface WriteCreateRequest {
-  workspace: string;
+  threadId: string;
   path: string;
   content?: string;
 }
 
 export interface WriteRenameRequest {
-  workspace: string;
+  threadId: string;
   path: string;
   newPath: string;
 }
 
 export interface WriteDeleteRequest {
-  workspace: string;
+  threadId: string;
   path: string;
 }
 
 export interface WriteCompleteRequest {
-  workspace: string;
+  threadId: string;
   path: string;
   /** Text before the cursor. */
   prefix: string;
