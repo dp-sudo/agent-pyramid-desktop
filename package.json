@@ -58,5 +58,8 @@
     "rehype-highlight": "^7.0.2",
     "vite": "^7.3.5",
     "vitest": "^4.1.8"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
   }
 }
