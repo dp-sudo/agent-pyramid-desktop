@@ -383,15 +383,18 @@ Rules:
 
 - `CheckpointStore.beginTurn()` creates or updates the per-turn record.
 - `CheckpointStore.recordFileSnapshot()` records at most one file snapshot per
-  `turnId + path`; it preserves the earliest snapshot for that file in the
-  selected turn so turn-level code rewind can restore the pre-turn state.
+  `turnId + path`; it preserves the earliest `beforeContent` for that file in
+  the selected turn while updating `afterContent` / `afterSha256` to the latest
+  committed state, so turn-level code rewind can restore the pre-turn state from
+  the final live file content.
 - `CheckpointStore.discardFileSnapshots()` removes selected snapshots for one
   turn/workspace after a coding tool rolls back a failed write, keeping rewind
   and completion evidence aligned to committed mutations.
 - `CheckpointStore.restoreCode()` restores a suffix of turn checkpoints by
   collecting the earliest snapshot for each path from the selected turn forward,
-  then rechecking workspace path and symbolic-link boundaries before every
-  write or delete.
+  then rechecking workspace path, symbolic-link boundaries and the live file's
+  `afterSha256` before every write or delete. Entries whose live content no
+  longer matches are returned as `skippedPaths` instead of being overwritten.
 - `CheckpointStore.latestFileSnapshot()` reads the newest same-thread/workspace
   snapshot for a single path. `rollback_file` uses it only when in-memory file
   history is absent and the live file state still matches the snapshot
@@ -539,6 +542,9 @@ Profile state contract:
 
 - `ModelConfigProfilesState`
 - `ModelConfigProfile`
+- `RendererModelConfig`, `RendererModelConfigProfile`, and
+  `RendererModelConfigProfilesState` are the renderer-facing IPC DTOs. They omit
+  `OPENAI_API_KEY` and expose only `hasApiKey` / `apiKeyPreview`.
 - `ModelConfigUpdate` is a partial update payload; stores merge it with the
   active, default, or existing profile config and persist a complete
   `ModelConfig`.
@@ -564,6 +570,9 @@ Key semantics:
   `ModelConfig` contract. The `userData/config` representation is encrypted via
   the main-process secret codec, and legacy plain-text config files are migrated
   on the next normalized write.
+- `modelConfig.*` IPC responses never return `OPENAI_API_KEY`; the preload and
+  renderer use `RendererModelConfig*` DTOs. Updating a profile may still submit
+  `OPENAI_API_KEY` through `ModelConfigUpdate` when the user enters a new value.
 - Deleting a model profile clears Code/Write default profile ids in
   `runtimePreferences` when they point at the deleted profile, avoiding
   persisted dangling profile references.

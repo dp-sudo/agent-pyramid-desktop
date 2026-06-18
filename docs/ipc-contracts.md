@@ -270,7 +270,9 @@ Notes:
   restoring code, so a missing session boundary cannot partially restore
   workspace files and then fail during transcript truncation.
 - Code rewind still rechecks the live workspace path and symbolic-link boundary
-  before each restore commit.
+  before each restore commit. The success payload includes `skippedPaths` for
+  files whose live content no longer matches the checkpoint `afterSha256`, so
+  rewind does not silently overwrite unrelated external edits.
 
 ### Workspace
 
@@ -333,13 +335,13 @@ Notes:
 
 | Channel | Preload Method | Request | Success Value | Error Codes |
 | --- | --- | --- | --- | --- |
-| `config:model:get` | `modelConfig.get()` | none | `ModelConfig` | `MODEL_CONFIG_GET_FAILED` |
-| `config:model:update` | `modelConfig.update(update)` | `ModelConfigUpdate` | `ModelConfig` | `MODEL_CONFIG_UPDATE_FAILED` |
-| `config:model:profiles:list` | `modelConfig.listProfiles()` | none | `ModelConfigProfilesState` | `MODEL_CONFIG_PROFILES_LIST_FAILED` |
-| `config:model:profiles:create` | `modelConfig.createProfile(request)` | `ModelConfigProfileCreateRequest` | `ModelConfigProfilesState` | `MODEL_CONFIG_PROFILES_CREATE_FAILED` |
-| `config:model:profiles:update` | `modelConfig.updateProfile(request)` | `ModelConfigProfileUpdateRequest` | `ModelConfigProfile` | `MODEL_CONFIG_PROFILES_UPDATE_FAILED` |
-| `config:model:profiles:delete` | `modelConfig.deleteProfile(request)` | `ModelConfigProfileDeleteRequest` | `ModelConfigProfilesState` | `MODEL_CONFIG_PROFILES_DELETE_FAILED` |
-| `config:model:profiles:activate` | `modelConfig.activateProfile(request)` | `ModelConfigProfileActivateRequest` | `ModelConfigProfilesState` | `MODEL_CONFIG_PROFILES_ACTIVATE_FAILED` |
+| `config:model:get` | `modelConfig.get()` | none | `RendererModelConfig` | `MODEL_CONFIG_GET_FAILED` |
+| `config:model:update` | `modelConfig.update(update)` | `ModelConfigUpdate` | `RendererModelConfig` | `MODEL_CONFIG_UPDATE_FAILED` |
+| `config:model:profiles:list` | `modelConfig.listProfiles()` | none | `RendererModelConfigProfilesState` | `MODEL_CONFIG_PROFILES_LIST_FAILED` |
+| `config:model:profiles:create` | `modelConfig.createProfile(request)` | `ModelConfigProfileCreateRequest` | `RendererModelConfigProfilesState` | `MODEL_CONFIG_PROFILES_CREATE_FAILED` |
+| `config:model:profiles:update` | `modelConfig.updateProfile(request)` | `ModelConfigProfileUpdateRequest` | `RendererModelConfigProfile` | `MODEL_CONFIG_PROFILES_UPDATE_FAILED` |
+| `config:model:profiles:delete` | `modelConfig.deleteProfile(request)` | `ModelConfigProfileDeleteRequest` | `RendererModelConfigProfilesState` | `MODEL_CONFIG_PROFILES_DELETE_FAILED` |
+| `config:model:profiles:activate` | `modelConfig.activateProfile(request)` | `ModelConfigProfileActivateRequest` | `RendererModelConfigProfilesState` | `MODEL_CONFIG_PROFILES_ACTIVATE_FAILED` |
 
 Notes:
 
@@ -349,8 +351,11 @@ Notes:
   `userData/config` file; the IPC namespaces stay split so callers only touch
   the section they need.
 - Non-empty `OPENAI_API_KEY` values are encrypted by the main-process config
-  persistence boundary before they are written to `userData/config`; IPC and
-  renderer code still receive the existing plain `ModelConfig` shape.
+  persistence boundary before they are written to `userData/config`.
+- Renderer-facing model config IPC responses always use `RendererModelConfig`
+  shapes: `OPENAI_API_KEY` is omitted, and callers only receive `hasApiKey`
+  plus `apiKeyPreview`. Runtime code still reads the plain in-memory
+  `ModelConfig` from `ModelConfigStore`.
 - Runtime resolves a turn profile by explicit id, Code/Write default profile id
   from `RuntimePreferences`, model match, active profile, then first profile.
 - Deleting a profile also clears Code/Write default profile ids in
