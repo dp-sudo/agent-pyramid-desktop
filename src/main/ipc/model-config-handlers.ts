@@ -23,14 +23,23 @@ import {
   isLlmProtocol,
   isModelReasoningEffort,
   ok,
+  toRendererModelConfig,
+  toRendererModelConfigProfile,
+  toRendererModelConfigProfilesState,
 } from "../../shared/agent-contracts.js";
 import type { ModelConfigStore } from "../persistence/model-config-store.js";
 import { messageOfIpcError as messageOf } from "./ipc-result-handler.js";
 
 export function registerModelConfigHandlers(store: ModelConfigStore): void {
+  /*
+   * Model API keys remain available to main-process runtime code through the
+   * store, but IPC responses cross into renderer memory. Redact every success
+   * payload at this boundary so DevTools or compromised renderer code cannot
+   * read an existing provider secret.
+   */
   ipcMain.handle(MODEL_CONFIG_GET_CHANNEL, async () => {
     try {
-      return ok(await store.get());
+      return ok(toRendererModelConfig(await store.get()));
     } catch (error) {
       return err(IPC_ERROR_CODES.MODEL_CONFIG_GET_FAILED, messageOf(error));
     }
@@ -38,7 +47,9 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
 
   ipcMain.handle(MODEL_CONFIG_UPDATE_CHANNEL, async (_event, update: unknown) => {
     try {
-      return ok(await store.update(parseModelConfigUpdateRequest(update)));
+      return ok(toRendererModelConfig(
+        await store.update(parseModelConfigUpdateRequest(update)),
+      ));
     } catch (error) {
       return err(IPC_ERROR_CODES.MODEL_CONFIG_UPDATE_FAILED, messageOf(error));
     }
@@ -46,7 +57,7 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
 
   ipcMain.handle(MODEL_CONFIG_PROFILES_LIST_CHANNEL, async () => {
     try {
-      return ok(await store.listProfiles());
+      return ok(toRendererModelConfigProfilesState(await store.listProfiles()));
     } catch (error) {
       return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_LIST_FAILED, messageOf(error));
     }
@@ -56,7 +67,9 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
     MODEL_CONFIG_PROFILES_CREATE_CHANNEL,
     async (_event, request: ModelConfigProfileCreateRequest) => {
       try {
-        return ok(await store.createProfile(parseModelConfigProfileCreateRequest(request)));
+        return ok(toRendererModelConfigProfilesState(
+          await store.createProfile(parseModelConfigProfileCreateRequest(request)),
+        ));
       } catch (error) {
         return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_CREATE_FAILED, messageOf(error));
       }
@@ -67,7 +80,9 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
     MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
     async (_event, request: unknown) => {
       try {
-        return ok(await store.updateProfile(parseModelConfigProfileUpdateRequest(request)));
+        return ok(toRendererModelConfigProfile(
+          await store.updateProfile(parseModelConfigProfileUpdateRequest(request)),
+        ));
       } catch (error) {
         return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_UPDATE_FAILED, messageOf(error));
       }
@@ -78,7 +93,9 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
     MODEL_CONFIG_PROFILES_DELETE_CHANNEL,
     async (_event, request: unknown) => {
       try {
-        return ok(await store.deleteProfile(parseModelConfigProfileIdRequest(request).id));
+        return ok(toRendererModelConfigProfilesState(
+          await store.deleteProfile(parseModelConfigProfileIdRequest(request).id),
+        ));
       } catch (error) {
         return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_DELETE_FAILED, messageOf(error));
       }
@@ -89,7 +106,9 @@ export function registerModelConfigHandlers(store: ModelConfigStore): void {
     MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
     async (_event, request: unknown) => {
       try {
-        return ok(await store.setActiveProfile(parseModelConfigProfileIdRequest(request).id));
+        return ok(toRendererModelConfigProfilesState(
+          await store.setActiveProfile(parseModelConfigProfileIdRequest(request).id),
+        ));
       } catch (error) {
         return err(IPC_ERROR_CODES.MODEL_CONFIG_PROFILES_ACTIVATE_FAILED, messageOf(error));
       }

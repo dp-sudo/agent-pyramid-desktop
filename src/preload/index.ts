@@ -59,14 +59,14 @@ import type {
   UsageDailyBucket,
   UsageDailyRequest,
   WorkspacePickDirectoryResponse,
-  ModelConfig,
-  ModelConfigProfile,
   ModelConfigProfileActivateRequest,
   ModelConfigProfileCreateRequest,
   ModelConfigProfileDeleteRequest,
-  ModelConfigProfilesState,
   ModelConfigProfileUpdateRequest,
   ModelConfigUpdate,
+  RendererModelConfig,
+  RendererModelConfigProfile,
+  RendererModelConfigProfilesState,
 } from "../shared/agent-contracts";
 import {
   ATTACHMENT_CREATE_CHANNEL,
@@ -396,47 +396,47 @@ const write = {
 };
 
 const modelConfig = {
-  get(): Promise<IpcResult<ModelConfig>> {
+  get(): Promise<IpcResult<RendererModelConfig>> {
     return ipcRenderer.invoke(MODEL_CONFIG_GET_CHANNEL) as Promise<
-      IpcResult<ModelConfig>
+      IpcResult<RendererModelConfig>
     >;
   },
-  update(update: ModelConfigUpdate): Promise<IpcResult<ModelConfig>> {
+  update(update: ModelConfigUpdate): Promise<IpcResult<RendererModelConfig>> {
     return ipcRenderer.invoke(MODEL_CONFIG_UPDATE_CHANNEL, update) as Promise<
-      IpcResult<ModelConfig>
+      IpcResult<RendererModelConfig>
     >;
   },
-  listProfiles(): Promise<IpcResult<ModelConfigProfilesState>> {
+  listProfiles(): Promise<IpcResult<RendererModelConfigProfilesState>> {
     return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_LIST_CHANNEL) as Promise<
-      IpcResult<ModelConfigProfilesState>
+      IpcResult<RendererModelConfigProfilesState>
     >;
   },
   createProfile(
     request: ModelConfigProfileCreateRequest,
-  ): Promise<IpcResult<ModelConfigProfilesState>> {
+  ): Promise<IpcResult<RendererModelConfigProfilesState>> {
     return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_CREATE_CHANNEL, request) as Promise<
-      IpcResult<ModelConfigProfilesState>
+      IpcResult<RendererModelConfigProfilesState>
     >;
   },
   updateProfile(
     request: ModelConfigProfileUpdateRequest,
-  ): Promise<IpcResult<ModelConfigProfile>> {
+  ): Promise<IpcResult<RendererModelConfigProfile>> {
     return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_UPDATE_CHANNEL, request) as Promise<
-      IpcResult<ModelConfigProfile>
+      IpcResult<RendererModelConfigProfile>
     >;
   },
   deleteProfile(
     request: ModelConfigProfileDeleteRequest,
-  ): Promise<IpcResult<ModelConfigProfilesState>> {
+  ): Promise<IpcResult<RendererModelConfigProfilesState>> {
     return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_DELETE_CHANNEL, request) as Promise<
-      IpcResult<ModelConfigProfilesState>
+      IpcResult<RendererModelConfigProfilesState>
     >;
   },
   activateProfile(
     request: ModelConfigProfileActivateRequest,
-  ): Promise<IpcResult<ModelConfigProfilesState>> {
+  ): Promise<IpcResult<RendererModelConfigProfilesState>> {
     return ipcRenderer.invoke(MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL, request) as Promise<
-      IpcResult<ModelConfigProfilesState>
+      IpcResult<RendererModelConfigProfilesState>
     >;
   },
 };

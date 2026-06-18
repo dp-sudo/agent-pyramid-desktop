@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
@@ -59,6 +60,7 @@ export interface CheckpointSnapshotInput {
 export interface CheckpointRestoreResult {
   restoredPaths: string[];
   deletedPaths: string[];
+  skippedPaths: string[];
 }
 
 export interface CheckpointFileSnapshotLookupInput {
@@ -145,7 +147,12 @@ export class CheckpointStore {
       if (!isSamePath(record.workspace, snapshot.workspace)) {
         throw new Error(`Checkpoint workspace changed for turn ${snapshot.turnId}.`);
       }
-      if (record.files.some((file) => file.path === snapshot.relativePath)) {
+      const existingFile = record.files.find((file) => file.path === snapshot.relativePath);
+      if (existingFile) {
+        existingFile.afterContent = snapshot.afterContent;
+        existingFile.afterSha256 = snapshot.afterSha256;
+        existingFile.createdAt = new Date().toISOString();
+        await this.writeRecords(snapshot.threadId, sortRecords(records));
         return;
       }
       record.files.push({
@@ -262,7 +269,12 @@ export class CheckpointStore {
 
     const restoredPaths: string[] = [];
     const deletedPaths: string[] = [];
+    const skippedPaths: string[] = [];
     for (const entry of restorePlan) {
+      if (!await matchesCheckpointAfterHash(entry.target, entry.file)) {
+        skippedPaths.push(entry.file.path);
+        continue;
+      }
       if (entry.file.beforeContent === null) {
         const target = await resolveRestoreTarget(thread.workspace, entry.file.path, "write");
         await fs.rm(target, { force: true });
@@ -277,7 +289,7 @@ export class CheckpointStore {
       });
       restoredPaths.push(entry.file.path);
     }
-    return { restoredPaths, deletedPaths };
+    return { restoredPaths, deletedPaths, skippedPaths };
   }
 
   async pruneFromTurn(threadId: string, turnId: string): Promise<number> {
@@ -410,6 +422,22 @@ function collectEarliestSnapshots(
     }
   }
   return snapshots;
+}
+
+async function matchesCheckpointAfterHash(
+  target: string,
+  file: CheckpointFileSnapshot,
+): Promise<boolean> {
+  if (file.afterSha256 === null) {
+    return !existsSync(target);
+  }
+  try {
+    const content = await fs.readFile(target);
+    return createHash("sha256").update(content).digest("hex") === file.afterSha256;
+  } catch (error) {
+    if (getErrorCode(error) === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function resolveRestoreTarget(

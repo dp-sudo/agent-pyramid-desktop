@@ -76,6 +76,7 @@ export function registerCheckpointHandlers(
         rewindSession: request.rewindSession === true,
         restoredPaths: restored.restoredPaths,
         deletedPaths: restored.deletedPaths,
+        skippedPaths: restored.skippedPaths,
         itemsRemoved,
         eventsRemoved,
         checkpointsRemoved,
