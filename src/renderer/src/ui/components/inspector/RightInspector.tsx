@@ -164,6 +164,7 @@ function CheckpointsPanel(): ReactElement {
         setStatusMessage(t("checkpoints.rewindSuccess", {
           restored: result.value.restoredPaths.length,
           deleted: result.value.deletedPaths.length,
+          skipped: result.value.skippedPaths.length,
         }));
         if (rewindSession) {
           const itemsResult = await window.agentApi.turns.get(activeThread.id);

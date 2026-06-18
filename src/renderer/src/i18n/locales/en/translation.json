@@ -195,7 +195,7 @@
     "moreFiles": "{{count}} more file(s)",
     "rewindCode": "Rewind code",
     "rewindBoth": "Code + session",
-    "rewindSuccess": "Restored {{restored}} file(s), deleted {{deleted}} newly-created file(s)."
+    "rewindSuccess": "Restored {{restored}} file(s), deleted {{deleted}} newly-created file(s), skipped {{skipped}} changed file(s)."
   },
   "approvals": {
     "allow": "Allow",
@@ -426,7 +426,7 @@
       "model": "Exact model id passed to the provider API.",
       "protocol": "Request protocol used by this profile. Custom providers may support either protocol.",
       "baseUrl": "OpenAI-compatible endpoint root for this provider.",
-      "apiKey": "Stored with this profile. If empty, the runtime falls back to provider-specific environment variables.",
+      "apiKey": "Existing keys are not shown in the renderer. Leave unchanged to keep the current key; clear an edited value to fall back to provider-specific environment variables.",
       "contextWindow": "Maximum context tokens the selected model can receive.",
       "compactLimit": "Soft threshold for automatic context compaction. It must not exceed the context window.",
       "maxTokens": "Maximum tokens requested for a single model response.",

@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   DEFAULT_MODEL_CONFIG,
+  DEFAULT_RENDERER_MODEL_CONFIG,
   DEFAULT_RUNTIME_PREFERENCES,
 } from "../../../../shared/agent-contracts";
 import {
@@ -20,9 +21,9 @@ import {
 import type {
   AttachmentRecord,
   Item,
-  ModelConfig,
-  ModelConfigProfilesState,
   ModelReasoningEffort,
+  RendererModelConfig,
+  RendererModelConfigProfilesState,
   RuntimePreferences,
   TerminalTurnStatus,
   ThreadRecord,
@@ -72,8 +73,8 @@ export interface ComposerState {
 export interface WorkbenchState {
   route: WorkbenchRoute;
   lastWorkbenchRoute: Extract<WorkbenchRoute, "code" | "write">;
-  modelConfig: ModelConfig;
-  modelProfiles: ModelConfigProfilesState | null;
+  modelConfig: RendererModelConfig;
+  modelProfiles: RendererModelConfigProfilesState | null;
   runtimePreferences: RuntimePreferences;
   workspaceRoot: string;
   showArchivedThreads: boolean;
@@ -96,7 +97,7 @@ const initialBasicPreferences = loadBasicPreferences();
 export const INITIAL_STATE: WorkbenchState = {
   route: initialBasicPreferences.defaultStartupView,
   lastWorkbenchRoute: initialBasicPreferences.defaultStartupView,
-  modelConfig: DEFAULT_MODEL_CONFIG,
+  modelConfig: DEFAULT_RENDERER_MODEL_CONFIG,
   modelProfiles: null,
   runtimePreferences: DEFAULT_RUNTIME_PREFERENCES,
   workspaceRoot: initialBasicPreferences.restoreLastWorkspaceOnStartup
@@ -172,8 +173,8 @@ export function shouldDeselectActiveThreadForRoute(
 
 export type Action =
   | { type: "setRoute"; route: WorkbenchRoute }
-  | { type: "setModelConfig"; config: ModelConfig }
-  | { type: "setModelProfiles"; profiles: ModelConfigProfilesState }
+  | { type: "setModelConfig"; config: RendererModelConfig }
+  | { type: "setModelProfiles"; profiles: RendererModelConfigProfilesState }
   | { type: "setRuntimePreferences"; preferences: RuntimePreferences }
   | { type: "setWorkspaceRoot"; workspaceRoot: string }
   | { type: "setShowArchivedThreads"; show: boolean }
@@ -458,8 +459,8 @@ export function getActiveThreadInFlightTurn(state: WorkbenchState): TurnRecord |
 
 export interface WorkbenchActions {
   setRoute(route: WorkbenchRoute): void;
-  setModelConfig(config: ModelConfig): void;
-  setModelProfiles(profiles: ModelConfigProfilesState): void;
+  setModelConfig(config: RendererModelConfig): void;
+  setModelProfiles(profiles: RendererModelConfigProfilesState): void;
   setRuntimePreferences(preferences: RuntimePreferences): void;
   setWorkspaceRoot(workspaceRoot: string): void;
   setShowArchivedThreads(show: boolean): void;

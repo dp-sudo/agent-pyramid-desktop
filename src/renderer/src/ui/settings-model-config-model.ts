@@ -4,12 +4,14 @@ import {
   type AgentAutonomyLevel,
   type LlmProtocol,
   type ModelConfig,
-  type ModelConfigProfile,
-  type ModelConfigProfilesState,
   type ModelConfigUpdate,
   type ModelReasoningEffort,
+  type RendererModelConfigProfile,
+  type RendererModelConfigProfilesState,
 } from "../../../shared/agent-contracts";
 import type { SettingsTranslator } from "./settings-runtime-model";
+
+type EditableModelConfig = Omit<ModelConfig, "OPENAI_API_KEY">;
 
 export interface SettingsFormState {
   model_provide: string;
@@ -29,13 +31,13 @@ type IntegerValidationResult =
   | { ok: true; value: number | undefined }
   | { ok: false; message: string };
 
-export function toFormState(config: ModelConfig): SettingsFormState {
+export function toFormState(config: EditableModelConfig): SettingsFormState {
   return {
     model_provide: config.model_provide,
     model: config.model,
     protocol: config.protocol,
     base_url: config.base_url,
-    OPENAI_API_KEY: config.OPENAI_API_KEY,
+    OPENAI_API_KEY: "",
     model_context_window: String(config.model_context_window),
     model_auto_compact_token_limit: String(config.model_auto_compact_token_limit),
     max_tokens: String(config.max_tokens),
@@ -45,7 +47,10 @@ export function toFormState(config: ModelConfig): SettingsFormState {
   };
 }
 
-export function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
+export function toUpdatePayload(
+  form: SettingsFormState,
+  options: { includeApiKey?: boolean } = {},
+): ModelConfigUpdate {
   const contextWindow = parseOptionalInteger(
     form.model_context_window,
     "model_context_window",
@@ -60,7 +65,7 @@ export function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
     model: form.model,
     protocol: form.protocol,
     base_url: form.base_url,
-    OPENAI_API_KEY: form.OPENAI_API_KEY,
+    ...(options.includeApiKey ? { OPENAI_API_KEY: form.OPENAI_API_KEY } : {}),
     ...(contextWindow !== undefined ? { model_context_window: contextWindow } : {}),
     ...(compactLimit !== undefined
       ? { model_auto_compact_token_limit: compactLimit }
@@ -72,9 +77,24 @@ export function toUpdatePayload(form: SettingsFormState): ModelConfigUpdate {
   };
 }
 
+export function toProfileConfigUpdate(config: EditableModelConfig): ModelConfigUpdate {
+  return {
+    model_provide: config.model_provide,
+    model: config.model,
+    protocol: config.protocol,
+    base_url: config.base_url,
+    model_context_window: config.model_context_window,
+    model_auto_compact_token_limit: config.model_auto_compact_token_limit,
+    max_tokens: config.max_tokens,
+    thinking: config.thinking,
+    model_reasoning_effort: config.model_reasoning_effort,
+    agent_autonomy: config.agent_autonomy,
+  };
+}
+
 export function validateModelSettingsForm(
   form: SettingsFormState,
-  currentConfig: ModelConfig,
+  currentConfig: EditableModelConfig,
   t: SettingsTranslator,
 ): string | null {
   const contextWindow = parseOptionalPositiveIntegerForValidation(
@@ -114,8 +134,8 @@ export function validateModelSettingsForm(
 }
 
 export function findActiveProfile(
-  state: ModelConfigProfilesState,
-): ModelConfigProfile | null {
+  state: RendererModelConfigProfilesState,
+): RendererModelConfigProfile | null {
   return (
     state.profiles.find((profile) => profile.id === state.activeProfileId) ??
     state.profiles[0] ??

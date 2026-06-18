@@ -195,7 +195,7 @@
     "moreFiles": "另有 {{count}} 个文件",
     "rewindCode": "回滚代码",
     "rewindBoth": "代码+会话",
-    "rewindSuccess": "已恢复 {{restored}} 个文件，删除 {{deleted}} 个新建文件。"
+    "rewindSuccess": "已恢复 {{restored}} 个文件，删除 {{deleted}} 个新建文件，跳过 {{skipped}} 个已变更文件。"
   },
   "approvals": {
     "allow": "允许",
@@ -424,7 +424,7 @@
       "modelProvide": "运行时网关使用的供应商方言，例如 MiniMax、DeepSeek 或 Custom。",
       "model": "传给供应商 API 的精确模型 ID。",
       "baseUrl": "该供应商的 OpenAI-compatible 接口根地址。",
-      "apiKey": "随此档案保存。留空时运行时会回退读取对应供应商环境变量。",
+      "apiKey": "已有 Key 不会显示到 renderer。保持不改会保留当前 Key；清空已编辑的值会回退读取对应供应商环境变量。",
       "contextWindow": "所选模型可接收的最大上下文 token 数。",
       "compactLimit": "触发自动压缩的软阈值，不能超过上下文窗口。",
       "maxTokens": "单次模型回复请求的最大输出 token 数。",

@@ -1,7 +1,7 @@
 import type {
-  ModelConfig,
-  ModelConfigProfilesState,
   ModelReasoningEffort,
+  RendererModelConfig,
+  RendererModelConfigProfilesState,
 } from "../../../../shared/agent-contracts";
 
 export interface ComposerModelState {
@@ -13,7 +13,7 @@ export interface ComposerModelState {
 
 export function applyModelConfigToComposer<T extends ComposerModelState>(
   composer: T,
-  config: ModelConfig,
+  config: RendererModelConfig,
 ): T {
   return {
     ...composer,
@@ -24,7 +24,7 @@ export function applyModelConfigToComposer<T extends ComposerModelState>(
 
 export function applyModelProfilesToComposer<T extends ComposerModelState>(
   composer: T,
-  profiles: ModelConfigProfilesState,
+  profiles: RendererModelConfigProfilesState,
 ): T {
   const currentExplicitProfile = composer.modelProfileId &&
     composer.modelProfileSelection === "explicit"

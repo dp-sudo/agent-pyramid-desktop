@@ -2,17 +2,17 @@ import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { MODEL_REASONING_EFFORTS } from "../../../../../shared/agent-contracts";
 import type {
-  ModelConfigProfile,
   ModelReasoningEffort,
+  RendererModelConfigProfile,
 } from "../../../../../shared/agent-contracts";
 
 interface FloatingComposerModelPickerProps {
   id?: string;
-  profiles: ModelConfigProfile[];
+  profiles: RendererModelConfigProfile[];
   selectedModel: string;
   selectedProfileId?: string;
   selectedReasoningEffort?: ModelReasoningEffort;
-  onSelectModel(profile: ModelConfigProfile): void;
+  onSelectModel(profile: RendererModelConfigProfile): void;
   onSelectReasoningEffort(effort: ModelReasoningEffort): void;
 }
 

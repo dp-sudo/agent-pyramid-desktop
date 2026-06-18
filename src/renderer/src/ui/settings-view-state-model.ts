@@ -1,4 +1,4 @@
-import type { ModelConfigProfile } from "../../../shared/agent-contracts";
+import type { RendererModelConfigProfile } from "../../../shared/agent-contracts";
 import type { SettingsCategory } from "./components/settings/SettingsSidebar";
 import type { SettingsFormState } from "./settings-model-config-model";
 
@@ -18,7 +18,7 @@ export function isProfileDeletePending(
 
 export function prunePendingProfileDeleteId(
   pendingDeleteProfileId: string | null,
-  profiles: readonly Pick<ModelConfigProfile, "id">[],
+  profiles: readonly Pick<RendererModelConfigProfile, "id">[],
 ): string | null {
   if (!pendingDeleteProfileId) return null;
   return profiles.some((profile) => profile.id === pendingDeleteProfileId)
@@ -57,9 +57,10 @@ export function shouldDisableModelProfileControls(
 }
 
 export function hasUnsavedProfileChanges(
-  activeProfile: ModelConfigProfile | null,
+  activeProfile: RendererModelConfigProfile | null,
   profileName: string,
   form: SettingsFormState,
+  apiKeyDirty = false,
 ): boolean {
   if (!activeProfile) return false;
   return (
@@ -68,7 +69,7 @@ export function hasUnsavedProfileChanges(
     form.model !== activeProfile.config.model ||
     form.protocol !== activeProfile.config.protocol ||
     form.base_url !== activeProfile.config.base_url ||
-    form.OPENAI_API_KEY !== activeProfile.config.OPENAI_API_KEY ||
+    apiKeyDirty ||
     form.model_context_window !== String(activeProfile.config.model_context_window) ||
     form.model_auto_compact_token_limit !==
       String(activeProfile.config.model_auto_compact_token_limit) ||

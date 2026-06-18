@@ -38,10 +38,10 @@ import {
   type McpServerStatusRecord,
   type McpServerTransport,
   type AgentAutonomyLevel,
-  type ModelConfig,
-  type ModelConfigProfile,
-  type ModelConfigProfilesState,
+  type ModelConfigUpdate,
   type ModelReasoningEffort,
+  type RendererModelConfigProfile,
+  type RendererModelConfigProfilesState,
   type RuntimeCompactionStrategy,
   type RuntimePermissionRule,
   type RuntimePermissionRuleEffect,
@@ -96,6 +96,7 @@ import {
   findActiveProfile,
   isLlmProtocolSetting,
   toFormState,
+  toProfileConfigUpdate,
   toUpdatePayload,
   validateModelSettingsForm,
   type SettingsFormState,
@@ -171,9 +172,8 @@ export function SettingsView(): ReactElement {
     toFormState(DEFAULT_MODEL_CONFIG),
   );
   const [profileName, setProfileName] = useState(DEFAULT_MODEL_CONFIG.model_provide);
-  const [profilesState, setProfilesState] = useState<ModelConfigProfilesState | null>(
-    null,
-  );
+  const [profilesState, setProfilesState] =
+    useState<RendererModelConfigProfilesState | null>(null);
   const [runtimePreferences, setRuntimePreferences] = useState<RuntimePreferences>(
     state.runtimePreferences,
   );
@@ -199,6 +199,7 @@ export function SettingsView(): ReactElement {
   const [profileBusy, setProfileBusy] = useState<string>("");
   const [pendingDeleteProfileId, setPendingDeleteProfileId] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [apiKeyDirty, setApiKeyDirty] = useState(false);
   const [settingsSearch, setSettingsSearch] = useState("");
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [basicPreferenceError, setBasicPreferenceError] = useState("");
@@ -214,6 +215,7 @@ export function SettingsView(): ReactElement {
     activeProfile,
     profileName,
     form,
+    apiKeyDirty,
   );
   const settingsSectionItems = useMemo<SettingsSectionItem[]>(
     () => getSettingsSectionItems(t),
@@ -349,12 +351,13 @@ export function SettingsView(): ReactElement {
     state.workspaceRoot,
   ]);
 
-  function applyProfilesState(state: ModelConfigProfilesState): void {
+  function applyProfilesState(state: RendererModelConfigProfilesState): void {
     const active = findActiveProfile(state);
     setProfilesState(state);
     if (active) {
       setProfileName(active.name);
       setForm(toFormState(active.config));
+      setApiKeyDirty(false);
       actions.setModelConfig(active.config);
       actions.setModelProfiles(state);
     }
@@ -382,6 +385,7 @@ export function SettingsView(): ReactElement {
 
   function updateSecret(value: string): void {
     markDirty();
+    setApiKeyDirty(true);
     setForm((current) => ({ ...current, OPENAI_API_KEY: value }));
   }
 
@@ -978,7 +982,9 @@ export function SettingsView(): ReactElement {
     setShowAdvancedSettings(nextShowAdvanced);
   }
 
-  async function handleActivateProfile(profile: ModelConfigProfile): Promise<void> {
+  async function handleActivateProfile(
+    profile: RendererModelConfigProfile,
+  ): Promise<void> {
     if (!ensureNoUnsavedProfileChanges()) return;
     setPendingDeleteProfileId(null);
     setProfileBusy(profile.id);
@@ -1012,7 +1018,7 @@ export function SettingsView(): ReactElement {
 
   async function handleCreateProfile(
     name: string,
-    config: ModelConfig,
+    config: ModelConfigUpdate,
   ): Promise<void> {
     if (!ensureNoUnsavedProfileChanges()) return;
     setPendingDeleteProfileId(null);
@@ -1038,14 +1044,16 @@ export function SettingsView(): ReactElement {
     }
   }
 
-  async function handleDuplicateProfile(profile: ModelConfigProfile): Promise<void> {
+  async function handleDuplicateProfile(
+    profile: RendererModelConfigProfile,
+  ): Promise<void> {
     await handleCreateProfile(
       t("settings.profiles.copyName", { name: profile.name }),
-      profile.config,
+      toProfileConfigUpdate(profile.config),
     );
   }
 
-  async function handleDeleteProfile(profile: ModelConfigProfile): Promise<void> {
+  async function handleDeleteProfile(profile: RendererModelConfigProfile): Promise<void> {
     if (!profilesState || profilesState.profiles.length <= 1) return;
     if (!ensureNoUnsavedProfileChanges()) return;
     setPendingDeleteProfileId(null);
@@ -1095,7 +1103,7 @@ export function SettingsView(): ReactElement {
     setSaveState("saving");
     setError("");
     try {
-      const update = toUpdatePayload(form);
+      const update = toUpdatePayload(form, { includeApiKey: apiKeyDirty });
       const result = await window.agentApi.modelConfig.updateProfile({
         id: activeProfile.id,
         name: profileName,
@@ -1120,6 +1128,7 @@ export function SettingsView(): ReactElement {
         actions.setModelProfiles(nextState);
       }
       setForm(toFormState(updatedProfile.config));
+      setApiKeyDirty(false);
       setProfileName(updatedProfile.name);
       actions.setModelConfig(updatedProfile.config);
       setSaveState("saved");
@@ -1785,7 +1794,11 @@ export function SettingsView(): ReactElement {
                     value={form.OPENAI_API_KEY}
                     visible={showApiKey}
                     autoComplete="off"
-                    placeholder={t("settings.placeholders.apiKey")}
+                    placeholder={
+                      activeProfile?.config.hasApiKey
+                        ? activeProfile.config.apiKeyPreview
+                        : t("settings.placeholders.apiKey")
+                    }
                     disabled={modelProfileControlsDisabled}
                     showLabel={t("settings.showSecret")}
                     hideLabel={t("settings.hideSecret")}

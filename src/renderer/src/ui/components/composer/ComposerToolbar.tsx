@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../store/WorkbenchContext";
 import {
   SUPPORTED_ATTACHMENT_MIME_TYPES,
-  type ModelConfigProfile,
+  type RendererModelConfigProfile,
 } from "../../../../../shared/agent-contracts";
 import { FloatingComposerModelPicker } from "./FloatingComposerModelPicker";
 import { ComposerSendControls } from "./ComposerSendControls";
@@ -58,7 +58,7 @@ export function ComposerToolbar({
   const showMenuButton = showImagePicker || modeControlsEnabled;
   const controlsLocked = disabled || runtimeBusy || sendPending;
 
-  function handleSelectModel(profile: ModelConfigProfile): void {
+  function handleSelectModel(profile: RendererModelConfigProfile): void {
     actions.setComposerModel(profile.config.model, profile.id);
     actions.setComposerReasoningEffort(profile.config.model_reasoning_effort);
     onTogglePicker();
