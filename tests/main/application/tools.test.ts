@@ -18,6 +18,7 @@ import { FileReadStateStore } from "../../../src/main/application/tools/file-rea
 import { createGoalTools } from "../../../src/main/application/tools/goal-tools";
 import { InMemoryToolRegistry } from "../../../src/main/application/tools/in-memory-tool-registry";
 import { createSkillTools } from "../../../src/main/application/tools/skill-tools";
+import { createUserInputTools } from "../../../src/main/application/tools/user-input-tools";
 import { openTextFileNoFollow } from "../../../src/main/application/tools/text-file";
 import { createWorkspaceTools } from "../../../src/main/application/tools/workspace-tools";
 import { SkillService } from "../../../src/main/skills/skill-service";
@@ -286,6 +287,7 @@ describe("application tools", () => {
       createPlanTool,
       ...createGoalTools({ updateGoal: async () => undefined }),
       ...createSkillTools({ skillService: new SkillService() }),
+      ...createUserInputTools(),
       ...createCodingTools(),
     ];
     const metadataReadOnlyNames = tools
@@ -306,6 +308,7 @@ describe("application tools", () => {
       createPlanTool,
       ...createGoalTools({ updateGoal: async () => undefined }),
       ...createSkillTools({ skillService: new SkillService() }),
+      ...createUserInputTools(),
       ...createCodingTools(),
     ];
     const registeredNames = tools.map((tool) => tool.definition.name).sort();
@@ -421,6 +424,61 @@ describe("application tools", () => {
       "apply_patch",
       "rollback_file",
     ]);
+  });
+
+  it("asks for user input through the runtime interaction capability", async () => {
+    const requestUserInput = vi.fn(async () => ({ answer: "Use option A" }));
+    const registry = new InMemoryToolRegistry(createUserInputTools());
+
+    const result = await registry.execute(
+      {
+        id: "call-user-input",
+        name: "request_user_input",
+        arguments: {
+          question: "Which path should I use?",
+          options: ["Use option A", "Use option B"],
+        },
+      },
+      { threadId: "thread-1", turnId: "turn-1", requestUserInput },
+    );
+
+    expect(requestUserInput).toHaveBeenCalledWith({
+      question: "Which path should I use?",
+      options: ["Use option A", "Use option B"],
+    });
+    expect(JSON.parse(result.content)).toEqual({
+      status: "answered",
+      answer: "Use option A",
+    });
+  });
+
+  it("keeps request_user_input validation failures traceable", async () => {
+    const registry = new InMemoryToolRegistry(createUserInputTools());
+
+    await expect(
+      registry.execute(
+        {
+          id: "call-user-input-duplicate",
+          name: "request_user_input",
+          arguments: {
+            question: "Choose one",
+            options: ["same", "same"],
+          },
+        },
+        { threadId: "thread-1", turnId: "turn-1", requestUserInput: async () => ({ cancelled: true }) },
+      ),
+    ).rejects.toThrow("request_user_input option is duplicated: same");
+
+    await expect(
+      registry.execute(
+        {
+          id: "call-user-input-missing-capability",
+          name: "request_user_input",
+          arguments: { question: "Choose one" },
+        },
+        { threadId: "thread-1", turnId: "turn-1" },
+      ),
+    ).rejects.toThrow("request_user_input requires runtime user input capability.");
   });
 
   it("normalizes create_edit_plan into a visible multi-file plan payload", async () => {

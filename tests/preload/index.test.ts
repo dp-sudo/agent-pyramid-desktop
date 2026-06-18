@@ -4,6 +4,7 @@ import {
   SSE_SUBSCRIBE_GLOBAL_CHANNEL,
   SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
   SKILL_LIST_CHANNEL,
+  USER_INPUT_RESPOND_CHANNEL,
   WRITE_CREATE_CHANNEL,
   WRITE_DELETE_CHANNEL,
   WRITE_RENAME_CHANNEL,
@@ -11,6 +12,8 @@ import {
 import type {
   IpcResult,
   RuntimeEvent,
+  UserInputRespondRequest,
+  UserInputRespondResponse,
   WriteCreateRequest,
   WriteDeleteRequest,
   WriteRenameRequest,
@@ -121,6 +124,21 @@ describe("preload bridge", () => {
     );
   });
 
+  it("exposes user input response IPC methods", async () => {
+    const api = getAgentApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({
+      ok: true,
+      value: { userInputId: "input-1", accepted: true, answer: "yes" },
+    });
+
+    await api.userInput.respond({ userInputId: "input-1", answer: "yes" });
+
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith(
+      USER_INPUT_RESPOND_CHANNEL,
+      { userInputId: "input-1", answer: "yes" },
+    );
+  });
+
   it("exposes global SSE subscription IPC methods", async () => {
     const api = getAgentApi();
     electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true, value: { subscribed: true } });
@@ -152,6 +170,11 @@ function getAgentApi(): {
     rename(request: WriteRenameRequest): Promise<IpcResult<{ path: string; newPath: string }>>;
     delete(request: WriteDeleteRequest): Promise<IpcResult<{ path: string }>>;
   };
+  userInput: {
+    respond(
+      request: UserInputRespondRequest,
+    ): Promise<IpcResult<UserInputRespondResponse>>;
+  };
   skills: {
     list(request: { workspace: string }): Promise<IpcResult<unknown>>;
   };
@@ -172,6 +195,11 @@ function getAgentApi(): {
       ): Promise<IpcResult<{ path: string; content: string; bytes: number }>>;
       rename(request: WriteRenameRequest): Promise<IpcResult<{ path: string; newPath: string }>>;
       delete(request: WriteDeleteRequest): Promise<IpcResult<{ path: string }>>;
+    };
+    userInput: {
+      respond(
+        request: UserInputRespondRequest,
+      ): Promise<IpcResult<UserInputRespondResponse>>;
     };
     skills: {
       list(request: { workspace: string }): Promise<IpcResult<unknown>>;

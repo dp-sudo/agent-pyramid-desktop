@@ -251,6 +251,7 @@ describe("shared agent contracts", () => {
     expect(RUNTIME_TOOL_NAMES).toContain("run_command");
     expect(RUNTIME_TOOL_NAMES).toContain("list_skills");
     expect(RUNTIME_TOOL_NAMES).toContain("run_skill");
+    expect(RUNTIME_TOOL_NAMES).toContain("request_user_input");
     expect(RUNTIME_READ_ONLY_TOOL_NAMES).toEqual([
       "list_files",
       "read_file",
@@ -270,6 +271,7 @@ describe("shared agent contracts", () => {
       "diagnose_file",
       "list_skills",
       "run_skill",
+      "request_user_input",
     ]);
     expect(RUNTIME_READ_ONLY_TOOL_NAMES.every((toolName) =>
       RUNTIME_TOOL_NAMES.includes(toolName),
@@ -321,6 +323,8 @@ describe("shared agent contracts", () => {
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_command).toBe(false);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.list_skills).toBe(true);
     expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.run_skill).toBe(true);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code.request_user_input).toBe(true);
+    expect(DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write.request_user_input).toBe(true);
     expect(isRuntimePreferences(DEFAULT_RUNTIME_PREFERENCES)).toBe(true);
     expect(isRuntimePreferences({
       ...DEFAULT_RUNTIME_PREFERENCES,

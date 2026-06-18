@@ -311,6 +311,67 @@ describe("ChatBlock approval helpers", () => {
     expect(html).toContain("disabled=\"\"");
   });
 
+  it("renders pending user input with response controls", () => {
+    const userInputItem: Extract<Item, { kind: "user_input" }> = {
+      kind: "user_input",
+      id: "user-input-item",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      userInputId: "input-1",
+      question: "Which file should I edit?",
+      options: ["README.md", "docs/guide.md"],
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, {
+          item: userInputItem,
+          onUserInputRespond: async () => undefined,
+        }),
+      ),
+    );
+
+    expect(html).toContain("ds-user-input-block");
+    expect(html).toContain("chat.userInputLabel");
+    expect(html).toContain("Which file should I edit?");
+    expect(html).toContain("README.md");
+    expect(html).toContain("docs/guide.md");
+    expect(html).toContain("chat.userInputSubmit");
+    expect(html).toContain("chat.userInputCancel");
+  });
+
+  it("renders resolved user input without response controls", () => {
+    const userInputItem: Extract<Item, { kind: "user_input" }> = {
+      kind: "user_input",
+      id: "user-input-item",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      userInputId: "input-1",
+      question: "Which file should I edit?",
+      answer: "README.md",
+      resolvedAt: "2026-01-01T00:00:01.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(
+        WorkbenchProvider,
+        null,
+        createElement(ChatBlock, {
+          item: userInputItem,
+          onUserInputRespond: async () => undefined,
+        }),
+      ),
+    );
+
+    expect(html).toContain("chat.userInputAnswered");
+    expect(html).toContain("README.md");
+    expect(html).not.toContain("chat.userInputSubmit");
+  });
+
   it("renders reasoning as a collapsible process entry that opens while live", () => {
     const reasoningItem: Extract<Item, { kind: "reasoning" }> = {
       kind: "reasoning",
