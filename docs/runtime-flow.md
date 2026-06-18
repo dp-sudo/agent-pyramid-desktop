@@ -363,6 +363,11 @@ Tool availability:
   allowed read-only tools exposed; child messages and tool calls are not written
   to parent JSONL, and only the final answer returns as the parent `run_skill`
   result.
+- `request_user_input` is a read-only interaction tool enabled in Code and Write
+  threads. It appends a pending `UserInputItem`, waits for
+  `agentApi.userInput.respond()`, then returns either the user's answer or a
+  cancellation result to the next model request. Pending input state is
+  in-memory and is not resumed across app restart.
 - Other registered tools pass through `ToolCatalogService` tool access policy and
   persisted `RuntimePreferences.toolAvailability` before they are sent to the
   model or executed from a forced model tool call.
@@ -377,9 +382,10 @@ Tool availability:
   the model. The repeat state is cleared when the turn reaches a terminal status.
 - Parent-turn tool batches are parallelized only when every call in the model
   response resolves to a registered `metadata.isReadOnly` tool and the call is
-  not `run_skill`. Mixed batches and write-capable tools stay sequential, so
-  write/read ordering, approval prompts, checkpoint recording and command
-  lifecycle stay deterministic. Parallel batches still execute through
+  not `run_skill` or `request_user_input`. Mixed batches, write-capable tools,
+  subagent dispatch, and human-input gates stay sequential, so write/read
+  ordering, approval prompts, checkpoint recording, command lifecycle, and
+  turn suspension stay deterministic. Parallel batches still execute through
   `ToolCallExecutor`, and their results are appended to the next model request
   in the original model tool-call order.
 - MCP tools are registered dynamically by `McpHost` using the
@@ -640,7 +646,23 @@ the active thread's unresolved approvals in a composer-adjacent pending
 approval panel, reusing the same diff preview and scoped decision controls so
 users do not have to scroll the timeline to unblock a turn.
 
-Interrupting a turn denies pending approvals for that turn and aborts active tool controllers. Tool items that were already finalized as interrupted keep that interrupted result when the pending approval resolves to deny, so replay does not rewrite an interrupt as an ordinary user denial. Runtime waits briefly for already-started tool execution promises to settle before emitting the interrupted terminal event; if a tool ignores abort beyond that bounded wait, runtime emits a traceable `runtime_error` and continues the interrupt. Command tools receive the abort signal and terminate the child process/process group before the turn is marked interrupted.
+`UserInputCoordinator` follows the same append-only item audit pattern for
+model-initiated clarification questions, but does not emit a separate runtime
+event kind. The pending and resolved states both flow through
+`item_appended` / `item_updated`, and renderer responses go through
+`user-input:respond`. A stale input id returns `accepted: false` with
+`reason: "not_pending"` instead of masking an invalid payload or persistence
+failure.
+
+Interrupting a turn denies pending approvals for that turn, cancels pending user
+input requests, and aborts active tool controllers. Tool items that were already
+finalized as interrupted keep that interrupted result when the pending approval
+resolves to deny, so replay does not rewrite an interrupt as an ordinary user
+denial. Runtime waits briefly for already-started tool execution promises to
+settle before emitting the interrupted terminal event; if a tool ignores abort
+beyond that bounded wait, runtime emits a traceable `runtime_error` and
+continues the interrupt. Command tools receive the abort signal and terminate
+the child process/process group before the turn is marked interrupted.
 
 ## Interrupt Lifecycle
 

@@ -310,7 +310,7 @@ Item rendering:
 | `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning follows `basicPreferences.openReasoningByDefault` until the user explicitly toggles it. Closed completed reasoning shows a light text preview and does not mount the markdown body. |
 | `tool` | Code route: compact `ds-process-tool-row` (action label + title preview) that expands to the same detail frame as the card; consecutive completed read-only rows may be grouped under a read-only summary. Failed command titles use a short preview while full args/results remain in detail. Completed coding tools with `ToolItem.result.diff` show a changed-file compact title and render `ds-tool-diff-preview` with only the changed diff lines instead of raw result JSON. Write/settings route: full `ds-process-entry ds-process-tool` card with status/tone summary. Long non-diff details render as a bounded preview with an explicit full-detail toggle in both routes. Running command-backed tools may show temporary `[stdout]` / `[stderr]` progress details; the final tool result replaces that temporary progress when `item_updated` arrives. |
 | `approval` | Approval block with args JSON, optional diff preview, scoped allow buttons and deny. |
-| `user_input` | System-style user input prompt. |
+| `user_input` | User-input block with the model's question, optional answer choices, free-form answer field, cancel action, and resolved answer/cancelled status. |
 | `plan` | Plan block with ordered steps and per-step status class. |
 | `compaction` | System-style compaction notice. |
 | `system` | System bubble. |
@@ -363,6 +363,15 @@ Approval behavior:
 - Pending approval auto-scroll is driven by the pending approval identity
   signature, not only by count, so replacing one pending approval with another
   still honors `autoScrollOnRequest`.
+
+User-input behavior:
+
+- `request_user_input` appends a `user_input` item to the timeline when the
+  model needs missing task information. The block can render short option
+  buttons, a free-form answer field, and a cancel action.
+- Responses call `agentApi.userInput.respond()` and remain disabled while the
+  IPC request is in flight. The final answer or cancelled state is durable item
+  data from the following `item_updated` event.
 
 ### Assistant Markdown
 

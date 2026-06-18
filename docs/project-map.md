@@ -138,7 +138,7 @@ flowchart TD
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool"]
   Registry["InMemoryToolRegistry"]
-  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateSkillTools()\ncreateGoalTools()"]
+  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateSkillTools()\ncreateUserInputTools()\ncreateGoalTools()"]
   Skills["SkillService"]
   Runtime["AgentRuntime"]
   Handlers["register*Handlers"]
@@ -173,7 +173,7 @@ flowchart TD
 
 | Feature | Start Here | Then Check |
 | --- | --- | --- |
-| Start a turn | `src/renderer/src/ui/Workbench.tsx` | `src/preload/index.ts`、`src/main/ipc/turns-handlers.ts`、`src/main/application/turn-start-request.ts`、`src/main/application/plan-item-parser.ts`、`src/main/application/thread-goal-update.ts`、`src/main/application/agent-runtime.ts`、`ApprovalCoordinator` |
+| Start a turn | `src/renderer/src/ui/Workbench.tsx` | `src/preload/index.ts`、`src/main/ipc/turns-handlers.ts`、`src/main/application/turn-start-request.ts`、`src/main/application/plan-item-parser.ts`、`src/main/application/thread-goal-update.ts`、`src/main/application/agent-runtime.ts`、`ApprovalCoordinator`、`UserInputCoordinator` |
 | Stream runtime events | `src/main/event-bus.ts` | `src/main/ipc/sse-handlers.ts`、`src/preload/index.ts`、`Workbench.tsx` |
 | Add or change IPC | `src/shared/ipc.ts`、`src/shared/ipc-errors.ts` | `src/shared/agent-contracts.ts`、`src/main/ipc/*`、`src/preload/index.ts`、`src/renderer/src/global.d.ts` |
 | Add tool | `src/main/domain/agent/types.ts` | `src/main/application/tools/*`、`src/main/index.ts`、choose the narrowest `Agent*Capability` context、`ToolCatalogService`、`ToolPolicyService` |
@@ -201,12 +201,15 @@ flowchart TD
 - Parent-turn tool execution lifecycle goes through `ToolCallExecutor`, then
   approved calls reach `ToolRegistry.execute()`; direct tool bypass is not part
   of the architecture.
-- Parent-turn all-read-only tool batches may run concurrently, but mixed or
-  write-capable batches stay sequential; both paths still go through
-  `ToolCallExecutor`.
+- Parent-turn all-read-only tool batches may run concurrently, but mixed,
+  write-capable, `run_skill`, and `request_user_input` batches stay sequential;
+  both paths still go through `ToolCallExecutor`.
 - `ToolCallExecutor` also owns turn-scoped duplicate protection for read-only
   tool calls: the third identical tool name plus canonical arguments is recorded
   as a failed visible `ToolItem` and is not executed again in that turn.
+- `request_user_input` uses `UserInputCoordinator` to append a pending
+  `UserInputItem`, wait for `agentApi.userInput.respond()`, and resume the tool
+  loop with an answered or cancelled result.
 - `AgentToolContext` remains the registry execution boundary, but tool
   implementations should depend on the narrowest read/write/command/skill
   capability context that covers their inputs.

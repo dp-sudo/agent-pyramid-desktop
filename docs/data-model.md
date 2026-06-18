@@ -303,6 +303,15 @@ classDiagram
     scope
     resolvedAt
   }
+  class UserInputItem {
+    turnId
+    userInputId
+    question
+    options
+    answer
+    cancelled
+    resolvedAt
+  }
   class PlanItem {
     turnId
     title
@@ -319,6 +328,7 @@ classDiagram
   Item <|-- ReasoningItem
   Item <|-- ToolItem
   Item <|-- ApprovalItem
+  Item <|-- UserInputItem
   Item <|-- PlanItem
   Item <|-- SystemItem
 ```
@@ -336,7 +346,12 @@ Append-only update rule:
   `Date.prototype.toISOString()` shape validated by shared
   `isIsoTimestampString()`.
 - Streaming assistant/reasoning items emit `item_updated` before final persistence.
-- Tool and approval status updates are appended as a new JSONL row with the same item id.
+- Tool, approval, and user-input status updates are appended as a new JSONL row
+  with the same item id.
+- `UserInputItem` rows are created by the `request_user_input` tool when the
+  model needs missing task information from the user. Pending state includes
+  `userInputId`, `question`, optional `options`, and `createdAt`; resolution
+  adds either `answer` or `cancelled: true` plus `resolvedAt`.
 - `PlanItem` rows are appended by `create_plan` in plan mode and by
   `create_edit_plan` when a Code-mode turn asks for visible multi-file edit
   coordination before separate coding tool calls.

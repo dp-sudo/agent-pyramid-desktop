@@ -76,6 +76,7 @@ Current groups:
 | Turns | `agentApi.turns.*` | `src/main/ipc/turns-handlers.ts` |
 | SSE | `agentApi.sse.*` | `src/main/ipc/sse-handlers.ts` |
 | Approvals | `agentApi.approvals.*` | `src/main/ipc/approvals-handlers.ts` |
+| User input | `agentApi.userInput.*` | `src/main/ipc/user-input-handlers.ts` |
 | Goals | `agentApi.goals.*` | `src/main/ipc/goals-handlers.ts` |
 | Attachments | `agentApi.attachments.*` | `src/main/ipc/attachments-handlers.ts` |
 | Usage | `agentApi.usage.*` | `src/main/ipc/usage-handlers.ts` |
@@ -193,6 +194,26 @@ Notes:
   button state can clear without treating an already-resolved approval as an IPC
   failure. Invalid payloads and runtime persistence errors still return
   `APPROVAL_RESPOND_FAILED`.
+
+### User Input
+
+| Channel | Preload Method | Request | Success Value | Error Codes |
+| --- | --- | --- | --- | --- |
+| `user-input:respond` | `userInput.respond(request)` | `UserInputRespondRequest` | `UserInputRespondResponse` | `USER_INPUT_RESPOND_FAILED` |
+
+Notes:
+
+- `request_user_input` is a model-visible interaction tool for missing task
+  information. It appends a pending `UserInputItem` and suspends the current
+  tool call until the renderer responds.
+- Handler validates `userInputId`, optional `answer`, and optional `cancelled`
+  before touching runtime pending-input state. A response must include either a
+  non-empty answer or `cancelled: true`.
+- Pending input state is in-memory in `AgentRuntime`. Duplicate, stale, or
+  unknown ids return `ok({ accepted: false, reason: "not_pending", ... })`
+  rather than an IPC failure, matching approval response behavior.
+- Resolution is recorded by appending an updated `UserInputItem` with `answer`
+  or `cancelled` plus `resolvedAt`, then emitting `item_updated`.
 
 ### Goals
 

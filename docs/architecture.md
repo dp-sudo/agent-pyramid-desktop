@@ -152,7 +152,7 @@ flowchart TD
   Bus["RuntimeEventBus"]
   Pool["LlmWorkerPool(1)"]
   Registry["InMemoryToolRegistry"]
-  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateSkillTools()\ncreateGoalTools()"]
+  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateSkillTools()\ncreateUserInputTools()\ncreateGoalTools()"]
   Skills["SkillService"]
   Runtime["AgentRuntime"]
   Handlers["register*Handlers()"]
@@ -181,6 +181,7 @@ Registered IPC groups:
 - `turns`: start, interrupt, get.
 - `sse`: subscribe, unsubscribe, push runtime events.
 - `approvals`: respond.
+- `userInput`: respond to model-initiated clarification requests.
 - `goals`: update.
 - `attachments`: create, get, delete.
 - `usage`: daily aggregation.
@@ -242,8 +243,8 @@ Key runtime responsibilities in `src/main/application/agent-runtime.ts`:
   `ToolItem.result` values and checkpoint metadata before the terminal
   `turn_completed` event.
 - Persists visible items/events and emits `RuntimeEvent` updates.
-- Handles interrupt by cancelling worker request, denying pending approvals, and
-  finishing with `interrupted`.
+- Handles interrupt by cancelling worker request, denying pending approvals,
+  cancelling pending user-input requests, and finishing with `interrupted`.
 
 ## Tool Architecture
 
