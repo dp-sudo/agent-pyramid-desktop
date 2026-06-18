@@ -326,6 +326,10 @@ Notes:
 - Write IPC handlers validate request objects and string field types before
   entering filesystem access, then return the existing `WRITE_*_FAILED`
   envelope for malformed payloads.
+- Write IPC requests carry `threadId`, not a renderer-supplied workspace path.
+  Main resolves the workspace from `JsonlThreadStore.getThread(threadId)` and
+  rejects missing or non-write threads before filesystem access, so compromised
+  renderer code cannot choose an arbitrary root for the Markdown service.
 - `write.get` reads Markdown as strict UTF-8 through the shared no-follow
   final-component open boundary and fails instead of returning replacement
   characters for invalid bytes or following a symlink swapped in after path
@@ -343,8 +347,8 @@ Notes:
 - `write.delete` removes a single Markdown file after the same workspace and
   extension policy checks.
 
-- Write `workspace` is trimmed at the shared workspace-policy boundary, and
-  the trimmed value must be an absolute path.
+- The resolved thread `workspace` is trimmed at the shared workspace-policy
+  boundary, and the trimmed value must be an absolute path.
 - Write file paths are workspace-relative.
 - Write file paths must target `.md`, `.mdx`, or `.markdown` files.
 - Access uses the shared workspace path policy and realpath checks to prevent
@@ -446,8 +450,10 @@ Notes:
   servers. Any present `url` field must be HTTP(S), even when the selected
   transport is `stdio`. Env/header records reject NUL bytes and duplicate keys
   after trimming, so malformed config cannot silently overwrite a value.
-  Settings writes the config through this same preferences channel, then the
-  main composition root reconfigures `McpHost`.
+  Secret-like env/header keys are redacted before preferences are returned to
+  renderer; masked values sent back by Settings preserve the current
+  main-process secret. Settings writes the config through this same preferences
+  channel, then the main composition root reconfigures `McpHost`.
 
 ### Skills
 
@@ -492,7 +498,9 @@ Notes:
   `mcp__<server>__<tool>`, then flow through runtime tool availability,
   sandbox, approval and `permissionRules` like other tools. A live tools/list
   response must not contain two raw tool names that normalize to the same
-  namespaced tool id. Large MCP catalogs keep the full IPC tool surface in
+  namespaced tool id. Remote `annotations.readOnlyHint` is informational only;
+  only local `mcpServers[].readOnlyTools` marks an MCP tool read-only for
+  approval/sandbox bypass. Large MCP catalogs keep the full IPC tool surface in
   `mcp:tools:list`, but the model-visible registry uses progressive
   search/describe/call facade tools instead of registering every remote schema
   directly. Approval and persisted permission rules for the write-capable call

@@ -273,7 +273,7 @@ flowchart LR
   Approval -->|"skipped for read-only workspace tools"| Workspace
   Approval -->|"diff preview for writes"| Coding
   Approval -->|"default ask; auto can allow"| Command
-  Approval -->|"readOnlyHint can skip; writers ask"| Mcp
+  Approval -->|"local readOnlyTools can skip; writers ask"| Mcp
   Approval -->|"skipped when mode-gated and available"| Plan
   Approval -->|"skipped when goal mode/active goal allows it"| Goal
 ```
@@ -320,9 +320,10 @@ Tool availability is decided at the runtime boundary:
   Write threads by the default tool access policy. Small catalogs register each
   remote tool directly; large catalogs register progressive search/describe/call
   facade tools so the model can discover a target before loading that target's
-  full schema. Matching cached schema can register lazy placeholders or facade
-  tools before a live server is ready; the first call forces reconnect and then
-  continues through the same ToolRegistry path.
+  full schema. Local `readOnlyTools` config, not remote `readOnlyHint`, is the
+  authority for read-only approval/sandbox treatment. Matching cached schema can
+  register lazy placeholders or facade tools before a live server is ready; the
+  first call forces reconnect and then continues through the same ToolRegistry path.
   Refresh failures that clear live tools emit an empty `mcp_tool_list_changed`
   event so renderer and runtime consumers do not retain stale descriptors.
 - Unknown or unavailable tool calls produce a visible `runtime_error` with

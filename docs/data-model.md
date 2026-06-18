@@ -471,17 +471,19 @@ IPC methods.
 
 Current request models:
 
-- `WriteListRequest`: workspace plus optional case-insensitive substring search.
-- `WriteGetRequest`: workspace plus workspace-relative Markdown path.
-- `WritePutRequest`: workspace, workspace-relative Markdown path, and UTF-8 content.
-- `WriteCreateRequest`: workspace, workspace-relative Markdown path, and optional UTF-8 content.
-- `WriteRenameRequest`: workspace, current workspace-relative Markdown path, and new workspace-relative Markdown path.
-- `WriteDeleteRequest`: workspace plus workspace-relative Markdown path.
-- `WriteCompleteRequest`: workspace, path, prefix, and suffix around the current editor selection.
+- `WriteListRequest`: thread id plus optional case-insensitive substring search.
+- `WriteGetRequest`: thread id plus workspace-relative Markdown path.
+- `WritePutRequest`: thread id, workspace-relative Markdown path, and UTF-8 content.
+- `WriteCreateRequest`: thread id, workspace-relative Markdown path, and optional UTF-8 content.
+- `WriteRenameRequest`: thread id, current workspace-relative Markdown path, and new workspace-relative Markdown path.
+- `WriteDeleteRequest`: thread id plus workspace-relative Markdown path.
+- `WriteCompleteRequest`: thread id, path, prefix, and suffix around the current editor selection.
 
 Rules:
 
-- `workspace` must be absolute.
+- Renderer requests do not supply a workspace root. Main resolves `threadId`
+  through the thread store, requires the thread to be in `write` mode, and then
+  uses that thread's absolute `workspace` for all Markdown file operations.
 - Document paths are workspace-relative and use forward slashes in renderer state.
 - Document paths must target `.md`, `.mdx`, or `.markdown`.
 - Access reuses the shared workspace path policy and realpath checks from
@@ -585,6 +587,12 @@ Key semantics:
   `ModelConfig` contract. The `userData/config` representation is encrypted via
   the main-process secret codec, and legacy plain-text config files are migrated
   on the next normalized write.
+- Secret-like MCP server `env` and `headers` keys in
+  `RuntimePreferences.mcpServers` follow the same storage boundary: the
+  in-memory main-process config is plain text, the `userData/config`
+  representation is encrypted, and renderer-facing runtime preferences replace
+  non-empty secret values with a fixed mask. Sending the mask back through
+  `runtimePreferences.update` preserves the current main-process secret.
 - `modelConfig.*` IPC responses never return `OPENAI_API_KEY`; the preload and
   renderer use `RendererModelConfig*` DTOs. Updating a profile may still submit
   `OPENAI_API_KEY` through `ModelConfigUpdate` when the user enters a new value.
@@ -715,7 +723,9 @@ Key semantics:
   `cwd`), optional Streamable HTTP fields (`url`, `headers`), `enabled`,
   `readOnlyTools`, and timestamps. The parser requires unique ids/names,
   `command` for `stdio`, an HTTP(S) `url` for `streamable-http`, string record
-  env/header values and no NUL bytes.
+  env/header values and no NUL bytes. `readOnlyTools` is the local trust source
+  for whether an MCP tool can use the read-only approval/sandbox path; remote
+  `annotations.readOnlyHint` is retained only as informational metadata.
 - MCP server status, tool descriptors, prompts and resources are runtime
   surface state exposed through `McpServerStatusRecord` over IPC.
   `status` can be `disconnected`, `connecting`, `cached`, `lazy`,

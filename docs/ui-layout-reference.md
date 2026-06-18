@@ -306,9 +306,9 @@ Item rendering:
 | Item kind | UI |
 | --- | --- |
 | `user` | Right-side user bubble with optional attachment names. |
-| `assistant` | Markdown assistant bubble. Live output gets shiny styling. |
+| `assistant` | Markdown assistant bubble. Live output gets shiny styling; finalized non-empty responses expose a compact copy action above the Markdown body. |
 | `reasoning` | Collapsible process entry with reasoning label and markdown body. Live reasoning opens by default; completed reasoning follows `basicPreferences.openReasoningByDefault` until the user explicitly toggles it. Closed completed reasoning shows a light text preview and does not mount the markdown body. |
-| `tool` | Code route: compact `ds-process-tool-row` (action label + title preview) that expands to the same detail frame as the card; consecutive completed read-only rows may be grouped under a read-only summary. Failed command titles use a short preview while full args/results remain in detail. Completed coding tools with `ToolItem.result.diff` show a changed-file compact title and render `ds-tool-diff-preview` with only the changed diff lines instead of raw result JSON. Write/settings route: full `ds-process-entry ds-process-tool` card with status/tone summary. Long non-diff details render as a bounded preview with an explicit full-detail toggle in both routes. Running command-backed tools may show temporary `[stdout]` / `[stderr]` progress details; the final tool result replaces that temporary progress when `item_updated` arrives. |
+| `tool` | Code route: compact `ds-process-tool-row` (action label + title preview) that expands to the same detail frame as the card; consecutive completed read-only rows may be grouped under a read-only summary with tool-count context. Failed command titles use a short preview while full args/results remain in detail. Completed coding tools with `ToolItem.result.diff` show a changed-file compact title and render `ds-tool-diff-preview` with only the changed diff lines instead of raw result JSON. Write/settings route: full `ds-process-entry ds-process-tool` card with status/tone summary. Long non-diff details render as a bounded preview with an explicit full-detail toggle in both routes, and non-empty detail frames expose a copy action for the complete args/result text. Running command-backed tools may show temporary `[stdout]` / `[stderr]` progress details; the final tool result replaces that temporary progress when `item_updated` arrives. |
 | `approval` | Approval block with args JSON, optional diff preview, scoped allow buttons and deny. |
 | `user_input` | User-input block with the model's question, optional answer choices, free-form answer field, cancel action, and resolved answer/cancelled status. |
 | `plan` | Plan block with ordered steps and per-step status class. |
@@ -320,6 +320,7 @@ Key classes:
 - `ds-message-block`
 - `ds-user-bubble`
 - `ds-assistant-bubble`
+- `ds-assistant-actions`
 - `ds-message-attachments`
 - `ds-process-entry`
 - `ds-process-reasoning-entry`
@@ -386,7 +387,7 @@ Renderer:
   `rel="noreferrer"`; page anchors stay in-renderer; relative/local/unsafe
   protocols render as plain text instead of clickable anchors.
 - Non-empty code blocks are wrapped in `ds-code-block`.
-- Code language header is extracted from `language-*` class.
+- Code language header is extracted from `language-*` class, and the header also shows a localized line-count chip (`ds-code-block-lines`).
 - Fenced code blocks render from the extracted source string inside the
   `ds-code-block` `<pre>`; empty or whitespace-only fenced blocks are skipped
   so a dangling or empty model fence cannot leave a blank code shell.
