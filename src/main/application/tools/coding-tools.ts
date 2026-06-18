@@ -633,10 +633,12 @@ async function writePreparedChange(
   toolName: string,
 ): Promise<PreparedFileChange> {
   await recordFileCheckpoint(context, change, toolName);
-  await commitPreparedChange(change);
   const contentHash = sha256(change.nextContent);
   let stat: Stats | undefined;
+  let committedToDisk = false;
   try {
+    await commitPreparedChange(change);
+    committedToDisk = true;
     // Post-write stat is best-effort metadata; if it fails (file evicted by a
     // hook, anti-virus scanner, etc.) the bytes are already on disk, so the
     // single-file tool must roll back to the pre-write content just like
@@ -644,16 +646,19 @@ async function writePreparedChange(
     stat = change.operation === "delete" ? undefined : await fs.stat(change.filePath);
   } catch (error) {
     try {
-      await restoreCommittedChanges([{
-        ...change,
-        bytes: change.operation === "delete" ? 0 : Buffer.byteLength(change.nextContent, "utf8"),
-        modifiedAt: new Date().toISOString(),
-        mtimeMs: 0,
-        sha256: contentHash,
-      }]);
+      if (committedToDisk) {
+        await restoreCommittedChanges([{
+          ...change,
+          bytes: change.operation === "delete" ? 0 : Buffer.byteLength(change.nextContent, "utf8"),
+          modifiedAt: new Date().toISOString(),
+          mtimeMs: 0,
+          sha256: contentHash,
+        }]);
+      }
+      await discardFileCheckpoints(context, [change]);
     } catch (rollbackError) {
       throw new Error(
-        `${toolName} failed: ${messageOf(error)}; rollback failed: ${messageOf(rollbackError)}`,
+        `${toolName} failed: ${messageOf(error)}; cleanup failed: ${messageOf(rollbackError)}`,
       );
     }
     throw error;
@@ -704,6 +709,7 @@ async function writePreparedChanges(
   } catch (error) {
     try {
       await restoreCommittedChanges(committed);
+      await discardFileCheckpoints(context, changes);
     } catch (rollbackError) {
       throw new Error(
         `apply_patch failed: ${messageOf(error)}; rollback failed: ${messageOf(rollbackError)}`,
@@ -1421,6 +1427,21 @@ async function recordFileCheckpoint(
     afterContent: change.operation === "delete" ? null : change.nextContent,
     beforeSha256: change.operation === "create" ? null : sha256(change.originalContent),
     afterSha256: change.operation === "delete" ? null : sha256(change.nextContent),
+  });
+}
+
+async function discardFileCheckpoints(
+  context: AgentToolContext,
+  changes: readonly PreparedFileChange[],
+): Promise<void> {
+  const workspace = requireWorkspace(context);
+  const relativePaths = [...new Set(changes.map((change) => change.path))];
+  if (relativePaths.length === 0) return;
+  await context.checkpoint?.discardFileSnapshots?.({
+    threadId: context.threadId,
+    turnId: context.turnId,
+    workspace,
+    relativePaths,
   });
 }
 

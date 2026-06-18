@@ -67,6 +67,13 @@ export interface CheckpointFileSnapshotLookupInput {
   relativePath: string;
 }
 
+export interface CheckpointDiscardFileSnapshotsInput {
+  threadId: string;
+  turnId: string;
+  workspace: string;
+  relativePaths: string[];
+}
+
 export interface CheckpointFileSnapshotLookupResult {
   threadId: string;
   turnId: string;
@@ -152,6 +159,31 @@ export class CheckpointStore {
         createdAt: new Date().toISOString(),
       });
       await this.writeRecords(snapshot.threadId, sortRecords(records));
+    });
+  }
+
+  async discardFileSnapshots(input: CheckpointDiscardFileSnapshotsInput): Promise<number> {
+    const threadId = normalizeSafeId(input.threadId, "threadId");
+    const turnId = normalizeSafeId(input.turnId, "turnId");
+    const workspace = resolveWorkspaceRoot(input.workspace);
+    const relativePaths = [...new Set(input.relativePaths.map(normalizeRelativePath))];
+    if (relativePaths.length === 0) return 0;
+
+    return this.serialized(threadId, async () => {
+      const records = await this.readRecords(threadId);
+      const record = records.find((candidate) => candidate.turnId === turnId);
+      if (!record) return 0;
+      if (!isSamePath(record.workspace, workspace)) {
+        throw new Error(`Checkpoint workspace changed for turn ${turnId}.`);
+      }
+      const targets = new Set(relativePaths);
+      const beforeCount = record.files.length;
+      record.files = record.files.filter((file) => !targets.has(file.path));
+      const discarded = beforeCount - record.files.length;
+      if (discarded > 0) {
+        await this.writeRecords(threadId, sortRecords(records));
+      }
+      return discarded;
     });
   }
 

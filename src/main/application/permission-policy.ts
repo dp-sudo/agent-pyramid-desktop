@@ -79,6 +79,10 @@ export function evaluatePermission(input: PermissionPolicyInput): PermissionPoli
   if (!candidate) {
     return "none";
   }
+  const candidateValues = splitPermissionValues(candidate.value);
+  if (candidate.tool === "write" && candidateValues.length > 1) {
+    return evaluateMultiValueWritePermission(candidate.tool, candidateValues, input.rules);
+  }
 
   let decision: PermissionPolicyDecision = "none";
   let priority = 0;
@@ -98,14 +102,49 @@ export function evaluatePermission(input: PermissionPolicyInput): PermissionPoli
   return decision;
 }
 
+function evaluateMultiValueWritePermission(
+  tool: RuntimePermissionRule["tool"],
+  values: readonly string[],
+  rules: readonly RuntimePermissionRule[],
+): PermissionPolicyDecision {
+  const allowedValues = new Set<string>();
+  let hasAskMatch = false;
+
+  for (const rule of rules) {
+    if (rule.tool !== tool) {
+      continue;
+    }
+    const matchingValues = values.filter((value) =>
+      matchesSingleCandidateRule(tool, rule, value)
+    );
+    if (matchingValues.length === 0) {
+      continue;
+    }
+    if (rule.effect === "deny") {
+      return "deny";
+    }
+    if (rule.effect === "ask") {
+      hasAskMatch = true;
+      continue;
+    }
+    for (const value of matchingValues) {
+      allowedValues.add(value);
+    }
+  }
+
+  if (hasAskMatch) {
+    return "ask";
+  }
+  return values.every((value) => allowedValues.has(value)) ? "allow" : "none";
+}
+
 export function buildPermissionCandidate(
   toolName: string,
   args: Record<string, unknown>,
 ): { tool: RuntimePermissionRule["tool"]; value: string } | null {
   if (SHELL_COMMAND_POLICY_TOOL_NAMES.has(toolName)) {
-    return typeof args.command === "string"
-      ? { tool: "command", value: normalizeCommandValue(args.command) }
-      : null;
+    const value = buildShellCommandPermissionValue(toolName, args);
+    return value ? { tool: "command", value } : null;
   }
   if (GENERATED_COMMAND_POLICY_TOOL_NAMES.has(toolName)) {
     const value = buildGeneratedCommandPermissionValue(toolName, args);
@@ -131,6 +170,50 @@ export function buildPermissionCandidate(
   return typeof args.path === "string"
     ? { tool: "write", value: normalizePermissionPath(args.path) }
     : null;
+}
+
+function buildShellCommandPermissionValue(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  if (typeof args.command !== "string") return null;
+  const segments = [
+    toolName,
+    `command=${JSON.stringify(normalizeCommandValue(args.command))}`,
+  ];
+  appendShellCommandContextSegments(segments, toolName, args);
+  return normalizeCommandValue(segments.join(" "));
+}
+
+function appendShellCommandContextSegments(
+  segments: string[],
+  toolName: string,
+  args: Record<string, unknown>,
+): void {
+  const cwd = optionalNonBlankString(args.cwd);
+  if (cwd) {
+    segments.push(`cwd=${normalizePermissionPath(cwd)}`);
+  }
+  if (toolName === "shell_command") {
+    const shell = optionalNonBlankString(args.shell);
+    const shellPath = optionalNonBlankString(args.shell_path);
+    const shellArgs = optionalPermissionStringArray(args.shell_args);
+    if (shell) segments.push(`shell=${shell}`);
+    if (shellPath) segments.push(`shell_path=${normalizePermissionPath(shellPath)}`);
+    if (shellArgs) segments.push(`shell_args=${JSON.stringify(shellArgs)}`);
+  }
+  if (toolName === "git_bash_command") {
+    const gitBashPath = optionalNonBlankString(args.git_bash_path);
+    if (gitBashPath) segments.push(`git_bash_path=${normalizePermissionPath(gitBashPath)}`);
+  }
+  if (toolName === "powershell_command") {
+    const executable = optionalNonBlankString(args.executable);
+    if (executable) segments.push(`executable=${executable}`);
+  }
+  if (toolName === "wsl_command") {
+    const distro = optionalNonBlankString(args.distro);
+    if (distro) segments.push(`distro=${distro}`);
+  }
 }
 
 function buildGeneratedCommandPermissionValue(
@@ -226,7 +309,14 @@ function buildCommandSessionPermissionValue(
   args: Record<string, unknown>,
 ): string | null {
   const sessionId = optionalNonBlankString(args.session_id);
-  return sessionId ? `${action}:${sessionId}` : null;
+  if (!sessionId) return null;
+  if (action === "stop_command_session") {
+    return `${action}:${sessionId}`;
+  }
+  const input = optionalSessionInputValue(args.input);
+  if (input === null) return null;
+  const newline = args.newline === false ? "none" : "lf";
+  return `${action}:${sessionId} input=${input} newline=${newline}`;
 }
 
 function appendOptionalCwd(value: string, args: Record<string, unknown>): string {
@@ -242,6 +332,11 @@ function optionalPackageManagerValue(value: unknown): string | null {
 
 function optionalNonBlankString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function optionalSessionInputValue(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  return JSON.stringify(normalizeCommandValue(value));
 }
 
 function optionalPermissionStringArray(value: unknown): string[] | null {
@@ -298,13 +393,28 @@ function matchesCandidateRule(
   rule: RuntimePermissionRule,
   value: string,
 ): boolean {
+  return splitPermissionValues(value).some((entry) =>
+    matchesSingleCandidateRule(tool, rule, entry)
+  );
+}
+
+function matchesSingleCandidateRule(
+  tool: RuntimePermissionRule["tool"],
+  rule: RuntimePermissionRule,
+  value: string,
+): boolean {
+  // Shell-like command candidates now include the tool name and execution
+  // context. Bare command patterns are still accepted as a legacy compatibility
+  // path, but they only match the parsed command field and cannot scope cwd.
   if (rule.match === "exact") {
-    return matchesExactPermissionPattern(rule.pattern, value);
+    return matchesExactPermissionPattern(rule.pattern, value) ||
+      (tool === "command" && matchesStructuredCommandFieldExactPattern(rule.pattern, value));
   }
   if (tool === "command" && matchesCommandPrefixPattern(rule.pattern, value)) {
     return true;
   }
-  return matchesPermissionPattern(rule.pattern, value);
+  return matchesPermissionPattern(rule.pattern, value) ||
+    (tool === "command" && matchesStructuredCommandFieldPattern(rule.pattern, value));
 }
 
 export function matchesExactPermissionPattern(pattern: string, value: string): boolean {
@@ -316,6 +426,17 @@ export function matchesExactPermissionPattern(pattern: string, value: string): b
 
 function matchesCommandPrefixPattern(pattern: string, value: string): boolean {
   const normalizedPattern = normalizeCommandValue(pattern);
+  const structuredPattern = parseStructuredCommandPrefixPattern(normalizedPattern);
+  if (structuredPattern) {
+    return splitPermissionValues(value).some((entry) => {
+      const candidate = parseStructuredCommandCandidate(normalizeCommandValue(entry));
+      return candidate !== null &&
+        candidate.beforeCommand === structuredPattern.beforeCommand &&
+        (!structuredPattern.afterCommand ||
+          candidate.afterCommand === structuredPattern.afterCommand) &&
+        matchesSafeCommandPrefix(structuredPattern.commandPrefix, candidate.command);
+    });
+  }
   if (!normalizedPattern.endsWith(":*")) {
     return false;
   }
@@ -325,14 +446,127 @@ function matchesCommandPrefixPattern(pattern: string, value: string): boolean {
   }
   const values = value.split("\n").map((entry) => normalizeCommandValue(entry)).filter(Boolean);
   return values.some((entry) => {
-    if (entry === prefix) {
-      return true;
-    }
-    if (!entry.startsWith(`${prefix} `)) {
-      return false;
-    }
-    return isSafeCommandPrefixContinuation(entry.slice(prefix.length).trimStart());
+    const candidate = parseStructuredCommandCandidate(entry);
+    return matchesSafeCommandPrefix(prefix, entry) ||
+      (candidate !== null && matchesSafeCommandPrefix(prefix, candidate.command));
   });
+}
+
+function matchesStructuredCommandFieldExactPattern(pattern: string, value: string): boolean {
+  const approvedCommands = new Set(
+    splitPermissionValues(pattern).map((entry) => normalizeCommandValue(entry)),
+  );
+  const candidateValues = splitPermissionValues(value);
+  return candidateValues.length > 0 &&
+    candidateValues.every((entry) => {
+      const candidate = parseStructuredCommandCandidate(normalizeCommandValue(entry));
+      return candidate !== null && approvedCommands.has(candidate.command);
+    });
+}
+
+function matchesStructuredCommandFieldPattern(pattern: string, value: string): boolean {
+  const normalizedPattern = normalizeCommandValue(pattern);
+  const expression = wildcardToRegExp(normalizedPattern);
+  return splitPermissionValues(value).some((entry) => {
+    const candidate = parseStructuredCommandCandidate(normalizeCommandValue(entry));
+    return candidate !== null && expression.test(candidate.command);
+  });
+}
+
+interface StructuredCommandPrefixPattern {
+  beforeCommand: string;
+  commandPrefix: string;
+  afterCommand: string;
+}
+
+interface StructuredCommandCandidate {
+  beforeCommand: string;
+  command: string;
+  afterCommand: string;
+}
+
+function parseStructuredCommandPrefixPattern(
+  pattern: string,
+): StructuredCommandPrefixPattern | null {
+  const commandValueStart = findStructuredCommandValueStart(pattern);
+  if (commandValueStart === null) {
+    return null;
+  }
+  const command = parseJsonStringAt(pattern, commandValueStart);
+  if (!command || !command.value.trim()) {
+    return null;
+  }
+  const markerEnd = command.end + 2;
+  if (pattern.slice(command.end, markerEnd) !== ":*") {
+    return null;
+  }
+  return {
+    beforeCommand: pattern.slice(0, commandValueStart),
+    commandPrefix: normalizeCommandValue(command.value),
+    afterCommand: pattern.slice(markerEnd),
+  };
+}
+
+function parseStructuredCommandCandidate(value: string): StructuredCommandCandidate | null {
+  const commandValueStart = findStructuredCommandValueStart(value);
+  if (commandValueStart === null) {
+    return null;
+  }
+  const command = parseJsonStringAt(value, commandValueStart);
+  if (!command) {
+    return null;
+  }
+  return {
+    beforeCommand: value.slice(0, commandValueStart),
+    command: normalizeCommandValue(command.value),
+    afterCommand: value.slice(command.end),
+  };
+}
+
+function findStructuredCommandValueStart(value: string): number | null {
+  const marker = "command=";
+  const firstSpaceIndex = value.indexOf(" ");
+  if (firstSpaceIndex <= 0 || !SHELL_COMMAND_POLICY_TOOL_NAMES.has(value.slice(0, firstSpaceIndex))) {
+    return null;
+  }
+  const markerIndex = value.indexOf(marker);
+  return markerIndex >= 0 ? markerIndex + marker.length : null;
+}
+
+function parseJsonStringAt(
+  value: string,
+  start: number,
+): { value: string; end: number } | null {
+  if (value[start] !== "\"") {
+    return null;
+  }
+  for (let index = start + 1; index < value.length; index += 1) {
+    if (value[index] === "\\") {
+      index += 1;
+      continue;
+    }
+    if (value[index] !== "\"") {
+      continue;
+    }
+    const literal = value.slice(start, index + 1);
+    try {
+      const parsed = JSON.parse(literal) as unknown;
+      return typeof parsed === "string" ? { value: parsed, end: index + 1 } : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function matchesSafeCommandPrefix(prefix: string, command: string): boolean {
+  if (command === prefix) {
+    return true;
+  }
+  if (!command.startsWith(`${prefix} `)) {
+    return false;
+  }
+  return isSafeCommandPrefixContinuation(command.slice(prefix.length).trimStart());
 }
 
 export function extractUnifiedDiffTargetPaths(patch: string): string[] {

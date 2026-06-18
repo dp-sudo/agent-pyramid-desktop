@@ -163,6 +163,12 @@ export interface AgentCheckpointRecorder {
     beforeSha256: string | null;
     afterSha256: string | null;
   }): Promise<void>;
+  discardFileSnapshots?(entry: {
+    threadId: string;
+    turnId: string;
+    workspace: string;
+    relativePaths: string[];
+  }): Promise<number>;
   latestFileSnapshot?(entry: {
     threadId: string;
     workspace: string;

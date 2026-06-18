@@ -73,6 +73,7 @@ import {
   killProcessTree,
   spawnWorkspaceCommand,
   spawnWorkspaceProcess,
+  waitForProcessSpawn,
   type CommandOutput,
 } from "./command-process-runner.js";
 import {
@@ -1345,7 +1346,7 @@ async function executeGitStatus(
   stderr: string;
 }> {
   const { workspace, cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "git_status");
-  const pathspecs = await resolvePathspecs(input.pathspecs, workspace, "git_status");
+  const pathspecs = await resolvePathspecs(input.pathspecs, workspace, cwdPath, "git_status");
   const args = ["status", "--short", "--branch", "--untracked-files=all", ...gitPathspecArgs(pathspecs)];
   const output = await executeGitCommand(args, cwdPath, context);
   const lines = output.stdout.text.split(/\r?\n/).filter(Boolean);
@@ -1372,7 +1373,7 @@ async function executeGitDiff(
   const { cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "git_diff");
   const staged = input.staged === undefined ? false : requiredBoolean(input.staged, "staged");
   const stat = input.stat === undefined ? false : requiredBoolean(input.stat, "stat");
-  const pathspecs = await resolvePathspecs(input.pathspecs, requireWorkspace(context), "git_diff");
+  const pathspecs = await resolvePathspecs(input.pathspecs, requireWorkspace(context), cwdPath, "git_diff");
   const args = [
     "-c",
     "diff.external=",
@@ -1416,7 +1417,7 @@ async function executeGitLog(
     "max_count",
   );
   const ref = optionalGitLogRef(input.ref);
-  const pathspecs = await resolvePathspecs(input.pathspecs, workspace, "git_log");
+  const pathspecs = await resolvePathspecs(input.pathspecs, workspace, cwdPath, "git_log");
   const format = "%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s";
   const args = [
     "log",
@@ -1496,7 +1497,7 @@ async function executeGitCommit(
   const { workspace, cwdPath, cwd } = await resolveWorkspaceDirectory(input, context, "git_commit");
   const message = requiredLimitedString(input.message, "git_commit requires a non-empty message.", 10_000);
   const all = input.all === undefined ? false : requiredBoolean(input.all, "all");
-  const pathspecs = await resolvePathspecs(input.pathspecs, workspace, "git_commit");
+  const pathspecs = await resolvePathspecs(input.pathspecs, workspace, cwdPath, "git_commit");
   let addResult: CommandRunResult | undefined;
   if (all || pathspecs.length > 0) {
     const addArgs = ["add", ...(all ? ["-A"] : gitPathspecArgs(pathspecs))];
@@ -1973,17 +1974,22 @@ async function executeGitCommand(
 async function resolvePathspecs(
   value: unknown,
   workspace: string,
+  cwdPath: string,
   toolName: string,
 ): Promise<string[]> {
   const pathspecs = optionalStringArray(value, "pathspecs") ?? [];
+  const gitPathspecs: string[] = [];
   for (const pathspec of pathspecs) {
     assertPlainGitPathspec(pathspec, toolName);
-    resolveWorkspacePathLexically(workspace, pathspec);
     if (pathspec.includes("\0")) {
       throw new Error(`${toolName} pathspec cannot contain NUL bytes.`);
     }
+    const targetPath = resolveWorkspacePathLexically(workspace, pathspec);
+    // Tool callers use workspace-relative pathspecs, while Git interprets
+    // pathspecs relative to the process cwd.
+    gitPathspecs.push(toWorkspaceRelative(cwdPath, targetPath) || ".");
   }
-  return pathspecs;
+  return gitPathspecs;
 }
 
 async function detectShellEnvironment(
@@ -2143,7 +2149,20 @@ class CommandSessionManager {
     context.signal?.addEventListener("abort", onAbort, { once: true });
     this.sessions.set(session.id, session);
     try {
-      await this.waitForSessionSpawn(session);
+      await waitForProcessSpawn(child, {
+        failureMessagePrefix: "start_command_session failed to start command",
+        timeoutMs: COMMAND_SESSION_SPAWN_TIMEOUT_MS,
+        createCurrentError: () => {
+          if (session.status !== "failed") return undefined;
+          return new Error(session.error ?? "unknown spawn failure");
+        },
+        createCloseError: (exitCode, signal) => {
+          if (session.status === "failed") {
+            return new Error(session.error ?? "unknown spawn failure");
+          }
+          return new Error(`process closed before spawn event (exitCode: ${exitCode}, signal: ${signal})`);
+        },
+      });
       if (context.signal?.aborted) {
         throw new Error("Command was interrupted.");
       }
@@ -2324,62 +2343,6 @@ class CommandSessionManager {
 
   private isActiveSession(session: CommandSession): boolean {
     return session.status === "running" || session.status === "stopping";
-  }
-
-  private async waitForSessionSpawn(session: CommandSession): Promise<void> {
-    // start_command_session must only return a usable session id after the OS
-    // accepted the child process. A pid covers already-emitted spawn events,
-    // while close/error/timeout keep startup failures traceable to this call.
-    if (typeof session.child.pid === "number") return;
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const cleanup = (): void => {
-        clearTimeout(timeout);
-        session.child.off("spawn", onSpawn);
-        session.child.off("error", onError);
-        session.child.off("close", onClose);
-      };
-      const settleResolve = (): void => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve();
-      };
-      const settleReject = (error: Error): void => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(new Error(`start_command_session failed to start command: ${error.message}`));
-      };
-      const onSpawn = (): void => {
-        settleResolve();
-      };
-      const onError = (error: Error): void => {
-        settleReject(error);
-      };
-      const onClose = (exitCode: number | null, signal: NodeJS.Signals | null): void => {
-        if (session.status === "failed") {
-          settleReject(new Error(session.error ?? "unknown spawn failure"));
-          return;
-        }
-        settleReject(
-          new Error(`process closed before spawn event (exitCode: ${exitCode}, signal: ${signal})`),
-        );
-      };
-      const timeout = setTimeout(() => {
-        settleReject(new Error("timed out waiting for process spawn"));
-      }, COMMAND_SESSION_SPAWN_TIMEOUT_MS);
-      session.child.once("spawn", onSpawn);
-      session.child.once("error", onError);
-      session.child.once("close", onClose);
-      if (typeof session.child.pid === "number") {
-        settleResolve();
-        return;
-      }
-      if (session.status === "failed") {
-        settleReject(new Error(session.error ?? "unknown spawn failure"));
-      }
-    });
   }
 
   private async waitForTerminalSession(

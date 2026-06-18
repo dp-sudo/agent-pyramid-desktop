@@ -27,6 +27,89 @@ export interface CommandOutput {
   stderr: StreamCapture;
 }
 
+export interface ProcessSpawnWaitOptions {
+  failureMessagePrefix: string;
+  timeoutMs?: number;
+  onSpawnAccepted?: () => void;
+  formatFailure?: (error: Error) => Error;
+  createCurrentError?: () => Error | undefined;
+  createCloseError?: (
+    exitCode: number | null,
+    signal: NodeJS.Signals | null,
+  ) => Error | undefined;
+}
+
+/**
+ * Centralizes the spawn-startup contract for command tools: callers only treat
+ * a command as started after Node reports a pid/spawn event, while pre-spawn
+ * errors and early closes stay traceable to the tool call that attempted spawn.
+ */
+export function waitForProcessSpawn(
+  child: ChildProcess,
+  options: ProcessSpawnWaitOptions,
+): Promise<void> {
+  if (typeof child.pid === "number") {
+    options.onSpawnAccepted?.();
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timeout: NodeJS.Timeout | undefined;
+
+    const cleanup = (): void => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      child.off("spawn", onSpawn);
+      child.off("error", onError);
+      child.off("close", onClose);
+    };
+    const settleResolve = (): void => {
+      if (settled) return;
+      settled = true;
+      options.onSpawnAccepted?.();
+      cleanup();
+      resolve();
+    };
+    const settleReject = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(options.formatFailure?.(error) ?? new Error(`${options.failureMessagePrefix}: ${error.message}`));
+    };
+    const onSpawn = (): void => {
+      settleResolve();
+    };
+    const onError = (error: Error): void => {
+      settleReject(error);
+    };
+    const onClose = (exitCode: number | null, signal: NodeJS.Signals | null): void => {
+      settleReject(
+        options.createCloseError?.(exitCode, signal) ??
+          new Error(`process closed before spawn event (exitCode: ${exitCode}, signal: ${signal})`),
+      );
+    };
+
+    child.once("spawn", onSpawn);
+    child.once("error", onError);
+    child.once("close", onClose);
+    if (options.timeoutMs !== undefined) {
+      timeout = setTimeout(() => {
+        settleReject(new Error("timed out waiting for process spawn"));
+      }, options.timeoutMs);
+    }
+    if (typeof child.pid === "number") {
+      settleResolve();
+      return;
+    }
+    const currentError = options.createCurrentError?.();
+    if (currentError) {
+      settleReject(currentError);
+    }
+  });
+}
+
 /**
  * Runs foreground commands with bounded output, live progress, timeout, and
  * cancellation semantics. Process-tree ownership stays here so command tools
@@ -71,7 +154,6 @@ export async function spawnWorkspaceProcess(
     const progress = createCommandProgressReporter(reportProgress);
     let timedOut = false;
     let settled = false;
-    let spawned = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
 
     const spawnSpec = createCommandSpawnSpec(invocation, {
@@ -80,6 +162,7 @@ export async function spawnWorkspaceProcess(
       stdin: "ignore",
     });
     const child = spawn(spawnSpec.file, spawnSpec.args, spawnSpec.options);
+    let spawnAccepted = typeof child.pid === "number";
 
     const killChild = (killSignal: NodeJS.Signals): void => {
       killProcessTree(child, killSignal);
@@ -128,18 +211,34 @@ export async function spawnWorkspaceProcess(
       stderr.collect(data);
       progress?.collect(data, "stderr");
     });
-    child.on("spawn", () => {
-      spawned = true;
-    });
+    void waitForProcessSpawn(child, {
+      failureMessagePrefix: "Command failed to start",
+      onSpawnAccepted: () => {
+        spawnAccepted = true;
+      },
+      formatFailure: (error) =>
+        error.message === "Command was interrupted."
+          ? error
+          : new Error(`Command failed to start: ${error.message}`),
+      createCloseError: (exitCode, childSignal) => {
+        if (signal?.aborted && !timedOut) {
+          return new Error("Command was interrupted.");
+        }
+        return new Error(`process closed before spawn event (exitCode: ${exitCode}, signal: ${childSignal})`);
+      },
+    }).catch(settleReject);
     child.on("error", (error) => {
-      if (!spawned) {
-        settleReject(new Error(`Command failed to start: ${error.message}`));
-        return;
-      }
+      if (!spawnAccepted) return;
       settleReject(error);
     });
     child.on("close", (exitCode, childSignal) => {
       if (settled) return;
+      if (!spawnAccepted) {
+        if (signal?.aborted && !timedOut) {
+          settleReject(new Error("Command was interrupted."));
+        }
+        return;
+      }
       settled = true;
       progress?.flush();
       cleanup();

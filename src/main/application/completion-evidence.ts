@@ -24,6 +24,7 @@ interface FileChangeEvidence {
 interface CommandEvidence {
   toolName: string;
   status: ToolItem["status"];
+  resultStatus?: string;
   command?: string;
   exitCode?: number | null;
   timedOut: boolean;
@@ -173,13 +174,13 @@ function collectCommandRuns(items: readonly ToolItem[]): CommandEvidence[] {
     const result = asRecord(item.result);
     const command = result ? readString(result, "command") : readString(item.args, "command");
     const exitCode = result ? readNullableNumber(result, "exitCode") : undefined;
+    const resultStatus = result ? readString(result, "status") : undefined;
     const timedOut = result ? readBoolean(result, "timedOut") ?? false : false;
-    const success = item.status === "completed" &&
-      !timedOut &&
-      (exitCode === undefined || exitCode === 0);
+    const success = commandRunSucceeded(item.name, item.status, resultStatus, exitCode, timedOut);
     return [{
       toolName: item.name,
       status: item.status,
+      ...(resultStatus ? { resultStatus } : {}),
       ...(command ? { command } : {}),
       ...(exitCode !== undefined ? { exitCode } : {}),
       timedOut,
@@ -257,6 +258,11 @@ function formatCommandRuns(commandRuns: readonly CommandEvidence[]): string {
 
 function formatCommandStatus(run: CommandEvidence): string {
   if (run.timedOut) return "timed out";
+  if (run.resultStatus === "running" || run.resultStatus === "stopping") {
+    return "still running";
+  }
+  if (run.resultStatus === "failed") return "failed";
+  if (run.toolName === "write_command_session") return "input written";
   if (run.exitCode !== undefined) {
     return run.exitCode === 0
       ? "passed (exit 0)"
@@ -266,6 +272,22 @@ function formatCommandStatus(run: CommandEvidence): string {
   if (run.status === "running") return "still running";
   if (run.status === "pending") return "pending";
   return "failed";
+}
+
+function commandRunSucceeded(
+  toolName: string,
+  toolStatus: ToolItem["status"],
+  resultStatus: string | undefined,
+  exitCode: number | null | undefined,
+  timedOut: boolean,
+): boolean {
+  if (toolStatus !== "completed" || timedOut) return false;
+  if (toolName === "write_command_session") return false;
+  if (resultStatus === "running" || resultStatus === "stopping" || resultStatus === "failed") {
+    return false;
+  }
+  if (exitCode === undefined) return true;
+  return exitCode === 0;
 }
 
 function formatCheckpointCoverage(
