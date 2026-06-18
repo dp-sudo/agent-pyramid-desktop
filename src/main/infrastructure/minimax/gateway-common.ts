@@ -22,6 +22,8 @@ const SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /\bkey-[A-Za-z0-9_\-]{6,}/g,
   /\bcr_[A-Za-z0-9_\-]{6,}/g,
   /\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*\.?[A-Za-z0-9_\-]*/g,
+  // Provider-specific error bodies may use arbitrary credential field names.
+  /\b[\w.-]*(?:secret|credential|token|password|passwd|api[_-]?key|access[_-]?key|refresh[_-]?key)[\w.-]*\s*[:=]\s*"?[^\s",}]+/gi,
 ];
 
 export function redactSecrets(text: string): string {

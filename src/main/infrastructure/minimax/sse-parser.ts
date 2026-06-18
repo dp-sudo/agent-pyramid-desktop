@@ -1,3 +1,5 @@
+import { redactSecrets } from "./gateway-common.js";
+
 /**
  * Protocol-agnostic SSE stream decoder for LLM gateway responses.
  *
@@ -102,8 +104,9 @@ export function parseSseFrame(frame: string): unknown | "[DONE]" | null {
 
 /** Extract a human-readable summary from an SSE error-event data payload. */
 export function formatSseErrorData(data: string): string {
+  const safeData = redactSecrets(data);
   try {
-    const parsed = JSON.parse(data) as unknown;
+    const parsed = JSON.parse(safeData) as unknown;
     if (parsed && typeof parsed === "object") {
       const value = parsed as {
         error?: { message?: unknown; type?: unknown; code?: unknown };
@@ -119,11 +122,11 @@ export function formatSseErrorData(data: string): string {
           ? String(value.error.code)
           : "";
       const details = [type, code, message].filter((part) => part.length > 0).join(": ");
-      return (details || JSON.stringify(parsed)).slice(0, 800);
+      return redactSecrets(details || JSON.stringify(parsed)).slice(0, 800);
     }
   } catch (error) {
     void error;
-    return data.slice(0, 800);
+    return safeData.slice(0, 800);
   }
-  return data.slice(0, 800);
+  return safeData.slice(0, 800);
 }
