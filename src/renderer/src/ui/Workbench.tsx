@@ -126,7 +126,7 @@ export function Workbench(): ReactElement {
   // Load thread list on mount.
   useEffect(() => {
     if (!window.agentApi) {
-      actions.setError("Preload script not loaded — check the Electron main process logs.");
+      actions.setError(t("settings.preloadMissing"));
       return;
     }
     let cancelled = false;
@@ -166,7 +166,7 @@ export function Workbench(): ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [actions, state.showArchivedThreads]);
+  }, [actions, state.showArchivedThreads, t]);
 
   const flushToolProgressBuffers = useCallback((): void => {
     if (toolProgressFlushTimerRef.current) {

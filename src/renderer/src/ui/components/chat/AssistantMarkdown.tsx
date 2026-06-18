@@ -33,11 +33,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 }: AssistantMarkdownProps): ReactElement {
   // Streaming cleanup runs only on the live block, so finalized text keeps its
   // original whitespace and any deliberately-unclosed fence the model chose to
-  // emit. Order matters: trim trailing blank lines first, then close any
-  // inline backticks (e.g. a lone ` at the end of a sentence), then close any
-  // dangling fenced code block.
+  // emit. Inline code repair only counts text outside fenced blocks; otherwise
+  // an unfinished streamed code fence would get a stray backtick in its body.
   const renderText = streaming
-    ? closeDanglingCodeFence(closeDanglingInlineBackticks(trimTrailingBlankLines(text)))
+    ? closeDanglingInlineBackticks(closeDanglingCodeFence(trimTrailingBlankLines(text)))
     : text;
   const tailCursor = streaming && !looksLikeTrailingWhitespace(text);
   const components = useMemo(
@@ -256,7 +255,7 @@ export function isCodeBlockCollapsedByDefault(
   code: string,
   lineThreshold = CODE_BLOCK_COLLAPSE_LINE_THRESHOLD_DEFAULT,
 ): boolean {
-  return countCodeLines(code) >= lineThreshold;
+  return countCodeLines(code) > lineThreshold;
 }
 
 export function resolveNextCodeBlockCollapsedState({
@@ -390,17 +389,22 @@ export function closeDanglingCodeFence(text: string): string {
 // with no React/state coupling and is independently testable.
 
 export function closeDanglingInlineBackticks(text: string): string {
-  // Counts the total number of backtick characters in the buffer. If the count
-  // is odd, the model opened an inline code span (a lone `) that never closed;
-  // appending one more ` keeps downstream markdown parsers from consuming the
-  // rest of the message as code. Fenced ``` blocks already contain balanced
-  // backticks in multiples of three, so this only fires on the genuinely
-  // dangling single-backtick case.
-  let count = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    if (text.charCodeAt(i) === 96) count += 1;
+  // Count only backticks that can open inline code. Fenced code blocks are
+  // parsed as their own region, so their delimiters and body backticks must not
+  // influence inline repair while the assistant is still streaming.
+  let inlineBacktickCount = 0;
+  let insideFence = false;
+  for (const line of text.split("\n")) {
+    if (/^\s*```/.test(line)) {
+      insideFence = !insideFence;
+      continue;
+    }
+    if (insideFence) continue;
+    for (let index = 0; index < line.length; index += 1) {
+      if (line.charCodeAt(index) === 96) inlineBacktickCount += 1;
+    }
   }
-  return count % 2 === 1 ? `${text}\`` : text;
+  return inlineBacktickCount % 2 === 1 ? `${text}\`` : text;
 }
 
 export function trimTrailingBlankLines(text: string): string {
