@@ -106,6 +106,28 @@ describe("AttachmentStore", () => {
       .rejects.toThrow("Attachment 00000000-0000-4000-8000-000000000000 not found.");
   });
 
+  it("rejects image payloads whose magic bytes do not match the declared MIME type", async () => {
+    await expect(
+      store.create({
+        name: "avatar.jpg",
+        mimeType: "image/jpeg",
+        dataBase64: ONE_PIXEL_PNG_BASE64,
+      }),
+    ).rejects.toThrow(
+      "Attachment MIME type does not match image content: expected image/jpeg, detected image/png.",
+    );
+  });
+
+  it("rejects payloads without supported image magic bytes", async () => {
+    await expect(
+      store.create({
+        name: "avatar.png",
+        mimeType: "image/png",
+        dataBase64: Buffer.from("not an image", "utf8").toString("base64"),
+      }),
+    ).rejects.toThrow("Attachment content is not a supported image.");
+  });
+
   it("rejects invalid base64 payloads instead of storing decoded garbage", async () => {
     await expect(
       store.create({

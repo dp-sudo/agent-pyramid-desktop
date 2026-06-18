@@ -14,61 +14,147 @@ import {
   parseWritePutRequest,
   parseWriteRenameRequest,
   readMarkdownFileContent,
+  registerWriteHandlers,
   renameMarkdownFile,
+  resolveWriteWorkspaceForThread,
   resolveWritePathForAccess,
   resolveWritePath,
   writeMarkdownFileContent,
 } from "../../../src/main/ipc/write-handlers";
+import { WRITE_LIST_CHANNEL } from "../../../src/shared/ipc";
+import type { JsonlThreadStore } from "../../../src/main/persistence";
+import type { ThreadRecord } from "../../../src/shared/agent-contracts";
 import { makeTempDir, removeTempDir } from "../../helpers/temp-dir";
 
+type IpcHandler = (_event: unknown, request: unknown) => Promise<unknown>;
+
+const electronMock = vi.hoisted(() => {
+  const handlers = new Map<string, IpcHandler>();
+  return {
+    handlers,
+    ipcMain: {
+      handle: vi.fn((channel: string, handler: IpcHandler) => {
+        handlers.set(channel, handler);
+      }),
+    },
+  };
+});
+
 vi.mock("electron", () => ({
-  ipcMain: {
-    handle: vi.fn(),
-  },
+  ipcMain: electronMock.ipcMain,
 }));
+
+const WRITE_THREAD_ID = "00000000-0000-4000-8000-000000000001";
+
+function createThreadRecord(overrides: Partial<ThreadRecord> = {}): ThreadRecord {
+  return {
+    id: WRITE_THREAD_ID,
+    title: "Write",
+    workspace: "/workspace",
+    mode: "write",
+    status: "active",
+    relation: "primary",
+    createdAt: "2026-06-18T00:00:00.000Z",
+    updatedAt: "2026-06-18T00:00:00.000Z",
+    approvalPolicy: "on-request",
+    sandboxMode: "workspace-write",
+    ...overrides,
+  };
+}
+
+function createThreadStore(thread: ThreadRecord | null): JsonlThreadStore {
+  return {
+    getThread: vi.fn(async () => thread),
+  } as unknown as JsonlThreadStore;
+}
+
+describe("write handlers registration", () => {
+  it("resolves write workspaces from main-owned write threads", async () => {
+    const store = createThreadStore(createThreadRecord({ workspace: "C:\\workspace" }));
+
+    await expect(resolveWriteWorkspaceForThread(store, WRITE_THREAD_ID))
+      .resolves.toBe("C:\\workspace");
+    expect(store.getThread).toHaveBeenCalledWith(WRITE_THREAD_ID);
+  });
+
+  it("rejects missing or non-write threads before filesystem access", async () => {
+    await expect(resolveWriteWorkspaceForThread(createThreadStore(null), WRITE_THREAD_ID))
+      .rejects.toThrow(`Write thread was not found: ${WRITE_THREAD_ID}`);
+    await expect(resolveWriteWorkspaceForThread(
+      createThreadStore(createThreadRecord({ mode: "code" })),
+      WRITE_THREAD_ID,
+    )).rejects.toThrow(`Write service requires a write-mode thread: ${WRITE_THREAD_ID}`);
+  });
+
+  it("registers list handler without trusting a renderer workspace field", async () => {
+    electronMock.handlers.clear();
+    electronMock.ipcMain.handle.mockClear();
+    const workspace = await makeTempDir("write-handler-auth-");
+    try {
+      await fs.writeFile(path.join(workspace, "notes.md"), "# Notes\n", "utf8");
+      const store = createThreadStore(createThreadRecord({ workspace }));
+      registerWriteHandlers(store);
+      const handler = electronMock.handlers.get(WRITE_LIST_CHANNEL);
+      if (!handler) throw new Error("Expected write list handler.");
+
+      const result = await handler({}, {
+        threadId: WRITE_THREAD_ID,
+        workspace: "C:\\attacker-controlled",
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        value: [{ path: "notes.md" }],
+      });
+      expect(store.getThread).toHaveBeenCalledWith(WRITE_THREAD_ID);
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+});
 
 describe("write handlers helpers", () => {
   it("parses write IPC requests before file service access", () => {
-    expect(parseWriteListRequest({ workspace: "/workspace", search: "guide" }))
-      .toEqual({ workspace: "/workspace", search: "guide" });
-    expect(parseWriteGetRequest({ workspace: "/workspace", path: "notes.md" }))
-      .toEqual({ workspace: "/workspace", path: "notes.md" });
+    expect(parseWriteListRequest({ threadId: WRITE_THREAD_ID, search: "guide" }))
+      .toEqual({ threadId: WRITE_THREAD_ID, search: "guide" });
+    expect(parseWriteGetRequest({ threadId: WRITE_THREAD_ID, path: "notes.md" }))
+      .toEqual({ threadId: WRITE_THREAD_ID, path: "notes.md" });
     expect(parseWritePutRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "notes.md",
       content: "# Notes\n",
     })).toEqual({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "notes.md",
       content: "# Notes\n",
     });
     expect(parseWriteCreateRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "drafts/new.md",
       content: "# New\n",
     })).toEqual({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "drafts/new.md",
       content: "# New\n",
     });
     expect(parseWriteRenameRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "drafts/old.md",
       newPath: "drafts/new.md",
     })).toEqual({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "drafts/old.md",
       newPath: "drafts/new.md",
     });
-    expect(parseWriteDeleteRequest({ workspace: "/workspace", path: "notes.md" }))
-      .toEqual({ workspace: "/workspace", path: "notes.md" });
+    expect(parseWriteDeleteRequest({ threadId: WRITE_THREAD_ID, path: "notes.md" }))
+      .toEqual({ threadId: WRITE_THREAD_ID, path: "notes.md" });
     expect(parseWriteCompleteRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "notes.md",
       prefix: "- first task",
       suffix: "",
     })).toEqual({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "notes.md",
       prefix: "- first task",
       suffix: "",
@@ -79,41 +165,41 @@ describe("write handlers helpers", () => {
     expect(() => parseWriteListRequest(null)).toThrow(
       "Write list request must be an object.",
     );
-    expect(() => parseWriteListRequest({ workspace: "/workspace", search: 1 }))
+    expect(() => parseWriteListRequest({ threadId: WRITE_THREAD_ID, search: 1 }))
       .toThrow("Write list search must be a string.");
-    expect(() => parseWriteGetRequest({ workspace: "/workspace", path: 1 }))
+    expect(() => parseWriteGetRequest({ threadId: WRITE_THREAD_ID, path: 1 }))
       .toThrow("Write get path must be a string.");
     expect(() => parseWritePutRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "notes.md",
       content: Buffer.from("draft"),
     })).toThrow("Write put content must be a string.");
     expect(() => parseWriteCreateRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "notes.md",
       content: 1,
     })).toThrow("Write create content must be a string.");
     expect(() => parseWriteRenameRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "notes.md",
       newPath: 1,
     })).toThrow("Write rename newPath must be a string.");
     expect(() => parseWriteDeleteRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: false,
     })).toThrow("Write delete path must be a string.");
     expect(() => parseWriteCompleteRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "notes.md",
       prefix: "- first task",
       suffix: false,
     })).toThrow("Write complete suffix must be a string.");
-    expect(() => parseWriteListRequest({ workspace: "/workspace", search: `guide${"\0"}` }))
+    expect(() => parseWriteListRequest({ threadId: WRITE_THREAD_ID, search: `guide${"\0"}` }))
       .toThrow("Write list search cannot contain NUL bytes.");
-    expect(() => parseWriteGetRequest({ workspace: "/workspace", path: `notes.md${"\0"}` }))
+    expect(() => parseWriteGetRequest({ threadId: WRITE_THREAD_ID, path: `notes.md${"\0"}` }))
       .toThrow("Write get path cannot contain NUL bytes.");
     expect(() => parseWritePutRequest({
-      workspace: "/workspace",
+      threadId: WRITE_THREAD_ID,
       path: "notes.md",
       content: `draft${"\0"}`,
     })).toThrow("Write put content cannot contain NUL bytes.");
@@ -491,7 +577,7 @@ describe("write handlers helpers", () => {
   it("suggests local markdown continuations for inline completion", () => {
     expect(
       completeMarkdownInline({
-        workspace: "/workspace",
+        threadId: WRITE_THREAD_ID,
         path: "notes.md",
         prefix: "- first task",
         suffix: "",
@@ -500,7 +586,7 @@ describe("write handlers helpers", () => {
 
     expect(
       completeMarkdownInline({
-        workspace: "/workspace",
+        threadId: WRITE_THREAD_ID,
         path: "notes.md",
         prefix: "1. first item",
         suffix: "",

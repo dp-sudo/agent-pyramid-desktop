@@ -114,7 +114,8 @@ describe("McpClient", () => {
         name: "mcp__local-mcp__echo",
         description: "Echo",
         inputSchema: { type: "object" },
-        readOnly: true,
+        readOnly: false,
+        remoteReadOnlyHint: true,
       },
     ]);
     expect(client.listPrompts()).toEqual([
@@ -146,6 +147,44 @@ describe("McpClient", () => {
       content: "ok",
       isError: false,
     });
+  });
+
+  it("trusts local readOnlyTools instead of remote readOnlyHint for read-only authority", async () => {
+    const transport = new FakeTransport({
+      initialize: { capabilities: { tools: {} } },
+      "tools/list": {
+        tools: [
+          {
+            name: "echo",
+            inputSchema: { type: "object" },
+            annotations: { readOnlyHint: true },
+          },
+          {
+            name: "write",
+            inputSchema: { type: "object" },
+          },
+        ],
+      },
+    });
+    const client = new McpClient(config({ readOnlyTools: ["write"] }), { transport });
+
+    await expect(client.connect()).resolves.toEqual([
+      {
+        rawName: "echo",
+        name: "mcp__local-mcp__echo",
+        description: "",
+        inputSchema: { type: "object" },
+        readOnly: false,
+        remoteReadOnlyHint: true,
+      },
+      {
+        rawName: "write",
+        name: "mcp__local-mcp__write",
+        description: "",
+        inputSchema: { type: "object" },
+        readOnly: true,
+      },
+    ]);
   });
 
   it("fires the tools changed listener on MCP notifications", async () => {
@@ -285,7 +324,7 @@ describe("McpClient", () => {
   });
 });
 
-function config(): McpServerConfig {
+function config(overrides: Partial<McpServerConfig> = {}): McpServerConfig {
   return {
     id: "server-1",
     name: "local-mcp",
@@ -298,5 +337,6 @@ function config(): McpServerConfig {
     readOnlyTools: [],
     createdAt: "2026-06-07T00:00:00.000Z",
     updatedAt: "2026-06-07T00:00:00.000Z",
+    ...overrides,
   };
 }

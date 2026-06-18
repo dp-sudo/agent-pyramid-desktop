@@ -218,6 +218,47 @@ describe("RuntimePreferencesStore", () => {
     expect(parsed.runtimePreferences?.command.timeoutMs).toBe(45_000);
   });
 
+  it("encrypts sensitive MCP env and header values in shared config", async () => {
+    const secretPreferences: RuntimePreferences = {
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      mcpServers: [
+        {
+          id: "secure-mcp",
+          name: "secure MCP",
+          transport: "streamable-http",
+          args: [],
+          env: {
+            MCP_TOKEN: "env-secret",
+            PUBLIC_FLAG: "visible",
+          },
+          url: "https://mcp.example.test/mcp",
+          headers: {
+            Authorization: "Bearer header-secret",
+            "X-Trace": "trace-id",
+          },
+          enabled: true,
+          readOnlyTools: [],
+          createdAt: "2026-06-14T00:00:00.000Z",
+          updatedAt: "2026-06-14T00:00:00.000Z",
+        },
+      ],
+    };
+
+    await store.update({ mcpServers: secretPreferences.mcpServers });
+    const raw = await fs.readFile(path.join(userDataDir, "config"), "utf8");
+    const parsed = JSON.parse(raw) as { runtimePreferences?: RuntimePreferences };
+    const stored = parsed.runtimePreferences?.mcpServers[0];
+
+    expect(raw).not.toContain("env-secret");
+    expect(raw).not.toContain("header-secret");
+    expect(stored?.env.MCP_TOKEN).toBe(`${ENCRYPTED_SECRET_PREFIX}${encodeTestSecret("env-secret")}`);
+    expect(stored?.env.PUBLIC_FLAG).toBe("visible");
+    expect(stored?.headers.Authorization)
+      .toBe(`${ENCRYPTED_SECRET_PREFIX}${encodeTestSecret("Bearer header-secret")}`);
+    expect(stored?.headers["X-Trace"]).toBe("trace-id");
+    await expect(store.get()).resolves.toMatchObject(secretPreferences);
+  });
+
   it("uses config runtime preferences instead of stale legacy preferences", async () => {
     const configPreferences: RuntimePreferences = {
       ...DEFAULT_RUNTIME_PREFERENCES,

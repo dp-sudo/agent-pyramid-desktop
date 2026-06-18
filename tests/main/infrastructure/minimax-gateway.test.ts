@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { MiniMaxGateway } from "../../../src/main/infrastructure/minimax/minimax-gateway";
+import {
+  LLM_HTTP_ERROR_RESPONSE_MAX_BYTES,
+  LLM_HTTP_RESPONSE_MAX_BYTES,
+} from "../../../src/main/infrastructure/minimax/gateway-common";
 import type { LlmRequest, LlmStreamChunk } from "../../../src/main/domain/agent/types";
 
 const baseRequest: LlmRequest = {
@@ -817,6 +821,34 @@ describe("MiniMaxGateway", () => {
       /LLM openai-compatible request failed with HTTP 401:.*\[REDACTED\]/,
     );
     await expect(new MiniMaxGateway().complete(baseRequest)).rejects.not.toThrow(/sk-1234567890abcdef/);
+  });
+
+  it("rejects oversized non-stream provider response bodies before JSON parsing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response("x".repeat(LLM_HTTP_RESPONSE_MAX_BYTES + 1), { status: 200 }),
+      ),
+    );
+
+    await expect(new MiniMaxGateway().complete(baseRequest)).rejects.toThrow(
+      "LLM openai-compatible response exceeds the maximum size.",
+    );
+  });
+
+  it("rejects oversized stream error response bodies before surfacing provider text", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response("x".repeat(LLM_HTTP_ERROR_RESPONSE_MAX_BYTES + 1), { status: 500 }),
+      ),
+    );
+
+    await expect(async () => {
+      for await (const _chunk of new MiniMaxGateway().stream(baseRequest)) {
+        void _chunk;
+      }
+    }).rejects.toThrow("LLM openai-compatible stream error response exceeds the maximum size.");
   });
 });
 

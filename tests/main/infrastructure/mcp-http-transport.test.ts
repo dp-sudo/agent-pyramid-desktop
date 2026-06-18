@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
+import { MCP_MAX_MESSAGE_BYTES } from "../../../src/main/application/constants";
 import { HttpMcpTransport } from "../../../src/main/infrastructure/mcp/http-transport";
 import type { McpServerConfig } from "../../../src/shared/agent-contracts";
 
@@ -83,6 +84,19 @@ describe("HttpMcpTransport", () => {
 
     await expect(transport.call("initialize", {})).rejects.toThrow(
       "authentication appears required and no auth material is configured",
+    );
+  });
+
+  it("rejects oversized HTTP response bodies before parsing JSON", async () => {
+    const server = await listen((_request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end("x".repeat(MCP_MAX_MESSAGE_BYTES + 1));
+    });
+    servers.push(server);
+    const transport = HttpMcpTransport.start(config(server.url));
+
+    await expect(transport.call("initialize", {})).rejects.toThrow(
+      "MCP HTTP response exceeds the maximum size.",
     );
   });
 });

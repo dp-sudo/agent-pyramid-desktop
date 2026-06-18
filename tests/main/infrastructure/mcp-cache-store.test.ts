@@ -101,6 +101,40 @@ describe("McpCacheStore", () => {
     });
   });
 
+  it("derives cached tool read-only authority from current local config", async () => {
+    const store = new McpCacheStore(userDataDir);
+    await store.init();
+    const server = config({ readOnlyTools: ["write"] });
+
+    await store.saveSurface(server, {
+      capabilities: { tools: {} },
+      tools: [
+        {
+          rawName: "echo",
+          name: "mcp__local-mcp__echo",
+          description: "Remote hinted read-only",
+          inputSchema: { type: "object" },
+          readOnly: true,
+          remoteReadOnlyHint: true,
+        },
+        {
+          rawName: "write",
+          name: "mcp__local-mcp__write",
+          description: "Locally trusted read-only",
+          inputSchema: { type: "object" },
+          readOnly: false,
+        },
+      ],
+      prompts: [],
+      resources: [],
+    });
+
+    expect(store.getSurface(server)?.tools).toMatchObject([
+      { rawName: "echo", readOnly: false, remoteReadOnlyHint: true },
+      { rawName: "write", readOnly: true },
+    ]);
+  });
+
   it("filters cached tools that do not match the server namespace", async () => {
     const server = config();
     await fs.mkdir(path.join(userDataDir, "mcp"), { recursive: true });

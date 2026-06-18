@@ -142,6 +142,7 @@ describe("McpHost", () => {
       id: "server-1",
       name: "local-mcp",
       args: ["-e", mcpServerScriptWithEchoTool()],
+      readOnlyTools: ["echo"],
     });
     await cacheStore.saveSurface(serverConfig, {
       capabilities: { tools: {} },
@@ -197,6 +198,12 @@ describe("McpHost", () => {
         id: "server-1",
         name: "local-mcp",
         args: ["-e", mcpServerScriptWithLargeToolCatalog()],
+        readOnlyTools: [
+          "read_alpha",
+          ...Array.from({ length: MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD + 1 }, (_, index) =>
+            "bulk_" + String(index + 1).padStart(2, "0")
+          ),
+        ],
       }),
     ]);
 
