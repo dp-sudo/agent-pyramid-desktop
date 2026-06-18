@@ -385,6 +385,9 @@ Rules:
 - `CheckpointStore.recordFileSnapshot()` records at most one file snapshot per
   `turnId + path`; it preserves the earliest snapshot for that file in the
   selected turn so turn-level code rewind can restore the pre-turn state.
+- `CheckpointStore.discardFileSnapshots()` removes selected snapshots for one
+  turn/workspace after a coding tool rolls back a failed write, keeping rewind
+  and completion evidence aligned to committed mutations.
 - `CheckpointStore.restoreCode()` restores a suffix of turn checkpoints by
   collecting the earliest snapshot for each path from the selected turn forward,
   then rechecking workspace path and symbolic-link boundaries before every
@@ -659,19 +662,30 @@ Key semantics:
   read-only tool becomes deny only when the thread approval policy is `never`.
   Workspace-scoped rules only apply when their scope workspace matches the
   thread workspace using the shared path comparison; unscoped rules apply
-  globally. Command rules match raw `command` arguments for shell-like command
-  tools; write rules match `path` arguments, including `multi_edit`, or
-  `apply_patch` target paths; MCP rules match `server/tool` derived from
-  `mcp__<server>__<tool>` names and facade `tool_name` arguments. Matching
+  globally. Shell-like command candidates include the public tool name,
+  normalized `command="..."`, optional `cwd`, and shell selector context such as
+  `shell_path`, so exact persisted approval grants stay bound to the execution
+  boundary that was approved. Bare command patterns from older configurations,
+  such as `npm test*`, remain supported as a compatibility path and match only
+  the parsed command field; use structured patterns such as
+  `run_command command="npm test":* cwd=packages/app` when a rule must also
+  scope the tool or cwd. Write rules match `path` arguments, including
+  `multi_edit`, or `apply_patch` target paths; MCP rules match `server/tool`
+  derived from `mcp__<server>__<tool>` names and facade `tool_name` arguments.
+  `write_command_session` command candidates include the session id, normalized
+  stdin payload, and newline mode so scoped approvals do not authorize different
+  future input for the same session. Matching
   effects resolve across scoped and persisted rules by `deny > ask > allow`; no
   match falls back to normal approval logic. `approvalPolicy: untrusted` still
   asks for non-read-only tools when the only matching effect is `allow`, while
   explicit `deny` and `ask` rules remain authoritative. Glob command patterns
   ending in `:*` are conservative prefix scopes: ordinary arguments after the
   prefix still match, but shell control, redirection, substitution, or
-  newline-separated continuations do not. Exact rules compare literal normalized
-  candidates; for multi-value write candidates such as `apply_patch`, every
-  target path must be covered by the exact pattern set.
+  newline-separated continuations do not. For multi-value write candidates such
+  as `apply_patch`, any target matched by `deny` denies the call, any target
+  matched by `ask` requests approval, and `allow` skips approval only when the
+  allow rule set covers every target path. Exact rules compare literal
+  normalized candidates.
 - `mcpServers` is an array of external MCP server configs. Each config stores
   `id`, `name`, `transport`, optional stdio fields (`command`, `args`, `env`,
   `cwd`), optional Streamable HTTP fields (`url`, `headers`), `enabled`,

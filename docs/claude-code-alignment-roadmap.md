@@ -77,9 +77,15 @@ Implemented evidence:
   repeat read-only suppression, live progress, and interruption cleanup.
 - `ToolPolicyService` combines read-only metadata, plan/goal gates, sandbox,
   approval policy, and `permissionRules`.
-- Command `:*` permission scopes are conservative: the approved prefix can carry
-  ordinary arguments, but appended shell control, redirection, substitution, or
-  newline-separated commands fall back to approval.
+- Command permission candidates for shell-like tools are structured by tool,
+  normalized `command="..."`, cwd, and shell selector context. Command `:*`
+  permission scopes are conservative: the approved prefix can carry ordinary
+  arguments, but appended shell control, redirection, substitution, or
+  newline-separated commands fall back to approval. Older bare command patterns
+  still match the parsed command field for compatibility.
+- Multi-target write permission candidates, including `apply_patch`, require
+  allow coverage for every target path before they can skip approval; ask or deny
+  matches on any target still take precedence.
 - Approval responses support scoped backend decisions: `once`, in-memory
   `session`, and persisted exact `permissionRules` grants. Hard read-only
   sandbox and `approvalPolicy: never` still run before these grants.
@@ -106,7 +112,11 @@ Implemented evidence:
 - Command cwd uses the workspace policy; child environments strip
   credential-like variables while preserving shell basics.
 - Shell command permission scopes reject operator-bearing prefix continuations
-  instead of widening an approved prefix to unrelated follow-up commands.
+  instead of widening an approved prefix to unrelated follow-up commands, and
+  structured rules can bind that prefix to a specific tool/cwd/shell context.
+- Command session stdin write permission candidates include the exact input and
+  newline mode, so scoped approvals for one session write do not authorize
+  different future input.
 - Foreground commands and sessions support timeout, abort, process-tree cleanup,
   UTF-8-safe output capture, and live `tool_progress`.
 - Command sandboxing has a dedicated spawn-time profile in
@@ -115,6 +125,9 @@ Implemented evidence:
   `shell: false`, non-inherited stdio, hidden windows, and platform-specific
   process-tree cleanup. `detect_shell_environment` reports this profile and
   explicitly records that Node/Electron has no built-in cross-platform OS jail.
+- Git tool pathspec inputs stay workspace-relative at the public tool boundary
+  and are converted to Git's cwd-relative form after validation, so subdirectory
+  command cwd does not silently narrow or miss requested files.
 - Long-running sessions support start/list/read/write/stop with same
   thread/workspace visibility checks.
 - App shutdown invokes a main-process command-session cleanup hook that uses the
@@ -137,8 +150,9 @@ Implemented evidence:
 - Coding writes enforce workspace realpath boundaries, skipped directories,
   strict UTF-8, fresh read-state, symlink checks, diff previews, file history,
   checkpoint snapshots, and rollback-on-failed-post-write metadata.
-- `apply_patch` validates restricted unified diff hunks before writing and
-  restores already-written files if a later file fails.
+- `apply_patch` validates restricted unified diff hunks before writing,
+  restores already-written files if a later file fails, and discards failed
+  patch checkpoint snapshots after rollback.
 - Checkpoint rewind revalidates workspace and symlink boundaries before restore.
 - `rollback_file` uses current-process file history first and can fall back to
   persisted same-thread/workspace checkpoint snapshots after restart when the
