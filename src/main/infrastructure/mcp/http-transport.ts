@@ -1,5 +1,6 @@
 import type { McpServerConfig } from "../../../shared/agent-contracts.js";
 import { MCP_MAX_MESSAGE_BYTES } from "../../application/constants.js";
+import { readResponseTextBounded } from "../http/body-limit.js";
 import { diagnoseMcpHttpAuthFailure } from "./auth-diagnostics.js";
 import {
   isJsonRpcNotification,
@@ -149,11 +150,11 @@ export class HttpMcpTransport implements McpTransport {
 }
 
 async function readBoundedResponseBody(response: Response): Promise<string> {
-  const body = await response.text();
-  if (Buffer.byteLength(body, "utf8") > MCP_MAX_MESSAGE_BYTES) {
-    throw new Error("MCP HTTP response exceeds the maximum size.");
-  }
-  return body;
+  return readResponseTextBounded(
+    response,
+    MCP_MAX_MESSAGE_BYTES,
+    "MCP HTTP response exceeds the maximum size.",
+  );
 }
 
 function parseJsonMessage(body: string): unknown {

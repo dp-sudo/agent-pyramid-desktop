@@ -113,7 +113,7 @@ export class McpClient {
     const tools = normalizeMcpToolsListResult(result).map((tool) => ({
       ...tool,
       name: namespaceMcpToolName(this.config.name, tool.rawName),
-      readOnly: tool.readOnly || this.readOnlyTools.has(tool.rawName),
+      readOnly: this.readOnlyTools.has(tool.rawName),
     }));
     assertUniqueToolNames(this.config.name, tools);
     this.tools = tools;

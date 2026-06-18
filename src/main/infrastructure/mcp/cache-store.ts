@@ -89,7 +89,15 @@ export class McpCacheStore {
     if (surface.fingerprint !== fingerprintMcpServerConfig(config)) {
       return null;
     }
-    return cloneCachedSurface(surface);
+    const localReadOnlyTools = new Set(config.readOnlyTools);
+    const cloned = cloneCachedSurface(surface);
+    return {
+      ...cloned,
+      tools: cloned.tools.map((tool) => ({
+        ...tool,
+        readOnly: localReadOnlyTools.has(tool.rawName),
+      })),
+    };
   }
 
   getStartupStats(config: McpServerConfig): McpStartupStatsRecord | null {
@@ -307,6 +315,9 @@ function normalizeTool(value: unknown, serverName: string): McpToolDescriptor | 
     description: value.description,
     inputSchema: isRecord(value.inputSchema) ? cloneRecord(value.inputSchema) : {},
     readOnly: value.readOnly,
+    remoteReadOnlyHint: typeof value.remoteReadOnlyHint === "boolean"
+      ? value.remoteReadOnlyHint
+      : value.readOnly,
   };
 }
 

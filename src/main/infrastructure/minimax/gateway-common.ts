@@ -1,8 +1,11 @@
 import type { LlmRequest } from "../../domain/agent/types";
+import { readResponseTextBounded } from "../http/body-limit.js";
 
 export const OPENAI_CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 export const ANTHROPIC_MESSAGES_PATH = "/anthropic/v1/messages";
 export const DEEPSEEK_CHAT_COMPLETIONS_PATH = "/chat/completions";
+export const LLM_HTTP_RESPONSE_MAX_BYTES = 4 * 1024 * 1024;
+export const LLM_HTTP_ERROR_RESPONSE_MAX_BYTES = 64 * 1024;
 
 export type ProviderDialect = "minimax" | "deepseek" | "custom";
 
@@ -103,7 +106,11 @@ export async function postJson<T>(
     },
     body: JSON.stringify(body),
   });
-  const responseText = await response.text();
+  const responseText = await readResponseTextBounded(
+    response,
+    response.ok ? LLM_HTTP_RESPONSE_MAX_BYTES : LLM_HTTP_ERROR_RESPONSE_MAX_BYTES,
+    `LLM ${protocol} response exceeds the maximum size.`,
+  );
 
   if (!response.ok) {
     throw new Error(
@@ -138,7 +145,11 @@ export async function postStream(
   });
 
   if (!response.ok) {
-    const responseText = await response.text();
+    const responseText = await readResponseTextBounded(
+      response,
+      LLM_HTTP_ERROR_RESPONSE_MAX_BYTES,
+      `LLM ${protocol} stream error response exceeds the maximum size.`,
+    );
     throw new Error(
       `LLM ${protocol} stream failed with HTTP ${response.status}: ${redactSecrets(responseText.slice(0, 800))}`,
     );

@@ -41,6 +41,7 @@ export type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
 
 export interface McpToolDescriptor extends McpToolInfo {
   rawName: string;
+  remoteReadOnlyHint?: boolean;
 }
 
 export interface McpPromptDescriptor extends McpPromptInfo {
@@ -168,7 +169,8 @@ function normalizeMcpToolDescriptor(value: unknown): McpToolDescriptor {
     name: value.name.trim(),
     description: typeof value.description === "string" ? value.description : "",
     inputSchema,
-    readOnly: annotations.readOnlyHint === true,
+    readOnly: false,
+    ...(annotations.readOnlyHint === true ? { remoteReadOnlyHint: true } : {}),
   };
 }
 
