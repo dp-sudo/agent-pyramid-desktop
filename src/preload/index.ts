@@ -46,6 +46,8 @@ import type {
   ThreadUpdatePatch,
   TurnRecord,
   TurnStartRequest,
+  UserInputRespondRequest,
+  UserInputRespondResponse,
   WriteCompleteRequest,
   WriteCompleteResponse,
   WriteCreateRequest,
@@ -89,6 +91,7 @@ import {
   TURN_INTERRUPT_CHANNEL,
   TURN_START_CHANNEL,
   USAGE_DAILY_CHANNEL,
+  USER_INPUT_RESPOND_CHANNEL,
   WORKSPACE_PICK_DIRECTORY_CHANNEL,
   WRITE_COMPLETE_CHANNEL,
   WRITE_CREATE_CHANNEL,
@@ -219,6 +222,16 @@ const approvals = {
   ): Promise<IpcResult<ApprovalRespondResponse>> {
     return ipcRenderer.invoke(APPROVAL_RESPOND_CHANNEL, request) as Promise<
       IpcResult<ApprovalRespondResponse>
+    >;
+  },
+};
+
+const userInput = {
+  respond(
+    request: UserInputRespondRequest,
+  ): Promise<IpcResult<UserInputRespondResponse>> {
+    return ipcRenderer.invoke(USER_INPUT_RESPOND_CHANNEL, request) as Promise<
+      IpcResult<UserInputRespondResponse>
     >;
   },
 };
@@ -467,6 +480,7 @@ export const agentApi = {
   turns,
   sse,
   approvals,
+  userInput,
   goals,
   attachments,
   usage,
