@@ -4,6 +4,7 @@ import { PendingApprovalPanel } from "../chat/PendingApprovalPanel";
 import type {
   ApprovalPendingDecision,
   ApprovalResponseChoice,
+  UserInputResponseChoice,
 } from "../chat/ChatBlock";
 import {
   FloatingComposer,
@@ -19,6 +20,10 @@ import { WorkbenchErrorToast } from "./WorkbenchErrorToast";
 export interface CodeWorkbenchStageProps {
   onApprove: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses: Record<string, ApprovalPendingDecision>;
+  onUserInputRespond?: (
+    userInputId: string,
+    response: UserInputResponseChoice,
+  ) => Promise<void>;
   onComposerRequestSend: (payload: FloatingComposerRequestPayload) => Promise<boolean>;
   onInterrupt: () => void;
   composerDisabled: boolean;
@@ -32,6 +37,7 @@ export interface CodeWorkbenchStageProps {
 export function CodeWorkbenchStage({
   onApprove,
   pendingApprovalResponses,
+  onUserInputRespond,
   onComposerRequestSend,
   onInterrupt,
   composerDisabled,
@@ -54,6 +60,7 @@ export function CodeWorkbenchStage({
           <MessageTimeline
             onApprove={onApprove}
             pendingApprovalResponses={pendingApprovalResponses}
+            onUserInputRespond={onUserInputRespond}
           />
           <div className="ds-chat-composer-dock">
             <div className="ds-chat-composer-frame">

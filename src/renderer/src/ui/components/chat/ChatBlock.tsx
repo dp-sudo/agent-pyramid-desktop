@@ -1,10 +1,11 @@
-import { useEffect, useId, useState, memo, type ReactElement } from "react";
+import { useEffect, useId, useState, memo, type FormEvent, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   ApprovalDecisionScope,
   ApprovalPreview,
   FileDiffLine,
   Item,
+  UserInputRespondRequest,
 } from "../../../../../shared/agent-contracts";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { extractToolDiffPreview, summarizeToolAction, summarizeToolItem } from "./timeline-model";
@@ -20,6 +21,10 @@ interface ChatBlockProps {
   nested?: boolean;
   onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   approvalPendingDecision?: ApprovalPendingDecision;
+  onUserInputRespond?: (
+    userInputId: string,
+    response: UserInputResponseChoice,
+  ) => Promise<void>;
 }
 
 export type ApprovalDecision = "allow" | "deny";
@@ -30,6 +35,7 @@ export interface ApprovalResponseChoice {
 }
 
 export type ApprovalPendingDecision = ApprovalResponseChoice | null;
+export type UserInputResponseChoice = Pick<UserInputRespondRequest, "answer" | "cancelled">;
 
 interface ApprovalAction {
   key: string;
@@ -74,6 +80,7 @@ export const ChatBlock = memo(function ChatBlock({
   nested,
   onApprove,
   approvalPendingDecision,
+  onUserInputRespond,
 }: ChatBlockProps): ReactElement {
   const { t } = useTranslation();
   switch (item.kind) {
@@ -122,9 +129,11 @@ export const ChatBlock = memo(function ChatBlock({
       );
     case "user_input":
       return (
-        <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
-          <div className="ds-system-bubble">{t("chat.userInputLabel")}: {item.question}</div>
-        </div>
+        <UserInputBlock
+          item={item}
+          nested={nested}
+          onUserInputRespond={onUserInputRespond}
+        />
       );
     case "plan":
       return (
@@ -164,6 +173,93 @@ export const ChatBlock = memo(function ChatBlock({
     }
   }
 });
+
+function UserInputBlock({
+  item,
+  nested,
+  onUserInputRespond,
+}: {
+  item: Extract<Item, { kind: "user_input" }>;
+  nested?: boolean;
+  onUserInputRespond?: (
+    userInputId: string,
+    response: UserInputResponseChoice,
+  ) => Promise<void>;
+}): ReactElement {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState(false);
+  const resolved = Boolean(item.answer || item.cancelled);
+  const canRespond = Boolean(item.userInputId && onUserInputRespond && !resolved && !pending);
+
+  async function respond(response: UserInputResponseChoice): Promise<void> {
+    if (!item.userInputId || !onUserInputRespond || pending || resolved) return;
+    setPending(true);
+    try {
+      await onUserInputRespond(item.userInputId, response);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const answer = draft.trim();
+    if (!answer) return;
+    void respond({ answer });
+  }
+
+  return (
+    <div className={`ds-message-block ${nested ? "is-nested" : ""}`}>
+      <div className={`ds-user-input-block ${pending ? "is-pending" : ""}`}>
+        <div className="ds-user-input-header">
+          <strong>{t("chat.userInputLabel")}</strong>
+          {item.cancelled ? <span>{t("chat.userInputCancelled")}</span> : null}
+          {item.answer ? <span>{t("chat.userInputAnswered")}</span> : null}
+          {pending ? <span>{t("chat.userInputSubmitting")}</span> : null}
+        </div>
+        <p>{item.question}</p>
+        {item.options && item.options.length > 0 && !resolved ? (
+          <div className="ds-user-input-options">
+            {item.options.map((option) => (
+              <button
+                key={option}
+                type="button"
+                disabled={!canRespond}
+                onClick={() => void respond({ answer: option })}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {item.answer ? <div className="ds-user-input-answer">{item.answer}</div> : null}
+        {!resolved && item.userInputId && onUserInputRespond ? (
+          <form className="ds-user-input-form" onSubmit={submit}>
+            <input
+              value={draft}
+              disabled={pending}
+              aria-label={t("chat.userInputAnswerLabel")}
+              placeholder={t("chat.userInputAnswerPlaceholder")}
+              onChange={(event) => setDraft(event.currentTarget.value)}
+            />
+            <button type="submit" disabled={!canRespond || !draft.trim()}>
+              {t("chat.userInputSubmit")}
+            </button>
+            <button
+              type="button"
+              className="is-secondary"
+              disabled={!canRespond}
+              onClick={() => void respond({ cancelled: true })}
+            >
+              {t("chat.userInputCancel")}
+            </button>
+          </form>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function ReasoningBlock({
   item,

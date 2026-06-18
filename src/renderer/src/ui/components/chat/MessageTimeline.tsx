@@ -13,6 +13,7 @@ import {
   ChatBlock,
   type ApprovalPendingDecision,
   type ApprovalResponseChoice,
+  type UserInputResponseChoice,
 } from "./ChatBlock";
 import { InitialSessionUsageHeatmap } from "./InitialSessionUsageHeatmap";
 import {
@@ -25,6 +26,10 @@ import {
 interface MessageTimelineProps {
   onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses?: Record<string, ApprovalPendingDecision>;
+  onUserInputRespond?: (
+    userInputId: string,
+    response: UserInputResponseChoice,
+  ) => Promise<void>;
 }
 
 const TIMELINE_BOTTOM_STICKY_THRESHOLD_PX = 96;
@@ -49,6 +54,7 @@ export interface ReadOnlyToolSummaryPreview {
 export function MessageTimeline({
   onApprove,
   pendingApprovalResponses = {},
+  onUserInputRespond,
 }: MessageTimelineProps): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
@@ -163,6 +169,7 @@ export function MessageTimeline({
               nested
               {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
               {...(onApprove ? { onApprove } : {})}
+              {...(onUserInputRespond ? { onUserInputRespond } : {})}
               approvalPendingDecision={getApprovalPendingDecision(
                 item,
                 pendingApprovalResponses,
@@ -188,6 +195,7 @@ export function MessageTimeline({
                 <ChatBlock
                   item={turn.user}
                   {...(onApprove ? { onApprove } : {})}
+                  {...(onUserInputRespond ? { onUserInputRespond } : {})}
                   approvalPendingDecision={getApprovalPendingDecision(
                     turn.user,
                     pendingApprovalResponses,
@@ -235,6 +243,7 @@ export function MessageTimeline({
                   item={item}
                   {...(item.turnId === activeInFlightTurn?.id ? { isLive: true } : {})}
                   {...(onApprove ? { onApprove } : {})}
+                  {...(onUserInputRespond ? { onUserInputRespond } : {})}
                   approvalPendingDecision={getApprovalPendingDecision(
                     item,
                     pendingApprovalResponses,
@@ -247,6 +256,7 @@ export function MessageTimeline({
                   key={item.id}
                   item={item}
                   {...(onApprove ? { onApprove } : {})}
+                  {...(onUserInputRespond ? { onUserInputRespond } : {})}
                   approvalPendingDecision={getApprovalPendingDecision(
                     item,
                     pendingApprovalResponses,

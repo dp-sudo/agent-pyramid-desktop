@@ -5,6 +5,7 @@ import {
   ChatBlock,
   type ApprovalPendingDecision,
   type ApprovalResponseChoice,
+  type UserInputResponseChoice,
 } from "../chat/ChatBlock";
 import {
   getApprovalPendingDecision,
@@ -35,6 +36,10 @@ export interface WriteAssistantPanelProps {
   onInterrupt: () => void;
   onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses?: Record<string, ApprovalPendingDecision>;
+  onUserInputRespond?: (
+    userInputId: string,
+    response: UserInputResponseChoice,
+  ) => Promise<void>;
 }
 
 export function WriteAssistantPanel({
@@ -47,6 +52,7 @@ export function WriteAssistantPanel({
   onInterrupt,
   onApprove,
   pendingApprovalResponses = {},
+  onUserInputRespond,
 }: WriteAssistantPanelProps): ReactElement {
   const { t } = useTranslation();
   const { state } = useWorkbench();
@@ -137,6 +143,7 @@ export function WriteAssistantPanel({
                     <ChatBlock
                       item={turn.user}
                       {...(onApprove ? { onApprove } : {})}
+                      {...(onUserInputRespond ? { onUserInputRespond } : {})}
                       approvalPendingDecision={getApprovalPendingDecision(
                         turn.user,
                         pendingApprovalResponses,
@@ -175,6 +182,7 @@ export function WriteAssistantPanel({
                               nested
                               {...(item.turnId === activeTurnId ? { isLive: true } : {})}
                               {...(onApprove ? { onApprove } : {})}
+                              {...(onUserInputRespond ? { onUserInputRespond } : {})}
                               approvalPendingDecision={getApprovalPendingDecision(
                                 item,
                                 pendingApprovalResponses,
@@ -192,6 +200,7 @@ export function WriteAssistantPanel({
                       item={item}
                       {...(item.turnId === activeTurnId ? { isLive: true } : {})}
                       {...(onApprove ? { onApprove } : {})}
+                      {...(onUserInputRespond ? { onUserInputRespond } : {})}
                       approvalPendingDecision={getApprovalPendingDecision(
                         item,
                         pendingApprovalResponses,
@@ -204,6 +213,7 @@ export function WriteAssistantPanel({
                       key={item.id}
                       item={item}
                       {...(onApprove ? { onApprove } : {})}
+                      {...(onUserInputRespond ? { onUserInputRespond } : {})}
                       approvalPendingDecision={getApprovalPendingDecision(
                         item,
                         pendingApprovalResponses,

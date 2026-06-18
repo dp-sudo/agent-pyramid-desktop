@@ -56,7 +56,10 @@ import {
 import { IPC_ERROR_CODES } from "../../../shared/ipc-errors";
 import { CodeWorkbenchStage } from "./components/workbench/CodeWorkbenchStage";
 import { WriteWorkbenchStage } from "./components/workbench/WriteWorkbenchStage";
-import type { ApprovalResponseChoice } from "./components/chat/ChatBlock";
+import type {
+  ApprovalResponseChoice,
+  UserInputResponseChoice,
+} from "./components/chat/ChatBlock";
 import type { ThreadSafetyUpdate } from "./components/topbar/WorkbenchTopBar";
 import { usePanelResizer } from "./hooks/usePanelResizer";
 import {
@@ -767,6 +770,24 @@ export function Workbench(): ReactElement {
     [actions, beginApprovalResponse, clearApprovalResponse],
   );
 
+  const onUserInputRespond = useCallback(
+    async (userInputId: string, response: UserInputResponseChoice) => {
+      const result = await runWorkbenchIpc(() =>
+        window.agentApi.userInput.respond({
+          userInputId,
+          ...(response.answer !== undefined ? { answer: response.answer } : {}),
+          ...(response.cancelled !== undefined ? { cancelled: response.cancelled } : {}),
+        }),
+      );
+      if (result.ok) {
+        actions.setError(null);
+      } else {
+        actions.setError(result.message);
+      }
+    },
+    [actions],
+  );
+
   const onOpenSettings = useCallback(() => {
     actions.setRoute("settings");
   }, [actions]);
@@ -833,6 +854,7 @@ export function Workbench(): ReactElement {
           <WriteWorkbenchStage
             onApprove={onApprove}
             pendingApprovalResponses={pendingApprovalResponses}
+            onUserInputRespond={onUserInputRespond}
             onWorkspaceSelected={(workspace) =>
               selectOrCreateThreadForWorkspace(workspace, "write")
             }
@@ -857,6 +879,7 @@ export function Workbench(): ReactElement {
           <CodeWorkbenchStage
             onApprove={onApprove}
             pendingApprovalResponses={pendingApprovalResponses}
+            onUserInputRespond={onUserInputRespond}
             onComposerRequestSend={onSend}
             onInterrupt={() => void onInterrupt()}
             composerDisabled={activeThreadArchived}

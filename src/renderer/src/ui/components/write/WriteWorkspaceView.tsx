@@ -29,6 +29,7 @@ import {
 import type {
   ApprovalPendingDecision,
   ApprovalResponseChoice,
+  UserInputResponseChoice,
 } from "../chat/ChatBlock";
 import { ThreadSessionList } from "../sidebar/Sidebar";
 import { WriteAssistantPanel } from "./WriteAssistantPanel";
@@ -78,6 +79,10 @@ export {
 export interface WriteWorkspaceViewProps {
   onApprove?: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses?: Record<string, ApprovalPendingDecision>;
+  onUserInputRespond?: (
+    userInputId: string,
+    response: UserInputResponseChoice,
+  ) => Promise<void>;
   onWorkspaceSelected?: (workspace: string) => boolean | void | Promise<boolean | void>;
   onSendAssistantPrompt?: (payload: WriteAssistantPromptPayload) => Promise<boolean>;
   onInterruptAssistant?: () => void;
@@ -107,6 +112,7 @@ interface WriteDocumentContextMenu {
 export function WriteWorkspaceView({
   onApprove,
   pendingApprovalResponses = {},
+  onUserInputRespond,
   onWorkspaceSelected,
   onSendAssistantPrompt,
   onInterruptAssistant,
@@ -1224,6 +1230,7 @@ export function WriteWorkspaceView({
           onInterrupt={onInterruptAssistant ?? (() => undefined)}
           onApprove={onApprove}
           pendingApprovalResponses={pendingApprovalResponses}
+          onUserInputRespond={onUserInputRespond}
         />
       </div>
     </div>

@@ -4,6 +4,7 @@ import type { WriteAssistantPromptPayload } from "../write/write-workspace-model
 import type {
   ApprovalPendingDecision,
   ApprovalResponseChoice,
+  UserInputResponseChoice,
 } from "../chat/ChatBlock";
 import { WorkbenchErrorToast } from "./WorkbenchErrorToast";
 import type { ThreadSummary } from "../../../../../shared/agent-contracts";
@@ -11,6 +12,10 @@ import type { ThreadSummary } from "../../../../../shared/agent-contracts";
 export interface WriteWorkbenchStageProps {
   onApprove: (approvalId: string, response: ApprovalResponseChoice) => Promise<void>;
   pendingApprovalResponses: Record<string, ApprovalPendingDecision>;
+  onUserInputRespond?: (
+    userInputId: string,
+    response: UserInputResponseChoice,
+  ) => Promise<void>;
   onWorkspaceSelected: (workspace: string) => boolean | void | Promise<boolean | void>;
   onSendAssistantPrompt: (payload: WriteAssistantPromptPayload) => Promise<boolean>;
   onInterruptAssistant: () => void;
@@ -31,6 +36,7 @@ export interface WriteWorkbenchStageProps {
 export function WriteWorkbenchStage({
   onApprove,
   pendingApprovalResponses,
+  onUserInputRespond,
   onWorkspaceSelected,
   onSendAssistantPrompt,
   onInterruptAssistant,
@@ -52,6 +58,7 @@ export function WriteWorkbenchStage({
       <WriteWorkspaceView
         onApprove={onApprove}
         pendingApprovalResponses={pendingApprovalResponses}
+        onUserInputRespond={onUserInputRespond}
         onWorkspaceSelected={onWorkspaceSelected}
         onSendAssistantPrompt={onSendAssistantPrompt}
         onInterruptAssistant={onInterruptAssistant}
