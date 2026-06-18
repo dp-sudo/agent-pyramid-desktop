@@ -19,7 +19,7 @@ export class CommandSandboxUnavailableError extends Error {
   }
 }
 
-type CommandSandboxEngineName = "direct" | "windows-helper";
+type CommandSandboxEngineName = "direct" | "windows-helper" | "unavailable";
 
 export interface CommandSandboxReport {
   mode: ThreadSandboxMode;
@@ -144,8 +144,13 @@ function createSandboxEngineRequest(options: CommandSpawnSandboxOptions): Comman
 }
 
 function selectDefaultSandboxEngine(request: CommandSandboxEngineRequest): CommandSandboxEngine {
-  if (request.platform === "win32" && request.mode === "workspace-write") {
-    return createWindowsHelperCommandSandboxEngine();
+  if (request.mode === "workspace-write") {
+    if (request.platform === "win32") {
+      return createWindowsHelperCommandSandboxEngine();
+    }
+    return unavailableCommandSandboxEngine(
+      "workspace-write command execution requires an OS jail on this platform, but no supported jail engine is configured.",
+    );
   }
   return directCommandSandboxEngine;
 }
@@ -170,6 +175,31 @@ const directCommandSandboxEngine: CommandSandboxEngine = {
     };
   },
 };
+
+function unavailableCommandSandboxEngine(reason: string): CommandSandboxEngine {
+  return {
+    name: "unavailable",
+    describe(request) {
+      return createBaseReport(request, {
+        enabled: false,
+        required: true,
+        available: false,
+        engine: "unavailable",
+        reason,
+      });
+    },
+    createSpawnSpec(_invocation, request) {
+      const report = this.describe(request);
+      throw new CommandSandboxUnavailableError(
+        [
+          "Command sandbox is unavailable; refusing workspace-write command execution.",
+          report.osJail.reason,
+          "Switch the thread to danger-full-access only if host command execution is intended.",
+        ].filter(Boolean).join(" "),
+      );
+    },
+  };
+}
 
 function createDirectSpawnOptions(request: CommandSandboxEngineRequest): SpawnOptions {
   return {
@@ -252,7 +282,7 @@ function directSandboxReason(request: CommandSandboxEngineRequest): string {
   if (request.mode === "read-only") {
     return "read-only mode only allows tools marked read-only; command write-capable tools are denied before spawn.";
   }
-  return "Non-Windows workspace-write command execution keeps the existing cwd/env/stdio/process-cleanup boundary until an OS jail engine is explicitly supported.";
+  return "workspace-write requires a dedicated OS jail engine; direct execution is only valid for read-only-denied or danger-full-access flows.";
 }
 
 function windowsHelperUnavailableMessage(reason: string | undefined): string {

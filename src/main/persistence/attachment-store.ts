@@ -61,6 +61,15 @@ export class AttachmentStore {
     if (data.byteLength > MAX_ATTACHMENT_BYTES) {
       throw new Error("Attachment exceeds the 12MB size limit.");
     }
+    const detectedMimeType = detectSupportedImageMimeType(data);
+    if (!detectedMimeType) {
+      throw new Error("Attachment content is not a supported image.");
+    }
+    if (detectedMimeType !== mimeType) {
+      throw new Error(
+        `Attachment MIME type does not match image content: expected ${mimeType}, detected ${detectedMimeType}.`,
+      );
+    }
 
     const now = new Date().toISOString();
     const record: AttachmentRecord = {
@@ -195,4 +204,44 @@ function decodeBase64(value: unknown): Buffer {
     throw new Error("Attachment dataBase64 must be valid base64.");
   }
   return data;
+}
+
+function detectSupportedImageMimeType(data: Buffer): string | null {
+  if (
+    data.byteLength >= 8 &&
+    data.subarray(0, 8).equals(Buffer.from([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+    ]))
+  ) {
+    return "image/png";
+  }
+  if (
+    data.byteLength >= 3 &&
+    data[0] === 0xff &&
+    data[1] === 0xd8 &&
+    data[2] === 0xff
+  ) {
+    return "image/jpeg";
+  }
+  if (
+    data.byteLength >= 12 &&
+    data.subarray(0, 4).toString("ascii") === "RIFF" &&
+    data.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  if (data.byteLength >= 6) {
+    const signature = data.subarray(0, 6).toString("ascii");
+    if (signature === "GIF87a" || signature === "GIF89a") {
+      return "image/gif";
+    }
+  }
+  return null;
 }

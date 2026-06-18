@@ -38,7 +38,7 @@ export class SafeStorageSecretCodec implements SecretStringCodec {
 
   private assertEncryptionAvailable(): void {
     if (!this.safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secret encryption is unavailable for model API keys.");
+      throw new Error("Secret encryption is unavailable for stored credentials.");
     }
   }
 }

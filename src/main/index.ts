@@ -183,7 +183,7 @@ app.whenReady().then(async () => {
   registerMcpHandlers(mcpHost);
   registerSkillHandlers(skillService, runtimePreferencesStore);
   registerWorkspaceHandlers();
-  registerWriteHandlers();
+  registerWriteHandlers(store);
   registerModelConfigHandlers(modelConfigStore);
   registerRuntimePreferencesHandlers(runtimePreferencesStore, {
     afterUpdate: async (preferences) => {

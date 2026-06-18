@@ -30,6 +30,7 @@ import {
   openTextFileNoFollow,
   writeUtf8TextFileNoFollow,
 } from "../application/tools/text-file.js";
+import type { JsonlThreadStore } from "../persistence/index.js";
 import {
   resolveWorkspacePathForAccess as resolveSharedWorkspacePathForAccess,
   resolveWorkspacePathLexically,
@@ -44,14 +45,16 @@ const WRITE_WORKSPACE_POLICY_OPTIONS = {
     `Path is skipped by write service policy: ${relativePath}`,
 };
 
-export function registerWriteHandlers(): void {
+export function registerWriteHandlers(store: JsonlThreadStore): void {
   // Write IPC is a renderer file-service boundary, not an agent tool surface.
-  // Parse unknown payloads before filesystem access so bad requests fail with
-  // traceable envelope errors while path and Markdown policy stay in main.
+  // Renderer requests carry only a thread id. The workspace root is resolved
+  // from the main-owned thread record so compromised renderer code cannot pick
+  // an arbitrary filesystem root and ask the Markdown service to operate there.
   ipcMain.handle(WRITE_LIST_CHANNEL, async (_event, request: unknown) => {
     try {
       const parsed = parseWriteListRequest(request);
-      const files = await listMarkdownFiles(parsed.workspace, parsed.search ?? "");
+      const workspace = await resolveWriteWorkspaceForThread(store, parsed.threadId);
+      const files = await listMarkdownFiles(workspace, parsed.search ?? "");
       return ok(files);
     } catch (error) {
       return err(IPC_ERROR_CODES.WRITE_LIST_FAILED, messageOf(error));
@@ -61,7 +64,8 @@ export function registerWriteHandlers(): void {
   ipcMain.handle(WRITE_GET_CHANNEL, async (_event, request: unknown) => {
     try {
       const parsed = parseWriteGetRequest(request);
-      const content = await readMarkdownFileContent(parsed.workspace, parsed.path);
+      const workspace = await resolveWriteWorkspaceForThread(store, parsed.threadId);
+      const content = await readMarkdownFileContent(workspace, parsed.path);
       return ok({ path: parsed.path, content });
     } catch (error) {
       return err(IPC_ERROR_CODES.WRITE_GET_FAILED, messageOf(error));
@@ -71,8 +75,9 @@ export function registerWriteHandlers(): void {
   ipcMain.handle(WRITE_PUT_CHANNEL, async (_event, request: unknown) => {
     try {
       const parsed = parseWritePutRequest(request);
+      const workspace = await resolveWriteWorkspaceForThread(store, parsed.threadId);
       const bytes = await writeMarkdownFileContent(
-        parsed.workspace,
+        workspace,
         parsed.path,
         parsed.content,
       );
@@ -85,8 +90,9 @@ export function registerWriteHandlers(): void {
   ipcMain.handle(WRITE_CREATE_CHANNEL, async (_event, request: unknown) => {
     try {
       const parsed = parseWriteCreateRequest(request);
+      const workspace = await resolveWriteWorkspaceForThread(store, parsed.threadId);
       const bytes = await createMarkdownFileContent(
-        parsed.workspace,
+        workspace,
         parsed.path,
         parsed.content ?? "",
       );
@@ -99,7 +105,8 @@ export function registerWriteHandlers(): void {
   ipcMain.handle(WRITE_RENAME_CHANNEL, async (_event, request: unknown) => {
     try {
       const parsed = parseWriteRenameRequest(request);
-      await renameMarkdownFile(parsed.workspace, parsed.path, parsed.newPath);
+      const workspace = await resolveWriteWorkspaceForThread(store, parsed.threadId);
+      await renameMarkdownFile(workspace, parsed.path, parsed.newPath);
       return ok({ path: parsed.path, newPath: parsed.newPath });
     } catch (error) {
       return err(IPC_ERROR_CODES.WRITE_RENAME_FAILED, messageOf(error));
@@ -109,7 +116,8 @@ export function registerWriteHandlers(): void {
   ipcMain.handle(WRITE_DELETE_CHANNEL, async (_event, request: unknown) => {
     try {
       const parsed = parseWriteDeleteRequest(request);
-      await deleteMarkdownFile(parsed.workspace, parsed.path);
+      const workspace = await resolveWriteWorkspaceForThread(store, parsed.threadId);
+      await deleteMarkdownFile(workspace, parsed.path);
       return ok({ path: parsed.path });
     } catch (error) {
       return err(IPC_ERROR_CODES.WRITE_DELETE_FAILED, messageOf(error));
@@ -121,7 +129,8 @@ export function registerWriteHandlers(): void {
     async (_event, request: unknown): Promise<IpcResult<WriteCompleteResponse>> => {
       try {
         const parsed = parseWriteCompleteRequest(request);
-        resolveWritePath(parsed.workspace, parsed.path);
+        const workspace = await resolveWriteWorkspaceForThread(store, parsed.threadId);
+        resolveWritePath(workspace, parsed.path);
         return ok(completeMarkdownInline(parsed));
       } catch (error) {
         return err(IPC_ERROR_CODES.WRITE_COMPLETE_FAILED, messageOf(error));
@@ -132,10 +141,10 @@ export function registerWriteHandlers(): void {
 
 export function parseWriteListRequest(request: unknown): WriteListRequest {
   const value = parseWriteRequestObject(request, "Write list request");
-  const workspace = requiredString(value.workspace, "Write list workspace must be a string.");
+  const threadId = requiredString(value.threadId, "Write list threadId must be a string.");
   const search = optionalString(value.search, "Write list search must be a string.");
   return {
-    workspace,
+    threadId,
     ...(search !== undefined ? { search } : {}),
   };
 }
@@ -143,7 +152,7 @@ export function parseWriteListRequest(request: unknown): WriteListRequest {
 export function parseWriteGetRequest(request: unknown): WriteGetRequest {
   const value = parseWriteRequestObject(request, "Write get request");
   return {
-    workspace: requiredString(value.workspace, "Write get workspace must be a string."),
+    threadId: requiredString(value.threadId, "Write get threadId must be a string."),
     path: requiredString(value.path, "Write get path must be a string."),
   };
 }
@@ -151,7 +160,7 @@ export function parseWriteGetRequest(request: unknown): WriteGetRequest {
 export function parseWritePutRequest(request: unknown): WritePutRequest {
   const value = parseWriteRequestObject(request, "Write put request");
   return {
-    workspace: requiredString(value.workspace, "Write put workspace must be a string."),
+    threadId: requiredString(value.threadId, "Write put threadId must be a string."),
     path: requiredString(value.path, "Write put path must be a string."),
     content: requiredString(value.content, "Write put content must be a string."),
   };
@@ -161,7 +170,7 @@ export function parseWriteCreateRequest(request: unknown): WriteCreateRequest {
   const value = parseWriteRequestObject(request, "Write create request");
   const content = optionalString(value.content, "Write create content must be a string.");
   return {
-    workspace: requiredString(value.workspace, "Write create workspace must be a string."),
+    threadId: requiredString(value.threadId, "Write create threadId must be a string."),
     path: requiredString(value.path, "Write create path must be a string."),
     ...(content !== undefined ? { content } : {}),
   };
@@ -170,7 +179,7 @@ export function parseWriteCreateRequest(request: unknown): WriteCreateRequest {
 export function parseWriteRenameRequest(request: unknown): WriteRenameRequest {
   const value = parseWriteRequestObject(request, "Write rename request");
   return {
-    workspace: requiredString(value.workspace, "Write rename workspace must be a string."),
+    threadId: requiredString(value.threadId, "Write rename threadId must be a string."),
     path: requiredString(value.path, "Write rename path must be a string."),
     newPath: requiredString(value.newPath, "Write rename newPath must be a string."),
   };
@@ -179,7 +188,7 @@ export function parseWriteRenameRequest(request: unknown): WriteRenameRequest {
 export function parseWriteDeleteRequest(request: unknown): WriteDeleteRequest {
   const value = parseWriteRequestObject(request, "Write delete request");
   return {
-    workspace: requiredString(value.workspace, "Write delete workspace must be a string."),
+    threadId: requiredString(value.threadId, "Write delete threadId must be a string."),
     path: requiredString(value.path, "Write delete path must be a string."),
   };
 }
@@ -187,11 +196,25 @@ export function parseWriteDeleteRequest(request: unknown): WriteDeleteRequest {
 export function parseWriteCompleteRequest(request: unknown): WriteCompleteRequest {
   const value = parseWriteRequestObject(request, "Write complete request");
   return {
-    workspace: requiredString(value.workspace, "Write complete workspace must be a string."),
+    threadId: requiredString(value.threadId, "Write complete threadId must be a string."),
     path: requiredString(value.path, "Write complete path must be a string."),
     prefix: requiredString(value.prefix, "Write complete prefix must be a string."),
     suffix: requiredString(value.suffix, "Write complete suffix must be a string."),
   };
+}
+
+export async function resolveWriteWorkspaceForThread(
+  store: JsonlThreadStore,
+  threadId: string,
+): Promise<string> {
+  const thread = await store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Write thread was not found: ${threadId}`);
+  }
+  if (thread.mode !== "write") {
+    throw new Error(`Write service requires a write-mode thread: ${threadId}`);
+  }
+  return thread.workspace;
 }
 
 function parseWriteRequestObject(

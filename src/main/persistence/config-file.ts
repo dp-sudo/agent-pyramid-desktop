@@ -8,6 +8,7 @@ import {
   isIsoTimestampString,
   isLlmProtocol,
   isModelReasoningEffort,
+  isMcpSecretRecordKey,
   type ModelConfig,
   type ModelConfigProfile,
   type ModelConfigProfileCreateRequest,
@@ -164,15 +165,16 @@ function deserializeAppConfigSecrets(
   secretCodec: SecretStringCodec,
 ): unknown {
   if (!isRecord(value)) return value;
-  if (Array.isArray(value.profiles)) {
+  const withRuntimePreferences = deserializeRuntimePreferencesSecrets(value, secretCodec);
+  if (Array.isArray(withRuntimePreferences.profiles)) {
     return {
-      ...value,
-      profiles: value.profiles.map((profile) =>
+      ...withRuntimePreferences,
+      profiles: withRuntimePreferences.profiles.map((profile) =>
         deserializeStoredProfileSecrets(profile, secretCodec)
       ),
     };
   }
-  return deserializeStoredConfigSecrets(value, secretCodec);
+  return deserializeStoredConfigSecrets(withRuntimePreferences, secretCodec);
 }
 
 function deserializeStoredProfileSecrets(
@@ -199,6 +201,52 @@ function deserializeStoredConfigSecrets(
   };
 }
 
+function deserializeRuntimePreferencesSecrets(
+  value: Record<string, unknown>,
+  secretCodec: SecretStringCodec,
+): Record<string, unknown> {
+  const runtimePreferences = value.runtimePreferences;
+  if (!isRecord(runtimePreferences) || !Array.isArray(runtimePreferences.mcpServers)) {
+    return value;
+  }
+  return {
+    ...value,
+    runtimePreferences: {
+      ...runtimePreferences,
+      mcpServers: runtimePreferences.mcpServers.map((server) =>
+        deserializeStoredMcpServerSecrets(server, secretCodec)
+      ),
+    },
+  };
+}
+
+function deserializeStoredMcpServerSecrets(
+  value: unknown,
+  secretCodec: SecretStringCodec,
+): unknown {
+  if (!isRecord(value)) return value;
+  return {
+    ...value,
+    env: deserializeSecretRecord(value.env, secretCodec),
+    headers: deserializeSecretRecord(value.headers, secretCodec),
+  };
+}
+
+function deserializeSecretRecord(
+  value: unknown,
+  secretCodec: SecretStringCodec,
+): unknown {
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      typeof entry === "string" && isMcpSecretRecordKey(key)
+        ? deserializeSecretString(entry, secretCodec)
+        : entry,
+    ]),
+  );
+}
+
 function deserializeSecretString(
   value: string,
   secretCodec: SecretStringCodec,
@@ -219,6 +267,14 @@ function serializeAppConfigSecrets(
       ...profile,
       config: serializeModelConfigSecrets(profile.config, secretCodec),
     })),
+    runtimePreferences: {
+      ...value.runtimePreferences,
+      mcpServers: value.runtimePreferences.mcpServers.map((server) => ({
+        ...server,
+        env: serializeSecretRecord(server.env, secretCodec),
+        headers: serializeSecretRecord(server.headers, secretCodec),
+      })),
+    },
   };
 }
 
@@ -235,6 +291,20 @@ function serializeModelConfigSecrets(
       ? ENCRYPTED_SECRET_PREFIX + secretCodec.encrypt(value.OPENAI_API_KEY)
       : "",
   };
+}
+
+function serializeSecretRecord(
+  value: Record<string, string>,
+  secretCodec: SecretStringCodec,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      entry && isMcpSecretRecordKey(key) && !entry.startsWith(ENCRYPTED_SECRET_PREFIX)
+        ? ENCRYPTED_SECRET_PREFIX + secretCodec.encrypt(entry)
+        : entry,
+    ]),
+  );
 }
 
 export function normalizeAppConfigState(
