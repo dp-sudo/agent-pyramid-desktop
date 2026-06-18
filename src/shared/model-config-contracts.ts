@@ -68,6 +68,21 @@ export interface ModelConfigProfileActivateRequest {
   id: string;
 }
 
+export interface RendererModelConfig extends Omit<ModelConfig, "OPENAI_API_KEY"> {
+  hasApiKey: boolean;
+  apiKeyPreview: string;
+}
+
+export interface RendererModelConfigProfile extends Omit<ModelConfigProfile, "config"> {
+  config: RendererModelConfig;
+}
+
+export interface RendererModelConfigProfilesState extends Omit<ModelConfigProfilesState, "profiles"> {
+  profiles: RendererModelConfigProfile[];
+}
+
+const API_KEY_PREVIEW_MASK = "********";
+
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   model_provide: "MiniMax",
   model: "MiniMax-M3",
@@ -88,6 +103,36 @@ export const DEFAULT_DEEPSEEK_MODEL_CONFIG: ModelConfig = {
   model: "deepseek-v4-flash",
   base_url: "https://api.deepseek.com",
 };
+
+export const DEFAULT_RENDERER_MODEL_CONFIG: RendererModelConfig =
+  toRendererModelConfig(DEFAULT_MODEL_CONFIG);
+
+export function toRendererModelConfig(config: ModelConfig): RendererModelConfig {
+  const { OPENAI_API_KEY, ...safeConfig } = config;
+  return {
+    ...safeConfig,
+    hasApiKey: OPENAI_API_KEY.length > 0,
+    apiKeyPreview: OPENAI_API_KEY.length > 0 ? API_KEY_PREVIEW_MASK : "",
+  };
+}
+
+export function toRendererModelConfigProfile(
+  profile: ModelConfigProfile,
+): RendererModelConfigProfile {
+  return {
+    ...profile,
+    config: toRendererModelConfig(profile.config),
+  };
+}
+
+export function toRendererModelConfigProfilesState(
+  state: ModelConfigProfilesState,
+): RendererModelConfigProfilesState {
+  return {
+    ...state,
+    profiles: state.profiles.map(toRendererModelConfigProfile),
+  };
+}
 
 export function isLlmProtocol(value: unknown): value is LlmProtocol {
   return typeof value === "string" && LLM_PROTOCOLS.includes(value as LlmProtocol);

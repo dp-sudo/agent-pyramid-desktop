@@ -56,14 +56,14 @@ import type {
   WriteRenameRequest,
 } from "./agent-contracts.js";
 import type {
-  ModelConfig,
-  ModelConfigProfile,
   ModelConfigProfileActivateRequest,
   ModelConfigProfileCreateRequest,
   ModelConfigProfileDeleteRequest,
   ModelConfigProfileUpdateRequest,
-  ModelConfigProfilesState,
   ModelConfigUpdate,
+  RendererModelConfig,
+  RendererModelConfigProfile,
+  RendererModelConfigProfilesState,
 } from "./model-config-contracts.js";
 
 export type AgentDesktopRuntimeEventListener = (event: RuntimeEvent) => void;
@@ -147,21 +147,21 @@ export interface AgentDesktopApi {
     complete(request: WriteCompleteRequest): Promise<IpcResult<WriteCompleteResponse>>;
   };
   modelConfig: {
-    get(): Promise<IpcResult<ModelConfig>>;
-    update(update: ModelConfigUpdate): Promise<IpcResult<ModelConfig>>;
-    listProfiles(): Promise<IpcResult<ModelConfigProfilesState>>;
+    get(): Promise<IpcResult<RendererModelConfig>>;
+    update(update: ModelConfigUpdate): Promise<IpcResult<RendererModelConfig>>;
+    listProfiles(): Promise<IpcResult<RendererModelConfigProfilesState>>;
     createProfile(
       request: ModelConfigProfileCreateRequest,
-    ): Promise<IpcResult<ModelConfigProfilesState>>;
+    ): Promise<IpcResult<RendererModelConfigProfilesState>>;
     updateProfile(
       request: ModelConfigProfileUpdateRequest,
-    ): Promise<IpcResult<ModelConfigProfile>>;
+    ): Promise<IpcResult<RendererModelConfigProfile>>;
     deleteProfile(
       request: ModelConfigProfileDeleteRequest,
-    ): Promise<IpcResult<ModelConfigProfilesState>>;
+    ): Promise<IpcResult<RendererModelConfigProfilesState>>;
     activateProfile(
       request: ModelConfigProfileActivateRequest,
-    ): Promise<IpcResult<ModelConfigProfilesState>>;
+    ): Promise<IpcResult<RendererModelConfigProfilesState>>;
   };
   runtimePreferences: {
     get(): Promise<IpcResult<RuntimePreferences>>;

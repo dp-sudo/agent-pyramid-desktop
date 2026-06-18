@@ -1373,6 +1373,7 @@ export interface CheckpointRewindResponse {
   rewindSession: boolean;
   restoredPaths: string[];
   deletedPaths: string[];
+  skippedPaths: string[];
   itemsRemoved: number;
   eventsRemoved: number;
   checkpointsRemoved: number;
