@@ -1,542 +1,308 @@
 # Project Architecture
 
-This document is a diagram-first map of the current `agent-pyramid-desktop`
-implementation. It describes the real code path in this repository, not an
-aspirational target architecture.
+Diagram-first architecture reference for the current codebase. Detailed turn steps live in `docs/runtime-flow.md`; detailed storage shapes live in `docs/data-model.md`.
 
 ## Scope
 
 Authoritative source areas:
 
-- `src/main/`: Electron main process, runtime orchestration, IPC handlers,
-  persistence, worker pool, LLM gateway, tools, and event bus.
+- `src/main/`: Electron main process, runtime, tools, IPC, persistence, worker, gateway, MCP.
 - `src/preload/`: secure `window.agentApi` bridge.
-- `src/renderer/`: React workbench UI and local UI preferences.
-- `src/shared/`: cross-process contracts, IPC channel constants, locale list.
-- `tests/`: Vitest coverage for contracts, runtime, IPC, persistence, worker,
-  gateway, and renderer state helpers.
+- `src/renderer/`: React UI and local preferences.
+- `src/shared/`: cross-process contracts, channel constants, locale list, skills contracts.
+- `tests/`: Vitest coverage.
 
-Out of scope:
-
-- External DeepSeek GUI reference source is read-only design input only when a
-  task explicitly asks to inspect it; it is not project source, a dependency,
-  an implementation input, or a build input.
-- `docs/external-references/` is not project source or project documentation
-  for normal search, audit, build, test, or documentation maintenance.
+External references are out of scope for implementation and build.
 
 ## System Overview
 
 ```mermaid
 flowchart LR
-  subgraph Renderer["Renderer Process (React)"]
+  subgraph Renderer["Renderer Process"]
     AppShell["AppShell"]
-    Workbench["Workbench route: code/write"]
-    Settings["SettingsView route"]
+    Workbench["Workbench code/write"]
+    Settings["SettingsView"]
     Store["WorkbenchContext reducer"]
-    UI["UI components"]
   end
 
-  subgraph Preload["Preload Bridge"]
-    AgentApi["window.agentApi"]
+  subgraph Preload["Preload"]
+    Api["window.agentApi"]
   end
 
   subgraph Main["Main Process"]
-    IpcHandlers["IPC handlers"]
+    Ipc["IPC handlers"]
     Runtime["AgentRuntime"]
-    Registry["InMemoryToolRegistry"]
-    Skills["SkillService"]
+    Tools["InMemoryToolRegistry"]
     Bus["RuntimeEventBus"]
-    Threads["JsonlThreadStore"]
-    Attachments["AttachmentStore"]
-    Config["ModelConfigStore"]
-    RuntimePrefs["RuntimePreferencesStore"]
-    AppConfig["AppConfigFile\nuserData/config"]
-    WorkerPool["LlmWorkerPool"]
-    WriteSvc["write-handlers"]
+    Stores["Thread/Attachment/Config/Checkpoint/MCP stores"]
+    Skills["SkillService"]
+    Mcp["McpHost"]
+    Pool["LlmWorkerPool"]
   end
 
   subgraph Worker["Worker Thread"]
-    WorkerEntry["llm-worker.js"]
     Gateway["MiniMaxGateway"]
   end
 
-  subgraph External["External Services"]
-    Providers["MiniMax / DeepSeek / Custom OpenAI-compatible / Anthropic-compatible"]
-    Filesystem["Electron userData + selected workspace"]
-  end
+  Provider["Provider HTTP API"]
+  UserData["Electron userData"]
+  Workspace["Selected workspace"]
 
   AppShell --> Workbench
   AppShell --> Settings
   Workbench --> Store
   Settings --> Store
-  UI --> Store
-  Workbench --> AgentApi
-  Settings --> AgentApi
-  AgentApi --> IpcHandlers
-  IpcHandlers --> Runtime
-  IpcHandlers --> Threads
-  IpcHandlers --> Attachments
-  IpcHandlers --> Config
-  IpcHandlers --> RuntimePrefs
-  IpcHandlers --> WriteSvc
-  Runtime --> Registry
-  Runtime --> Skills
+  Workbench --> Api
+  Settings --> Api
+  Api --> Ipc
+  Ipc --> Runtime
+  Ipc --> Stores
+  Runtime --> Tools
   Runtime --> Bus
-  Runtime --> Threads
-  Runtime --> Attachments
-  Runtime --> Config
-  Runtime --> RuntimePrefs
-  Runtime --> WorkerPool
-  Config --> AppConfig
-  RuntimePrefs --> AppConfig
-  WorkerPool --> WorkerEntry
-  WorkerEntry --> Gateway
-  Gateway --> Providers
-  Threads --> Filesystem
-  Attachments --> Filesystem
-  AppConfig --> Filesystem
-  Skills --> Filesystem
-  WriteSvc --> Filesystem
-  Bus --> IpcHandlers
-  IpcHandlers -. "sse:push RuntimeEvent" .-> AgentApi
-  AgentApi -. "onEvent()" .-> Workbench
+  Runtime --> Stores
+  Runtime --> Skills
+  Runtime --> Pool
+  Mcp --> Tools
+  Pool --> Gateway
+  Gateway --> Provider
+  Stores --> UserData
+  Runtime --> Workspace
+  Ipc -. "SSE_PUSH_CHANNEL RuntimeEvent" .-> Api
 ```
 
 ## Process Boundaries
 
-```mermaid
-flowchart TB
-  Renderer["Renderer\nReact 19 UI\nNo Node filesystem access"]
-  Preload["Preload\ncontextBridge.exposeInMainWorld('agentApi')"]
-  Main["Main\nElectron app, stores, runtime, IPC"]
-  Worker["Worker thread\nLLM HTTP/SSE isolation"]
-  Provider["Provider HTTP API"]
-
-  Renderer -->|"typed API calls return IpcResult<T>"| Preload
-  Preload -->|"ipcRenderer.invoke(channel, payload)"| Main
-  Main -->|"postMessage(chat/cancel)"| Worker
-  Worker -->|"fetch + SSE"| Provider
-  Provider -->|"SSE chunks / JSON"| Worker
-  Worker -->|"delta/done/error messages"| Main
-  Main -->|"SSE_PUSH_CHANNEL RuntimeEvent"| Preload
-  Preload -->|"listener fan-out"| Renderer
+```text
+Renderer -> Preload: typed calls through window.agentApi
+Preload -> Main: ipcRenderer.invoke(channel, payload)
+Main -> Worker: worker_threads messages for chat/cancel
+Worker -> Provider: HTTP/SSE fetch
+Main -> Renderer: RuntimeEvent push through sse:push
 ```
 
-Security invariants:
+Invariants:
 
-- Electron window keeps `contextIsolation: true` and `nodeIntegration: false`
-  in `src/main/index.ts`.
-- Renderer only uses `window.agentApi` and `src/shared/*` contracts.
-- External links opened from renderer markdown are mediated by
-  `configureExternalNavigation()` in `src/main/infrastructure/electron-window.ts`.
-- Renderer CSP is installed by `installContentSecurityPolicy()` in
-  `src/main/infrastructure/content-security-policy.ts`.
-- File access stays in main process handlers and tools, with workspace/path
-  boundary checks.
+- `src/main/index.ts` creates `BrowserWindow` with `contextIsolation: true` and `nodeIntegration: false`.
+- `src/preload/index.ts` exposes only `window.agentApi`.
+- Renderer code cannot access Node filesystem or import `src/main/*`.
+- Main process owns filesystem access, workspace policy, external navigation, and persistence.
+- `SSE_PUSH_CHANNEL` carries pushed `RuntimeEvent` payloads; preload validates them with `isRuntimeEvent()`.
 
-## Main Composition Root
+## Composition Root
 
-`src/main/index.ts` creates and wires the application graph:
+`src/main/index.ts` wires:
 
-Window navigation guards and renderer CSP live in `src/main/infrastructure/`
-platform helpers; `src/main/index.ts` passes the renderer entry file into the
-window helper and keeps lifecycle registration at the composition root. The
-current lifecycle has three independent `app.on("before-quit")` handlers: one
-closes `McpHost`, one shuts down in-memory command sessions, and one destroys
-`LlmWorkerPool`.
+- `JsonlThreadStore`
+- `AttachmentStore`
+- `ModelConfigStore`
+- `RuntimePreferencesStore`
+- `CheckpointStore`
+- `McpCacheStore`
+- `RuntimeEventBus`
+- `LlmWorkerPool`
+- `InMemoryToolRegistry`
+- `SkillService`
+- `McpHost`
+- `AgentRuntime`
+- all IPC handlers
+- Electron window, CSP, navigation policy, shutdown hooks
 
-```mermaid
-flowchart TD
-  AppReady["app.whenReady()"]
-  Stores["JsonlThreadStore\nAttachmentStore\nModelConfigStore\nRuntimePreferencesStore\nCheckpointStore\nMcpCacheStore\n(shared AppConfigFile for config)"]
-  Bus["RuntimeEventBus"]
-  Pool["LlmWorkerPool(1)"]
-  Registry["InMemoryToolRegistry"]
-  Tools["createPlanTool\ncreateWorkspaceTools()\ncreateCodingTools()\ncreateCommandTools()\ncreateSkillTools()\ncreateUserInputTools()\ncreateGoalTools()"]
-  Skills["SkillService"]
-  Runtime["AgentRuntime"]
-  Handlers["register*Handlers()"]
-  Window["BrowserWindow"]
+Built-in tool registration order:
 
-  AppReady --> Stores
-  AppReady --> Pool
-  AppReady --> Skills
-  Registry --> Tools
-  Registry --> Mcp["McpHost\nexternal MCP tools"]
-  Stores --> Runtime
-  Bus --> Runtime
-  Bus --> Mcp
-  Pool --> Runtime
-  Registry --> Runtime
-  Skills --> Runtime
-  Runtime --> Handlers
-  Stores --> Handlers
-  Bus --> Handlers
-  AppReady --> Window
-```
+1. `createPlanTool`
+2. `createWorkspaceTools()`
+3. `createCodingTools()`
+4. `createCommandTools()`
+5. `createSkillTools({ skillService })`
+6. `createUserInputTools()`
+7. `createGoalTools(...)`
 
-Registered IPC groups:
+MCP tools are added dynamically by `McpHost` to the same registry.
 
-- `threads`: list, create, get, update, delete, fork.
-- `turns`: start, interrupt, get.
-- `sse`: subscribe, unsubscribe, push runtime events.
-- `approvals`: respond.
-- `userInput`: respond to model-initiated clarification requests.
-- `goals`: update.
-- `attachments`: create, get, delete.
-- `usage`: daily aggregation.
-- `checkpoints`: list, code rewind, optional session rewind.
-- `workspace`: pick directory.
-- `write`: markdown list, get, put, create, rename, delete, inline complete.
-- `modelConfig`: get/update and profile lifecycle.
-- `runtimePreferences`: get/update runtime preference state.
-- `mcp`: server status/connect/disconnect, tools refresh/list, surface refresh, prompts and resources.
-- `skills`: read-only workspace skill catalog diagnostics.
+## Runtime Architecture
 
-## Runtime Turn Lifecycle
+Runtime ownership:
 
-```mermaid
-sequenceDiagram
-  participant R as Renderer Workbench
-  participant P as window.agentApi
-  participant M as IPC turns handler
-  participant A as AgentRuntime
-  participant S as JsonlThreadStore
-  participant C as ModelConfigStore
-  participant Prefs as RuntimePreferencesStore
-  participant Att as AttachmentStore
-  participant W as LlmWorkerPool
-  participant Bus as RuntimeEventBus
+- `AgentRuntime`: turn state machine, model profile selection, prompt/context assembly, worker calls, tool rounds, goal updates, interrupts.
+- `ToolCallExecutor`: parent-turn tool item lifecycle, catalog/policy checks, approval and user-input suspension, live progress, active tool cleanup.
+- `ToolCatalogService`: mode and availability filtering for model-visible tools.
+- `ToolPolicyService` and `permission-policy.ts`: sandbox, approval policy, scoped grants, persisted permission rules.
+- `ApprovalCoordinator`: pending approval state and timeline items.
+- `UserInputCoordinator`: pending `request_user_input` state.
+- `context-compaction.ts`: request-history budget handling.
+- `runtime-event-persist.ts`: item/event persistence helpers.
 
-  R->>P: turns.start(TurnStartRequest)
-  P->>M: ipcRenderer.invoke(turn:start)
-  M->>A: startTurn(request)
-  A->>S: getThread(threadId)
-  A->>C: listProfiles()
-  A->>Prefs: get()
-  A->>Att: get(attachmentIds)
-  A->>S: appendItem(user)
-  A->>Bus: item_appended + turn_started(TurnRecord)
-  A-->>M: TurnRecord(status=in-flight)
-  M-->>P: ok(TurnRecord)
-  P-->>R: IpcResult<TurnRecord>
-  A->>S: replayItems(threadId)
-  A->>W: chat(thread, LlmRequest, onChunk)
-  W-->>A: text/reasoning/usage/tool chunks
-  A->>Bus: item_updated
-  A->>S: append final reasoning/assistant/tool/system items
-  A->>S: appendEvent(turn_completed)
-  A->>Bus: turn_completed
-  Bus-->>R: SSE push via preload listener
-```
+Runtime invariants:
 
-Key runtime responsibilities in `src/main/application/agent-runtime.ts`:
-
-- Blocks concurrent in-flight turns for the same thread.
-- Resolves model profile by `modelProfileId`, model string, or active profile.
-- Injects attachments as `AgentContentBlock[]`.
-- Builds runtime context for plan mode and goal mode.
-- Applies request history hygiene and context compaction before LLM calls.
-- Executes tool rounds until the model stops or tool budget is reached.
-- Requests approval for non-read-only and non-mode-gated tools.
-- Appends completion evidence for coding/development turns from durable
-  `ToolItem.result` values and checkpoint metadata before the terminal
-  `turn_completed` event.
-- Persists visible items/events and emits `RuntimeEvent` updates.
-- Handles interrupt by cancelling worker request, denying pending approvals,
-  cancelling pending user-input requests, and finishing with `interrupted`.
+- `turns.start()` returns quickly with an in-flight `TurnRecord`.
+- Renderer observes later updates through `RuntimeEvent`.
+- One thread cannot have two concurrent in-flight turns.
+- `messages.jsonl` is append-only; repeated item ids are updates.
+- Tool calls do not bypass `ToolCallExecutor`.
+- Tool budget comes from model profile autonomy and optional `AGENT_MAX_TOOL_ROUNDS`.
 
 ## Tool Architecture
 
-```mermaid
-flowchart LR
-  Runtime["AgentRuntime"]
-  Registry["ToolRegistry port"]
-  InMemory["InMemoryToolRegistry"]
-  Plan["create_plan"]
-  Workspace["list_files\nread_file\nsearch_files"]
-  Coding["create_edit_plan\nedit_file\nmulti_edit\nwrite_file\napply_patch\nrollback_file"]
-  Command["run_command\ncommand sessions\ndiagnose_workspace\ndiagnose_file\nlist_symbols\nsearch_symbols"]
-  Mcp["MCP tools\nmcp__server__tool"]
-  Goal["update_goal"]
-  Approval["Approval gate"]
+Tool contracts:
 
-  Runtime --> Registry
-  Registry --> InMemory
-  InMemory --> Plan
-  InMemory --> Workspace
-  InMemory --> Coding
-  InMemory --> Command
-  InMemory --> Mcp
-  InMemory --> Goal
-  Runtime --> Approval
-  Approval -->|"skipped for read-only workspace tools"| Workspace
-  Approval -->|"diff preview for writes"| Coding
-  Approval -->|"default ask; auto can allow"| Command
-  Approval -->|"local readOnlyTools can skip; writers ask"| Mcp
-  Approval -->|"skipped when mode-gated and available"| Plan
-  Approval -->|"skipped when goal mode/active goal allows it"| Goal
+- Tool interface: `AgentTool` in `src/main/domain/agent/types.ts`.
+- Registry port: `ToolRegistry` in `src/main/domain/agent/ports.ts`.
+- Built-in tool names: `RUNTIME_TOOL_NAMES` in `src/shared/agent-contracts.ts`.
+- Read-only built-in names: `RUNTIME_READ_ONLY_TOOL_NAMES`.
+
+Tool categories:
+
+- Workspace read tools: `list_files`, `read_file`, `search_files`.
+- Developer read tools: `rg_search`, symbols, diagnostics, package/git/session inspection.
+- Coding write tools: `edit_file`, `multi_edit`, `write_file`, `delete_file`, `apply_patch`, `rollback_file`.
+- Coordination tools: `create_plan`, `create_edit_plan`, `update_goal`.
+- Command tools: foreground commands, shell-specific commands, package wrappers, git commands, command sessions.
+- Skills: `list_skills`, `run_skill`.
+- Interaction: `request_user_input`.
+- MCP: dynamic `mcp__<server>__<tool>`.
+
+Policy flow:
+
+```text
+model-visible catalog
+  -> tool call
+  -> ToolCallExecutor
+  -> registered tool exists?
+  -> catalog availability for thread/mode?
+  -> input schema valid?
+  -> sandbox / approvalPolicy hard denials
+  -> scoped grants and RuntimePreferences.permissionRules
+  -> approval gate if needed
+  -> ToolRegistry.execute()
 ```
 
-Tool availability is decided at the runtime boundary:
+## Worker And Gateway
 
-- `create_plan`: only exposed in plan mode.
-- `update_goal`: exposed in goal mode or active-goal threads.
-- `list_files`, `read_file`, `search_files`: read-only workspace tools and do
-  not require approval.
-- `create_edit_plan`: read-only Code-mode coding tool that validates at least
-  two planned workspace-relative files, returns a structured coordination plan,
-  and appends the normal `PlanItem` timeline surface before separate
-  edit/write/delete calls.
-- `edit_file`, `multi_edit`, `write_file`, `apply_patch`, `rollback_file`: workspace write tools that
-  require approval, strict UTF-8 text, fresh read-state for existing files, and
-  workspace path validation. `multi_edit` applies ordered exact replacements in
-  memory and writes once only after every step succeeds. `apply_patch` dry-runs
-  all hunks before writing, preserves no-newline-at-end markers, and can show a
-  multi-file diff preview. `rollback_file` restores the latest in-memory agent
-  file history entry first, then falls back to the latest same-thread/workspace
-  checkpoint file snapshot only when current content still matches the
-  recorded post-write hash.
-- `run_command`: foreground command tool that runs inside the workspace,
-  returns stdout/stderr/exit status, requires approval, and is aborted when the
-  turn is interrupted. Foreground commands and long-running command sessions
-  share `command-sandbox.ts` for spawn-time cwd/env/stdio/shell/process cleanup
-  boundaries; OS jail support is reported as unavailable unless a future native
-  platform helper adds it.
-- `diagnose_workspace`: command-backed diagnostics tool that runs workspace
-  typecheck and requires approval because package scripts can execute shell
-  commands.
-- `diagnose_file`: read-only diagnostics tool that uses TypeScript Language
-  Service for one file and does not require approval.
-- `list_symbols`: read-only TypeScript/JavaScript outline tool that uses the
-  same short-lived Language Service boundary to return single-file symbols
-  before editing unfamiliar code.
-- `search_symbols`: read-only TypeScript/JavaScript project symbol search/map
-  tool that uses bounded on-demand Language Service extraction across
-  workspace-filtered project files without a persistent language server.
-- MCP tools are dynamically registered by `McpHost` from configured stdio or
-  Streamable HTTP MCP servers. They use `mcp__<server>__<tool>` names, reuse the
-  normal ToolRegistry/approval/sandbox/permission path, and are hidden from
-  Write threads by the default tool access policy. Small catalogs register each
-  remote tool directly; large catalogs register progressive search/describe/call
-  facade tools so the model can discover a target before loading that target's
-  full schema. Local `readOnlyTools` config, not remote `readOnlyHint`, is the
-  authority for read-only approval/sandbox treatment. Matching cached schema can
-  register lazy placeholders or facade tools before a live server is ready; the
-  first call forces reconnect and then continues through the same ToolRegistry path.
-  Refresh failures that clear live tools emit an empty `mcp_tool_list_changed`
-  event so renderer and runtime consumers do not retain stale descriptors.
-- Unknown or unavailable tool calls produce a visible `runtime_error` with
-  `code: "tool_not_found"`.
+Build entries in `electron.vite.config.ts`:
 
-## Worker And LLM Gateway
-
-```mermaid
-flowchart TD
-  Runtime["AgentRuntime"]
-  Pool["LlmWorkerPool"]
-  ThreadMap["threadId -> worker affinity"]
-  CancelMap["threadId -> cancel request"]
-  Worker["worker.ts"]
-  Gateway["MiniMaxGateway"]
-  OpenAI["OpenAI-compatible path"]
-  Anthropic["Anthropic-compatible path"]
-
-  Runtime --> Pool
-  Pool --> ThreadMap
-  Pool --> CancelMap
-  Pool --> Worker
-  Worker --> Gateway
-  Gateway --> OpenAI
-  Gateway --> Anthropic
-```
+- Main: `src/main/index.ts`
+- Worker: `src/main/infrastructure/llm-worker/worker.ts`
+- Preload: `src/preload/index.ts`
+- Renderer root: `src/renderer`
 
 Worker rules:
 
-- Same thread routes to the same worker while alive.
-- `cancel(threadId)` posts a request-specific cancel message.
-- Cancel post failures are logged and treated as best-effort so interruption can
-  continue to persist the interrupted state.
-- Request cleanup only clears the cancel handle it installed, so a settling old
-  request cannot remove a newer same-thread cancel mapping.
-- Worker exit clears stale thread affinity and creates a replacement worker.
-- Initial worker `postMessage(chat)` failures clean request listeners and cancel
-  state before surfacing `worker_crashed` to runtime.
-- `destroy()` is idempotent while shutdown is in progress or already complete,
-  so Electron shutdown paths cannot terminate the same worker entry twice.
-- Worker stream chunks become `LlmStreamChunk` events for runtime consumption.
-- Worker protocol errors keep their category through the pool and are mapped to
-  runtime errors such as `provider_http`, `provider_error`, `schema_invalid`,
-  and `worker_crashed`.
-- Worker raw diagnostics are bounded stream summaries, not full retained chunk
-  transcripts.
+- `LlmWorkerPool` keeps `threadId -> worker` affinity.
+- `cancel(threadId)` reaches the worker request through `AbortController`.
+- Worker protocol lives in `src/main/infrastructure/llm-worker/protocol.ts`.
+- `worker.ts` instantiates `MiniMaxGateway`.
+- Worker exit clears stale affinity and creates a replacement.
 
 Gateway rules:
 
-- `AgentRuntime` forwards the selected model profile `protocol` into
-  `LlmRequest`, so OpenAI-compatible and Anthropic-compatible profiles use the
-  same runtime path.
-- Provider dialect is resolved from `LlmRequest.provider`.
-- MiniMax and DeepSeek use provider-specific request body fields.
-- Custom OpenAI-compatible providers use generic chat completions bodies.
-- Anthropic-compatible providers use messages/tool_use/tool_result mapping.
-- Anthropic-compatible streaming usage is merged across `message_start` and
-  `message_delta` frames, including prompt cache read/create token fields.
-- OpenAI-compatible and Anthropic-compatible SSE keep reading after terminal
-  finish/stop signals until `[DONE]` or stream close so provider usage-only
-  tail frames are preserved.
-- Provider SSE `event: error` frames throw immediately instead of being treated
-  as normal payload frames.
-- SSE parsing flushes pending tool calls on terminal finish, `[DONE]`, or stream
-  close.
+- `MiniMaxGateway` implements `LlmGateway`.
+- `request.protocol === "openai-compatible"` uses chat completions adapters.
+- `request.protocol === "anthropic-compatible"` uses messages adapters.
+- MiniMax and DeepSeek have provider-specific OpenAI-compatible request fields.
+- API key fallback is resolved in gateway/common provider logic; renderer never receives real keys.
 
 ## Persistence Architecture
 
-```mermaid
-flowchart TB
-  UserData["Electron userData"]
-  ThreadsDir["threads/"]
-  AttachDir["attachments/"]
-  ConfigFile["config"]
-  CheckpointsDir["checkpoints/"]
-  McpDir["mcp/"]
-
-  UserData --> ThreadsDir
-  UserData --> AttachDir
-  UserData --> ConfigFile
-  UserData --> CheckpointsDir
-  UserData --> McpDir
-
-  ThreadsDir --> Index["index.json\nThreadSummary[]"]
-  ThreadsDir --> ThreadFolder["<threadId>/"]
-  ThreadFolder --> ThreadJson["thread.json\nThreadRecord"]
-  ThreadFolder --> Messages["messages.jsonl\nItem per line"]
-  ThreadFolder --> Events["events.jsonl\nPersisted runtime event per line"]
-
-  AttachDir --> AttachIndex["index.json\nAttachmentRecord[]"]
-  AttachDir --> Blob["<attachmentId>.bin"]
-
-  ConfigFile --> Profiles["ModelConfigProfilesState"]
-  ConfigFile --> RuntimePrefs["runtimePreferences\nAgent controls"]
-  CheckpointsDir --> CheckpointJsonl["<threadId>.jsonl\nturn/file snapshots"]
-  McpDir --> McpCache["cache.json\nschema + surface + startup stats"]
+```text
+userData/
+  threads/
+    index.json
+    <threadId>/
+      thread.json
+      messages.jsonl
+      events.jsonl
+  attachments/
+    index.json
+    <attachmentId>.bin
+  config
+  checkpoints/
+    <threadId>.jsonl
+  mcp/
+    cache.json
 ```
+
+Store ownership:
+
+- `JsonlThreadStore`: threads, items, events.
+- `AttachmentStore`: image metadata and bytes.
+- `ModelConfigStore`: model profile section of shared config.
+- `RuntimePreferencesStore`: runtime preferences section of shared config.
+- `CheckpointStore`: file snapshots and rewind records.
+- `McpCacheStore`: public MCP schema/surface/startup cache.
+- `AppConfigFile`: shared `userData/config` writer used by model config and runtime preferences.
 
 Persistence invariants:
 
 - JSON writes use temp file + fsync + rename.
 - JSONL appends use fsync.
-- Same-thread writes are serialized with a per-thread mutex.
-- Malformed JSONL lines are warned and skipped during replay.
-- Thread and attachment ids must be UUIDs before path construction.
-- Attachment names are reduced with the shared basename/length contract before
-  metadata is written or replayed.
-- Model config keeps at least one profile and normalizes legacy single-config
-  files into profile state.
-- `userData/config` is the shared authority for model profiles and runtime
-  preferences. `ModelConfigStore` and `RuntimePreferencesStore` use the shared
-  config-file writer so one section update does not overwrite the other.
-- The shared config writer encrypts non-empty model `OPENAI_API_KEY` values on
-  disk through the main-process secret codec. Store callers, IPC, renderer state
-  and runtime requests still use the plain `ModelConfig` contract in memory.
-- Legacy `runtime-preferences.json` is read only to populate a missing
-  `runtimePreferences` section; if the section already exists, it is
-  authoritative.
-- Checkpoint JSONL records are keyed by thread and are restore inputs only after
-  workspace path and symlink boundary checks pass again. Single-file
-  `rollback_file` can also use the newest same-thread/workspace file snapshot
-  as a restart-safe fallback, but only after the live file hash still matches
-  that snapshot's `afterSha256`.
-- MCP cache stores public schema/surface descriptors and startup observations;
-  it is never the user-editable server config authority.
+- Per-thread writes are serialized.
+- Malformed JSONL replay lines warn and skip.
+- Checkpoint restore re-checks workspace boundary and symlink constraints.
 
-## Renderer State Architecture
-
-```mermaid
-flowchart TD
-  AppShell["AppShell"]
-  Provider["WorkbenchProvider"]
-  Reducer["WorkbenchContext reducer"]
-  Code["Code route"]
-  Write["Write route"]
-  Settings["Settings route"]
-  LocalStorage["localStorage preferences"]
-  AgentApi["window.agentApi"]
-
-  AppShell --> Provider
-  Provider --> Reducer
-  Reducer --> Code
-  Reducer --> Write
-  Reducer --> Settings
-  Reducer <--> LocalStorage
-  Code --> AgentApi
-  Write --> AgentApi
-  Settings --> AgentApi
-```
+## Renderer Architecture
 
 State center: `src/renderer/src/ui/store/WorkbenchContext.tsx`.
 
-Important state slices:
+Main routes:
 
-- `route`: `code | write | settings`.
-- `modelConfig` and `modelProfiles`.
-- `workspaceRoot`, `threads`, `activeThread`, active-thread `items`.
-- `inFlightTurnsByThreadId`, `activeTurnId`.
-- `composer`: text, model, profile, reasoning effort, mode, goal mode,
-  attachment ids.
-- `rightPanelMode`: `changes | checkpoints | todo | plan | null`.
-- `basicPreferences`: theme, startup, sidebar widths, inspector default,
-  archive visibility, last workspace, code/reasoning display defaults, composer
-  image upload and paste entry points.
+- `code`: chat/workbench for code threads.
+- `write`: write workspace with Markdown file service.
+- `settings`: settings panels.
 
-## IPC Contract Map
+Renderer modules:
 
-```mermaid
-flowchart LR
-  Shared["src/shared/ipc.ts\nchannel constants"]
-  Contracts["src/shared/agent-contracts.ts\nrequest/response/runtime types"]
-  MainHandlers["src/main/ipc/*-handlers.ts"]
-  Preload["src/preload/index.ts"]
-  Renderer["src/renderer/src/global.d.ts + UI calls"]
+- `AppShell.tsx`: route shell.
+- `Workbench.tsx`: thread loading, SSE subscription, message send, interrupt, approval/user-input responses.
+- `SettingsView.tsx`: model config, runtime preferences, MCP, skills, basic preferences.
+- `workbench-*.ts`: IPC, runtime event, thread, and composer payload helpers.
+- `components/chat/`: timeline, assistant markdown, approval panel, usage heatmap.
+- `components/composer/`: floating composer and popover hooks.
+- `components/write/`: write workspace and editor/assistant panels.
+- `components/settings/`: settings sidebar and panels.
 
-  Shared --> MainHandlers
-  Shared --> Preload
-  Contracts --> MainHandlers
-  Contracts --> Preload
-  Contracts --> Renderer
-  Preload --> Renderer
+Renderer invariants:
+
+- `useReducer` state only; no external state library.
+- UI text goes through i18n JSON files.
+- Tokens use `--ds-*` in `tokens.css`.
+- Component layout/style details are documented in `docs/ui-layout-reference.md` and `docs/ui-design.md`.
+
+## IPC Architecture
+
+Contract path:
+
+```text
+src/shared/ipc.ts
+src/shared/agent-contracts.ts
+src/shared/agent-api.ts
+  -> src/main/ipc/*-handlers.ts
+  -> src/preload/index.ts
+  -> src/renderer/src/global.d.ts + UI callers
 ```
 
-Every renderer-invoked IPC handler returns:
+Renderer-callable groups:
 
-- `ok(value)` for success.
-- `err(code, message)` for failure.
+- `threads`
+- `turns`
+- `sse`
+- `approvals`
+- `userInput`
+- `goals`
+- `attachments`
+- `usage`
+- `checkpoints`
+- `workspace`
+- `write`
+- `modelConfig`
+- `runtimePreferences`
+- `skills`
+- `mcp`
 
-The push event channel is separate:
+Every invoked handler returns `IpcResult<T>`.
 
-- `SSE_PUSH_CHANNEL = "sse:push"` sends `RuntimeEvent` payloads from main to
-  preload; preload validates each pushed payload with `isRuntimeEvent()` before
-  forwarding it to renderer listeners.
+## Verification
 
-## Module Ownership
-
-| Area | Ownership |
-| --- | --- |
-| `src/main/application/agent-runtime.ts` | Turn state machine, tool loop, model request construction, runtime events. |
-| `src/main/application/tool-call-executor.ts` | Parent-turn tool item lifecycle, catalog/policy checks, approval suspension, live progress, and interruption cleanup. |
-| `src/main/application/tools/` | Tool registry and built-in tool implementations. |
-| `src/main/infrastructure/minimax/` | Provider gateway routing, protocol adapters, shared HTTP/SSE helpers, and message/tool conversion. |
-| `src/main/infrastructure/llm-worker/` | Worker isolation, worker affinity, cancellation, worker protocol. |
-| `src/main/infrastructure/mcp/` | MCP client, host, cache/stats store, auth diagnostics, stdio and Streamable HTTP transports, protocol normalization. |
-| `src/main/ipc/` | IPC envelope handlers and Electron-only services. |
-| `src/main/persistence/` | userData persistence and migration/normalization. |
-| `src/preload/index.ts` | Minimal bridge API and SSE listener fan-out. |
-| `src/renderer/src/ui/` | Routes, UI components, reducer state, preferences, styles. |
-| `src/shared/` | Cross-process authority for contracts, channels, locales. |
-
-## Verification Commands
-
-Use these after architecture-affecting code changes:
+For code changes:
 
 ```bash
 npm run typecheck
@@ -544,10 +310,10 @@ npm run test
 npm run build
 ```
 
-For documentation-only edits, at minimum verify referenced paths and Markdown
-diff hygiene:
+For docs-only changes:
 
 ```bash
-rg "src/main/index.ts|src/preload/index.ts|src/renderer/src/ui" docs/architecture.md
-git diff --check
+git diff --check -- <changed-docs>
 ```
+
+Also verify referenced paths exist.

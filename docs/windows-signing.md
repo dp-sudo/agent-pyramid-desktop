@@ -4,15 +4,16 @@ This project uses `electron-builder` for Windows packaging.
 
 ## Icon
 
-The Windows icon is stored at:
+`package.json` currently points `build.win.icon` at:
 
 ```text
 resources/icons/icon.ico
 ```
 
-`package.json` points `build.win.icon` to that file, so both `package:win` and
-`package:win:signed` use it. Replace this file with a final brand `.ico` when a
-formal visual identity is available.
+The repository does not currently contain that `.ico` file. Add
+`resources/icons/icon.ico` before relying on `npm run package:win` or
+`npm run package:win:signed`, or update `package.json` to point at the actual
+brand icon. Do not commit temporary local icon paths.
 
 ## Unsigned Test Package
 

@@ -1,94 +1,173 @@
-# Agent 开发维护指南
+# Agent Development
 
-## 文档定位
+Maintenance entry for agents changing this repository. Use it to decide what to read, what to update, and how to verify.
 
-本文是 Agent 相关开发的维护入口，用来说明“改哪里、同步哪份文档、怎么验证”。它不再承担逐条变更记录、临时任务清单或规则副本职责。
+## Read Order
 
-不要在本文追加日常流水账。历史追踪使用 Git 记录、OpenSpec change、测试用例和对应领域文档。
+Always start with:
 
-## 先读什么
+1. `AGENTS.md`
+2. `CLAUDE.md`
+3. `docs/project-map.md`
 
-非平凡改动开始前，按任务类型读取：
+Then read by task:
 
-- 通用规则：`AGENTS.md`。
-- 项目地图和模块入口：`docs/project-map.md`。
-- 整体架构图：`docs/architecture.md`。
-- turn 生命周期、工具循环、approval、中断、事件流：`docs/runtime-flow.md`。
-- IPC、preload API、错误码：`docs/ipc-contracts.md`。
-- shared contract、JSONL、附件、模型配置、runtime preferences、checkpoint、MCP cache：`docs/data-model.md`。
-- UI token、布局、组件模式：`docs/ui-design.md` 和 `docs/ui-layout-reference.md`。
+| Task | Required docs |
+| --- | --- |
+| Runtime, tool loop, approval, interrupt, MCP runtime events | `docs/runtime-flow.md` |
+| IPC/preload/API/event contract | `docs/ipc-contracts.md` |
+| Thread/turn/item/event/config/attachment/checkpoint/MCP storage | `docs/data-model.md` |
+| UI layout or interaction | `docs/ui-layout-reference.md`, `docs/ui-design.md` |
+| System architecture | `docs/architecture.md` |
+| Windows packaging/signing | `docs/windows-signing.md` |
 
-只把 `src/`、`tests/`、`docs/` 中的当前项目文档和根目录构建配置作为项目实现依据。`docs/external-references/` 只读参考，不属于普通维护范围。`docs/claude-code-alignment-roadmap.md` 和 `docs/write-workbench-audit-plan.md` 都是已完成工作的历史归档，不是当前路线图或 backlog。只有当任务明确属于 OpenSpec change 且仓库中存在对应目录时，才把 `openspec/changes/<change-id>/` 纳入本次依据。
+Project implementation evidence comes from `src/`, `tests/`, `docs/`, and root config files. External reference folders are not project source.
 
-## 当前实现快照
+## Current Runtime Facts
 
-当前项目是 Electron + Vite + React + TypeScript 的桌面 Agent Workbench。主路径是：
+The runtime path diagram, full entry-point list, and source ownership live in `AGENTS.md` (§4-§5) and `docs/project-map.md` (§Summary, §Module Map); see those for authoritative detail. This document covers maintenance process only.
+
+One invariant gates all changes here: there is a single Agent runtime path (`src/main/application/agent-runtime.ts`). Do not restore old single-run orchestration, old trace contracts, or renderer-main shortcuts.
+
+## Documentation Ownership
+
+Update only the docs that match the changed boundary:
+
+| Change | Update |
+| --- | --- |
+| Module map, entry files, test map | `docs/project-map.md` |
+| Process architecture or composition root | `docs/architecture.md` |
+| Turn lifecycle, streaming, tools, approval, interrupt, runtime events | `docs/runtime-flow.md` |
+| IPC channels, preload API, event push contract, error codes | `docs/ipc-contracts.md` |
+| Shared fields, persistence formats, migrations, storage invariants | `docs/data-model.md` |
+| UI tokens, visual rules, interaction constraints | `docs/ui-design.md` |
+| UI route/component/state layout | `docs/ui-layout-reference.md` |
+| Agent maintenance process | `docs/agent-development.md` |
+| Packaging/signing commands | `docs/windows-signing.md` |
+
+Do not put changelog entries or temporary task notes in maintenance docs. Use Git history, tests, issues/specs, or task-specific plans for historical tracking.
+
+## Cross-Process Change Checklist
+
+For fields, channels, API methods, runtime events, tool names, or persisted shapes:
+
+1. Search current definitions and call sites with `rg`.
+2. Update shared contract authority first.
+3. Update guards/normalizers/migrations.
+4. Update main handlers/services/stores/runtime.
+5. Update preload API and `src/shared/agent-api.ts` if renderer surface changes.
+6. Update renderer state and call sites.
+7. Update tests.
+8. Update the domain docs above.
+
+Common authority files:
+
+- Types: `src/shared/agent-contracts.ts`, focused shared submodules.
+- Channels: `src/shared/ipc.ts`.
+- Errors: `src/shared/ipc-errors.ts`.
+- API shape: `src/shared/agent-api.ts`.
+- Runtime events: `RUNTIME_EVENT_KINDS` in shared contracts.
+- Tools: `RUNTIME_TOOL_NAMES`, `RUNTIME_READ_ONLY_TOOL_NAMES`, registry wiring in `src/main/index.ts`.
+
+## Runtime And Tool Changes
+
+Check these files before editing runtime behavior:
+
+- `src/main/application/agent-runtime.ts`
+- `src/main/application/tool-call-executor.ts`
+- `src/main/application/tool-catalog.ts`
+- `src/main/application/tool-policy.ts`
+- `src/main/application/permission-policy.ts`
+- `src/main/application/tools/`
+- `src/main/domain/agent/types.ts`
+- `src/main/domain/agent/ports.ts`
+- relevant tests under `tests/main/application/`
+
+Rules:
+
+- All model-requested tools go through `ToolCallExecutor`.
+- Tool visibility starts with `ToolCatalogService`.
+- Sandbox/approval/permission decisions go through current policy services.
+- Write/command-sensitive tools must not bypass approval and sandbox boundaries.
+- Tool failures must produce traceable `ToolItem` results or runtime events.
+
+## IPC Changes
+
+Required path:
 
 ```text
-renderer React
-  -> window.agentApi
-  -> preload contextBridge
-  -> ipcMain handlers
-  -> AgentRuntime / stores / event bus / tool registry
-  -> LlmWorkerPool
-  -> worker_threads
-  -> MiniMaxGateway
-  -> provider HTTP API
+src/shared/ipc.ts
+src/shared/agent-contracts.ts
+src/shared/agent-api.ts
+  -> src/main/ipc/*-handlers.ts
+  -> src/main/index.ts
+  -> src/preload/index.ts
+  -> renderer callers
+  -> tests
 ```
 
-核心边界：
+Rules:
 
-- `src/main/application/agent-runtime.ts` 是唯一 Agent runtime 入口。
-- `src/main/index.ts` 是 main process 组合根。
-- `src/preload/index.ts` 只暴露 `window.agentApi`。
-- `src/shared/agent-contracts.ts` 是跨进程契约统一出口；模型配置与基础 guard 可拆到 `src/shared/model-config-contracts.ts`、`src/shared/contract-primitives.ts` 后再 re-export。
-- `src/renderer/src/ui/store/WorkbenchContext.tsx` 是 renderer 状态中心。
-- `src/main/application/tool-catalog.ts` 负责当前 turn 的工具目录过滤。
-- `src/main/application/tool-policy.ts` 负责工具审批、拒绝和 permission rule 决策。
-- `src/main/application/approval-coordinator.ts` 负责 pending approval 的内存状态、timeline item 和 live event。
-- `src/main/application/context-compaction.ts` 负责模型请求前的上下文预算处理。
-- `src/renderer/src/ui/hooks/` 放置 Workbench 局部交互 hooks，例如 pending approval 提交状态。
+- Every renderer-invoked handler returns `IpcResult<T>`.
+- New renderer-callable channels must be added to `RENDERER_TO_MAIN_CHANNELS`.
+- Handler errors need stable codes and concrete messages.
+- Push events go through `SSE_PUSH_CHANNEL` and `isRuntimeEvent()`.
 
-旧单次运行入口、旧响应 trace 契约和旧编排器已经下线。新增 Agent 能力必须接入当前多 turn runtime，不要恢复旧路径。
+## Renderer Changes
 
-## 文档归属
+Check by area:
 
-修改后只同步相关权威文档，不要把所有细节都堆回本文。
-
-| 变更类型 | 必须同步 |
+| Area | Files |
 | --- | --- |
-| 模块边界、入口文件、测试地图、阅读顺序 | `docs/project-map.md`，必要时同步 `docs/architecture.md` |
-| Runtime 状态机、工具循环、approval、中断、worker stream、runtime event | `docs/runtime-flow.md` |
-| IPC channel、request/response、preload API、handler 错误码 | `docs/ipc-contracts.md` |
-| Thread/Turn/Item/RuntimeEvent、附件、模型配置、runtime preferences、checkpoint、MCP cache、JSONL、迁移规则 | `docs/data-model.md` |
-| UI token、布局语法、主题、组件模式 | `docs/ui-design.md` |
-| 页面结构、组件布局、交互状态归属 | `docs/ui-layout-reference.md` |
-| 开发流程、文档归属、跨模块维护策略变化 | `docs/agent-development.md` |
+| Route/state | `AppShell.tsx`, `Workbench.tsx`, `WorkbenchContext.tsx` |
+| Code timeline | `components/chat/`, `components/workbench/CodeWorkbenchStage.tsx` |
+| Composer | `components/composer/`, `workbench-composer-payload.ts` |
+| Sidebar/topbar/inspector | `components/sidebar/`, `components/topbar/`, `components/inspector/` |
+| Write mode | `components/write/`, `WriteWorkbenchStage.tsx`, write IPC handlers |
+| Settings | `SettingsView.tsx`, `settings-*-model.ts`, `components/settings/` |
+| Styling | `styles/tokens.css`, `styles/shell.css` |
+| i18n | both translation JSON files |
 
-## 开发维护原则
+Rules:
 
-- 先确认现有定义、调用链和测试，再改实现。
-- 复用当前模块边界；不要为单次调用新增抽象层。
-- 共享字段、IPC 契约和持久化格式变更必须同步 main、preload、renderer、tests 和对应文档。
-- 工具实现应依赖最窄的 capability context；不要绕过 `ToolRegistry`、`ToolCatalogService`、`ToolPolicyService` 或 approval gate。
-- Renderer 只能通过 `window.agentApi` 和 `src/shared/` 交互，不直接 import `src/main/`。
-- 失败路径必须可追踪。IPC 返回 `IpcResult<T>`，工具失败写入可见 `ToolItem` 或 runtime event。
-- 不在代码、测试、文档或提交中写入真实 API key。
+- Renderer calls main only through `window.agentApi`.
+- UI state uses `WorkbenchContext` and local component state; no new state library.
+- New text updates both `zh-CN` and `en`.
+- Style changes use `--ds-*` tokens.
+- UI errors must be visible or returned to a visible caller.
 
-## 变更记录策略
+## Data And Persistence Changes
 
-本文不维护“已完成内容”和逐日 changelog。以下位置才是历史与验收依据：
+Check:
 
-- Git commit / diff：记录真实代码和文档变更。
-- OpenSpec change：仅在仓库实际存在对应目录时，作为较大能力的 proposal、design、tasks 和 specs 记录。
-- `tests/`：固化行为、边界和回归风险。
-- 领域文档：记录当前事实，不记录过期过程。
+- `src/shared/agent-contracts.ts`
+- `src/shared/model-config-contracts.ts`
+- `src/shared/contract-primitives.ts`
+- `src/main/persistence/`
+- `src/main/infrastructure/mcp/cache-store.ts`
+- `docs/data-model.md`
 
-只有当开发维护流程本身变化，或新增一个长期维护者必须知道的跨模块边界时，才更新本文。
+Rules:
 
-## 验证要求
+- JSON writes use temp file + fsync + rename.
+- JSONL append is append-only and fsynced.
+- Replay currently warns and skips malformed JSONL lines.
+- Model config and runtime preferences share `userData/config`.
+- Renderer DTOs never expose real API keys.
+- Checkpoint restore and write IPC must re-check workspace boundaries.
 
-代码改动默认运行：
+## External Reference Boundary
+
+Not project source:
+
+- `F:\cc_src\*`
+- `docs/external-references/*` if present
+
+Do not import, link, copy, build, test, or package external reference code. If a task explicitly asks to study it, treat it as read-only design context and implement inside `src/`.
+
+## Verification
+
+Code changes:
 
 ```bash
 npm run typecheck
@@ -96,26 +175,33 @@ npm run test
 npm run build
 ```
 
-文档-only 改动至少执行：
+Docs-only changes:
 
 ```bash
 git diff --check -- <changed-docs>
 ```
 
-并确认新增引用的路径存在。未运行构建或测试时，在交付说明中写明原因。
+Also verify every newly referenced path exists:
 
-## 清理标准
+```powershell
+Test-Path <path>
+```
 
-清理文档时优先删除：
+If build/test commands are skipped for docs-only work, state that in the handoff/final response.
 
-- 已被 `AGENTS.md`、`CLAUDE.md` 或领域文档覆盖的重复规则。
-- 只描述历史过程、但不影响当前维护判断的流水账。
-- 指向不存在路径、旧入口、旧 channel、旧字段或旧工具的说明。
-- “后续可能”“临时方案”“待补充”但没有 owner、入口或验收标准的内容。
+## Documentation Cleanup Rules
 
-保留文档时必须满足至少一项：
+Delete content when it is:
 
-- 能帮助定位当前实现入口。
-- 说明当前仍生效的不变量或安全边界。
-- 规定修改某类能力时必须同步的契约、测试或文档。
-- 提供可执行验证步骤。
+- Duplicate of `AGENTS.md`, `CLAUDE.md`, or a domain doc.
+- Historical process notes without current maintenance value.
+- A claim about a removed path, channel, field, tool, or runtime.
+- A future idea without owner, entry point, and verification path.
+- Decorative wording that does not help locate or maintain implementation.
+
+Keep content only when it:
+
+- Points to a current implementation entry.
+- Defines a current invariant or security boundary.
+- Lists required synchronization points.
+- Provides executable verification steps.
