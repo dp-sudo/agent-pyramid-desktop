@@ -10,6 +10,7 @@
     "build": "electron-vite build",
     "package:win": "npm run build && electron-builder --win --x64",
     "package:win:signed": "npm run build && electron-builder --win --x64 -c.forceCodeSigning=true",
+    "package:linux": "npm run build && electron-builder --linux AppImage",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -35,6 +36,13 @@
       "icon": "resources/icons/icon.ico",
       "signAndEditExecutable": true,
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "category": "Development"
     }
   },
   "dependencies": {
