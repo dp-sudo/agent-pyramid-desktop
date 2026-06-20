@@ -9,6 +9,7 @@ import { SafeStorageSecretCodec } from "./persistence/secret-codec.js";
 import { RuntimeEventBus } from "./event-bus.js";
 import { LlmWorkerPool } from "./infrastructure/llm-worker/worker-pool.js";
 import { AgentRuntime } from "./application/agent-runtime.js";
+import { AppLifecycle } from "./application/app-lifecycle.js";
 import { createPlanTool } from "./application/tools/create-plan-tool.js";
 import { createGoalTools } from "./application/tools/goal-tools.js";
 import { createWorkspaceTools } from "./application/tools/workspace-tools.js";
@@ -66,6 +67,7 @@ const registry = new InMemoryToolRegistry([]);
 const skillService = new SkillService();
 const mcpCacheStore = new McpCacheStore(userDataDir);
 const mcpHost = new McpHost(registry, bus, mcpCacheStore);
+const lifecycle = new AppLifecycle();
 const runtime = new AgentRuntime({
   store,
   attachmentStore,
@@ -100,6 +102,19 @@ for (const tool of createGoalTools({
 })) {
   registry.register(tool);
 }
+
+lifecycle.registerCleanup({
+  name: "MCP host",
+  run: () => mcpHost.close(),
+});
+lifecycle.registerCleanup({
+  name: "command sessions",
+  run: () => shutdownCommandSessions(),
+});
+lifecycle.registerCleanup({
+  name: "LLM worker pool",
+  run: () => pool.destroy(),
+});
 
 let mainWindow: BrowserWindow | null = null;
 const RENDERER_INDEX_FILE = join(__dirname, "../renderer/index.html");
@@ -200,25 +215,13 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
-  void mcpHost.close();
-});
-
-app.on("before-quit", () => {
-  // Long-running command sessions are owned by this main process; shutdown must
-  // terminate their process trees before the app releases its runtime graph.
-  void shutdownCommandSessions().catch((error) => {
-    console.error("[main] command session shutdown failed:", error);
-  });
+  void lifecycle.runCleanup();
 });
 
 app.on("window-all-closed", () => {
-  void pool.destroy().finally(() => {
+  void lifecycle.runCleanup().finally(() => {
     if (process.platform !== "darwin") app.quit();
   });
-});
-
-app.on("before-quit", () => {
-  void pool.destroy();
 });
 
 // ---------------------------------------------------------------------------

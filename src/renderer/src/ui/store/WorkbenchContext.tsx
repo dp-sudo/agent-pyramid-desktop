@@ -40,11 +40,12 @@ import {
   selectComposerModel,
 } from "./composer-model-model";
 import {
+  applyLeftSidebarWidthPreference,
   applyBasicPreferenceUpdate,
+  applyRightSidebarWidthPreference,
+  applyShowArchivedThreadsPreference,
+  persistBasicPreferences,
   persistWorkspaceRootWhenRestored,
-  setLeftSidebarWidthPreference,
-  setRightSidebarWidthPreference,
-  setShowArchivedThreadsPreference,
   type BasicPreferenceAction,
 } from "./basic-preferences-state";
 
@@ -255,12 +256,11 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
         runtimePreferences: action.preferences,
       };
     case "setWorkspaceRoot":
-      persistWorkspaceRootWhenRestored(state.basicPreferences, action.workspaceRoot);
       return { ...state, workspaceRoot: action.workspaceRoot };
     case "setShowArchivedThreads": {
       return {
         ...state,
-        ...setShowArchivedThreadsPreference(state.basicPreferences, action.show),
+        ...applyShowArchivedThreadsPreference(state.basicPreferences, action.show),
       };
     }
     case "setThreads":
@@ -287,10 +287,6 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       };
     }
     case "selectThread":
-      persistWorkspaceRootWhenRestored(
-        state.basicPreferences,
-        action.thread.workspace || state.workspaceRoot,
-      );
       return {
         ...state,
         activeThread: action.thread,
@@ -415,12 +411,12 @@ export function reducer(state: WorkbenchState, action: Action): WorkbenchState {
     case "setLeftSidebarWidth":
       return {
         ...state,
-        ...setLeftSidebarWidthPreference(state.basicPreferences, action.width),
+        ...applyLeftSidebarWidthPreference(state.basicPreferences, action.width),
       };
     case "setRightSidebarWidth":
       return {
         ...state,
-        ...setRightSidebarWidthPreference(state.basicPreferences, action.width),
+        ...applyRightSidebarWidthPreference(state.basicPreferences, action.width),
       };
     case "updateBasicPreference":
       return {
@@ -525,13 +521,26 @@ export function WorkbenchProvider({
       setModelProfiles: (profiles) => dispatch({ type: "setModelProfiles", profiles }),
       setRuntimePreferences: (preferences) =>
         dispatch({ type: "setRuntimePreferences", preferences }),
-      setWorkspaceRoot: (workspaceRoot) =>
-        dispatch({ type: "setWorkspaceRoot", workspaceRoot }),
-      setShowArchivedThreads: (show) =>
-        dispatch({ type: "setShowArchivedThreads", show }),
+      setWorkspaceRoot: (workspaceRoot) => {
+        persistWorkspaceRootWhenRestored(state.basicPreferences, workspaceRoot);
+        dispatch({ type: "setWorkspaceRoot", workspaceRoot });
+      },
+      setShowArchivedThreads: (show) => {
+        persistBasicPreferences({
+          ...state.basicPreferences,
+          showArchivedThreadsByDefault: show,
+        });
+        dispatch({ type: "setShowArchivedThreads", show });
+      },
       setThreads: (threads) => dispatch({ type: "setThreads", threads }),
       removeThread: (id) => dispatch({ type: "removeThread", id }),
-      selectThread: (thread, items) => dispatch({ type: "selectThread", thread, items }),
+      selectThread: (thread, items) => {
+        persistWorkspaceRootWhenRestored(
+          state.basicPreferences,
+          thread.workspace || state.workspaceRoot,
+        );
+        dispatch({ type: "selectThread", thread, items });
+      },
       updateActiveThread: (thread) => dispatch({ type: "updateActiveThread", thread }),
       deselectThread: () => dispatch({ type: "deselectThread" }),
       appendItem: (item) => dispatch({ type: "appendItem", item }),
@@ -556,12 +565,50 @@ export function WorkbenchProvider({
       openRightPanel: (mode) => dispatch({ type: "openRightPanel", mode }),
       closeRightPanel: () => dispatch({ type: "closeRightPanel" }),
       setError: (message) => dispatch({ type: "setError", message }),
-      setLeftSidebarWidth: (width) => dispatch({ type: "setLeftSidebarWidth", width }),
-      setRightSidebarWidth: (width) => dispatch({ type: "setRightSidebarWidth", width }),
-      updateBasicPreference: (key, value) =>
-        dispatch({ type: "updateBasicPreference", key, value } as BasicPreferenceAction),
+      setLeftSidebarWidth: (width) => {
+        if (state.basicPreferences.rememberLeftSidebarWidth) {
+          persistBasicPreferences({
+            ...state.basicPreferences,
+            leftSidebarWidth: width,
+          });
+        }
+        dispatch({ type: "setLeftSidebarWidth", width });
+      },
+      setRightSidebarWidth: (width) => {
+        if (state.basicPreferences.rememberRightSidebarWidth) {
+          persistBasicPreferences({
+            ...state.basicPreferences,
+            rightSidebarWidth: width,
+          });
+        }
+        dispatch({ type: "setRightSidebarWidth", width });
+      },
+      updateBasicPreference: (key, value) => {
+        const restoredWorkspaceRoot =
+          key === "restoreLastWorkspaceOnStartup" && value && !state.workspaceRoot
+            ? loadLastWorkspaceRoot()
+            : undefined;
+        if (key === "restoreLastWorkspaceOnStartup" && value && state.workspaceRoot) {
+          persistWorkspaceRootWhenRestored(
+            {
+              ...state.basicPreferences,
+              restoreLastWorkspaceOnStartup: true,
+            },
+            state.workspaceRoot,
+          );
+        }
+        const action = {
+          type: "updateBasicPreference",
+          key,
+          value,
+          restoredWorkspaceRoot,
+        } as BasicPreferenceAction;
+        const patch = applyBasicPreferenceUpdate(state, action);
+        persistBasicPreferences(patch.basicPreferences);
+        dispatch(action);
+      },
     }),
-    [],
+    [state],
   );
 
   return (

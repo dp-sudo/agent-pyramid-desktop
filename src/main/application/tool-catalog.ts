@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ToolRegistry } from "../domain/agent/ports.js";
 import type { AgentToolDefinition } from "../domain/agent/types.js";
+import { canonicalizeJsonRecord } from "../stable-json.js";
 import type {
   RuntimePreferences,
   RuntimeToolCatalogSnapshot,
@@ -243,7 +244,7 @@ function normalizeToolDefinitions(definitions: AgentToolDefinition[]): AgentTool
     .map((definition) => ({
       name: definition.name,
       description: definition.description,
-      inputSchema: canonicalizeJson(definition.inputSchema) as Record<string, unknown>,
+      inputSchema: canonicalizeJsonRecord(definition.inputSchema),
     }))
     .sort(compareToolDefinitions);
 }
@@ -253,14 +254,4 @@ function hashToolCatalog(definitions: AgentToolDefinition[]): string {
     .update(JSON.stringify(definitions))
     .digest("hex")
     .slice(0, 16);
-}
-
-function canonicalizeJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalizeJson);
-  if (!value || typeof value !== "object") return value;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    out[key] = canonicalizeJson((value as Record<string, unknown>)[key]);
-  }
-  return out;
 }

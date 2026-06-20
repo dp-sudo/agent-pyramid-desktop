@@ -4,19 +4,11 @@ import {
   getActiveThreadInFlightTurn,
   getThreadInFlightTurn,
   useWorkbench,
-  type ToolProgressUpdate,
   type WorkbenchState,
 } from "./store/WorkbenchContext";
-import {
-  mergeToolProgressBufferEvent,
-  toolProgressBufferKey,
-} from "./store/tool-progress-model";
 import { explicitComposerModelProfileId } from "./store/composer-model-model";
-import {
-  applyWorkbenchRuntimeEvent,
-  shouldBufferLiveTextItemUpdate,
-  shouldFlushBufferedItemUpdatesBeforeEvent,
-} from "./workbench-runtime-events";
+import { applyWorkbenchRuntimeEvent } from "./workbench-runtime-events";
+import { WorkbenchLiveEventBuffer } from "./workbench-live-event-buffer";
 import {
   filterThreadsForWorkbench,
   findLatestThreadForWorkspace,
@@ -49,7 +41,6 @@ import {
 } from "./sidebar-resize-model";
 import {
   DEFAULT_THREAD_TITLE,
-  type Item,
   type RuntimeEvent,
   type ThreadRecord,
 } from "../../../shared/agent-contracts";
@@ -78,14 +69,6 @@ export {
   type WorkbenchErrorCopyResult,
 } from "./components/workbench/WorkbenchErrorToast";
 
-const TOOL_PROGRESS_RENDER_FLUSH_MS = 100;
-// Assistant text and reasoning arrive as high-frequency item_updated deltas
-// (one per model token). Coalescing them into a single store dispatch per
-// window avoids re-rendering the whole visible timeline on every token while
-// keeping the cadence fast enough to feel live. Tool/approval item_updated
-// events are low-frequency and stay immediate.
-const TEXT_DELTA_RENDER_FLUSH_MS = 60;
-
 export function Workbench(): ReactElement {
   const { t } = useTranslation();
   const { state, actions } = useWorkbench();
@@ -94,10 +77,7 @@ export function Workbench(): ReactElement {
   const selectThreadRequestRef = useRef(0);
   const sendInProgressRef = useRef(false);
   const subscribedThreadIdsRef = useRef(new Set<string>());
-  const toolProgressBuffersRef = useRef(new Map<string, ToolProgressUpdate>());
-  const toolProgressFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latestItemUpdateByItemIdRef = useRef(new Map<string, Item>());
-  const itemUpdateFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveEventBufferRef = useRef<WorkbenchLiveEventBuffer | null>(null);
   const [threadSafetyUpdating, setThreadSafetyUpdating] = useState(false);
   const activeThreadArchived = state.activeThread?.status === "archived";
   const activeThreadInFlightTurn = getActiveThreadInFlightTurn(state);
@@ -108,6 +88,10 @@ export function Workbench(): ReactElement {
     beginApprovalResponse,
     clearApprovalResponse,
   } = usePendingApprovalResponses(state.items);
+  if (!liveEventBufferRef.current) {
+    liveEventBufferRef.current = new WorkbenchLiveEventBuffer(actions);
+  }
+  liveEventBufferRef.current.updateActions(actions);
   const {
     dragging: leftSidebarDragging,
     handlePointerDown: handleLeftSidebarPointerDown,
@@ -171,89 +155,16 @@ export function Workbench(): ReactElement {
     };
   }, [actions, state.showArchivedThreads, t]);
 
-  const flushToolProgressBuffers = useCallback((): void => {
-    if (toolProgressFlushTimerRef.current) {
-      clearTimeout(toolProgressFlushTimerRef.current);
-      toolProgressFlushTimerRef.current = null;
-    }
-    const updates = [...toolProgressBuffersRef.current.values()];
-    toolProgressBuffersRef.current.clear();
-    for (const update of updates) {
-      actions.appendToolProgress(update);
-    }
-  }, [actions]);
-
-  const queueToolProgress = useCallback(
-    (event: Extract<RuntimeEvent, { kind: "tool_progress" }>): void => {
-      const key = toolProgressBufferKey(event);
-      const current = toolProgressBuffersRef.current.get(key);
-      toolProgressBuffersRef.current.set(key, mergeToolProgressBufferEvent(current, event));
-      if (toolProgressFlushTimerRef.current) return;
-      toolProgressFlushTimerRef.current = setTimeout(
-        flushToolProgressBuffers,
-        TOOL_PROGRESS_RENDER_FLUSH_MS,
-      );
-    },
-    [flushToolProgressBuffers],
-  );
-
-  const flushItemUpdates = useCallback((): void => {
-    if (itemUpdateFlushTimerRef.current) {
-      clearTimeout(itemUpdateFlushTimerRef.current);
-      itemUpdateFlushTimerRef.current = null;
-    }
-    const updates = [...latestItemUpdateByItemIdRef.current.values()];
-    latestItemUpdateByItemIdRef.current.clear();
-    for (const item of updates) {
-      actions.updateItem(item);
-    }
-  }, [actions]);
-
-  const queueItemUpdate = useCallback(
-    (item: Item): void => {
-      // Keep only the freshest snapshot per item id; the last delta in the
-      // window is the one that lands in the store, so no content is lost.
-      latestItemUpdateByItemIdRef.current.set(item.id, item);
-      if (itemUpdateFlushTimerRef.current) return;
-      itemUpdateFlushTimerRef.current = setTimeout(
-        flushItemUpdates,
-        TEXT_DELTA_RENDER_FLUSH_MS,
-      );
-    },
-    [flushItemUpdates],
-  );
-
   useEffect(() => {
     return () => {
-      if (toolProgressFlushTimerRef.current) {
-        clearTimeout(toolProgressFlushTimerRef.current);
-      }
-      if (itemUpdateFlushTimerRef.current) {
-        clearTimeout(itemUpdateFlushTimerRef.current);
-      }
-      toolProgressBuffersRef.current.clear();
-      latestItemUpdateByItemIdRef.current.clear();
+      liveEventBufferRef.current?.dispose();
+      liveEventBufferRef.current = null;
     };
   }, []);
 
   const handleRuntimeEvent = useCallback(
     (event: RuntimeEvent): void => {
-      if (event.kind === "tool_progress") {
-        queueToolProgress(event);
-        return;
-      }
-      // Coalesce high-frequency assistant/reasoning text deltas so the live
-      // turn re-renders at most once per window; tool/approval item_updated
-      // and all other events stay immediate via the normal apply path.
-      if (shouldBufferLiveTextItemUpdate(event, activeThreadIdRef.current)) {
-        queueItemUpdate(event.item);
-        return;
-      }
-      // Flush any buffered text deltas before terminal turn events so the
-      // final streamed content is committed before the turn status flips.
-      if (shouldFlushBufferedItemUpdatesBeforeEvent(event)) {
-        flushItemUpdates();
-      }
+      if (liveEventBufferRef.current?.handleRuntimeEvent(event, activeThreadIdRef.current)) return;
       applyWorkbenchRuntimeEvent(
         event,
         {
@@ -263,7 +174,7 @@ export function Workbench(): ReactElement {
         actions,
       );
     },
-    [actions, queueToolProgress, queueItemUpdate, flushItemUpdates, state.activeThread],
+    [actions, state.activeThread],
   );
 
   useEffect(() => {

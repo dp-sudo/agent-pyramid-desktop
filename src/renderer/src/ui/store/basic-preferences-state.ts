@@ -1,6 +1,6 @@
 import {
   DEFAULT_BASIC_PREFERENCES,
-  loadLastWorkspaceRoot,
+  normalizeBasicPreferences,
   saveBasicPreferences,
   saveLastWorkspaceRoot,
   type WorkbenchBasicPreferences,
@@ -11,6 +11,7 @@ export type BasicPreferenceAction = {
     type: "updateBasicPreference";
     key: K;
     value: WorkbenchBasicPreferences[K];
+    restoredWorkspaceRoot?: string;
   };
 }[keyof WorkbenchBasicPreferences];
 
@@ -39,23 +40,28 @@ export function persistWorkspaceRootWhenRestored(
   }
 }
 
-export function setShowArchivedThreadsPreference(
+export function persistBasicPreferences(preferences: WorkbenchBasicPreferences): WorkbenchBasicPreferences {
+  return saveBasicPreferences(preferences);
+}
+
+export function applyShowArchivedThreadsPreference(
   preferences: WorkbenchBasicPreferences,
   show: boolean,
 ): {
   showArchivedThreads: boolean;
   basicPreferences: WorkbenchBasicPreferences;
 } {
+  const basicPreferences = normalizeBasicPreferences({
+    ...preferences,
+    showArchivedThreadsByDefault: show,
+  });
   return {
     showArchivedThreads: show,
-    basicPreferences: saveBasicPreferences({
-      ...preferences,
-      showArchivedThreadsByDefault: show,
-    }),
+    basicPreferences,
   };
 }
 
-export function setLeftSidebarWidthPreference(
+export function applyLeftSidebarWidthPreference(
   preferences: WorkbenchBasicPreferences,
   width: number,
 ): {
@@ -65,12 +71,12 @@ export function setLeftSidebarWidthPreference(
   return {
     leftSidebarWidth: width,
     basicPreferences: preferences.rememberLeftSidebarWidth
-      ? saveBasicPreferences({ ...preferences, leftSidebarWidth: width })
+      ? normalizeBasicPreferences({ ...preferences, leftSidebarWidth: width })
       : preferences,
   };
 }
 
-export function setRightSidebarWidthPreference(
+export function applyRightSidebarWidthPreference(
   preferences: WorkbenchBasicPreferences,
   width: number,
 ): {
@@ -80,7 +86,7 @@ export function setRightSidebarWidthPreference(
   return {
     rightSidebarWidth: width,
     basicPreferences: preferences.rememberRightSidebarWidth
-      ? saveBasicPreferences({ ...preferences, rightSidebarWidth: width })
+      ? normalizeBasicPreferences({ ...preferences, rightSidebarWidth: width })
       : preferences,
   };
 }
@@ -103,14 +109,7 @@ export function applyBasicPreferenceUpdate(
       ? input.rightSidebarWidth
       : DEFAULT_BASIC_PREFERENCES.rightSidebarWidth;
   }
-  if (
-    action.key === "restoreLastWorkspaceOnStartup" &&
-    action.value &&
-    input.workspaceRoot
-  ) {
-    saveLastWorkspaceRoot(input.workspaceRoot);
-  }
-  const nextPreferences = saveBasicPreferences(draftPreferences);
+  const nextPreferences = normalizeBasicPreferences(draftPreferences);
   return {
     basicPreferences: nextPreferences,
     ...(action.key === "showArchivedThreadsByDefault"
@@ -129,7 +128,7 @@ export function applyBasicPreferenceUpdate(
       : {}),
     ...(action.key === "restoreLastWorkspaceOnStartup" &&
     nextPreferences.restoreLastWorkspaceOnStartup
-      ? { workspaceRoot: input.workspaceRoot || loadLastWorkspaceRoot() }
+      ? { workspaceRoot: input.workspaceRoot || action.restoredWorkspaceRoot || "" }
       : {}),
   };
 }

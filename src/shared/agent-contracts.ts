@@ -5,9 +5,15 @@ import {
   type ModelReasoningEffort,
 } from "./model-config-contracts.js";
 import { toMcpNameSegment } from "./mcp-names.js";
+import {
+  RUNTIME_TOOL_NAMES,
+  isRuntimeToolName,
+  type RuntimeToolName,
+} from "./runtime-tool-contracts.js";
 
 export * from "./contract-primitives.js";
 export * from "./model-config-contracts.js";
+export * from "./runtime-tool-contracts.js";
 
 // ============================================================================
 // Threading + multi-turn
@@ -141,77 +147,6 @@ export function isThreadSandboxMode(value: unknown): value is ThreadSandboxMode 
 // ============================================================================
 // Runtime preferences
 // ============================================================================
-
-export const RUNTIME_TOOL_NAMES = [
-  "list_files",
-  "read_file",
-  "search_files",
-  "rg_search",
-  "list_symbols",
-  "search_symbols",
-  "create_edit_plan",
-  "edit_file",
-  "multi_edit",
-  "write_file",
-  "delete_file",
-  "apply_patch",
-  "rollback_file",
-  "run_command",
-  "shell_command",
-  "git_bash_command",
-  "powershell_command",
-  "wsl_command",
-  "git_status",
-  "git_diff",
-  "git_log",
-  "git_branch",
-  "git_commit",
-  "package_scripts",
-  "package_install",
-  "package_test",
-  "package_build",
-  "run_lint",
-  "run_format",
-  "run_tests",
-  "run_build",
-  "start_command_session",
-  "list_command_sessions",
-  "read_command_session",
-  "write_command_session",
-  "stop_command_session",
-  "detect_shell_environment",
-  "diagnose_workspace",
-  "diagnose_file",
-  "list_skills",
-  "run_skill",
-  "request_user_input",
-  "create_plan",
-  "update_goal",
-] as const;
-export type RuntimeToolName = (typeof RUNTIME_TOOL_NAMES)[number];
-
-export const RUNTIME_READ_ONLY_TOOL_NAMES = [
-  "list_files",
-  "read_file",
-  "search_files",
-  "rg_search",
-  "list_symbols",
-  "search_symbols",
-  "create_edit_plan",
-  "git_status",
-  "git_diff",
-  "git_log",
-  "git_branch",
-  "package_scripts",
-  "list_command_sessions",
-  "read_command_session",
-  "detect_shell_environment",
-  "diagnose_file",
-  "list_skills",
-  "run_skill",
-  "request_user_input",
-] as const satisfies readonly RuntimeToolName[];
-export type RuntimeReadOnlyToolName = (typeof RUNTIME_READ_ONLY_TOOL_NAMES)[number];
 
 export const RUNTIME_COMPACTION_STRATEGIES = [
   "balanced",
@@ -656,10 +591,6 @@ export const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   permissionRules: [],
   mcpServers: [],
 };
-
-export function isRuntimeToolName(value: unknown): value is RuntimeToolName {
-  return typeof value === "string" && RUNTIME_TOOL_NAMES.includes(value as RuntimeToolName);
-}
 
 export function isRuntimeCompactionStrategy(
   value: unknown,

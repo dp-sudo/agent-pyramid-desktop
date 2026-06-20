@@ -80,58 +80,90 @@ export const MCP_PROMPTS_GET_CHANNEL = "mcp:prompts:get";
 export const MCP_RESOURCES_LIST_CHANNEL = "mcp:resources:list";
 export const MCP_RESOURCES_READ_CHANNEL = "mcp:resources:read";
 
+export type IpcChannelGroup =
+  | "threads"
+  | "turns"
+  | "sse"
+  | "approvals"
+  | "userInput"
+  | "goals"
+  | "attachments"
+  | "usage"
+  | "checkpoints"
+  | "workspace"
+  | "write"
+  | "modelConfig"
+  | "runtimePreferences"
+  | "skills"
+  | "mcp";
+
+export interface RendererToMainChannelDescriptor {
+  channel: string;
+  group: IpcChannelGroup;
+  method: string;
+}
+
+/**
+ * Descriptor authority for renderer-invoked IPC. Channel constants stay exported
+ * for handler/preload ergonomics, but the invoke allowlist is derived here so a
+ * new channel has one shared place to declare its renderer surface.
+ */
+export const RENDERER_TO_MAIN_CHANNEL_DESCRIPTORS = [
+  { channel: THREAD_LIST_CHANNEL, group: "threads", method: "list" },
+  { channel: THREAD_CREATE_CHANNEL, group: "threads", method: "create" },
+  { channel: THREAD_GET_CHANNEL, group: "threads", method: "get" },
+  { channel: THREAD_UPDATE_CHANNEL, group: "threads", method: "update" },
+  { channel: THREAD_DELETE_CHANNEL, group: "threads", method: "delete" },
+  { channel: THREAD_FORK_CHANNEL, group: "threads", method: "fork" },
+  { channel: TURN_START_CHANNEL, group: "turns", method: "start" },
+  { channel: TURN_INTERRUPT_CHANNEL, group: "turns", method: "interrupt" },
+  { channel: TURN_GET_CHANNEL, group: "turns", method: "get" },
+  { channel: SSE_SUBSCRIBE_CHANNEL, group: "sse", method: "subscribe" },
+  { channel: SSE_UNSUBSCRIBE_CHANNEL, group: "sse", method: "unsubscribe" },
+  { channel: SSE_SUBSCRIBE_GLOBAL_CHANNEL, group: "sse", method: "subscribeGlobal" },
+  { channel: SSE_UNSUBSCRIBE_GLOBAL_CHANNEL, group: "sse", method: "unsubscribeGlobal" },
+  { channel: APPROVAL_RESPOND_CHANNEL, group: "approvals", method: "respond" },
+  { channel: USER_INPUT_RESPOND_CHANNEL, group: "userInput", method: "respond" },
+  { channel: GOAL_UPDATE_CHANNEL, group: "goals", method: "update" },
+  { channel: ATTACHMENT_CREATE_CHANNEL, group: "attachments", method: "create" },
+  { channel: ATTACHMENT_GET_CHANNEL, group: "attachments", method: "get" },
+  { channel: ATTACHMENT_DELETE_CHANNEL, group: "attachments", method: "delete" },
+  { channel: USAGE_DAILY_CHANNEL, group: "usage", method: "daily" },
+  { channel: CHECKPOINT_LIST_CHANNEL, group: "checkpoints", method: "list" },
+  { channel: CHECKPOINT_REWIND_CHANNEL, group: "checkpoints", method: "rewind" },
+  { channel: WORKSPACE_PICK_DIRECTORY_CHANNEL, group: "workspace", method: "pickDirectory" },
+  { channel: WRITE_LIST_CHANNEL, group: "write", method: "list" },
+  { channel: WRITE_GET_CHANNEL, group: "write", method: "get" },
+  { channel: WRITE_PUT_CHANNEL, group: "write", method: "put" },
+  { channel: WRITE_COMPLETE_CHANNEL, group: "write", method: "complete" },
+  { channel: WRITE_CREATE_CHANNEL, group: "write", method: "create" },
+  { channel: WRITE_RENAME_CHANNEL, group: "write", method: "rename" },
+  { channel: WRITE_DELETE_CHANNEL, group: "write", method: "delete" },
+  { channel: MODEL_CONFIG_GET_CHANNEL, group: "modelConfig", method: "get" },
+  { channel: MODEL_CONFIG_UPDATE_CHANNEL, group: "modelConfig", method: "update" },
+  { channel: MODEL_CONFIG_PROFILES_LIST_CHANNEL, group: "modelConfig", method: "listProfiles" },
+  { channel: MODEL_CONFIG_PROFILES_CREATE_CHANNEL, group: "modelConfig", method: "createProfile" },
+  { channel: MODEL_CONFIG_PROFILES_UPDATE_CHANNEL, group: "modelConfig", method: "updateProfile" },
+  { channel: MODEL_CONFIG_PROFILES_DELETE_CHANNEL, group: "modelConfig", method: "deleteProfile" },
+  { channel: MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL, group: "modelConfig", method: "activateProfile" },
+  { channel: RUNTIME_PREFERENCES_GET_CHANNEL, group: "runtimePreferences", method: "get" },
+  { channel: RUNTIME_PREFERENCES_UPDATE_CHANNEL, group: "runtimePreferences", method: "update" },
+  { channel: SKILL_LIST_CHANNEL, group: "skills", method: "list" },
+  { channel: MCP_SERVERS_LIST_CHANNEL, group: "mcp", method: "listServers" },
+  { channel: MCP_SERVERS_CONNECT_CHANNEL, group: "mcp", method: "connect" },
+  { channel: MCP_SERVERS_DISCONNECT_CHANNEL, group: "mcp", method: "disconnect" },
+  { channel: MCP_TOOLS_LIST_CHANNEL, group: "mcp", method: "listTools" },
+  { channel: MCP_TOOLS_REFRESH_CHANNEL, group: "mcp", method: "refreshTools" },
+  { channel: MCP_SURFACE_REFRESH_CHANNEL, group: "mcp", method: "refreshSurface" },
+  { channel: MCP_PROMPTS_LIST_CHANNEL, group: "mcp", method: "listPrompts" },
+  { channel: MCP_PROMPTS_GET_CHANNEL, group: "mcp", method: "getPrompt" },
+  { channel: MCP_RESOURCES_LIST_CHANNEL, group: "mcp", method: "listResources" },
+  { channel: MCP_RESOURCES_READ_CHANNEL, group: "mcp", method: "readResource" },
+] as const satisfies readonly RendererToMainChannelDescriptor[];
+
 /** All channels a renderer may invoke on the main process. */
-export const RENDERER_TO_MAIN_CHANNELS = [
-  THREAD_LIST_CHANNEL,
-  THREAD_CREATE_CHANNEL,
-  THREAD_GET_CHANNEL,
-  THREAD_UPDATE_CHANNEL,
-  THREAD_DELETE_CHANNEL,
-  THREAD_FORK_CHANNEL,
-  TURN_START_CHANNEL,
-  TURN_INTERRUPT_CHANNEL,
-  TURN_GET_CHANNEL,
-  SSE_SUBSCRIBE_CHANNEL,
-  SSE_UNSUBSCRIBE_CHANNEL,
-  SSE_SUBSCRIBE_GLOBAL_CHANNEL,
-  SSE_UNSUBSCRIBE_GLOBAL_CHANNEL,
-  APPROVAL_RESPOND_CHANNEL,
-  USER_INPUT_RESPOND_CHANNEL,
-  GOAL_UPDATE_CHANNEL,
-  ATTACHMENT_CREATE_CHANNEL,
-  ATTACHMENT_GET_CHANNEL,
-  ATTACHMENT_DELETE_CHANNEL,
-  USAGE_DAILY_CHANNEL,
-  CHECKPOINT_LIST_CHANNEL,
-  CHECKPOINT_REWIND_CHANNEL,
-  WORKSPACE_PICK_DIRECTORY_CHANNEL,
-  WRITE_LIST_CHANNEL,
-  WRITE_GET_CHANNEL,
-  WRITE_PUT_CHANNEL,
-  WRITE_COMPLETE_CHANNEL,
-  WRITE_CREATE_CHANNEL,
-  WRITE_RENAME_CHANNEL,
-  WRITE_DELETE_CHANNEL,
-  MODEL_CONFIG_GET_CHANNEL,
-  MODEL_CONFIG_UPDATE_CHANNEL,
-  MODEL_CONFIG_PROFILES_LIST_CHANNEL,
-  MODEL_CONFIG_PROFILES_CREATE_CHANNEL,
-  MODEL_CONFIG_PROFILES_UPDATE_CHANNEL,
-  MODEL_CONFIG_PROFILES_DELETE_CHANNEL,
-  MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
-  RUNTIME_PREFERENCES_GET_CHANNEL,
-  RUNTIME_PREFERENCES_UPDATE_CHANNEL,
-  SKILL_LIST_CHANNEL,
-  MCP_SERVERS_LIST_CHANNEL,
-  MCP_SERVERS_CONNECT_CHANNEL,
-  MCP_SERVERS_DISCONNECT_CHANNEL,
-  MCP_TOOLS_LIST_CHANNEL,
-  MCP_TOOLS_REFRESH_CHANNEL,
-  MCP_SURFACE_REFRESH_CHANNEL,
-  MCP_PROMPTS_LIST_CHANNEL,
-  MCP_PROMPTS_GET_CHANNEL,
-  MCP_RESOURCES_LIST_CHANNEL,
-  MCP_RESOURCES_READ_CHANNEL,
-] as const;
+export const RENDERER_TO_MAIN_CHANNELS = RENDERER_TO_MAIN_CHANNEL_DESCRIPTORS.map(
+  (descriptor) => descriptor.channel,
+);
 
 export type RendererToMainChannel = (typeof RENDERER_TO_MAIN_CHANNELS)[number];

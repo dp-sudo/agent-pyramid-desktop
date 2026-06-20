@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ATTACHMENT_DELETE_CHANNEL,
   MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL,
+  RENDERER_TO_MAIN_CHANNEL_DESCRIPTORS,
   RENDERER_TO_MAIN_CHANNELS,
   RUNTIME_PREFERENCES_GET_CHANNEL,
   RUNTIME_PREFERENCES_UPDATE_CHANNEL,
@@ -181,6 +182,21 @@ describe("shared agent contracts", () => {
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(SSE_SUBSCRIBE_GLOBAL_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).toContain(SSE_UNSUBSCRIBE_GLOBAL_CHANNEL);
     expect(RENDERER_TO_MAIN_CHANNELS).not.toContain("agent:run");
+  });
+
+  it("derives renderer-invoked IPC allowlist from channel descriptors", () => {
+    const descriptorChannels = RENDERER_TO_MAIN_CHANNEL_DESCRIPTORS.map(
+      (descriptor) => descriptor.channel,
+    );
+    expect(RENDERER_TO_MAIN_CHANNELS).toEqual(descriptorChannels);
+    expect(new Set(descriptorChannels).size).toBe(descriptorChannels.length);
+    expect(RENDERER_TO_MAIN_CHANNEL_DESCRIPTORS).toEqual(
+      expect.arrayContaining([
+        { channel: TURN_START_CHANNEL, group: "turns", method: "start" },
+        { channel: MODEL_CONFIG_PROFILES_ACTIVATE_CHANNEL, group: "modelConfig", method: "activateProfile" },
+        { channel: SKILL_LIST_CHANNEL, group: "skills", method: "list" },
+      ]),
+    );
   });
 
   it("validates public skill catalog response summaries", () => {

@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  applyLeftSidebarWidthPreference,
   applyBasicPreferenceUpdate,
+  applyShowArchivedThreadsPreference,
+  persistBasicPreferences,
   persistWorkspaceRootWhenRestored,
-  setLeftSidebarWidthPreference,
-  setShowArchivedThreadsPreference,
 } from "../../src/renderer/src/ui/store/basic-preferences-state";
 import {
   DEFAULT_BASIC_PREFERENCES,
@@ -19,10 +20,13 @@ describe("basic preferences state helpers", () => {
   it("persists showArchivedThreads changes through basic preferences", () => {
     vi.stubGlobal("window", { localStorage: createMemoryStorage() });
 
-    const patch = setShowArchivedThreadsPreference(DEFAULT_BASIC_PREFERENCES, true);
+    const patch = applyShowArchivedThreadsPreference(DEFAULT_BASIC_PREFERENCES, true);
 
     expect(patch.showArchivedThreads).toBe(true);
     expect(patch.basicPreferences.showArchivedThreadsByDefault).toBe(true);
+    expect(window.localStorage.getItem("agent-pyramid.basicPreferences")).toBeNull();
+
+    persistBasicPreferences(patch.basicPreferences);
     expect(JSON.parse(
       window.localStorage.getItem("agent-pyramid.basicPreferences") ?? "{}",
     )).toMatchObject({
@@ -33,8 +37,8 @@ describe("basic preferences state helpers", () => {
   it("persists sidebar width only when the remember preference is enabled", () => {
     vi.stubGlobal("window", { localStorage: createMemoryStorage() });
 
-    const ignored = setLeftSidebarWidthPreference(DEFAULT_BASIC_PREFERENCES, 320);
-    const remembered = setLeftSidebarWidthPreference({
+    const ignored = applyLeftSidebarWidthPreference(DEFAULT_BASIC_PREFERENCES, 320);
+    const remembered = applyLeftSidebarWidthPreference({
       ...DEFAULT_BASIC_PREFERENCES,
       rememberLeftSidebarWidth: true,
     }, 320);
@@ -86,6 +90,7 @@ describe("basic preferences state helpers", () => {
     expect(enableRememberWidth.basicPreferences.leftSidebarWidth).toBe(320);
     expect(disableRememberWidth.leftSidebarWidth).toBe(LEFT_SIDEBAR_DEFAULT_WIDTH);
     expect(defaultPanel.rightPanelMode).toBe("todo");
+    expect(window.localStorage.getItem("agent-pyramid.basicPreferences")).toBeNull();
   });
 
   it("persists and restores the last workspace root only when restore is enabled", () => {
@@ -110,6 +115,7 @@ describe("basic preferences state helpers", () => {
       type: "updateBasicPreference",
       key: "restoreLastWorkspaceOnStartup",
       value: true,
+      restoredWorkspaceRoot: "/workspace/project",
     });
     expect(patch.workspaceRoot).toBe("/workspace/project");
   });

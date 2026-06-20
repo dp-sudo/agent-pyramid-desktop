@@ -1,4 +1,5 @@
 import type { AgentMessage, AgentToolDefinition } from "../domain/agent/types.js";
+import { stableJsonStringify } from "../stable-json.js";
 import type { RuntimePreferences } from "../../shared/agent-contracts.js";
 import {
   CONTEXT_BUDGET_SAFETY_RATIO,
@@ -693,7 +694,7 @@ function estimateRequestTokens(
   tools: AgentToolDefinition[],
 ): number {
   return estimateTokens(
-    stableStringifyForBudget({
+    stableJsonStringify({
       systemPrompt,
       messages,
       tools,
@@ -703,20 +704,6 @@ function estimateRequestTokens(
 
 function estimateTokens(value: string): number {
   return Math.ceil(Buffer.byteLength(value, "utf8") / TOKEN_ESTIMATE_BYTES_PER_TOKEN);
-}
-
-function stableStringifyForBudget(value: unknown): string {
-  return JSON.stringify(canonicalizeJsonForBudget(value));
-}
-
-function canonicalizeJsonForBudget(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalizeJsonForBudget);
-  if (!value || typeof value !== "object") return value;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    out[key] = canonicalizeJsonForBudget((value as Record<string, unknown>)[key]);
-  }
-  return out;
 }
 
 function isBase64Like(key: string, value: string): boolean {

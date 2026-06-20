@@ -120,7 +120,6 @@ import {
   clearDeletedDefaultProfileReferences,
   createDefaultPermissionRule,
   formatRuntimeSkillsExtraRoots,
-  mergeRuntimePreferencesUpdates,
   resolveRuntimePreferencesAfterProfileActivationRefreshFailure,
   shouldDisableRuntimePreferenceControls,
   toPermissionRulePatternDrafts,
@@ -140,6 +139,7 @@ import {
   shouldDisableModelProfileControls,
   type SaveState,
 } from "./settings-view-state-model";
+import { RuntimePreferencesSaveQueue } from "./settings-runtime-preferences-save-queue";
 import { SettingsMcpServersPanel } from "./components/settings/SettingsMcpServersPanel";
 import { SettingsSkillsPanel } from "./components/settings/SettingsSkillsPanel";
 import { i18n, persistLocale, setFollowSystemTheme, setTheme } from "../i18n";
@@ -206,8 +206,7 @@ export function SettingsView(): ReactElement {
   const [codeBlockThresholdDraft, setCodeBlockThresholdDraft] = useState(() =>
     String(state.basicPreferences.codeBlockCollapseLineThreshold),
   );
-  const runtimeSaveInProgressRef = useRef(false);
-  const pendingRuntimePreferencesUpdateRef = useRef<RuntimePreferencesUpdate | null>(null);
+  const runtimePreferencesSaveQueueRef = useRef<RuntimePreferencesSaveQueue | null>(null);
 
   const activeProfile = profilesState ? findActiveProfile(profilesState) : null;
   const hasAgentApi = Boolean(window.agentApi);
@@ -245,6 +244,29 @@ export function SettingsView(): ReactElement {
     saveState,
     profileBusy,
   );
+  const runtimePreferencesSaveQueueHandlers = {
+    getUpdater: () => window.agentApi?.runtimePreferences.update ?? null,
+    onSaving: () => {
+      setRuntimeSaveState("saving");
+      setRuntimeError("");
+    },
+    onSaved: (preferences: RuntimePreferences) => {
+      applyRuntimePreferences(preferences);
+      setRuntimeSaveState("saved");
+    },
+    onError: (message: string) => {
+      setRuntimeSaveState("error");
+      setRuntimeError(message);
+    },
+    messageOfUnknownError,
+    preloadMissingMessage: () => i18n.t("settings.preloadMissing"),
+  };
+  if (!runtimePreferencesSaveQueueRef.current) {
+    runtimePreferencesSaveQueueRef.current = new RuntimePreferencesSaveQueue(
+      runtimePreferencesSaveQueueHandlers,
+    );
+  }
+  runtimePreferencesSaveQueueRef.current.updateHandlers(runtimePreferencesSaveQueueHandlers);
 
   useEffect(() => {
     let cancelled = false;
@@ -479,41 +501,7 @@ export function SettingsView(): ReactElement {
   }
 
   async function updateRuntimePreferences(update: RuntimePreferencesUpdate): Promise<void> {
-    if (!window.agentApi) {
-      setRuntimeSaveState("error");
-      setRuntimeError(i18n.t("settings.preloadMissing"));
-      return;
-    }
-    if (runtimeSaveInProgressRef.current) {
-      pendingRuntimePreferencesUpdateRef.current = mergeRuntimePreferencesUpdates(
-        pendingRuntimePreferencesUpdateRef.current,
-        update,
-      );
-      return;
-    }
-    runtimeSaveInProgressRef.current = true;
-    setRuntimeSaveState("saving");
-    setRuntimeError("");
-    try {
-      const result = await window.agentApi.runtimePreferences.update(update);
-      if (!result.ok) {
-        setRuntimeSaveState("error");
-        setRuntimeError(result.message);
-        return;
-      }
-      applyRuntimePreferences(result.value);
-      setRuntimeSaveState("saved");
-    } catch (updateError) {
-      setRuntimeSaveState("error");
-      setRuntimeError(messageOfUnknownError(updateError));
-    } finally {
-      runtimeSaveInProgressRef.current = false;
-      const pendingUpdate = pendingRuntimePreferencesUpdateRef.current;
-      pendingRuntimePreferencesUpdateRef.current = null;
-      if (pendingUpdate) {
-        void updateRuntimePreferences(pendingUpdate);
-      }
-    }
+    await runtimePreferencesSaveQueueRef.current?.save(update);
   }
 
   function updateRuntimeToolAvailability(

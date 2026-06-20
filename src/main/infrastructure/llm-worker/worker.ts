@@ -1,5 +1,5 @@
 import { parentPort } from "node:worker_threads";
-import { MiniMaxGateway } from "../minimax/minimax-gateway.js";
+import { ProviderCompatibleGateway } from "../minimax/provider-compatible-gateway.js";
 import {
   classifyWorkerErrorCode,
   createWorkerRawStreamSummary,
@@ -17,7 +17,7 @@ if (!parentPort) {
   throw new Error("llm-worker must be launched as a worker_thread.");
 }
 
-const gateway = new MiniMaxGateway();
+const gateway = new ProviderCompatibleGateway();
 const inflight = new Map<string, AbortController>();
 
 function send(message: WorkerOutbound): void {

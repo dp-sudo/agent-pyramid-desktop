@@ -4,6 +4,7 @@ import type { ToolRegistry } from "../domain/agent/ports.js";
 import { JsonlThreadStore } from "../persistence/index.js";
 import { CheckpointStore } from "../persistence/checkpoint-store.js";
 import { RuntimeEventBus } from "../event-bus.js";
+import { stableJsonStringify } from "../stable-json.js";
 import { FileReadStateStore } from "./tools/file-read-state.js";
 import { FileHistoryStore } from "./tools/file-history-state.js";
 import {
@@ -635,23 +636,5 @@ function isFileDiffLine(value: unknown): boolean {
   return (
     (line.type === "context" || line.type === "added" || line.type === "removed") &&
     typeof line.text === "string"
-  );
-}
-
-function stableJsonStringify(value: unknown): string {
-  return JSON.stringify(canonicalizeJson(value));
-}
-
-function canonicalizeJson(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(canonicalizeJson);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, nestedValue]) => [key, canonicalizeJson(nestedValue)]),
   );
 }
