@@ -1,5 +1,7 @@
 import type { AgentToolCall, AgentToolDefinition, AgentUsage } from "../../domain/agent/types";
+import { canonicalizeJsonRecord } from "../../stable-json.js";
 import { isNonNegativeInteger } from "../../../shared/agent-contracts.js";
+import { parseToolArguments } from "./gateway-common.js";
 
 export interface OpenAiChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -131,7 +133,7 @@ export function toOpenAiTool(tool: AgentToolDefinition): OpenAiTool {
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: canonicalizeSchema(tool.inputSchema)
+      parameters: canonicalizeJsonRecord(tool.inputSchema)
     }
   };
 }
@@ -140,7 +142,7 @@ export function toAnthropicTool(tool: AgentToolDefinition): AnthropicTool {
   return {
     name: tool.name,
     description: tool.description,
-    input_schema: canonicalizeSchema(tool.inputSchema)
+    input_schema: canonicalizeJsonRecord(tool.inputSchema)
   };
 }
 
@@ -149,7 +151,7 @@ export function normalizeToolDefinitions(tools: readonly AgentToolDefinition[]):
     .map((tool) => ({
       name: tool.name,
       description: tool.description,
-      inputSchema: canonicalizeSchema(tool.inputSchema),
+      inputSchema: canonicalizeJsonRecord(tool.inputSchema),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -199,21 +201,6 @@ export function parseAnthropicToolCalls(response: AnthropicMessageResponse): Age
         arguments: block.input ?? {}
       };
     });
-}
-
-function parseToolArguments(raw: string, toolName: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("Tool arguments must be a JSON object.");
-    }
-
-    return parsed as Record<string, unknown>;
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to parse arguments for tool "${toolName}": ${reason}`);
-  }
 }
 
 function requiredToolName(value: unknown, label: string): string {
@@ -313,25 +300,4 @@ function resolveCacheMissTokens(
 
 function tokenCountOrUndefined(value: unknown): number | undefined {
   return isNonNegativeInteger(value) ? value : undefined;
-}
-
-function canonicalizeSchema(value: unknown): Record<string, unknown> {
-  const canonical = canonicalize(value);
-  return canonical && typeof canonical === "object" && !Array.isArray(canonical)
-    ? (canonical as Record<string, unknown>)
-    : {};
-}
-
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (!value || typeof value !== "object") return value;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    out[key] = canonicalize((value as Record<string, unknown>)[key]);
-  }
-  return out;
-}
-
-export function stableJsonStringify(value: unknown): string {
-  return JSON.stringify(canonicalize(value));
 }

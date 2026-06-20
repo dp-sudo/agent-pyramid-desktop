@@ -9,6 +9,7 @@ import type {
   LlmStreamOptions,
   LlmStopReason,
 } from "../../domain/agent/types";
+import { canonicalizeJsonRecord } from "../../stable-json.js";
 import {
   mapAnthropicUsageFields,
   normalizeAnthropicUsage,
@@ -325,23 +326,6 @@ function toAnthropicMessages(messages: AgentMessage[]): AnthropicMessage[] {
       content: toAnthropicContent(message.content),
     };
   });
-}
-
-function canonicalizeJsonRecord(value: Record<string, unknown>): Record<string, unknown> {
-  const canonical = canonicalizeJson(value);
-  return canonical && typeof canonical === "object" && !Array.isArray(canonical)
-    ? (canonical as Record<string, unknown>)
-    : {};
-}
-
-function canonicalizeJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalizeJson);
-  if (!value || typeof value !== "object") return value;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    out[key] = canonicalizeJson((value as Record<string, unknown>)[key]);
-  }
-  return out;
 }
 
 function toAnthropicContent(

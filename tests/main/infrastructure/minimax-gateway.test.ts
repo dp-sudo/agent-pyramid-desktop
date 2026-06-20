@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { MiniMaxGateway } from "../../../src/main/infrastructure/minimax/minimax-gateway";
+import { ProviderCompatibleGateway } from "../../../src/main/infrastructure/minimax/provider-compatible-gateway";
 import {
   LLM_HTTP_ERROR_RESPONSE_MAX_BYTES,
   LLM_HTTP_RESPONSE_MAX_BYTES,
@@ -21,7 +21,7 @@ const baseRequest: LlmRequest = {
   reasoningEffort: "high",
 };
 
-describe("MiniMaxGateway", () => {
+describe("ProviderCompatibleGateway", () => {
   it("sends a minimal custom OpenAI-compatible request when no tools are present", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
@@ -45,7 +45,7 @@ describe("MiniMaxGateway", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const response = await new MiniMaxGateway().complete(baseRequest);
+    const response = await new ProviderCompatibleGateway().complete(baseRequest);
     const [url, init] = fetchMock.mock.calls[0];
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
 
@@ -87,7 +87,7 @@ describe("MiniMaxGateway", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const response = await new MiniMaxGateway().complete({
+    const response = await new ProviderCompatibleGateway().complete({
       ...baseRequest,
       protocol: "anthropic-compatible",
       baseUrl: "https://provider.example.test/anthropic",
@@ -119,7 +119,7 @@ describe("MiniMaxGateway", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await new MiniMaxGateway().complete({
+    await new ProviderCompatibleGateway().complete({
       ...baseRequest,
       provider: "DeepSeek",
       baseUrl: "https://api.deepseek.com",
@@ -197,7 +197,7 @@ describe("MiniMaxGateway", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await new MiniMaxGateway().complete({
+    await new ProviderCompatibleGateway().complete({
       ...baseRequest,
       messages: [
         {
@@ -251,7 +251,7 @@ describe("MiniMaxGateway", () => {
     );
 
     const chunks: LlmStreamChunk[] = [];
-    for await (const chunk of new MiniMaxGateway().stream(baseRequest)) {
+    for await (const chunk of new ProviderCompatibleGateway().stream(baseRequest)) {
       chunks.push(chunk);
     }
 
@@ -315,7 +315,7 @@ describe("MiniMaxGateway", () => {
     );
 
     const chunks: LlmStreamChunk[] = [];
-    for await (const chunk of new MiniMaxGateway().stream(baseRequest)) {
+    for await (const chunk of new ProviderCompatibleGateway().stream(baseRequest)) {
       chunks.push(chunk);
     }
 
@@ -359,7 +359,7 @@ describe("MiniMaxGateway", () => {
     );
 
     const chunks: LlmStreamChunk[] = [];
-    for await (const chunk of new MiniMaxGateway().stream(baseRequest)) {
+    for await (const chunk of new ProviderCompatibleGateway().stream(baseRequest)) {
       chunks.push(chunk);
     }
 
@@ -393,7 +393,7 @@ describe("MiniMaxGateway", () => {
     );
 
     const chunks: LlmStreamChunk[] = [];
-    for await (const chunk of new MiniMaxGateway().stream(baseRequest)) {
+    for await (const chunk of new ProviderCompatibleGateway().stream(baseRequest)) {
       chunks.push(chunk);
     }
 
@@ -434,7 +434,7 @@ describe("MiniMaxGateway", () => {
     );
 
     await expect(async () => {
-      for await (const _chunk of new MiniMaxGateway().stream(baseRequest)) {
+      for await (const _chunk of new ProviderCompatibleGateway().stream(baseRequest)) {
         void _chunk;
       }
     }).rejects.toThrow("LLM stream error event: auth: bad_key: [REDACTED]");
@@ -463,7 +463,7 @@ describe("MiniMaxGateway", () => {
     );
 
     await expect(async () => {
-      for await (const _chunk of new MiniMaxGateway().stream(baseRequest)) {
+      for await (const _chunk of new ProviderCompatibleGateway().stream(baseRequest)) {
         void _chunk;
       }
     }).rejects.toThrow("OpenAI streamed tool call call-1 is missing a tool name.");
@@ -498,7 +498,7 @@ describe("MiniMaxGateway", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const chunks: LlmStreamChunk[] = [];
-    for await (const chunk of new MiniMaxGateway().stream({
+    for await (const chunk of new ProviderCompatibleGateway().stream({
       ...baseRequest,
       protocol: "anthropic-compatible",
       baseUrl: "https://provider.example.test/anthropic",
@@ -568,7 +568,7 @@ describe("MiniMaxGateway", () => {
     );
 
     const chunks: LlmStreamChunk[] = [];
-    for await (const chunk of new MiniMaxGateway().stream({
+    for await (const chunk of new ProviderCompatibleGateway().stream({
       ...baseRequest,
       protocol: "anthropic-compatible",
       baseUrl: "https://provider.example.test/anthropic",
@@ -616,7 +616,7 @@ describe("MiniMaxGateway", () => {
     );
 
     await expect(async () => {
-      for await (const _chunk of new MiniMaxGateway().stream({
+      for await (const _chunk of new ProviderCompatibleGateway().stream({
         ...baseRequest,
         protocol: "anthropic-compatible",
         baseUrl: "https://provider.example.test/anthropic",
@@ -653,7 +653,7 @@ describe("MiniMaxGateway", () => {
     );
 
     const chunks: LlmStreamChunk[] = [];
-    for await (const chunk of new MiniMaxGateway().stream({
+    for await (const chunk of new ProviderCompatibleGateway().stream({
       ...baseRequest,
       protocol: "anthropic-compatible",
       baseUrl: "https://provider.example.test/anthropic",
@@ -695,7 +695,7 @@ describe("MiniMaxGateway", () => {
     );
 
     const chunks: LlmStreamChunk[] = [];
-    for await (const chunk of new MiniMaxGateway().stream({
+    for await (const chunk of new ProviderCompatibleGateway().stream({
       ...baseRequest,
       protocol: "anthropic-compatible",
       baseUrl: "https://provider.example.test/anthropic",
@@ -751,7 +751,7 @@ describe("MiniMaxGateway", () => {
     );
 
     await expect(async () => {
-      for await (const _chunk of new MiniMaxGateway().stream(baseRequest)) {
+      for await (const _chunk of new ProviderCompatibleGateway().stream(baseRequest)) {
         void _chunk;
       }
     }).rejects.toThrow("LLM stream error event: rate_limit_error: rate limited");
@@ -779,7 +779,7 @@ describe("MiniMaxGateway", () => {
     );
 
     await expect(async () => {
-      for await (const _chunk of new MiniMaxGateway().stream({
+      for await (const _chunk of new ProviderCompatibleGateway().stream({
         ...baseRequest,
         protocol: "anthropic-compatible",
         baseUrl: "https://provider.example.test/anthropic",
@@ -796,7 +796,7 @@ describe("MiniMaxGateway", () => {
       "fetch",
       vi.fn<typeof fetch>().mockResolvedValue(new Response("not-json", { status: 200 })),
     );
-    await expect(new MiniMaxGateway().complete(baseRequest)).rejects.toThrow(
+    await expect(new ProviderCompatibleGateway().complete(baseRequest)).rejects.toThrow(
       "LLM openai-compatible response was not valid JSON",
     );
 
@@ -804,7 +804,7 @@ describe("MiniMaxGateway", () => {
       "fetch",
       vi.fn<typeof fetch>().mockResolvedValue(new Response("bad request", { status: 400 })),
     );
-    await expect(new MiniMaxGateway().complete(baseRequest)).rejects.toThrow(
+    await expect(new ProviderCompatibleGateway().complete(baseRequest)).rejects.toThrow(
       "LLM openai-compatible request failed with HTTP 400: bad request",
     );
   });
@@ -817,10 +817,10 @@ describe("MiniMaxGateway", () => {
       "fetch",
       vi.fn<typeof fetch>().mockResolvedValue(new Response(maliciousBody, { status: 401 })),
     );
-    await expect(new MiniMaxGateway().complete(baseRequest)).rejects.toThrow(
+    await expect(new ProviderCompatibleGateway().complete(baseRequest)).rejects.toThrow(
       /LLM openai-compatible request failed with HTTP 401:.*\[REDACTED\]/,
     );
-    await expect(new MiniMaxGateway().complete(baseRequest)).rejects.not.toThrow(/sk-1234567890abcdef/);
+    await expect(new ProviderCompatibleGateway().complete(baseRequest)).rejects.not.toThrow(/sk-1234567890abcdef/);
   });
 
   it("rejects oversized non-stream provider response bodies before JSON parsing", async () => {
@@ -831,7 +831,7 @@ describe("MiniMaxGateway", () => {
       ),
     );
 
-    await expect(new MiniMaxGateway().complete(baseRequest)).rejects.toThrow(
+    await expect(new ProviderCompatibleGateway().complete(baseRequest)).rejects.toThrow(
       "LLM openai-compatible response exceeds the maximum size.",
     );
   });
@@ -845,7 +845,7 @@ describe("MiniMaxGateway", () => {
     );
 
     await expect(async () => {
-      for await (const _chunk of new MiniMaxGateway().stream(baseRequest)) {
+      for await (const _chunk of new ProviderCompatibleGateway().stream(baseRequest)) {
         void _chunk;
       }
     }).rejects.toThrow("LLM openai-compatible stream error response exceeds the maximum size.");
@@ -863,7 +863,7 @@ async function expectAuthorizationFor(
   );
   vi.stubGlobal("fetch", fetchMock);
 
-  await new MiniMaxGateway().complete({
+  await new ProviderCompatibleGateway().complete({
     ...baseRequest,
     ...request,
   });

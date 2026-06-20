@@ -8,12 +8,12 @@ import type {
   LlmStreamOptions,
   LlmStopReason,
 } from "../../domain/agent/types";
+import { stableJsonStringify } from "../../stable-json.js";
 import {
   mapOpenAiUsageFields,
   normalizeOpenAiUsage,
   normalizeToolDefinitions,
   parseOpenAiToolCalls,
-  stableJsonStringify,
   toOpenAiTool,
   type OpenAiChatMessage,
   type OpenAiChatResponse,

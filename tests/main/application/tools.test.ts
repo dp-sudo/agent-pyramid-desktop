@@ -1147,7 +1147,6 @@ describe("application tools", () => {
   });
 
   it("closes text read handles when the post-open symlink guard fails", async () => {
-    const noFollowDescriptor = Object.getOwnPropertyDescriptor(fsConstants, "O_NOFOLLOW");
     const close = vi.fn<() => Promise<void>>(async () => undefined);
     const fakeHandle = { close } as unknown as Awaited<ReturnType<typeof fs.open>>;
     const openSpy = vi.spyOn(fs, "open").mockResolvedValue(fakeHandle);
@@ -1156,16 +1155,13 @@ describe("application tools", () => {
     } as Awaited<ReturnType<typeof fs.lstat>>);
 
     try {
-      Object.defineProperty(fsConstants, "O_NOFOLLOW", {
-        configurable: true,
-        value: undefined,
-      });
-
       await expect(
-        openTextFileNoFollow(path.join("workspace", "link.txt"), {
-          label: "Helper read",
-          relativePath: "link.txt",
-        }),
+        withPlatformAsync("win32", () =>
+          openTextFileNoFollow(path.join("workspace", "link.txt"), {
+            label: "Helper read",
+            relativePath: "link.txt",
+          })
+        ),
       ).rejects.toThrow("Helper read target is a symbolic link: link.txt");
       expect(openSpy).toHaveBeenCalledTimes(1);
       expect(lstatSpy).toHaveBeenCalledTimes(1);
@@ -1173,11 +1169,6 @@ describe("application tools", () => {
     } finally {
       openSpy.mockRestore();
       lstatSpy.mockRestore();
-      if (noFollowDescriptor) {
-        Object.defineProperty(fsConstants, "O_NOFOLLOW", noFollowDescriptor);
-      } else {
-        Reflect.deleteProperty(fsConstants, "O_NOFOLLOW");
-      }
     }
   });
 
@@ -3337,7 +3328,7 @@ describe("application tools", () => {
       process.env.SHELL = "/bin/bash";
       try {
         expect(createShellInvocation("npm run typecheck")).toEqual({
-          file: "/bin/bash",
+          file: "/bin/sh",
           args: ["-c", "npm run typecheck"],
         });
       } finally {
@@ -4636,6 +4627,7 @@ describe("application tools", () => {
               id: "session-start",
               name: "start_command_session",
               arguments: {
+                shell: "sh",
                 command: nodeCommand(
                   "process.stdout.write('ready\\n'); process.stdin.on('data', (chunk) => process.stdout.write('echo:' + chunk.toString())); setInterval(() => undefined, 1000);",
                 ),
@@ -4934,6 +4926,7 @@ describe("application tools", () => {
               id: "session-env-start",
               name: "start_command_session",
               arguments: {
+                shell: "sh",
                 command: nodeCommand(
                   [
                     "process.stdout.write(JSON.stringify({",
@@ -5182,10 +5175,19 @@ describe("application tools", () => {
 
   it("fails command session start when the shell cannot spawn", async () => {
     const workspace = await makeTempDir("command-session-spawn-failure-");
-    const envKey = process.platform === "win32" ? "ComSpec" : "SHELL";
-    const originalShell = process.env[envKey];
+    const originalComSpec = process.env.ComSpec;
+    const originalPath = process.env.PATH;
+    const originalPathCapitalized = process.env.Path;
     try {
-      process.env[envKey] = path.join(workspace, "missing-shell");
+      const startArgs = process.platform === "win32"
+        ? { command: "echo unreachable" }
+        : { command: "echo unreachable", shell: "bash" };
+      if (process.platform === "win32") {
+        process.env.ComSpec = path.join(workspace, "missing-shell");
+      } else {
+        process.env.PATH = workspace;
+        delete process.env.Path;
+      }
       const registry = new InMemoryToolRegistry(createCommandTools());
       const context = { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const };
       await expect(
@@ -5193,16 +5195,26 @@ describe("application tools", () => {
           {
             id: "session-start-missing-shell",
             name: "start_command_session",
-            arguments: { command: "echo unreachable" },
+            arguments: startArgs,
           },
           context,
         ),
       ).rejects.toThrow("start_command_session failed to start command:");
     } finally {
-      if (originalShell === undefined) {
-        delete process.env[envKey];
+      if (originalComSpec === undefined) {
+        delete process.env.ComSpec;
       } else {
-        process.env[envKey] = originalShell;
+        process.env.ComSpec = originalComSpec;
+      }
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      if (originalPathCapitalized === undefined) {
+        delete process.env.Path;
+      } else {
+        process.env.Path = originalPathCapitalized;
       }
       await removeTempDir(workspace);
     }

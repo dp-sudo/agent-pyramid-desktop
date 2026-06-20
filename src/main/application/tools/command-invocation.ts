@@ -30,7 +30,7 @@ export function createShellInvocation(command: string): ShellInvocation {
     };
   }
   return {
-    file: process.env.SHELL || "/bin/sh",
+    file: "/bin/sh",
     args: ["-c", command],
   };
 }
@@ -60,7 +60,7 @@ export async function createSelectedShellInvocation(
     case "sh":
       return { file: process.platform === "win32" ? "sh.exe" : "/bin/sh", args: ["-c", command] };
     case "bash":
-      return { file: "bash", args: ["-lc", command] };
+      return { file: "bash", args: ["--noprofile", "--norc", "-lc", command] };
     case "git_bash":
       return { file: await resolveGitBashExecutable(), args: ["-lc", command] };
     case "powershell":

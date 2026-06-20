@@ -91,6 +91,22 @@ import {
   MAX_SEARCH_FILE_BYTES,
 } from "../constants.js";
 import {
+  createLineRegex,
+  hasNodeErrorCode,
+  numberInRange,
+  optionalEnum,
+  optionalLimitedString,
+  optionalString,
+  optionalStringArray,
+  requiredBoolean,
+  requiredCommand,
+  requiredCommandForTool,
+  requiredLimitedString,
+  requiredPath,
+  requiredRegexPattern,
+  requiredSessionInput,
+} from "./command-input.js";
+import {
   DEFAULT_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
   DEFAULT_RUNTIME_COMMAND_TIMEOUT_MS,
   MAX_RUNTIME_COMMAND_MAX_OUTPUT_BYTES,
@@ -271,7 +287,7 @@ const shellCommandTool: AgentTool = {
         shell: {
           type: "string",
           enum: ["default", "cmd", "sh", "bash", "git_bash", "powershell", "pwsh"],
-          description: "Shell family to use. Defaults to the platform default shell.",
+          description: "Shell family to use. Defaults to cmd.exe on Windows and /bin/sh on POSIX hosts.",
         },
         shell_path: {
           type: "string",
@@ -316,7 +332,7 @@ const gitBashCommandTool: AgentTool = {
       properties: {
         command: {
           type: "string",
-          description: "Command text passed to bash -lc.",
+          description: "Command text passed to bash --noprofile --norc -lc.",
         },
         git_bash_path: {
           type: "string",
@@ -764,7 +780,7 @@ const startCommandSessionTool: AgentTool = {
         shell: {
           type: "string",
           enum: ["default", "cmd", "sh", "bash", "git_bash", "powershell", "pwsh"],
-          description: "Shell family. Defaults to the platform default shell.",
+          description: "Shell family. Defaults to cmd.exe on Windows and /bin/sh on POSIX hosts.",
         },
         cwd: {
           type: "string",
@@ -2550,100 +2566,6 @@ function joinCommandOutput(stdout: string, stderr: string): string {
   return [stdout, stderr].filter((value) => value.length > 0).join(stdout && stderr ? "\n" : "");
 }
 
-function requiredCommand(value: unknown): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error("run_command requires a non-empty command string.");
-  }
-  if (value.includes("\0")) {
-    throw new Error("run_command command cannot contain NUL bytes.");
-  }
-  if (Buffer.byteLength(value, "utf8") > MAX_COMMAND_BYTES) {
-    throw new Error(`run_command command exceeds ${MAX_COMMAND_BYTES} bytes.`);
-  }
-  return value.trim();
-}
-
-function requiredCommandForTool(value: unknown, toolName: string): string {
-  return requiredLimitedString(
-    value,
-    `${toolName} requires a non-empty command string.`,
-    MAX_COMMAND_BYTES,
-  );
-}
-
-function requiredLimitedString(value: unknown, message: string, maxBytes: number): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(message);
-  }
-  if (value.includes("\0")) {
-    throw new Error("string value cannot contain NUL bytes.");
-  }
-  if (Buffer.byteLength(value, "utf8") > maxBytes) {
-    throw new Error(`string value exceeds ${maxBytes} bytes.`);
-  }
-  return value.trim();
-}
-
-function requiredSessionInput(value: unknown, message: string, maxBytes: number): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(message);
-  }
-  if (value.includes("\0")) {
-    throw new Error("string value cannot contain NUL bytes.");
-  }
-  if (Buffer.byteLength(value, "utf8") > maxBytes) {
-    throw new Error(`string value exceeds ${maxBytes} bytes.`);
-  }
-  return value;
-}
-
-function requiredRegexPattern(value: unknown): string {
-  return requiredLimitedString(
-    value,
-    "rg_search requires a non-empty pattern string.",
-    MAX_REGEX_PATTERN_BYTES,
-  );
-}
-
-function optionalLimitedString(
-  value: unknown,
-  maxBytes: number,
-  name: string,
-): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") {
-    throw new Error(`${name} must be a string.`);
-  }
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  if (trimmed.includes("\0")) {
-    throw new Error(`${name} cannot contain NUL bytes.`);
-  }
-  if (Buffer.byteLength(trimmed, "utf8") > maxBytes) {
-    throw new Error(`${name} exceeds ${maxBytes} bytes.`);
-  }
-  return trimmed;
-}
-
-function createLineRegex(pattern: string, flags: string): RegExp {
-  try {
-    return new RegExp(pattern, flags);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`rg_search pattern is invalid: ${message}`);
-  }
-}
-
-function requiredPath(value: unknown, message: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(message);
-  }
-  if (value.includes("\0")) {
-    throw new Error("path cannot contain NUL bytes.");
-  }
-  return value.trim();
-}
-
 async function assertTextFile(
   filePath: string,
   relativePath: string,
@@ -2651,69 +2573,6 @@ async function assertTextFile(
 ): Promise<void> {
   const sample = await fs.readFile(filePath);
   assertUtf8TextBuffer(sample, relativePath, label);
-}
-
-function optionalString(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") {
-    throw new Error("optional string value must be a string.");
-  }
-  if (value.includes("\0")) {
-    throw new Error("optional string value cannot contain NUL bytes.");
-  }
-  return value.trim() || undefined;
-}
-
-function optionalStringArray(value: unknown, name: string): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error(`${name} must be an array of strings.`);
-  }
-  return value.map((entry) => {
-    if (typeof entry !== "string" || !entry.trim()) {
-      throw new Error(`${name} entries must be non-empty strings.`);
-    }
-    if (entry.includes("\0")) {
-      throw new Error(`${name} entries cannot contain NUL bytes.`);
-    }
-    return entry.trim();
-  });
-}
-
-function optionalEnum<T extends string>(
-  value: unknown,
-  allowed: readonly T[],
-  name: string,
-): T | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string" || !allowed.includes(value as T)) {
-    throw new Error(`${name} must be one of: ${allowed.join(", ")}.`);
-  }
-  return value as T;
-}
-
-function requiredBoolean(value: unknown, name: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new Error(`${name} must be a boolean.`);
-  }
-  return value;
-}
-
-function numberInRange(
-  value: unknown,
-  min: number,
-  max: number,
-  fallback: number,
-  name: string,
-): number {
-  if (value === undefined) return fallback;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${name} must be a finite number.`);
-  }
-  if (!Number.isInteger(value) || value < min || value > max) {
-    throw new Error(`${name} must be an integer between ${min} and ${max}.`);
-  }
-  return value;
 }
 
 async function walkTextFiles(
@@ -2767,15 +2626,4 @@ function looksTextFile(name: string): boolean {
     ".yaml",
     ".yml",
   ].includes(ext);
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unexpected value: ${String(value)}`);
-}
-
-function hasNodeErrorCode(error: unknown, code: string): boolean {
-  return typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === code;
 }

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { stableJsonStringify } from "../../stable-json.js";
 import type {
   McpPromptInfo,
   McpResourceInfo,
@@ -192,7 +193,7 @@ export class McpCacheStore {
 }
 
 export function fingerprintMcpServerConfig(config: McpServerConfig): string {
-  const payload = stableStringify({
+  const payload = stableJsonStringify({
     name: config.name,
     transport: config.transport,
     command: config.command ?? "",
@@ -442,18 +443,6 @@ function uniquePromptsBySegment(prompts: McpPromptInfo[]): McpPromptInfo[] {
 
 function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
   return { ...value };
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
-  }
-  if (isRecord(value)) {
-    return `{${Object.keys(value).sort().map((key) =>
-      `${JSON.stringify(key)}:${stableStringify(value[key])}`
-    ).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "undefined";
 }
 
 function sortedUniqueStrings(value: readonly string[]): string[] {

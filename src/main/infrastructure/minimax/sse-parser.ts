@@ -3,7 +3,7 @@ import { redactSecrets } from "./gateway-common.js";
 /**
  * Protocol-agnostic SSE stream decoder for LLM gateway responses.
  *
- * These functions were extracted from MiniMaxGateway so the SSE wire format
+ * These functions were extracted from ProviderCompatibleGateway so the SSE wire format
  * (frame splitting, event/data parsing, error-event detection) is testable in
  * isolation and reusable across OpenAI-compatible and Anthropic-compatible
  * transports. They hold no gateway-specific state — only pure byte→payload

@@ -46,7 +46,7 @@ describe("command invocation helpers", () => {
       process.env.SHELL = "/bin/bash";
       try {
         expect(createShellInvocation("npm run test")).toEqual({
-          file: "/bin/bash",
+          file: "/bin/sh",
           args: ["-c", "npm run test"],
         });
       } finally {

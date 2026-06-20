@@ -13,20 +13,19 @@ import { RuntimeEventBus } from "../../event-bus.js";
 import {
   MCP_CONNECT_CONCURRENCY,
 } from "../../application/constants.js";
-import {
-  MCP_FACADE_CALL_READ_TOOL_RAW_NAME,
-  MCP_FACADE_CALL_TOOL_RAW_NAME,
-  MCP_FACADE_DESCRIBE_TOOL_RAW_NAME,
-  MCP_FACADE_SEARCH_TOOLS_RAW_NAME,
-  namespaceMcpToolName,
-  toMcpNameSegment,
-} from "../../../shared/mcp-names.js";
 import { McpClient } from "./client.js";
 import {
   McpCacheStore,
   type McpStartupStatsRecord,
 } from "./cache-store.js";
 import type { McpToolDescriptor } from "./protocol.js";
+import {
+  MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD,
+  createProgressiveDiscoveryTools,
+  shouldUseProgressiveDiscoveryFacade,
+  type ConnectedMcpFacadeServerSurface,
+  type McpFacadeServerSurface,
+} from "./mcp-facade.js";
 
 interface ManagedMcpServer {
   config: McpServerConfig;
@@ -44,9 +43,7 @@ interface ManagedMcpServer {
   generation: number;
 }
 
-export const MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD = 24;
-const MCP_FACADE_SEARCH_DEFAULT_LIMIT = 20;
-const MCP_FACADE_SEARCH_MAX_LIMIT = 50;
+export { MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD } from "./mcp-facade.js";
 
 /**
  * Main-process MCP host adapts external MCP tools into the existing ToolRegistry.
@@ -417,192 +414,10 @@ export class McpHost {
   }
 
   private createProgressiveDiscoveryTools(server: ManagedMcpServer): AgentTool[] {
-    return [
-      this.toSearchMcpToolsTool(server),
-      this.toDescribeMcpToolTool(server),
-      this.toCallMcpToolFacade(server, { readOnlyOnly: true }),
-      this.toCallMcpToolFacade(server, { readOnlyOnly: false }),
-    ];
-  }
-
-  private toSearchMcpToolsTool(server: ManagedMcpServer): AgentTool {
-    const name = namespaceMcpToolName(server.config.name, MCP_FACADE_SEARCH_TOOLS_RAW_NAME);
-    return {
-      definition: {
-        name,
-        description:
-          `Search the ${server.config.name} MCP tool catalog before describing or calling a specific tool.`,
-        inputSchema: {
-          type: "object",
-          properties: {
-            query: {
-              type: "string",
-              description: "Optional case-insensitive text matched against tool names and descriptions.",
-              maxLength: 120,
-            },
-            max_results: {
-              type: "integer",
-              description: `Maximum summaries to return. Defaults to ${MCP_FACADE_SEARCH_DEFAULT_LIMIT}, maximum ${MCP_FACADE_SEARCH_MAX_LIMIT}.`,
-              minimum: 1,
-              maximum: MCP_FACADE_SEARCH_MAX_LIMIT,
-            },
-          },
-        },
-      },
-      metadata: {
-        category: "command",
-        isReadOnly: true,
-        isDestructive: false,
-      },
-      execute: async (input) => {
-        const query = optionalFacadeString(input.query, "query");
-        const maxResults = optionalFacadeInteger(
-          input.max_results,
-          "max_results",
-          MCP_FACADE_SEARCH_DEFAULT_LIMIT,
-          MCP_FACADE_SEARCH_MAX_LIMIT,
-        );
-        const normalizedQuery = query?.toLocaleLowerCase();
-        const matches = normalizedQuery
-          ? server.tools.filter((tool) => mcpToolMatchesQuery(tool, normalizedQuery))
-          : server.tools;
-        const visible = matches.slice(0, maxResults);
-        const result = {
-          serverId: server.config.id,
-          serverName: server.config.name,
-          totalToolCount: server.tools.length,
-          ...(query ? { query } : {}),
-          matchCount: matches.length,
-          truncated: matches.length > visible.length,
-          tools: visible.map(toFacadeToolSummary),
-        };
-        return {
-          toolCallId: "",
-          name,
-          content: JSON.stringify(result),
-          displayResult: result,
-        };
-      },
-    };
-  }
-
-  private toDescribeMcpToolTool(server: ManagedMcpServer): AgentTool {
-    const name = namespaceMcpToolName(server.config.name, MCP_FACADE_DESCRIBE_TOOL_RAW_NAME);
-    return {
-      definition: {
-        name,
-        description:
-          `Describe one ${server.config.name} MCP tool and return its input schema before calling it.`,
-        inputSchema: {
-          type: "object",
-          properties: {
-            tool_name: {
-              type: "string",
-              description: "Tool name from search_tools output; accepts either namespaced name or raw MCP name.",
-              minLength: 1,
-              maxLength: 160,
-            },
-          },
-          required: ["tool_name"],
-        },
-      },
-      metadata: {
-        category: "command",
-        isReadOnly: true,
-        isDestructive: false,
-      },
-      execute: async (input) => {
-        const tool = resolveMcpFacadeTargetTool(
-          server,
-          requiredFacadeString(input.tool_name, "tool_name"),
-        );
-        const result = {
-          serverId: server.config.id,
-          serverName: server.config.name,
-          tool: toFacadeToolDescription(tool),
-        };
-        return {
-          toolCallId: "",
-          name,
-          content: JSON.stringify(result),
-          displayResult: result,
-        };
-      },
-    };
-  }
-
-  private toCallMcpToolFacade(
-    server: ManagedMcpServer,
-    options: { readOnlyOnly: boolean },
-  ): AgentTool {
-    const rawName = options.readOnlyOnly
-      ? MCP_FACADE_CALL_READ_TOOL_RAW_NAME
-      : MCP_FACADE_CALL_TOOL_RAW_NAME;
-    const name = namespaceMcpToolName(server.config.name, rawName);
-    return {
-      definition: {
-        name,
-        description: options.readOnlyOnly
-          ? `Call a read-only ${server.config.name} MCP tool selected from search_tools output.`
-          : `Call a write-capable ${server.config.name} MCP tool selected from search_tools output after approval.`,
-        inputSchema: {
-          type: "object",
-          properties: {
-            tool_name: {
-              type: "string",
-              description: "Tool name from search_tools output; accepts either namespaced name or raw MCP name.",
-              minLength: 1,
-              maxLength: 160,
-            },
-            arguments: {
-              type: "object",
-              description: "Arguments matching the selected MCP tool input schema.",
-            },
-          },
-          required: ["tool_name"],
-        },
-      },
-      metadata: {
-        category: "command",
-        isReadOnly: options.readOnlyOnly,
-        isDestructive: !options.readOnlyOnly,
-      },
-      execute: async (input, context) => {
-        const targetName = requiredFacadeString(input.tool_name, "tool_name");
-        const requestedTarget = resolveMcpFacadeTargetTool(server, targetName);
-        if (options.readOnlyOnly && !requestedTarget.readOnly) {
-          throw new Error(
-            `MCP tool is not read-only on ${server.config.name}: ${requestedTarget.rawName}. Use ${MCP_FACADE_CALL_TOOL_RAW_NAME} instead.`,
-          );
-        }
-        const args = optionalFacadeArguments(input.arguments);
-        const connected = await this.ensureConnectedServer(server.config.id);
-        const liveTarget = resolveMcpFacadeTargetTool(connected, targetName);
-        if (options.readOnlyOnly && !liveTarget.readOnly) {
-          throw new Error(
-            `MCP tool is not read-only on ${server.config.name}: ${liveTarget.rawName}. Use ${MCP_FACADE_CALL_TOOL_RAW_NAME} instead.`,
-          );
-        }
-        const result = await connected.client.callTool(liveTarget.name, args, {
-          signal: context.signal,
-        });
-        if (result.isError) {
-          throw new Error(result.content);
-        }
-        return {
-          toolCallId: "",
-          name,
-          content: result.content,
-          displayResult: {
-            serverId: server.config.id,
-            serverName: server.config.name,
-            toolName: liveTarget.rawName,
-            namespacedToolName: liveTarget.name,
-            result: result.displayResult,
-          },
-        };
-      },
-    };
+    return createProgressiveDiscoveryTools(
+      toFacadeServerSurface(server),
+      async (serverId) => toConnectedFacadeServerSurface(await this.ensureConnectedServer(serverId)),
+    );
   }
 
   private toAgentTool(server: ManagedMcpServer, tool: McpToolDescriptor): AgentTool {
@@ -863,96 +678,22 @@ function isServerConnected(
   return server.status === "connected" && server.client !== null;
 }
 
-function shouldUseProgressiveDiscoveryFacade(tools: readonly McpToolDescriptor[]): boolean {
-  return tools.length > MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD;
-}
-
-function resolveMcpFacadeTargetTool(
-  server: ManagedMcpServer,
-  targetName: string,
-): McpToolDescriptor {
-  const targetSegment = toMcpNameSegment(targetName);
-  const tool = server.tools.find((candidate) =>
-    candidate.name === targetName ||
-    candidate.rawName === targetName ||
-    toMcpNameSegment(candidate.rawName) === targetSegment
-  );
-  if (!tool) {
-    throw new Error(`MCP tool is not registered on ${server.config.name}: ${targetName}`);
-  }
-  return tool;
-}
-
-function mcpToolMatchesQuery(tool: McpToolDescriptor, normalizedQuery: string): boolean {
-  return (
-    tool.name.toLocaleLowerCase().includes(normalizedQuery) ||
-    tool.rawName.toLocaleLowerCase().includes(normalizedQuery) ||
-    tool.description.toLocaleLowerCase().includes(normalizedQuery)
-  );
-}
-
-function toFacadeToolSummary(tool: McpToolDescriptor): {
-  name: string;
-  rawName: string;
-  description: string;
-  readOnly: boolean;
-} {
+function toFacadeServerSurface(server: ManagedMcpServer): McpFacadeServerSurface {
   return {
-    name: tool.name,
-    rawName: tool.rawName,
-    description: tool.description,
-    readOnly: tool.readOnly,
+    id: server.config.id,
+    name: server.config.name,
+    tools: server.tools,
   };
 }
 
-function toFacadeToolDescription(tool: McpToolDescriptor): {
-  name: string;
-  rawName: string;
-  description: string;
-  readOnly: boolean;
-  inputSchema: Record<string, unknown>;
-} {
+function toConnectedFacadeServerSurface(
+  server: ManagedMcpServer & { client: McpClient },
+): ConnectedMcpFacadeServerSurface {
   return {
-    ...toFacadeToolSummary(tool),
-    inputSchema: tool.inputSchema,
+    ...toFacadeServerSurface(server),
+    callTool: (namespacedName, args, options) =>
+      server.client.callTool(namespacedName, args, options),
   };
-}
-
-function optionalFacadeArguments(value: unknown): Record<string, unknown> {
-  if (value === undefined) return {};
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("MCP facade arguments must be an object.");
-  }
-  return value as Record<string, unknown>;
-}
-
-function optionalFacadeInteger(
-  value: unknown,
-  name: string,
-  defaultValue: number,
-  maxValue: number,
-): number {
-  if (value === undefined) return defaultValue;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > maxValue) {
-    throw new Error(`MCP facade ${name} must be an integer between 1 and ${maxValue}.`);
-  }
-  return value;
-}
-
-function optionalFacadeString(value: unknown, name: string): string | undefined {
-  if (value === undefined) return undefined;
-  const text = requiredFacadeString(value, name);
-  return text || undefined;
-}
-
-function requiredFacadeString(value: unknown, name: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`MCP facade ${name} must be a string.`);
-  }
-  if (value.includes("\0")) {
-    throw new Error("MCP facade strings cannot contain NUL bytes.");
-  }
-  return value.trim();
 }
 
 function isSameServerRuntimeConfig(a: McpServerConfig, b: McpServerConfig): boolean {

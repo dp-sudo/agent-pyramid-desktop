@@ -285,6 +285,7 @@ function isUtf8ContinuationByte(byte: number | undefined): boolean {
 }
 
 function noFollowFlag(): number {
+  if (process.platform === "win32") return 0;
   return typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
 }
 

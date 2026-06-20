@@ -417,6 +417,12 @@ interface PreparedPatch {
   diff: MultiFileDiffPreview;
 }
 
+interface ParsedPatchTarget {
+  file: ReturnType<typeof parseUnifiedDiff>[number];
+  targetPath: string;
+  operation: FileChangeResult["operation"];
+}
+
 interface RollbackSource {
   kind: "history" | "checkpoint";
   threadId: string;
@@ -839,15 +845,11 @@ async function preparePatch(
     throw new Error("apply_patch requires a non-empty patch.");
   }
   const files = parseUnifiedDiff(patchText);
+  const targets = collectPatchTargets(files);
   const changes: PreparedFileChange[] = [];
   const seenTargets: string[] = [];
 
-  for (const file of files) {
-    const targetPath = file.newPath ?? file.oldPath;
-    if (!targetPath) {
-      throw new Error("apply_patch file header is missing a target path.");
-    }
-    const operation: FileChangeResult["operation"] = file.oldPath === undefined ? "create" : "update";
+  for (const { file, targetPath, operation } of targets) {
     const filePath = await resolveWorkspacePathForAccess(workspace, targetPath, operation === "create" ? "write" : "read");
     await assertNoSymlinkInPath(workspace, targetPath, operation === "create" ? "write" : "read", "Coding tools");
     if (seenTargets.some((seenTarget) => isSamePath(seenTarget, filePath))) {
@@ -912,6 +914,28 @@ async function readEditableTextFile(
   } finally {
     await handle.close();
   }
+}
+
+function collectPatchTargets(files: ReturnType<typeof parseUnifiedDiff>): ParsedPatchTarget[] {
+  const targets: ParsedPatchTarget[] = [];
+  const seenLexicalTargets = new Set<string>();
+  for (const file of files) {
+    const targetPath = file.newPath ?? file.oldPath;
+    if (!targetPath) {
+      throw new Error("apply_patch file header is missing a target path.");
+    }
+    const duplicateKey = process.platform === "win32" ? targetPath.toLowerCase() : targetPath;
+    if (seenLexicalTargets.has(duplicateKey)) {
+      throw new Error(`apply_patch contains duplicate file sections for ${targetPath}.`);
+    }
+    seenLexicalTargets.add(duplicateKey);
+    targets.push({
+      file,
+      targetPath,
+      operation: file.oldPath === undefined ? "create" : "update",
+    });
+  }
+  return targets;
 }
 
 async function readCurrentTextOrMissing(
