@@ -4,7 +4,7 @@ Renderer-to-main IPC contract map. Channel constants and types in `src/shared/*`
 
 ## Authorities
 
-- Channels and allowlist: `src/shared/ipc.ts`
+- Channels, descriptors, and allowlist: `src/shared/ipc.ts`
 - Request/response contracts: `src/shared/agent-contracts.ts`
 - Preload API type: `src/shared/agent-api.ts`
 - Error codes: `src/shared/ipc-errors.ts`
@@ -258,7 +258,7 @@ Required steps:
 
 1. Define or update request/response types in `src/shared/agent-contracts.ts` or focused shared submodule.
 2. Add channel constant to `src/shared/ipc.ts`.
-3. Add channel to `RENDERER_TO_MAIN_CHANNELS`.
+3. Add a `RENDERER_TO_MAIN_CHANNEL_DESCRIPTORS` entry with its `group` and `method`; `RENDERER_TO_MAIN_CHANNELS` is derived from that descriptor list.
 4. Add any new code to `src/shared/ipc-errors.ts`.
 5. Implement handler in `src/main/ipc/*-handlers.ts`.
 6. Register handler from `src/main/index.ts`.

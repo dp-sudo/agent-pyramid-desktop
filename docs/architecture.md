@@ -41,7 +41,7 @@ flowchart LR
   end
 
   subgraph Worker["Worker Thread"]
-    Gateway["MiniMaxGateway"]
+    Gateway["ProviderCompatibleGateway"]
   end
 
   Provider["Provider HTTP API"]
@@ -124,6 +124,7 @@ MCP tools are added dynamically by `McpHost` to the same registry.
 Runtime ownership:
 
 - `AgentRuntime`: turn state machine, model profile selection, prompt/context assembly, worker calls, tool rounds, goal updates, interrupts.
+- `runtime-turn-decisions.ts`: pure turn-start and runtime context decisions used by `AgentRuntime`.
 - `ToolCallExecutor`: parent-turn tool item lifecycle, catalog/policy checks, approval and user-input suspension, live progress, active tool cleanup.
 - `ToolCatalogService`: mode and availability filtering for model-visible tools.
 - `ToolPolicyService` and `permission-policy.ts`: sandbox, approval policy, scoped grants, persisted permission rules.
@@ -147,8 +148,8 @@ Tool contracts:
 
 - Tool interface: `AgentTool` in `src/main/domain/agent/types.ts`.
 - Registry port: `ToolRegistry` in `src/main/domain/agent/ports.ts`.
-- Built-in tool names: `RUNTIME_TOOL_NAMES` in `src/shared/agent-contracts.ts`.
-- Read-only built-in names: `RUNTIME_READ_ONLY_TOOL_NAMES`.
+- Built-in tool names: `RUNTIME_TOOL_NAMES` in `src/shared/runtime-tool-contracts.ts`, re-exported by `src/shared/agent-contracts.ts`.
+- Read-only built-in names: `RUNTIME_READ_ONLY_TOOL_NAMES` in the same shared tool contract.
 
 Tool categories:
 
@@ -190,12 +191,12 @@ Worker rules:
 - `LlmWorkerPool` keeps `threadId -> worker` affinity.
 - `cancel(threadId)` reaches the worker request through `AbortController`.
 - Worker protocol lives in `src/main/infrastructure/llm-worker/protocol.ts`.
-- `worker.ts` instantiates `MiniMaxGateway`.
+- `worker.ts` instantiates `ProviderCompatibleGateway`.
 - Worker exit clears stale affinity and creates a replacement.
 
 Gateway rules:
 
-- `MiniMaxGateway` implements `LlmGateway`.
+- `ProviderCompatibleGateway` implements `LlmGateway`.
 - `request.protocol === "openai-compatible"` uses chat completions adapters.
 - `request.protocol === "anthropic-compatible"` uses messages adapters.
 - MiniMax and DeepSeek have provider-specific OpenAI-compatible request fields.

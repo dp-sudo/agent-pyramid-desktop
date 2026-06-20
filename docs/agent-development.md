@@ -67,7 +67,7 @@ Common authority files:
 - Errors: `src/shared/ipc-errors.ts`.
 - API shape: `src/shared/agent-api.ts`.
 - Runtime events: `RUNTIME_EVENT_KINDS` in shared contracts.
-- Tools: `RUNTIME_TOOL_NAMES`, `RUNTIME_READ_ONLY_TOOL_NAMES`, registry wiring in `src/main/index.ts`.
+- Tools: `RUNTIME_TOOL_NAMES`, `RUNTIME_READ_ONLY_TOOL_NAMES` in `src/shared/runtime-tool-contracts.ts`, registry wiring in `src/main/index.ts`.
 
 ## Runtime And Tool Changes
 
@@ -155,6 +155,17 @@ Rules:
 - Model config and runtime preferences share `userData/config`.
 - Renderer DTOs never expose real API keys.
 - Checkpoint restore and write IPC must re-check workspace boundaries.
+
+## Dependency Maintenance
+
+The `package.json` `overrides.esbuild` pin is intentional. Vite 7.3.x can otherwise resolve `esbuild` 0.27.x, which is covered by GHSA-g7r4-m6w7-qqqr for Windows development server file reads. Keep the override on a non-vulnerable patch unless `npm audit` and a full build/test pass prove the Vite chain no longer needs it.
+
+When changing dependency versions:
+
+1. Run `npm audit`.
+2. Run `npm ls <package>` for any dependency named in the audit output.
+3. Run `npm run typecheck`, `npm run test`, and `npm run build`.
+4. Update this section if an override is added, removed, or changes reason.
 
 ## External Reference Boundary
 

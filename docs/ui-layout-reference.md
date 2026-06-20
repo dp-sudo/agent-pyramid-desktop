@@ -121,7 +121,7 @@ Render rules:
 
 Live behavior:
 
-- Text/reasoning deltas are coalesced in `Workbench.tsx`.
+- Text/reasoning deltas are coalesced by `workbench-live-event-buffer.ts`.
 - `tool_progress` merges live stdout/stderr into running tool display.
 - Scroll follows live output only when the user is near the bottom.
 - Failed tools remain visible even if read-only successful tools are hidden by preferences.

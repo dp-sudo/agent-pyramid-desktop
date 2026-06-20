@@ -31,7 +31,7 @@ Workbench
   -> ToolCallExecutor + ToolRegistry
   -> LlmWorkerPool
   -> llm-worker
-  -> MiniMaxGateway
+  -> ProviderCompatibleGateway
   -> provider
 ```
 
@@ -44,7 +44,7 @@ Workbench
 3. Runtime normalizes request fields in `turn-start-request.ts`.
 4. Runtime rejects missing/archived thread and same-thread in-flight concurrency.
 5. Runtime reads model profiles, runtime preferences, thread, and attachments.
-6. Runtime resolves model profile and creates `TurnRecord(status: "in-flight")`.
+6. Runtime resolves model profile through `runtime-turn-decisions.ts` and creates `TurnRecord(status: "in-flight")`.
 7. Runtime appends a `UserItem` to `messages.jsonl`.
 8. Runtime emits `item_appended` and `turn_started`.
 9. IPC returns the in-flight `TurnRecord` immediately.
@@ -138,7 +138,7 @@ Persistence rules:
 
 - Routes same `threadId` to the same worker while alive.
 - Posts chat request to `src/main/infrastructure/llm-worker/worker.ts`.
-- Worker calls `MiniMaxGateway.stream()`.
+- Worker calls `ProviderCompatibleGateway.stream()`.
 - Worker forwards delta/done/error messages back to pool.
 - Pool maps worker/protocol errors into runtime-visible categories.
 
@@ -151,7 +151,7 @@ Cancellation:
 
 ## Gateway Flow
 
-`MiniMaxGateway` routes by `LlmRequest.protocol`:
+`ProviderCompatibleGateway` routes by `LlmRequest.protocol`:
 
 - `openai-compatible`: chat completions adapter.
 - `anthropic-compatible`: messages adapter.
@@ -246,7 +246,7 @@ Sandbox rule:
 - `sandboxMode: "workspace-write"` command execution requires a configured Windows helper on Windows and currently fails closed on non-Windows without a supported jail engine.
 - `sandboxMode: "danger-full-access"` uses direct host execution after policy and approval checks.
 
-Long-running command sessions are in-memory only and are shut down from the main-process `before-quit` hook.
+Long-running command sessions are in-memory only and are shut down through the main-process `AppLifecycle` cleanup sequence. The same sequence also closes MCP transports and destroys the LLM worker pool, so Electron's `before-quit` and `window-all-closed` paths share one ordered cleanup module.
 
 ## Tool Budget
 
