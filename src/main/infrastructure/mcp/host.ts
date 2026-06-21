@@ -22,10 +22,22 @@ import type { McpToolDescriptor } from "./protocol.js";
 import {
   MCP_PROGRESSIVE_DISCOVERY_TOOL_THRESHOLD,
   createProgressiveDiscoveryTools,
-  shouldUseProgressiveDiscoveryFacade,
   type ConnectedMcpFacadeServerSurface,
   type McpFacadeServerSurface,
 } from "./mcp-facade.js";
+import {
+  planMcpToolRegistration,
+  type McpRegisteredToolMode,
+} from "./tool-registration.js";
+import {
+  toMcpConnectionEvent,
+  toMcpPromptInfo,
+  toMcpServerStatusRecord,
+  toMcpSurfaceChangedEvent,
+  toMcpToolInfo,
+  toMcpToolListChangedEvent,
+  type McpStatusProjectionInput,
+} from "./status-projection.js";
 
 interface ManagedMcpServer {
   config: McpServerConfig;
@@ -35,7 +47,7 @@ interface ManagedMcpServer {
   prompts: McpPromptInfo[];
   resources: McpResourceInfo[];
   registeredToolNames: string[];
-  registeredToolMode: "none" | "lazy" | "live" | "facade" | "lazy_facade";
+  registeredToolMode: McpRegisteredToolMode;
   lastConnectedAt?: string;
   lastError?: string;
   startupStats?: McpStartupStatsRecord;
@@ -229,7 +241,7 @@ export class McpHost {
     return servers.map((server) => ({
       serverId: server.config.id,
       serverName: server.config.name,
-      tools: server.tools.map(toToolInfo),
+      tools: server.tools.map(toMcpToolInfo),
     }));
   }
 
@@ -242,7 +254,7 @@ export class McpHost {
     return servers.map((server) => ({
       serverId: server.config.id,
       serverName: server.config.name,
-      prompts: server.prompts.map(toPromptInfo),
+      prompts: server.prompts.map(toMcpPromptInfo),
     }));
   }
 
@@ -389,20 +401,21 @@ export class McpHost {
   ): void {
     this.unregisterServerTools(server);
     server.tools = tools;
-    if (shouldUseProgressiveDiscoveryFacade(tools)) {
+    const plan = planMcpToolRegistration(tools, options);
+    if (plan.useFacade) {
       for (const agentTool of this.createProgressiveDiscoveryTools(server)) {
         this.registry.register(agentTool);
         server.registeredToolNames.push(agentTool.definition.name);
       }
-      server.registeredToolMode = options.lazy ? "lazy_facade" : "facade";
+      server.registeredToolMode = plan.mode;
       return;
     }
     for (const tool of tools) {
-      const agentTool = options.lazy ? this.toLazyAgentTool(server, tool) : this.toAgentTool(server, tool);
+      const agentTool = plan.lazy ? this.toLazyAgentTool(server, tool) : this.toAgentTool(server, tool);
       this.registry.register(agentTool);
       server.registeredToolNames.push(agentTool.definition.name);
     }
-    server.registeredToolMode = options.lazy ? "lazy" : "live";
+    server.registeredToolMode = plan.mode;
   }
 
   private unregisterServerTools(server: ManagedMcpServer): void {
@@ -566,62 +579,28 @@ export class McpHost {
   }
 
   private emitConnection(server: ManagedMcpServer): void {
-    this.bus.emit("mcp_server_connection", {
-      kind: "mcp_server_connection",
-      serverId: server.config.id,
-      serverName: server.config.name,
-      status: server.status,
-      toolCount: server.tools.length,
-      occurredAt: new Date().toISOString(),
-      ...(server.lastError ? { message: server.lastError } : {}),
-    });
+    this.bus.emit("mcp_server_connection", toMcpConnectionEvent(
+      toStatusProjectionInput(server),
+      new Date().toISOString(),
+    ));
   }
 
   private emitToolListChanged(server: ManagedMcpServer): void {
-    this.bus.emit("mcp_tool_list_changed", {
-      kind: "mcp_tool_list_changed",
-      serverId: server.config.id,
-      serverName: server.config.name,
-      toolCount: server.tools.length,
-      tools: server.tools.map(toToolInfo),
-      occurredAt: new Date().toISOString(),
-    });
+    this.bus.emit("mcp_tool_list_changed", toMcpToolListChangedEvent(
+      toStatusProjectionInput(server),
+      new Date().toISOString(),
+    ));
   }
 
   private emitSurfaceChanged(server: ManagedMcpServer): void {
-    this.bus.emit("mcp_surface_changed", {
-      kind: "mcp_surface_changed",
-      serverId: server.config.id,
-      serverName: server.config.name,
-      promptCount: server.prompts.length,
-      resourceCount: server.resources.length,
-      occurredAt: new Date().toISOString(),
-    });
+    this.bus.emit("mcp_surface_changed", toMcpSurfaceChangedEvent(
+      toStatusProjectionInput(server),
+      new Date().toISOString(),
+    ));
   }
 
   private toStatus(server: ManagedMcpServer): McpServerStatusRecord {
-    return {
-      id: server.config.id,
-      name: server.config.name,
-      transport: server.config.transport,
-      enabled: server.config.enabled,
-      status: server.status,
-      toolCount: server.tools.length,
-      tools: server.tools.map(toToolInfo),
-      promptCount: server.prompts.length,
-      prompts: server.prompts.map(toPromptInfo),
-      resourceCount: server.resources.length,
-      resources: server.resources.map((resource) => ({ ...resource })),
-      ...(server.startupStats
-        ? {
-            lastStartupDurationMs: server.startupStats.lastDurationMs,
-            startupSuccessCount: server.startupStats.successCount,
-            startupFailureCount: server.startupStats.failureCount,
-          }
-        : {}),
-      ...(server.lastConnectedAt ? { lastConnectedAt: server.lastConnectedAt } : {}),
-      ...(server.lastError ? { lastError: server.lastError } : {}),
-    };
+    return toMcpServerStatusRecord(toStatusProjectionInput(server));
   }
 
   private requireServer(serverId: string): ManagedMcpServer {
@@ -655,20 +634,16 @@ export class McpHost {
   }
 }
 
-function toToolInfo(tool: McpToolDescriptor): McpToolInfo {
+function toStatusProjectionInput(server: ManagedMcpServer): McpStatusProjectionInput {
   return {
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-    readOnly: tool.readOnly,
-  };
-}
-
-function toPromptInfo(prompt: McpPromptInfo): McpPromptInfo {
-  return {
-    name: prompt.name,
-    description: prompt.description,
-    arguments: prompt.arguments.map((argument) => ({ ...argument })),
+    config: server.config,
+    status: server.status,
+    tools: server.tools,
+    prompts: server.prompts,
+    resources: server.resources,
+    ...(server.startupStats ? { startupStats: server.startupStats } : {}),
+    ...(server.lastConnectedAt ? { lastConnectedAt: server.lastConnectedAt } : {}),
+    ...(server.lastError ? { lastError: server.lastError } : {}),
   };
 }
 

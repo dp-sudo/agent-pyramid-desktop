@@ -439,7 +439,9 @@ export async function listMarkdownFiles(workspace: string, search: string): Prom
     if (!MARKDOWN_EXT.includes(path.extname(file).toLowerCase())) return;
     const relative = toWorkspaceRelative(root, file);
     if (needle && !relative.toLowerCase().includes(needle)) return;
-    const stat = await fs.stat(file);
+    const checkedPath = await resolveWritePathForAccess(workspace, relative, "read");
+    const stat = await fs.lstat(checkedPath);
+    if (!stat.isFile()) return;
     out.push({ path: relative, size: stat.size, modifiedAt: stat.mtime.toISOString() });
   });
   out.sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt));
