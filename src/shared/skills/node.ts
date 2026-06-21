@@ -9,6 +9,14 @@ export {
   createBuiltinSkills,
 } from "./builtins.js";
 export {
+  SkillRegistry,
+  loadSkillFromDirectory,
+  loadSkills,
+  loadSkillsFromRoots,
+  type LoadSkillsOptions,
+  type ResolveSkillsOptions,
+} from "./registry.js";
+export {
   SkillError,
   type ParsedSkillMarkdown,
   type Skill,

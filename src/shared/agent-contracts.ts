@@ -1,148 +1,55 @@
-import type { IpcErrorCode } from "./ipc-errors.js";
-import { isIsoTimestampString, isUuidString } from "./contract-primitives.js";
+import { isIsoTimestampString } from "./contract-primitives.js";
+import {
+  isAttachmentRecord,
+  type AttachmentRecord,
+} from "./attachment-contracts.js";
 import {
   isModelReasoningEffort,
   type ModelReasoningEffort,
 } from "./model-config-contracts.js";
-import { toMcpNameSegment } from "./mcp-names.js";
+import {
+  isHttpUrl,
+  isMcpServerConfigs,
+  isMcpServerStatus,
+  isMcpToolInfo,
+  redactMcpServerConfigForRenderer,
+  type McpPromptInfo,
+  type McpPromptResult,
+  type McpResourceInfo,
+  type McpResourceReadResult,
+  type McpServerConfig,
+  type McpServerStatus,
+  type McpServerStatusRecord,
+  type McpServerTransport,
+  type McpToolInfo,
+} from "./mcp-contracts.js";
 import {
   RUNTIME_TOOL_NAMES,
+  RUNTIME_TOOL_MANIFEST,
   isRuntimeToolName,
   type RuntimeToolName,
 } from "./runtime-tool-contracts.js";
+import {
+  DEFAULT_THREAD_APPROVAL_POLICY,
+  DEFAULT_THREAD_SANDBOX_MODE,
+  THREAD_MODES,
+  isThreadApprovalPolicy,
+  isThreadGoal,
+  isThreadSandboxMode,
+  type ThreadApprovalPolicy,
+  type ThreadGoal,
+  type ThreadGoalStatus,
+  type ThreadMode,
+  type ThreadSandboxMode,
+} from "./thread-contracts.js";
 
 export * from "./contract-primitives.js";
+export * from "./attachment-contracts.js";
+export * from "./ipc-result.js";
+export * from "./mcp-contracts.js";
 export * from "./model-config-contracts.js";
 export * from "./runtime-tool-contracts.js";
-
-// ============================================================================
-// Threading + multi-turn
-// ============================================================================
-
-/** Thread field domains are exported so IPC, persistence, and guards cannot drift. */
-export const THREAD_RELATIONS = ["primary", "fork", "side"] as const;
-export type ThreadRelation = (typeof THREAD_RELATIONS)[number];
-
-export const THREAD_GOAL_STATUSES = ["active", "complete", "blocked"] as const;
-export type ThreadGoalStatus = (typeof THREAD_GOAL_STATUSES)[number];
-
-export const THREAD_STATUSES = ["active", "archived"] as const;
-export type ThreadStatus = (typeof THREAD_STATUSES)[number];
-
-export const THREAD_MODES = ["code", "write"] as const;
-export type ThreadMode = (typeof THREAD_MODES)[number];
-
-export const THREAD_APPROVAL_POLICIES = [
-  "auto",
-  "on-request",
-  "untrusted",
-  "never",
-] as const;
-export type ThreadApprovalPolicy = (typeof THREAD_APPROVAL_POLICIES)[number];
-
-export const THREAD_SANDBOX_MODES = [
-  "read-only",
-  "workspace-write",
-  "danger-full-access",
-] as const;
-export type ThreadSandboxMode = (typeof THREAD_SANDBOX_MODES)[number];
-
-export const DEFAULT_THREAD_RELATION: ThreadRelation = "primary";
-export const DEFAULT_THREAD_TITLE = "New thread";
-export const DEFAULT_THREAD_MODE: ThreadMode = "code";
-export const DEFAULT_THREAD_STATUS: ThreadStatus = "active";
-export const DEFAULT_THREAD_APPROVAL_POLICY: ThreadApprovalPolicy = "on-request";
-export const DEFAULT_THREAD_SANDBOX_MODE: ThreadSandboxMode = "workspace-write";
-export const DEFAULT_THREAD_LIST_RELATIONS: readonly ThreadRelation[] = ["primary", "fork"];
-
-export interface ThreadGoal {
-  text: string;
-  status: ThreadGoalStatus;
-  createdAt: string;
-  updatedAt: string;
-  completedAt?: string;
-  blockedAt?: string;
-  summary?: string;
-}
-
-/** A persisted conversation. */
-export interface ThreadRecord {
-  id: string;
-  title: string;
-  workspace: string; // absolute workspace path for code and write flows
-  mode: ThreadMode;
-  status: ThreadStatus;
-  relation: ThreadRelation;
-  parentThreadId?: string;
-  forkedAt?: string; // ISO timestamp
-  createdAt: string; // ISO timestamp
-  updatedAt: string; // ISO timestamp
-  approvalPolicy: ThreadApprovalPolicy;
-  sandboxMode: ThreadSandboxMode;
-  goal?: ThreadGoal;
-}
-
-/** A lightweight row in the index.json listing. */
-export interface ThreadSummary {
-  id: string;
-  title: string;
-  workspace: string;
-  status: ThreadStatus;
-  relation: ThreadRelation;
-  mode: ThreadMode;
-  updatedAt: string;
-}
-
-export interface ThreadCreateInput {
-  title?: string;
-  workspace: string;
-  mode: ThreadMode;
-  relation?: ThreadRelation;
-  parentThreadId?: string;
-  approvalPolicy?: ThreadApprovalPolicy;
-  sandboxMode?: ThreadSandboxMode;
-}
-
-export interface ThreadUpdatePatch {
-  title?: string;
-  approvalPolicy?: ThreadRecord["approvalPolicy"];
-  sandboxMode?: ThreadRecord["sandboxMode"];
-  status?: ThreadStatus;
-  goal?: ThreadGoal | null;
-}
-
-export interface ThreadListFilter {
-  include?: ThreadRelation[]; // default excludes 'side'
-  search?: string; // case-insensitive title match
-  mode?: ThreadMode;
-  includeArchived?: boolean;
-  archivedOnly?: boolean;
-}
-
-export function isThreadRelation(value: unknown): value is ThreadRelation {
-  return typeof value === "string" && THREAD_RELATIONS.includes(value as ThreadRelation);
-}
-
-export function isThreadGoalStatus(value: unknown): value is ThreadGoalStatus {
-  return typeof value === "string" && THREAD_GOAL_STATUSES.includes(value as ThreadGoalStatus);
-}
-
-export function isThreadStatus(value: unknown): value is ThreadStatus {
-  return typeof value === "string" && THREAD_STATUSES.includes(value as ThreadStatus);
-}
-
-export function isThreadMode(value: unknown): value is ThreadMode {
-  return typeof value === "string" && THREAD_MODES.includes(value as ThreadMode);
-}
-
-export function isThreadApprovalPolicy(value: unknown): value is ThreadApprovalPolicy {
-  return typeof value === "string" &&
-    THREAD_APPROVAL_POLICIES.includes(value as ThreadApprovalPolicy);
-}
-
-export function isThreadSandboxMode(value: unknown): value is ThreadSandboxMode {
-  return typeof value === "string" && THREAD_SANDBOX_MODES.includes(value as ThreadSandboxMode);
-}
+export * from "./thread-contracts.js";
 
 // ============================================================================
 // Runtime preferences
@@ -235,116 +142,6 @@ export interface SkillListResponse {
   validationErrors: RuntimeSkillValidationSummary[];
 }
 
-export const MCP_SERVER_TRANSPORTS = ["stdio", "streamable-http"] as const;
-export type McpServerTransport = (typeof MCP_SERVER_TRANSPORTS)[number];
-export const MCP_SERVER_STATUSES = [
-  "disconnected",
-  "connecting",
-  "cached",
-  "lazy",
-  "connected",
-  "failed",
-] as const;
-export type McpServerStatus = (typeof MCP_SERVER_STATUSES)[number];
-
-export interface McpServerConfig {
-  id: string;
-  name: string;
-  transport: McpServerTransport;
-  command?: string;
-  args: string[];
-  env: Record<string, string>;
-  cwd?: string;
-  url?: string;
-  headers: Record<string, string>;
-  enabled: boolean;
-  readOnlyTools: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type McpServerConfigUpdate = Partial<
-  Pick<
-    McpServerConfig,
-    | "name"
-    | "transport"
-    | "command"
-    | "args"
-    | "env"
-    | "cwd"
-    | "url"
-    | "headers"
-    | "enabled"
-    | "readOnlyTools"
-  >
->;
-
-export interface McpToolInfo {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  readOnly: boolean;
-}
-
-export interface McpPromptArgumentInfo {
-  name: string;
-  description?: string;
-  required: boolean;
-}
-
-export interface McpPromptInfo {
-  name: string;
-  description: string;
-  arguments: McpPromptArgumentInfo[];
-}
-
-export interface McpPromptMessage {
-  role: string;
-  content: unknown;
-}
-
-export interface McpPromptResult {
-  description?: string;
-  messages: McpPromptMessage[];
-}
-
-export interface McpResourceInfo {
-  uri: string;
-  name: string;
-  description: string;
-  mimeType?: string;
-}
-
-export interface McpResourceContent {
-  uri: string;
-  mimeType?: string;
-  text?: string;
-  blob?: string;
-}
-
-export interface McpResourceReadResult {
-  contents: McpResourceContent[];
-}
-
-export interface McpServerStatusRecord {
-  id: string;
-  name: string;
-  transport: McpServerTransport;
-  enabled: boolean;
-  status: McpServerStatus;
-  toolCount: number;
-  tools: McpToolInfo[];
-  promptCount: number;
-  prompts: McpPromptInfo[];
-  resourceCount: number;
-  resources: McpResourceInfo[];
-  lastStartupDurationMs?: number;
-  startupSuccessCount?: number;
-  startupFailureCount?: number;
-  lastConnectedAt?: string;
-  lastError?: string;
-}
-
 export const RUNTIME_PERMISSION_RULE_TOOLS = ["command", "write", "mcp"] as const;
 export type RuntimePermissionRuleTool = (typeof RUNTIME_PERMISSION_RULE_TOOLS)[number];
 
@@ -399,37 +196,6 @@ export interface RuntimePreferencesUpdate {
   mcpServers?: McpServerConfig[];
 }
 
-export const MCP_SECRET_VALUE_MASK = "********";
-const MCP_SECRET_KEY_PATTERN =
-  /(?:authorization|bearer|token|secret|password|passwd|credential|api[_-]?key|access[_-]?key|refresh[_-]?key|private[_-]?key|x-api-key|api-key|key)/i;
-
-export function isMcpSecretRecordKey(key: string): boolean {
-  return MCP_SECRET_KEY_PATTERN.test(key);
-}
-
-export function redactMcpStringRecordForRenderer(
-  record: Record<string, string>,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [
-      key,
-      value && isMcpSecretRecordKey(key) ? MCP_SECRET_VALUE_MASK : value,
-    ]),
-  );
-}
-
-export function redactMcpServerConfigForRenderer(
-  server: McpServerConfig,
-): McpServerConfig {
-  return {
-    ...server,
-    args: [...server.args],
-    env: redactMcpStringRecordForRenderer(server.env),
-    headers: redactMcpStringRecordForRenderer(server.headers),
-    readOnlyTools: [...server.readOnlyTools],
-  };
-}
-
 export function toRendererRuntimePreferences(
   preferences: RuntimePreferences,
 ): RuntimePreferences {
@@ -467,100 +233,21 @@ export const DEFAULT_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES = 24_000;
 export const MIN_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES = 1_024;
 export const MAX_RUNTIME_SKILLS_INSTRUCTION_BUDGET_BYTES = 128 * 1024;
 
-export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferences = {
-  code: {
-    list_files: true,
-    read_file: true,
-    search_files: true,
-    rg_search: true,
-    list_symbols: true,
-    search_symbols: true,
-    create_edit_plan: true,
-    edit_file: true,
-    multi_edit: true,
-    write_file: true,
-    delete_file: true,
-    apply_patch: true,
-    rollback_file: true,
-    run_command: true,
-    shell_command: true,
-    git_bash_command: true,
-    powershell_command: true,
-    wsl_command: true,
-    git_status: true,
-    git_diff: true,
-    git_log: true,
-    git_branch: true,
-    git_commit: true,
-    package_scripts: true,
-    package_install: true,
-    package_test: true,
-    package_build: true,
-    run_lint: true,
-    run_format: true,
-    run_tests: true,
-    run_build: true,
-    start_command_session: true,
-    list_command_sessions: true,
-    read_command_session: true,
-    write_command_session: true,
-    stop_command_session: true,
-    detect_shell_environment: true,
-    diagnose_workspace: true,
-    diagnose_file: true,
-    list_skills: true,
-    run_skill: true,
-    request_user_input: true,
-    create_plan: true,
-    update_goal: true,
-  },
-  write: {
-    list_files: true,
-    read_file: true,
-    search_files: true,
-    rg_search: true,
-    list_symbols: false,
-    search_symbols: false,
-    create_edit_plan: false,
-    edit_file: false,
-    multi_edit: false,
-    write_file: false,
-    delete_file: false,
-    apply_patch: false,
-    rollback_file: false,
-    run_command: false,
-    shell_command: false,
-    git_bash_command: false,
-    powershell_command: false,
-    wsl_command: false,
-    git_status: false,
-    git_diff: false,
-    git_log: false,
-    git_branch: false,
-    git_commit: false,
-    package_scripts: false,
-    package_install: false,
-    package_test: false,
-    package_build: false,
-    run_lint: false,
-    run_format: false,
-    run_tests: false,
-    run_build: false,
-    start_command_session: false,
-    list_command_sessions: false,
-    read_command_session: false,
-    write_command_session: false,
-    stop_command_session: false,
-    detect_shell_environment: false,
-    diagnose_workspace: false,
-    diagnose_file: false,
-    list_skills: true,
-    run_skill: true,
-    request_user_input: true,
-    create_plan: true,
-    update_goal: true,
-  },
-};
+export const DEFAULT_RUNTIME_TOOL_AVAILABILITY: RuntimeToolAvailabilityPreferences =
+  Object.fromEntries([
+    [
+      "code",
+      Object.fromEntries(
+        RUNTIME_TOOL_MANIFEST.map((tool) => [tool.name, tool.codeDefaultEnabled]),
+      ),
+    ],
+    [
+      "write",
+      Object.fromEntries(
+        RUNTIME_TOOL_MANIFEST.map((tool) => [tool.name, tool.writeDefaultEnabled]),
+      ),
+    ],
+  ]) as unknown as RuntimeToolAvailabilityPreferences;
 
 export const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   defaultApprovalPolicy: DEFAULT_THREAD_APPROVAL_POLICY,
@@ -643,16 +330,6 @@ export function isApprovalDecisionScope(value: unknown): value is ApprovalDecisi
     APPROVAL_DECISION_SCOPES.includes(value as ApprovalDecisionScope);
 }
 
-export function isMcpServerTransport(value: unknown): value is McpServerTransport {
-  return typeof value === "string" &&
-    MCP_SERVER_TRANSPORTS.includes(value as McpServerTransport);
-}
-
-export function isMcpServerStatus(value: unknown): value is McpServerStatus {
-  return typeof value === "string" &&
-    MCP_SERVER_STATUSES.includes(value as McpServerStatus);
-}
-
 export function isRuntimePreferences(value: unknown): value is RuntimePreferences {
   if (!isRecord(value)) return false;
   return isThreadApprovalPolicy(value.defaultApprovalPolicy) &&
@@ -724,84 +401,6 @@ export interface TurnRecord {
 // ============================================================================
 // Items: the in-thread content stream
 // ============================================================================
-
-export interface AttachmentRecord {
-  id: string;
-  name: string;
-  mimeType: string;
-  size: number;
-  createdAt: string;
-}
-
-export interface AttachmentCreateRequest {
-  name: string;
-  mimeType: string;
-  dataBase64: string;
-}
-
-export const SUPPORTED_ATTACHMENT_MIME_TYPES = [
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-] as const;
-export type SupportedAttachmentMimeType = (typeof SUPPORTED_ATTACHMENT_MIME_TYPES)[number];
-export const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
-export const MAX_ATTACHMENT_NAME_LENGTH = 180;
-
-export function normalizeSupportedAttachmentMimeType(
-  mimeType: string,
-): SupportedAttachmentMimeType | null {
-  const normalized = mimeType.trim().toLowerCase();
-  return SUPPORTED_ATTACHMENT_MIME_TYPES.includes(normalized as SupportedAttachmentMimeType)
-    ? (normalized as SupportedAttachmentMimeType)
-    : null;
-}
-
-export function normalizeAttachmentName(name: string): string | null {
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  const segments = trimmed.split(/[\\/]+/u).filter(Boolean);
-  const basename = segments.length > 0 ? segments[segments.length - 1] ?? "" : "";
-  const normalized = basename.slice(0, MAX_ATTACHMENT_NAME_LENGTH);
-  return isNormalizedAttachmentRecordName(normalized) ? normalized : null;
-}
-
-export function isAttachmentRecord(value: unknown): value is AttachmentRecord {
-  if (!isRecord(value)) return false;
-  const size = value.size;
-  return isUuidString(value.id) &&
-    isAttachmentRecordName(value.name) &&
-    typeof value.mimeType === "string" &&
-    normalizeSupportedAttachmentMimeType(value.mimeType) !== null &&
-    typeof size === "number" &&
-    Number.isInteger(size) &&
-    size > 0 &&
-    size <= MAX_ATTACHMENT_BYTES &&
-    isIsoTimestampString(value.createdAt);
-}
-
-function isAttachmentRecordName(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  return isNormalizedAttachmentRecordName(value);
-}
-
-function isNormalizedAttachmentRecordName(value: string): boolean {
-  return value.length > 0 &&
-    value.length <= MAX_ATTACHMENT_NAME_LENGTH &&
-    value === value.trim() &&
-    value !== "." &&
-    value !== ".." &&
-    !/[\\/]/u.test(value);
-}
-
-export interface AttachmentDeleteRequest {
-  id: string;
-}
-
-export interface AttachmentDeleteResponse {
-  id: string;
-}
 
 export interface UserItem {
   kind: "user";
@@ -1458,31 +1057,6 @@ export interface McpResourceReadRequest {
 }
 
 // ============================================================================
-// Generic IPC envelope
-// ============================================================================
-
-export interface IpcOk<T> {
-  ok: true;
-  value: T;
-}
-
-export interface IpcErr {
-  ok: false;
-  code: IpcErrorCode;
-  message: string;
-}
-
-export type IpcResult<T> = IpcOk<T> | IpcErr;
-
-export function ok<T>(value: T): IpcOk<T> {
-  return { ok: true, value };
-}
-
-export function err(code: IpcErrorCode, message: string): IpcErr {
-  return { ok: false, code, message };
-}
-
-// ============================================================================
 // Type guards (TypeScript-native validation, zod-equivalent for runtime checks)
 // ============================================================================
 
@@ -1652,42 +1226,6 @@ export function isRuntimeEvent(value: unknown): value is RuntimeEvent {
   }
 }
 
-export function isThreadRecord(value: unknown): value is ThreadRecord {
-  if (!value || typeof value !== "object") return false;
-  const v = value as Record<string, unknown>;
-  return (
-    isUuidString(v.id) &&
-    typeof v.title === "string" &&
-    v.title.trim().length > 0 &&
-    isAbsolutePathString(v.workspace) &&
-    isThreadMode(v.mode) &&
-    (v.status === undefined || isThreadStatus(v.status)) &&
-    isThreadRelation(v.relation) &&
-    isThreadParentRelationValid(v) &&
-    (v.approvalPolicy === undefined || isThreadApprovalPolicy(v.approvalPolicy)) &&
-    (v.sandboxMode === undefined || isThreadSandboxMode(v.sandboxMode)) &&
-    (v.forkedAt === undefined || isIsoTimestampString(v.forkedAt)) &&
-    (v.goal === undefined || isThreadGoal(v.goal)) &&
-    isIsoTimestampString(v.createdAt) &&
-    isIsoTimestampString(v.updatedAt)
-  );
-}
-
-function isThreadParentRelationValid(value: Record<string, unknown>): boolean {
-  if (value.parentThreadId !== undefined && !isUuidString(value.parentThreadId)) {
-    return false;
-  }
-  if (value.relation === "fork") {
-    return isUuidString(value.parentThreadId);
-  }
-  return value.parentThreadId === undefined && value.forkedAt === undefined;
-}
-
-function isAbsolutePathString(value: unknown): value is string {
-  if (typeof value !== "string" || !value.trim()) return false;
-  return value.startsWith("/") || value.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(value);
-}
-
 function isRuntimeToolAvailabilityPreferences(
   value: unknown,
 ): value is RuntimeToolAvailabilityPreferences {
@@ -1845,67 +1383,6 @@ function isRuntimePermissionRules(value: unknown): value is RuntimePermissionRul
   return true;
 }
 
-function isMcpServerConfigs(value: unknown): value is McpServerConfig[] {
-  if (!Array.isArray(value)) return false;
-  const ids = new Set<string>();
-  const names = new Set<string>();
-  const nameSegments = new Set<string>();
-  for (const server of value) {
-    if (!isMcpServerConfig(server)) return false;
-    const idKey = server.id.trim();
-    const nameKey = server.name.trim();
-    const nameSegmentKey = toMcpNameSegment(nameKey);
-    if (ids.has(idKey) || names.has(nameKey) || nameSegments.has(nameSegmentKey)) return false;
-    ids.add(idKey);
-    names.add(nameKey);
-    nameSegments.add(nameSegmentKey);
-  }
-  return true;
-}
-
-function isMcpServerConfig(value: unknown): value is McpServerConfig {
-  if (!isRecord(value)) return false;
-  const baseValid = isNonBlankStringWithoutNul(value.id) &&
-    isNonBlankStringWithoutNul(value.name) &&
-    isMcpServerTransport(value.transport) &&
-    (value.command === undefined || isNonBlankStringWithoutNul(value.command)) &&
-    Array.isArray(value.args) &&
-    value.args.every(isStringWithoutNul) &&
-    isStringRecordWithoutNul(value.env) &&
-    (value.cwd === undefined || isNonBlankStringWithoutNul(value.cwd)) &&
-    (value.url === undefined || isHttpUrl(value.url)) &&
-    isStringRecordWithoutNul(value.headers) &&
-    typeof value.enabled === "boolean" &&
-    Array.isArray(value.readOnlyTools) &&
-    value.readOnlyTools.every(isNonBlankStringWithoutNul) &&
-    isIsoTimestampString(value.createdAt) &&
-    isIsoTimestampString(value.updatedAt);
-  if (!baseValid) return false;
-  if (value.transport === "stdio") {
-    return isNonBlankStringWithoutNul(value.command);
-  }
-  return isHttpUrl(value.url);
-}
-
-function isMcpToolInfo(value: unknown): value is McpToolInfo {
-  if (!isRecord(value)) return false;
-  return hasNonBlankString(value, "name") &&
-    hasString(value, "description") &&
-    isRecord(value.inputSchema) &&
-    typeof value.readOnly === "boolean";
-}
-
-export function isHttpUrl(value: unknown): value is string {
-  if (!isNonBlankStringWithoutNul(value)) return false;
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch (error) {
-    void error;
-    return false;
-  }
-}
-
 // Model `base_url` is the LLM provider endpoint. Unlike MCP URLs (which the
 // user fully controls), a malicious base_url can leak the `Authorization:
 // Bearer` API key to an attacker-influenced host (see H-1). We require http(s)
@@ -1983,17 +1460,6 @@ function isItemRuntimeEventConsistent(value: Record<string, unknown>): boolean {
   if (!isItem(value.item)) return false;
   return value.threadId === value.item.threadId &&
     value.turnId === value.item.turnId;
-}
-
-export function isThreadGoal(value: unknown): value is ThreadGoal {
-  if (!isRecord(value)) return false;
-  return hasNonBlankString(value, "text") &&
-    isThreadGoalStatus(value.status) &&
-    isIsoTimestampString(value.createdAt) &&
-    isIsoTimestampString(value.updatedAt) &&
-    isOptionalIsoTimestampString(value.completedAt) &&
-    isOptionalIsoTimestampString(value.blockedAt) &&
-    (value.summary === undefined || hasNonBlankString(value, "summary"));
 }
 
 function isPlanStep(value: unknown): value is PlanStep {
