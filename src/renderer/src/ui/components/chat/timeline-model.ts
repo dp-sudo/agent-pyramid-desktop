@@ -8,6 +8,10 @@ import type {
   UserItem,
 } from "../../../../../shared/agent-contracts";
 import { isRuntimeToolName } from "../../../../../shared/agent-contracts";
+import {
+  getRuntimeToolCompletionEvidence,
+  getRuntimeToolTimelineAction,
+} from "../../../../../shared/runtime-tool-contracts";
 
 type TimelineProcessItem = Exclude<Item, UserItem>;
 
@@ -164,7 +168,7 @@ export function extractToolDiffPreview(result: unknown): ApprovalPreview | null 
 }
 
 export function summarizeToolChangeResult(item: ToolItem): ToolChangeSummary | null {
-  if (!MODIFY_TOOL_NAMES.has(item.name)) return null;
+  if (getRuntimeToolCompletionEvidence(item.name) !== "file_change") return null;
   const preview = extractToolDiffPreview(item.result);
   if (!preview) return null;
 
@@ -194,55 +198,6 @@ export interface ToolAction {
   tone: "neutral" | "running" | "success" | "danger";
 }
 
-const EXPLORATORY_TOOL_NAMES = new Set<string>(["list_files", "search_files", "rg_search"]);
-const READ_TOOL_NAMES = new Set<string>([
-  "read_file",
-  "list_symbols",
-  "search_symbols",
-  "create_edit_plan",
-  "list_command_sessions",
-  "diagnose_file",
-  "diagnose_workspace",
-]);
-const MODIFY_TOOL_NAMES = new Set<string>([
-  "edit_file",
-  "multi_edit",
-  "write_file",
-  "delete_file",
-  "apply_patch",
-  "rollback_file",
-]);
-// Command-style tools run shell/git/package/test/build/session work; the rest of
-// RUNTIME_TOOL_NAMES that is neither read-only nor a modify tool lands here so
-// run_command, git_*, package_*, run_*, *_command_session etc. read as "executed".
-const EXECUTE_TOOL_NAMES = new Set<string>([
-  "run_command",
-  "shell_command",
-  "git_bash_command",
-  "powershell_command",
-  "wsl_command",
-  "git_status",
-  "git_diff",
-  "git_log",
-  "git_branch",
-  "git_commit",
-  "package_scripts",
-  "package_install",
-  "package_test",
-  "package_build",
-  "run_lint",
-  "run_format",
-  "run_tests",
-  "run_build",
-  "start_command_session",
-  "read_command_session",
-  "write_command_session",
-  "stop_command_session",
-  "detect_shell_environment",
-  "create_plan",
-  "update_goal",
-]);
-
 export function summarizeToolAction(
   item: ToolItem,
   t: (key: string, options?: Record<string, unknown>) => string,
@@ -259,17 +214,15 @@ export function summarizeToolAction(
     return { label: t("chat.toolAction.pending"), tone: "neutral" };
   }
 
-  if (EXPLORATORY_TOOL_NAMES.has(item.name)) {
-    return { label: t("chat.toolAction.explored"), tone: "success" };
-  }
-  if (READ_TOOL_NAMES.has(item.name)) {
-    return { label: t("chat.toolAction.read"), tone: "success" };
-  }
-  if (MODIFY_TOOL_NAMES.has(item.name)) {
-    return { label: t("chat.toolAction.modified"), tone: "success" };
-  }
-  if (EXECUTE_TOOL_NAMES.has(item.name)) {
-    return { label: t("chat.toolAction.executed"), tone: "success" };
+  switch (getRuntimeToolTimelineAction(item.name)) {
+    case "explore":
+      return { label: t("chat.toolAction.explored"), tone: "success" };
+    case "read":
+      return { label: t("chat.toolAction.read"), tone: "success" };
+    case "modify":
+      return { label: t("chat.toolAction.modified"), tone: "success" };
+    case "execute":
+      return { label: t("chat.toolAction.executed"), tone: "success" };
   }
   // MCP tools (mcp__*) and any unknown tool: default to executed on completion.
   return { label: t("chat.toolAction.executed"), tone: "success" };

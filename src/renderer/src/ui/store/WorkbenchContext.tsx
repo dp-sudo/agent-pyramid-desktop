@@ -3,6 +3,7 @@ import {
   useContext,
   useMemo,
   useReducer,
+  useRef,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -503,6 +504,111 @@ export interface WorkbenchContextValue {
 
 const WorkbenchContext = createContext<WorkbenchContextValue | null>(null);
 
+export function createWorkbenchActions(
+  getState: () => WorkbenchState,
+  dispatch: (action: Action) => void,
+): WorkbenchActions {
+  return {
+    setRoute: (route) => dispatch({ type: "setRoute", route }),
+    setModelConfig: (config) => dispatch({ type: "setModelConfig", config }),
+    setModelProfiles: (profiles) => dispatch({ type: "setModelProfiles", profiles }),
+    setRuntimePreferences: (preferences) =>
+      dispatch({ type: "setRuntimePreferences", preferences }),
+    setWorkspaceRoot: (workspaceRoot) => {
+      const state = getState();
+      persistWorkspaceRootWhenRestored(state.basicPreferences, workspaceRoot);
+      dispatch({ type: "setWorkspaceRoot", workspaceRoot });
+    },
+    setShowArchivedThreads: (show) => {
+      const state = getState();
+      persistBasicPreferences({
+        ...state.basicPreferences,
+        showArchivedThreadsByDefault: show,
+      });
+      dispatch({ type: "setShowArchivedThreads", show });
+    },
+    setThreads: (threads) => dispatch({ type: "setThreads", threads }),
+    removeThread: (id) => dispatch({ type: "removeThread", id }),
+    selectThread: (thread, items) => {
+      const state = getState();
+      persistWorkspaceRootWhenRestored(
+        state.basicPreferences,
+        thread.workspace || state.workspaceRoot,
+      );
+      dispatch({ type: "selectThread", thread, items });
+    },
+    updateActiveThread: (thread) => dispatch({ type: "updateActiveThread", thread }),
+    deselectThread: () => dispatch({ type: "deselectThread" }),
+    appendItem: (item) => dispatch({ type: "appendItem", item }),
+    updateItem: (item) => dispatch({ type: "updateItem", item }),
+    appendToolProgress: (progress) =>
+      dispatch({ type: "appendToolProgress", progress }),
+    turnStarted: (turn) => dispatch({ type: "turnStarted", turn }),
+    turnEnded: (threadId, status) => dispatch({ type: "turnEnded", threadId, status }),
+    setComposerText: (text) => dispatch({ type: "setComposerText", text }),
+    setComposerModel: (model, modelProfileId, modelProfileSelection) =>
+      dispatch({ type: "setComposerModel", model, modelProfileId, modelProfileSelection }),
+    setComposerReasoningEffort: (reasoningEffort) =>
+      dispatch({ type: "setComposerReasoningEffort", reasoningEffort }),
+    setComposerMode: (mode) => dispatch({ type: "setComposerMode", mode }),
+    setComposerGoalMode: (enabled) =>
+      dispatch({ type: "setComposerGoalMode", enabled }),
+    addComposerAttachment: (attachment) =>
+      dispatch({ type: "addComposerAttachment", attachment }),
+    removeComposerAttachment: (attachmentId) =>
+      dispatch({ type: "removeComposerAttachment", attachmentId }),
+    clearComposerAttachments: () => dispatch({ type: "clearComposerAttachments" }),
+    openRightPanel: (mode) => dispatch({ type: "openRightPanel", mode }),
+    closeRightPanel: () => dispatch({ type: "closeRightPanel" }),
+    setError: (message) => dispatch({ type: "setError", message }),
+    setLeftSidebarWidth: (width) => {
+      const state = getState();
+      if (state.basicPreferences.rememberLeftSidebarWidth) {
+        persistBasicPreferences({
+          ...state.basicPreferences,
+          leftSidebarWidth: width,
+        });
+      }
+      dispatch({ type: "setLeftSidebarWidth", width });
+    },
+    setRightSidebarWidth: (width) => {
+      const state = getState();
+      if (state.basicPreferences.rememberRightSidebarWidth) {
+        persistBasicPreferences({
+          ...state.basicPreferences,
+          rightSidebarWidth: width,
+        });
+      }
+      dispatch({ type: "setRightSidebarWidth", width });
+    },
+    updateBasicPreference: (key, value) => {
+      const state = getState();
+      const restoredWorkspaceRoot =
+        key === "restoreLastWorkspaceOnStartup" && value && !state.workspaceRoot
+          ? loadLastWorkspaceRoot()
+          : undefined;
+      if (key === "restoreLastWorkspaceOnStartup" && value && state.workspaceRoot) {
+        persistWorkspaceRootWhenRestored(
+          {
+            ...state.basicPreferences,
+            restoreLastWorkspaceOnStartup: true,
+          },
+          state.workspaceRoot,
+        );
+      }
+      const action = {
+        type: "updateBasicPreference",
+        key,
+        value,
+        restoredWorkspaceRoot,
+      } as BasicPreferenceAction;
+      const patch = applyBasicPreferenceUpdate(state, action);
+      persistBasicPreferences(patch.basicPreferences);
+      dispatch(action);
+    },
+  };
+}
+
 export function WorkbenchProvider({
   children,
   initialState,
@@ -513,102 +619,12 @@ export function WorkbenchProvider({
   initialState?: WorkbenchState;
 }): ReactElement {
   const [state, dispatch] = useReducer(reducer, initialState ?? INITIAL_STATE);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const actions = useMemo<WorkbenchActions>(
-    () => ({
-      setRoute: (route) => dispatch({ type: "setRoute", route }),
-      setModelConfig: (config) => dispatch({ type: "setModelConfig", config }),
-      setModelProfiles: (profiles) => dispatch({ type: "setModelProfiles", profiles }),
-      setRuntimePreferences: (preferences) =>
-        dispatch({ type: "setRuntimePreferences", preferences }),
-      setWorkspaceRoot: (workspaceRoot) => {
-        persistWorkspaceRootWhenRestored(state.basicPreferences, workspaceRoot);
-        dispatch({ type: "setWorkspaceRoot", workspaceRoot });
-      },
-      setShowArchivedThreads: (show) => {
-        persistBasicPreferences({
-          ...state.basicPreferences,
-          showArchivedThreadsByDefault: show,
-        });
-        dispatch({ type: "setShowArchivedThreads", show });
-      },
-      setThreads: (threads) => dispatch({ type: "setThreads", threads }),
-      removeThread: (id) => dispatch({ type: "removeThread", id }),
-      selectThread: (thread, items) => {
-        persistWorkspaceRootWhenRestored(
-          state.basicPreferences,
-          thread.workspace || state.workspaceRoot,
-        );
-        dispatch({ type: "selectThread", thread, items });
-      },
-      updateActiveThread: (thread) => dispatch({ type: "updateActiveThread", thread }),
-      deselectThread: () => dispatch({ type: "deselectThread" }),
-      appendItem: (item) => dispatch({ type: "appendItem", item }),
-      updateItem: (item) => dispatch({ type: "updateItem", item }),
-      appendToolProgress: (progress) =>
-        dispatch({ type: "appendToolProgress", progress }),
-      turnStarted: (turn) => dispatch({ type: "turnStarted", turn }),
-      turnEnded: (threadId, status) => dispatch({ type: "turnEnded", threadId, status }),
-      setComposerText: (text) => dispatch({ type: "setComposerText", text }),
-      setComposerModel: (model, modelProfileId, modelProfileSelection) =>
-        dispatch({ type: "setComposerModel", model, modelProfileId, modelProfileSelection }),
-      setComposerReasoningEffort: (reasoningEffort) =>
-        dispatch({ type: "setComposerReasoningEffort", reasoningEffort }),
-      setComposerMode: (mode) => dispatch({ type: "setComposerMode", mode }),
-      setComposerGoalMode: (enabled) =>
-        dispatch({ type: "setComposerGoalMode", enabled }),
-      addComposerAttachment: (attachment) =>
-        dispatch({ type: "addComposerAttachment", attachment }),
-      removeComposerAttachment: (attachmentId) =>
-        dispatch({ type: "removeComposerAttachment", attachmentId }),
-      clearComposerAttachments: () => dispatch({ type: "clearComposerAttachments" }),
-      openRightPanel: (mode) => dispatch({ type: "openRightPanel", mode }),
-      closeRightPanel: () => dispatch({ type: "closeRightPanel" }),
-      setError: (message) => dispatch({ type: "setError", message }),
-      setLeftSidebarWidth: (width) => {
-        if (state.basicPreferences.rememberLeftSidebarWidth) {
-          persistBasicPreferences({
-            ...state.basicPreferences,
-            leftSidebarWidth: width,
-          });
-        }
-        dispatch({ type: "setLeftSidebarWidth", width });
-      },
-      setRightSidebarWidth: (width) => {
-        if (state.basicPreferences.rememberRightSidebarWidth) {
-          persistBasicPreferences({
-            ...state.basicPreferences,
-            rightSidebarWidth: width,
-          });
-        }
-        dispatch({ type: "setRightSidebarWidth", width });
-      },
-      updateBasicPreference: (key, value) => {
-        const restoredWorkspaceRoot =
-          key === "restoreLastWorkspaceOnStartup" && value && !state.workspaceRoot
-            ? loadLastWorkspaceRoot()
-            : undefined;
-        if (key === "restoreLastWorkspaceOnStartup" && value && state.workspaceRoot) {
-          persistWorkspaceRootWhenRestored(
-            {
-              ...state.basicPreferences,
-              restoreLastWorkspaceOnStartup: true,
-            },
-            state.workspaceRoot,
-          );
-        }
-        const action = {
-          type: "updateBasicPreference",
-          key,
-          value,
-          restoredWorkspaceRoot,
-        } as BasicPreferenceAction;
-        const patch = applyBasicPreferenceUpdate(state, action);
-        persistBasicPreferences(patch.basicPreferences);
-        dispatch(action);
-      },
-    }),
-    [state],
+    () => createWorkbenchActions(() => stateRef.current, dispatch),
+    [dispatch],
   );
 
   return (
