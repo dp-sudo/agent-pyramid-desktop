@@ -7,6 +7,7 @@ import {
   mcpPermissionValueFromFacadeCall,
   mcpPermissionValueFromToolName,
 } from "../../shared/mcp-names.js";
+import { getRuntimeToolPermissionCandidate } from "../../shared/runtime-tool-contracts.js";
 import { parseUnifiedDiffFilePath } from "./unified-diff-path.js";
 
 export type PermissionPolicyDecision = RuntimePermissionRuleEffect | "none";
@@ -16,29 +17,6 @@ const DECISION_PRIORITY: Record<RuntimePermissionRuleEffect, number> = {
   ask: 2,
   deny: 3,
 };
-
-const SHELL_COMMAND_POLICY_TOOL_NAMES = new Set([
-  "run_command",
-  "shell_command",
-  "git_bash_command",
-  "powershell_command",
-  "wsl_command",
-  "start_command_session",
-]);
-
-const GENERATED_COMMAND_POLICY_TOOL_NAMES = new Set([
-  "git_commit",
-  "package_install",
-  "package_test",
-  "package_build",
-  "run_lint",
-  "run_format",
-  "run_tests",
-  "run_build",
-  "write_command_session",
-  "stop_command_session",
-  "diagnose_workspace",
-]);
 
 const PACKAGE_SCRIPT_DEFAULTS: Record<string, string> = {
   package_test: "test",
@@ -51,15 +29,6 @@ const TASK_COMMAND_LABELS: Record<string, string> = {
   run_tests: "test",
   run_build: "build",
 };
-
-const WRITE_POLICY_TOOL_NAMES = new Set([
-  "edit_file",
-  "multi_edit",
-  "write_file",
-  "delete_file",
-  "apply_patch",
-  "rollback_file",
-]);
 
 const COMMAND_PREFIX_UNSAFE_CONTINUATION_PATTERN = /&&|\|\||;;|[;&|<>`]|\$\(/;
 
@@ -142,34 +111,36 @@ export function buildPermissionCandidate(
   toolName: string,
   args: Record<string, unknown>,
 ): { tool: RuntimePermissionRule["tool"]; value: string } | null {
-  if (SHELL_COMMAND_POLICY_TOOL_NAMES.has(toolName)) {
-    const value = buildShellCommandPermissionValue(toolName, args);
-    return value ? { tool: "command", value } : null;
-  }
-  if (GENERATED_COMMAND_POLICY_TOOL_NAMES.has(toolName)) {
-    const value = buildGeneratedCommandPermissionValue(toolName, args);
-    return value ? { tool: "command", value: normalizeCommandValue(value) } : null;
-  }
-  if (!WRITE_POLICY_TOOL_NAMES.has(toolName)) {
-    return buildMcpPermissionCandidate(toolName, args);
-  }
-  if (toolName === "apply_patch") {
-    if (typeof args.patch !== "string") {
-      return null;
+  switch (getRuntimeToolPermissionCandidate(toolName)) {
+    case "shell_command": {
+      const value = buildShellCommandPermissionValue(toolName, args);
+      return value ? { tool: "command", value } : null;
     }
-    let paths: string[];
-    try {
-      paths = extractUnifiedDiffTargetPaths(args.patch);
-    } catch (_error) {
-      // Invalid patch headers cannot be converted into a precise write rule candidate.
-      // Returning null keeps approval policy from granting access on ambiguous paths.
-      return null;
+    case "generated_command": {
+      const value = buildGeneratedCommandPermissionValue(toolName, args);
+      return value ? { tool: "command", value: normalizeCommandValue(value) } : null;
     }
-    return paths.length > 0 ? { tool: "write", value: paths.join("\n") } : null;
+    case "apply_patch": {
+      if (typeof args.patch !== "string") {
+        return null;
+      }
+      let paths: string[];
+      try {
+        paths = extractUnifiedDiffTargetPaths(args.patch);
+      } catch (_error) {
+        // Invalid patch headers cannot be converted into a precise write rule candidate.
+        // Returning null keeps approval policy from granting access on ambiguous paths.
+        return null;
+      }
+      return paths.length > 0 ? { tool: "write", value: paths.join("\n") } : null;
+    }
+    case "write_path":
+      return typeof args.path === "string"
+        ? { tool: "write", value: normalizePermissionPath(args.path) }
+        : null;
+    case null:
+      return buildMcpPermissionCandidate(toolName, args);
   }
-  return typeof args.path === "string"
-    ? { tool: "write", value: normalizePermissionPath(args.path) }
-    : null;
 }
 
 function buildShellCommandPermissionValue(
@@ -526,7 +497,10 @@ function parseStructuredCommandCandidate(value: string): StructuredCommandCandid
 function findStructuredCommandValueStart(value: string): number | null {
   const marker = "command=";
   const firstSpaceIndex = value.indexOf(" ");
-  if (firstSpaceIndex <= 0 || !SHELL_COMMAND_POLICY_TOOL_NAMES.has(value.slice(0, firstSpaceIndex))) {
+  if (
+    firstSpaceIndex <= 0 ||
+    getRuntimeToolPermissionCandidate(value.slice(0, firstSpaceIndex)) !== "shell_command"
+  ) {
     return null;
   }
   const markerIndex = value.indexOf(marker);

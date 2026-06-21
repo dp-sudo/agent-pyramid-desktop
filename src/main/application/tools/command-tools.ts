@@ -769,7 +769,7 @@ const startCommandSessionTool: AgentTool = {
   definition: {
     name: "start_command_session",
     description:
-      "Start a long-running workspace command session and return immediately with a session id. Use read/write/stop_command_session to interact with it.",
+      "Start a long-running workspace command session and return immediately with a session id. Once started, the session is owned by list/read/write/stop_command_session; interrupting the turn does not implicitly stop it.",
     inputSchema: {
       type: "object",
       properties: {

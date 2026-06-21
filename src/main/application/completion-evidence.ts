@@ -2,6 +2,7 @@ import type {
   Item,
   ToolItem,
 } from "../../shared/agent-contracts.js";
+import { getRuntimeToolCompletionEvidence } from "../../shared/runtime-tool-contracts.js";
 
 export type CompletionEvidenceCheckpointState =
   | { kind: "available"; paths: readonly string[] }
@@ -37,41 +38,6 @@ interface FileChangeSummary {
   added?: number;
   removed?: number;
 }
-
-const CODING_MODIFY_TOOL_NAMES = new Set<string>([
-  "edit_file",
-  "multi_edit",
-  "write_file",
-  "delete_file",
-  "apply_patch",
-  "rollback_file",
-]);
-
-const DEVELOPMENT_COMMAND_TOOL_NAMES = new Set<string>([
-  "run_command",
-  "shell_command",
-  "git_bash_command",
-  "powershell_command",
-  "wsl_command",
-  "git_status",
-  "git_diff",
-  "git_log",
-  "git_branch",
-  "git_commit",
-  "package_install",
-  "package_test",
-  "package_build",
-  "run_lint",
-  "run_format",
-  "run_tests",
-  "run_build",
-  "start_command_session",
-  "read_command_session",
-  "write_command_session",
-  "stop_command_session",
-  "diagnose_workspace",
-  "diagnose_file",
-]);
 
 const MAX_LISTED_ENTRIES = 8;
 const MAX_COMMAND_TEXT_LENGTH = 96;
@@ -120,13 +86,12 @@ function latestToolItems(items: readonly Item[]): ToolItem[] {
 }
 
 function isDevelopmentEvidenceTool(item: ToolItem): boolean {
-  return CODING_MODIFY_TOOL_NAMES.has(item.name) ||
-    DEVELOPMENT_COMMAND_TOOL_NAMES.has(item.name);
+  return getRuntimeToolCompletionEvidence(item.name) !== null;
 }
 
 function collectFileChanges(items: readonly ToolItem[]): FileChangeEvidence[] {
   return items.flatMap((item) => {
-    if (!CODING_MODIFY_TOOL_NAMES.has(item.name) || item.status !== "completed") {
+    if (getRuntimeToolCompletionEvidence(item.name) !== "file_change" || item.status !== "completed") {
       return [];
     }
     return fileChangesFromResult(item);
@@ -170,7 +135,7 @@ function readFileChange(
 
 function collectCommandRuns(items: readonly ToolItem[]): CommandEvidence[] {
   return items.flatMap((item) => {
-    if (!DEVELOPMENT_COMMAND_TOOL_NAMES.has(item.name)) return [];
+    if (getRuntimeToolCompletionEvidence(item.name) !== "command") return [];
     const result = asRecord(item.result);
     const command = result ? readString(result, "command") : readString(item.args, "command");
     const exitCode = result ? readNullableNumber(result, "exitCode") : undefined;

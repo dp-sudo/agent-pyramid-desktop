@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type {
-  AgentContentBlock,
   AgentMessage,
   AgentToolDefinition,
   AgentToolResult,
@@ -43,9 +42,8 @@ import {
   type ThreadGoalUpdate,
 } from "./thread-goal-update.js";
 import {
-  buildTurnCompletionEvidenceText,
-  type CompletionEvidenceCheckpointState,
-} from "./completion-evidence.js";
+  buildRuntimeCompletionEvidenceText,
+} from "./runtime-completion-evidence.js";
 import {
   appendItemAndBroadcast,
   persistEventOrReportError,
@@ -54,6 +52,13 @@ import {
   buildRuntimeContextMessages,
   resolveTurnModelProfile,
 } from "./runtime-turn-decisions.js";
+import {
+  canExecuteToolCallsInParallel,
+} from "./runtime-tool-rounds.js";
+import {
+  buildUserContent,
+  collectAgentHistory,
+} from "./runtime-history.js";
 import type {
   ApprovalRespondRequest,
   ApprovalRespondResponse,
@@ -561,7 +566,7 @@ export class AgentRuntime {
     runtimePreferences: RuntimePreferences,
     modelConfig: ModelConfig,
   ): Promise<AgentToolResult[]> {
-    if (this.canExecuteToolCallsInParallel(calls)) {
+    if (canExecuteToolCallsInParallel(this.deps.registry, calls)) {
       return Promise.all(
         calls.map((call) =>
           this.toolExecutor.execute(
@@ -591,19 +596,6 @@ export class AgentRuntime {
       }
     }
     return results;
-  }
-
-  private canExecuteToolCallsInParallel(calls: AgentToolCall[]): boolean {
-    return calls.length > 1 && calls.every((call) => this.isParallelSafeReadOnlyToolCall(call));
-  }
-
-  private isParallelSafeReadOnlyToolCall(call: AgentToolCall): boolean {
-    const tool = this.deps.registry.getTool(call.name);
-    if (!tool?.metadata?.isReadOnly) return false;
-    // run_skill can dispatch an isolated subagent LLM loop; keep parent and child
-    // model calls serialized on the thread-bound worker.
-    // request_user_input suspends the turn for a human response and must stay ordered.
-    return call.name !== "run_skill" && call.name !== "request_user_input";
   }
 
   private async appendBudgetExhaustedToolItems(
@@ -1141,56 +1133,7 @@ export class AgentRuntime {
     thread: ThreadRecord,
     excludeTurnId?: string,
   ): Promise<AgentMessage[]> {
-    const out: AgentMessage[] = [];
-    const items: Item[] = [];
-    const itemIndexById = new Map<string, number>();
-    for await (const item of this.deps.store.replayItems(thread.id)) {
-      if ("turnId" in item && item.turnId === excludeTurnId) {
-        continue;
-      }
-      const existingIndex = itemIndexById.get(item.id);
-      if (existingIndex === undefined) {
-        itemIndexById.set(item.id, items.length);
-        items.push(item);
-      } else {
-        items[existingIndex] = item;
-      }
-    }
-
-    for (const item of items) {
-      if (item.kind === "user") {
-        out.push({
-          role: "user",
-          content: await this.buildUserContent(item.text, item.attachmentIds ?? []),
-        });
-      } else if (item.kind === "assistant") {
-        out.push({ role: "assistant", content: item.text });
-      } else if (item.kind === "tool") {
-        if (item.status !== "completed" && item.status !== "failed") {
-          continue;
-        }
-        out.push({
-          role: "assistant",
-          content: "",
-          toolCalls: [
-            {
-              id: item.toolCallId,
-              name: item.name,
-              arguments: item.args,
-            },
-          ],
-        });
-        out.push({
-          role: "tool",
-          content:
-            typeof item.result === "object" && item.result && "content" in item.result
-              ? String((item.result as { content: unknown }).content)
-              : stableJsonStringify(item.result ?? null),
-          toolCallId: item.toolCallId,
-        });
-      }
-    }
-    return out;
+    return collectAgentHistory(this.deps, thread, { excludeTurnId });
   }
 
   private async appendSystemItem(
@@ -1217,43 +1160,14 @@ export class AgentRuntime {
   }
 
   private async appendCompletionEvidenceIfNeeded(turn: TurnRecord): Promise<void> {
-    const items: Item[] = [];
-    for await (const item of this.deps.store.replayItems(turn.threadId)) {
-      if ("turnId" in item && item.turnId === turn.id) {
-        items.push(item);
-      }
-    }
-    const text = buildTurnCompletionEvidenceText({
-      items,
-      checkpointState: await this.resolveCompletionEvidenceCheckpointState(turn),
-    });
+    const text = await buildRuntimeCompletionEvidenceText({
+      store: this.deps.store,
+      ...(this.deps.checkpointStore ? { checkpointStore: this.deps.checkpointStore } : {}),
+      reportRuntimeError: (currentTurn, code, message, error) =>
+        this.reportRuntimeError(currentTurn, code, message, error),
+    }, turn);
     if (!text) return;
     await this.appendSystemItem(turn, text, "info");
-  }
-
-  private async resolveCompletionEvidenceCheckpointState(
-    turn: TurnRecord,
-  ): Promise<CompletionEvidenceCheckpointState> {
-    if (!this.deps.checkpointStore) {
-      return { kind: "not_configured" };
-    }
-    try {
-      const checkpoints = await this.deps.checkpointStore.list(turn.threadId);
-      const checkpoint = checkpoints.find((candidate) => candidate.turnId === turn.id);
-      return {
-        kind: "available",
-        paths: checkpoint?.files.map((file) => file.path) ?? [],
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.reportRuntimeError(
-        turn,
-        "persistence_error",
-        `Completion evidence checkpoint lookup failed: ${message}`,
-        error,
-      );
-      return { kind: "lookup_failed", message };
-    }
   }
 
   private async persistApprovalPermissionRule(rule: RuntimePermissionRule): Promise<void> {
@@ -1291,24 +1205,8 @@ export class AgentRuntime {
     return attachments;
   }
 
-  private async buildUserContent(
-    text: string,
-    attachmentIds: string[],
-  ): Promise<string | AgentContentBlock[]> {
-    if (attachmentIds.length === 0) return text;
-    const blocks: AgentContentBlock[] = [{ type: "text", text }];
-    for (const id of attachmentIds) {
-      const attachment = await this.deps.attachmentStore.get(id);
-      if (!attachment) {
-        throw new Error(`Attachment ${id} not found.`);
-      }
-      blocks.push({
-        type: "image",
-        mimeType: attachment.mimeType,
-        dataBase64: attachment.dataBase64,
-      });
-    }
-    return blocks;
+  private buildUserContent(text: string, attachmentIds: string[]): ReturnType<typeof buildUserContent> {
+    return buildUserContent(this.deps.attachmentStore, text, attachmentIds);
   }
 
   private buildSystemPrompt(): string {

@@ -351,13 +351,14 @@ const applyPatchTool: AgentTool = {
   definition: {
     name: "apply_patch",
     description:
-      "Apply a unified diff patch to UTF-8 workspace files. Supports create and update hunks only; read existing files first so the patch can be checked against the latest content.",
+      "Apply a unified diff patch to UTF-8 workspace files. Supports create and update hunks only; use delete_file for deletions. Rename/copy patch metadata is rejected.",
     inputSchema: {
       type: "object",
       properties: {
         patch: {
           type: "string",
-          description: "Unified diff patch text with ---/+++ file headers and @@ hunks.",
+          description:
+            "Unified diff patch text with ---/+++ file headers and @@ hunks. Delete, rename, and copy patch operations are not supported.",
         },
       },
       required: ["patch"],

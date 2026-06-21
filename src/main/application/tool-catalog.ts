@@ -10,6 +10,7 @@ import type {
   TurnRecord,
 } from "../../shared/agent-contracts.js";
 import { THREAD_MODES, isRuntimeToolName } from "../../shared/agent-contracts.js";
+import { RUNTIME_TOOL_MANIFEST } from "../../shared/runtime-tool-contracts.js";
 
 export type ToolAccessDecision = "allow" | "deny" | "inherit";
 
@@ -27,49 +28,15 @@ export interface ToolAccessPolicyConfig {
   denyByMode?: Partial<Record<ThreadRecord["mode"], readonly string[]>>;
 }
 
-export const COMMAND_TOOL_NAMES = [
-  "run_command",
-  "shell_command",
-  "git_bash_command",
-  "powershell_command",
-  "wsl_command",
-  "git_status",
-  "git_diff",
-  "git_log",
-  "git_branch",
-  "git_commit",
-  "package_scripts",
-  "package_install",
-  "package_test",
-  "package_build",
-  "run_lint",
-  "run_format",
-  "run_tests",
-  "run_build",
-  "start_command_session",
-  "list_command_sessions",
-  "read_command_session",
-  "write_command_session",
-  "stop_command_session",
-  "detect_shell_environment",
-  "diagnose_workspace",
-  "diagnose_file",
-  "list_symbols",
-  "search_symbols",
-] as const satisfies readonly RuntimeToolName[];
+export const COMMAND_TOOL_NAMES = RUNTIME_TOOL_MANIFEST
+  .filter((tool) => tool.commandTool)
+  .map((tool) => tool.name) as RuntimeToolName[];
 
 const COMMAND_TOOL_NAME_SET = new Set<string>(COMMAND_TOOL_NAMES);
 
-export const CODE_ONLY_TOOL_NAMES = [
-  "create_edit_plan",
-  "edit_file",
-  "multi_edit",
-  "write_file",
-  "delete_file",
-  "apply_patch",
-  "rollback_file",
-  ...COMMAND_TOOL_NAMES,
-] as const satisfies readonly RuntimeToolName[];
+export const CODE_ONLY_TOOL_NAMES = RUNTIME_TOOL_MANIFEST
+  .filter((tool) => tool.codeOnly)
+  .map((tool) => tool.name) as RuntimeToolName[];
 
 const CODE_ONLY_TOOL_NAME_SET = new Set<string>(CODE_ONLY_TOOL_NAMES);
 const DEFAULT_TOOL_ACCESS_POLICY = createToolAccessPolicy({
