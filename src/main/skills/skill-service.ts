@@ -11,7 +11,7 @@ import {
   type SkillMatchInput,
   type SkillRoot,
   type SkillTurnResolution,
-} from "../../shared/skills/index.js";
+} from "../../shared/skills/node.js";
 
 export const PROJECT_SKILL_ROOTS = [
   ".agent/skills",
