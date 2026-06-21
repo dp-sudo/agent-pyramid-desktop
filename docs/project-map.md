@@ -62,18 +62,18 @@ Security anchors:
 | --- | --- | --- |
 | Main composition | `src/main/index.ts`, `src/main/application/app-lifecycle.ts` | Wires stores, event bus, worker pool, runtime, tool registry, MCP host, IPC handlers, BrowserWindow, and ordered shutdown cleanup. |
 | Main utilities | `src/main/stable-json.ts` | Main-process stable JSON canonicalization used for tool repeat keys, catalog hashing, MCP fingerprints, context estimates, and provider payloads. |
-| Runtime | `src/main/application/agent-runtime.ts`, `src/main/application/runtime-turn-decisions.ts` | Turn lifecycle, model profile selection, runtime context message decisions, worker calls, tool loop, interrupt, events. |
+| Runtime | `src/main/application/agent-runtime.ts`, `src/main/application/runtime-turn-decisions.ts`, `src/main/application/runtime-history.ts`, `src/main/application/runtime-completion-evidence.ts`, `src/main/application/runtime-tool-rounds.ts` | Turn lifecycle, model profile selection, runtime context/history/completion evidence decisions, worker calls, tool loop, interrupt, events. |
 | Tool execution | `src/main/application/tool-call-executor.ts` | Tool timeline items, catalog/policy/schema checks, approval/user-input suspension, live progress, interruption cleanup. |
 | Tool policy | `src/main/application/tool-catalog.ts`, `src/main/application/tool-policy.ts`, `src/main/application/permission-policy.ts` | Mode filtering, sandbox/approval decisions, runtime permission rules. |
 | Built-in tools | `src/main/application/tools/` | Workspace, coding, command, skill, user-input, plan, and goal tools; command input validation lives in `command-input.ts`. |
 | Domain ports | `src/main/domain/agent/types.ts`, `src/main/domain/agent/ports.ts` | LLM, tool, message, stream, and registry contracts. |
 | LLM worker | `src/main/infrastructure/llm-worker/` | Worker protocol, thread affinity, cancellation, provider stream isolation. |
 | Provider gateway | `src/main/infrastructure/minimax/` | `ProviderCompatibleGateway`, OpenAI-compatible adapter, Anthropic-compatible adapter, SSE parsing. |
-| MCP | `src/main/infrastructure/mcp/` | MCP client, host, transports, cache, dynamic tool registration, progressive discovery facade, prompts/resources. |
+| MCP | `src/main/infrastructure/mcp/` | MCP client, host, transports, cache, dynamic tool registration planning, status/event projection, progressive discovery facade, prompts/resources. |
 | Persistence | `src/main/persistence/` | JSONL thread store, attachments, config, checkpoints, MCP cache, secret codec. |
 | IPC | `src/main/ipc/` | Renderer-callable handlers returning `IpcResult<T>`. |
 | Skills | `src/main/skills/`, `src/shared/skills/` | Skill discovery, manifest parsing, built-ins, runtime injection, skill tools. |
-| Shared contracts | `src/shared/agent-contracts.ts`, `src/shared/agent-api.ts`, `src/shared/ipc.ts`, `src/shared/ipc-errors.ts` | Cross-process types, preload interface shape, IPC channel descriptors, error codes. |
+| Shared contracts | `src/shared/agent-contracts.ts`, focused contract modules such as `src/shared/thread-contracts.ts`, `src/shared/attachment-contracts.ts`, `src/shared/mcp-contracts.ts`, `src/shared/ipc-result.ts`, `src/shared/agent-api.ts`, `src/shared/ipc.ts`, `src/shared/ipc-errors.ts` | Cross-process types, preload interface shape, IPC channel descriptors, error codes; `agent-contracts.ts` remains the compatibility barrel. |
 | Renderer state | `src/renderer/src/ui/store/WorkbenchContext.tsx` | `useReducer` state for route, threads, items, composer, preferences, model/runtime config. |
 | Renderer shell | `src/renderer/src/ui/AppShell.tsx`, `src/renderer/src/ui/Workbench.tsx`, `src/renderer/src/ui/SettingsView.tsx` | Route shell, workbench flow, settings flow; live Workbench buffers and Settings runtime save queue live in adjacent helper modules. |
 | UI components | `src/renderer/src/ui/components/` | `chat`, `composer`, `sidebar`, `topbar`, `inspector`, `workbench`, `write`, `settings`, `primitives`. |
@@ -90,12 +90,12 @@ Security anchors:
 | Add/change tool | `src/main/domain/agent/types.ts` | relevant file in `tools/`, `src/main/index.ts`, `tool-catalog.ts`, `tool-policy.ts`, tests |
 | Change command behavior | `src/main/application/tools/command-tools.ts` | command sandbox/invocation/environment/progress/package/git helpers, approval tests |
 | Change LLM protocol | `src/main/infrastructure/minimax/provider-compatible-gateway.ts` | adapters, worker protocol, gateway tests |
-| Change MCP | `src/main/infrastructure/mcp/host.ts` | MCP contracts in `agent-contracts.ts`, IPC, settings UI, MCP tests |
+| Change MCP | `src/main/infrastructure/mcp/host.ts` | `src/shared/mcp-contracts.ts`, `tool-registration.ts`, `status-projection.ts`, IPC, settings UI, MCP tests |
 | Change skills | `src/main/skills/skill-service.ts` | `src/shared/skills/`, `skill-tools.ts`, settings skills panel, tests |
-| Change thread/timeline data | `src/shared/agent-contracts.ts` | `JsonlThreadStore`, runtime replay, renderer timeline, tests, `docs/data-model.md` |
+| Change thread/timeline data | `src/shared/thread-contracts.ts` for thread records; `src/shared/agent-contracts.ts` for turns, items, and runtime events | `JsonlThreadStore`, runtime replay, renderer timeline, tests, `docs/data-model.md` |
 | Change model config | `src/shared/model-config-contracts.ts` | `ModelConfigStore`, IPC handlers, settings model config UI |
 | Change runtime preferences | `src/shared/agent-contracts.ts`, `src/shared/runtime-tool-contracts.ts` for tool names | `RuntimePreferencesStore`, runtime, settings runtime preferences UI |
-| Change attachments | `src/main/persistence/attachment-store.ts` | contracts, attachment IPC, composer attachment hooks, runtime injection |
+| Change attachments | `src/shared/attachment-contracts.ts`, `src/main/persistence/attachment-store.ts` | attachment IPC, composer attachment hooks, runtime injection |
 | Change checkpoints/rewind | `src/main/persistence/checkpoint-store.ts` | coding tools, checkpoint IPC, inspector/checkpoints UI |
 | Change write mode | `src/main/ipc/write-handlers.ts` | write components, write contracts, workspace policy |
 | Change UI layout/style | `docs/ui-layout-reference.md` | `docs/ui-design.md`, `tokens.css`, `shell.css`, component tests |
@@ -105,12 +105,13 @@ Security anchors:
 
 | Concept | Authority | Persistence |
 | --- | --- | --- |
-| Threads, turns, items, runtime events | `src/shared/agent-contracts.ts` | `JsonlThreadStore` under `userData/threads/` |
+| Threads | `src/shared/thread-contracts.ts`, re-exported by `src/shared/agent-contracts.ts` | `JsonlThreadStore` under `userData/threads/` |
+| Turns, items, runtime events | `src/shared/agent-contracts.ts` | `JsonlThreadStore` under `userData/threads/` |
 | Model config profiles | `src/shared/model-config-contracts.ts` | `ModelConfigStore` in shared `userData/config` |
 | Runtime preferences | `src/shared/agent-contracts.ts`; tool name authority in `src/shared/runtime-tool-contracts.ts` | `RuntimePreferencesStore` in shared `userData/config` |
-| Attachments | `src/shared/agent-contracts.ts` | `AttachmentStore` under `userData/attachments/` |
+| Attachments | `src/shared/attachment-contracts.ts`, re-exported by `src/shared/agent-contracts.ts` | `AttachmentStore` under `userData/attachments/` |
 | Checkpoints | `src/shared/agent-contracts.ts` | `CheckpointStore` under `userData/checkpoints/` |
-| MCP cache | MCP contracts in `agent-contracts.ts` | `McpCacheStore` under `userData/mcp/cache.json` |
+| MCP cache | `src/shared/mcp-contracts.ts` | `McpCacheStore` under `userData/mcp/cache.json` |
 | IPC channel names | `src/shared/ipc.ts` | Not persisted |
 | Preload API shape | `src/shared/agent-api.ts` | Not persisted |
 | Locale list | `src/shared/locale.ts` | Not persisted |
@@ -121,8 +122,8 @@ Security anchors:
 | Area | Tests |
 | --- | --- |
 | Shared contracts / IPC allowlist | `tests/shared/` |
-| Runtime / tools / policy / commands | `tests/main/application/`, including focused seam tests for runtime decisions, app lifecycle, stable JSON, and command input validation |
-| Worker / gateway / MCP infrastructure | `tests/main/infrastructure/`, including provider gateway and MCP facade/cache/host tests |
+| Runtime / tools / policy / commands | `tests/main/application/`, including focused seam tests for runtime decisions, history, completion evidence, tool-round execution, app lifecycle, stable JSON, and command input validation |
+| Worker / gateway / MCP infrastructure | `tests/main/infrastructure/`, including provider gateway and MCP facade/cache/host/tool-registration/status-projection tests |
 | IPC handlers | `tests/main/ipc/` |
 | Persistence stores | `tests/main/persistence/` |
 | Skills | `tests/main/skills/` |

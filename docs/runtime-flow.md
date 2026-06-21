@@ -224,6 +224,8 @@ Write/command-sensitive tools go through approval and sandbox:
 
 Write threads hide Code-only coding/command tools by default through `ToolCatalogService`. `RuntimePreferences.toolAvailability` can hide known runtime tools per mode, but it does not bypass sandbox or approval checks.
 
+`apply_patch` accepts create/update unified diff hunks for UTF-8 workspace files. It rejects delete, rename, and copy patch metadata; deletions go through `delete_file` so checkpoint, approval, and rollback behavior stay explicit.
+
 ## Command Runtime
 
 Command execution files:
@@ -246,7 +248,7 @@ Sandbox rule:
 - `sandboxMode: "workspace-write"` command execution requires a configured Windows helper on Windows and currently fails closed on non-Windows without a supported jail engine.
 - `sandboxMode: "danger-full-access"` uses direct host execution after policy and approval checks.
 
-Long-running command sessions are in-memory only and are shut down through the main-process `AppLifecycle` cleanup sequence. The same sequence also closes MCP transports and destroys the LLM worker pool, so Electron's `before-quit` and `window-all-closed` paths share one ordered cleanup module.
+Long-running command sessions are in-memory only and are shut down through the main-process `AppLifecycle` cleanup sequence. Once `start_command_session` returns a session id, interrupting that turn does not implicitly stop the session; the session is then managed by `list_command_sessions`, `read_command_session`, `write_command_session`, and `stop_command_session`. The same app cleanup sequence also closes MCP transports and destroys the LLM worker pool, so Electron's `before-quit` and `window-all-closed` paths share one ordered cleanup module.
 
 ## Tool Budget
 
@@ -396,6 +398,7 @@ Rules:
 - Failed server connect unregisters that server's live tools; matching cached tools can remain as lazy placeholders.
 - Runtime preference updates await `McpHost.configure()` before reconnecting enabled servers.
 - `readOnlyTools` in local runtime preferences is the authority for MCP read-only treatment; remote `readOnlyHint` is informational.
+- `tool-registration.ts` owns direct/lazy/facade registration planning; `status-projection.ts` owns MCP status records and runtime event payload projection.
 - Prompt/resource list/get/read are renderer IPC surfaces, not model tools.
 
 ## Renderer Consumption
@@ -417,7 +420,12 @@ Workbench keeps SSE subscriptions for opened threads. Renderer handling:
 Runtime/tool changes usually require checking:
 
 - `src/shared/agent-contracts.ts`
+- focused shared modules such as `src/shared/runtime-tool-contracts.ts`, `src/shared/mcp-contracts.ts`, `src/shared/thread-contracts.ts`, `src/shared/attachment-contracts.ts`, and `src/shared/ipc-result.ts`
 - `src/main/application/agent-runtime.ts`
+- `src/main/application/runtime-turn-decisions.ts`
+- `src/main/application/runtime-history.ts`
+- `src/main/application/runtime-completion-evidence.ts`
+- `src/main/application/runtime-tool-rounds.ts`
 - `src/main/application/tool-call-executor.ts`
 - `src/main/application/tool-catalog.ts`
 - `src/main/application/tool-policy.ts`

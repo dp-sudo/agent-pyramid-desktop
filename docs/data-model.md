@@ -6,7 +6,11 @@ Data contract and persistence map. Source code is authoritative; this file lists
 
 | Concern | Authority |
 | --- | --- |
-| Shared data contracts | `src/shared/agent-contracts.ts` |
+| Shared data contracts | `src/shared/agent-contracts.ts` compatibility barrel |
+| Thread contracts | `src/shared/thread-contracts.ts` |
+| Attachment contracts | `src/shared/attachment-contracts.ts` |
+| IPC result envelope | `src/shared/ipc-result.ts` |
+| MCP contracts | `src/shared/mcp-contracts.ts` |
 | Model config contracts | `src/shared/model-config-contracts.ts` re-exported by `agent-contracts.ts` |
 | Primitive guards | `src/shared/contract-primitives.ts` |
 | IPC channels | `src/shared/ipc.ts` |
@@ -196,7 +200,7 @@ Rules:
 
 ## Attachments
 
-Metadata: `AttachmentRecord`.
+Metadata: `AttachmentRecord` in `src/shared/attachment-contracts.ts`, re-exported by `src/shared/agent-contracts.ts`.
 
 Fields:
 
