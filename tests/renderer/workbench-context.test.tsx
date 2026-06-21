@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createWorkbenchActions,
   getActiveThreadInFlightTurn,
   getThreadInFlightTurn,
   INITIAL_STATE,
   reducer,
   shouldDeselectActiveThreadForRoute,
+  type Action,
   type WorkbenchState,
 } from "../../src/renderer/src/ui/store/WorkbenchContext";
 import { DEFAULT_BASIC_PREFERENCES } from "../../src/renderer/src/ui/preferences";
@@ -49,6 +51,10 @@ function turn(overrides: Partial<TurnRecord> = {}): TurnRecord {
 }
 
 describe("WorkbenchContext reducer", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("remembers the last code or write workbench while visiting settings", () => {
     const fromWrite = reducer(INITIAL_STATE, { type: "setRoute", route: "write" });
     const settings = reducer(fromWrite, { type: "setRoute", route: "settings" });
@@ -626,4 +632,63 @@ describe("WorkbenchContext reducer", () => {
     expect(withReasoningOpen.basicPreferences.openReasoningByDefault).toBe(true);
     expect(resetWidth.leftSidebarWidth).toBe(DEFAULT_BASIC_PREFERENCES.leftSidebarWidth);
   });
+
+  it("keeps workbench actions reading the latest state", () => {
+    vi.stubGlobal("window", { localStorage: createMemoryStorage() });
+    let state: WorkbenchState = {
+      ...INITIAL_STATE,
+      workspaceRoot: "/old-workspace",
+      basicPreferences: {
+        ...INITIAL_STATE.basicPreferences,
+        restoreLastWorkspaceOnStartup: false,
+      },
+    };
+    const dispatched: Action[] = [];
+    const actions = createWorkbenchActions(
+      () => state,
+      (action) => {
+        dispatched.push(action);
+        state = reducer(state, action);
+      },
+    );
+
+    state = {
+      ...state,
+      workspaceRoot: "/latest-workspace",
+      basicPreferences: {
+        ...state.basicPreferences,
+        restoreLastWorkspaceOnStartup: true,
+      },
+    };
+
+    actions.updateBasicPreference("restoreLastWorkspaceOnStartup", true);
+
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]).toMatchObject({
+      type: "updateBasicPreference",
+      key: "restoreLastWorkspaceOnStartup",
+      value: true,
+    });
+    expect(state.workspaceRoot).toBe("/latest-workspace");
+    expect(window.localStorage.getItem("agent-pyramid.lastWorkspaceRoot"))
+      .toBe("/latest-workspace");
+  });
 });
+
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    removeItem: (key) => {
+      values.delete(key);
+    },
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+  };
+}

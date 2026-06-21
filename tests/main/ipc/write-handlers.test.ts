@@ -231,6 +231,23 @@ describe("write handlers helpers", () => {
     }
   });
 
+  it("lists markdown files through the shared workspace realpath policy", async () => {
+    const workspace = await makeTempDir("write-list-policy-");
+    const outside = await makeTempDir("write-list-policy-outside-");
+    try {
+      await fs.writeFile(path.join(workspace, "inside.md"), "# Inside\n", "utf8");
+      await fs.writeFile(path.join(outside, "outside.md"), "# Outside\n", "utf8");
+      await fs.symlink(path.join(outside, "outside.md"), path.join(workspace, "linked.md"));
+
+      const files = await listMarkdownFiles(workspace, "");
+
+      expect(files.map((file) => file.path)).toEqual(["inside.md"]);
+    } finally {
+      await removeTempDir(workspace);
+      await removeTempDir(outside);
+    }
+  });
+
   it("keeps write get/put paths inside the workspace and outside skipped directories", async () => {
     const workspace = await makeTempDir("write-path-policy-");
     try {

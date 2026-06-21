@@ -6,6 +6,8 @@ import { WINDOWS_APP_USER_MODEL_ID } from "../src/main/application/app-identity"
 interface PackageManifest {
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  overrides?: Record<string, string>;
   build?: {
     appId?: string;
     directories?: {
@@ -32,6 +34,26 @@ describe("package configuration", () => {
     const manifest = await readManifest();
 
     expect(manifest.dependencies ?? {}).not.toHaveProperty("@rollup/rollup-win32-x64-msvc");
+  });
+
+  it("keeps dependency ownership for packaged runtime and bundled renderer code explicit", async () => {
+    const manifest = await readManifest();
+
+    expect(manifest.dependencies).toHaveProperty("typescript");
+    expect(manifest.dependencies).toHaveProperty("react-markdown");
+    expect(manifest.dependencies).toHaveProperty("rehype-highlight");
+    expect(manifest.dependencies).toHaveProperty("remark-gfm");
+    expect(manifest.devDependencies ?? {}).not.toHaveProperty("rehype-highlight");
+    expect(manifest.devDependencies).toHaveProperty("vite");
+  });
+
+  it("keeps the esbuild security override documented and pinned", async () => {
+    const manifest = await readManifest();
+    const docs = await readFile(join(process.cwd(), "docs/agent-development.md"), "utf8");
+
+    expect(manifest.overrides?.esbuild).toBe("0.28.1");
+    expect(docs).toContain("overrides.esbuild");
+    expect(docs).toContain("GHSA-g7r4-m6w7-qqqr");
   });
 
   it("keeps Windows packaging identity aligned with the main-process identity", async () => {

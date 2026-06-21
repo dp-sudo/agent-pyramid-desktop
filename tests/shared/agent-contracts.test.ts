@@ -35,6 +35,7 @@ import {
   PLAN_STEP_STATUSES,
   RUNTIME_COMPACTION_STRATEGIES,
   RUNTIME_EVENT_KINDS,
+  RUNTIME_TOOL_MANIFEST,
   RUNTIME_READ_ONLY_TOOL_NAMES,
   RUNTIME_TOOL_NAMES,
   SUPPORTED_ATTACHMENT_MIME_TYPES,
@@ -291,6 +292,13 @@ describe("shared agent contracts", () => {
     ]);
     expect(RUNTIME_READ_ONLY_TOOL_NAMES.every((toolName) =>
       RUNTIME_TOOL_NAMES.includes(toolName),
+    )).toBe(true);
+    expect(RUNTIME_TOOL_MANIFEST.map((tool) => tool.name)).toEqual(RUNTIME_TOOL_NAMES);
+    expect(RUNTIME_TOOL_MANIFEST.filter((tool) => tool.readOnly).map((tool) => tool.name))
+      .toEqual(RUNTIME_READ_ONLY_TOOL_NAMES);
+    expect(RUNTIME_TOOL_MANIFEST.every((tool) =>
+      DEFAULT_RUNTIME_PREFERENCES.toolAvailability.code[tool.name] === tool.codeDefaultEnabled &&
+      DEFAULT_RUNTIME_PREFERENCES.toolAvailability.write[tool.name] === tool.writeDefaultEnabled
     )).toBe(true);
     expect(PLAN_STEP_STATUSES).toEqual(["pending", "in_progress", "completed"]);
     expect(RUNTIME_COMPACTION_STRATEGIES).toEqual([

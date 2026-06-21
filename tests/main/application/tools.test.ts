@@ -1914,6 +1914,69 @@ describe("application tools", () => {
     }
   });
 
+  it("rejects apply_patch delete operations with a clear replacement path", async () => {
+    const workspace = await makeTempDir("apply-patch-delete-boundary-");
+    try {
+      await fs.writeFile(path.join(workspace, "old.txt"), "old\n", "utf8");
+      const registry = new InMemoryToolRegistry(createCodingTools());
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-patch-delete",
+            name: "apply_patch",
+            arguments: {
+              patch: [
+                "--- a/old.txt",
+                "+++ /dev/null",
+                "@@ -1 +0,0 @@",
+                "-old",
+              ].join("\n"),
+            },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
+        ),
+      ).rejects.toThrow("apply_patch does not support deleting files.");
+      expect(await fs.readFile(path.join(workspace, "old.txt"), "utf8")).toBe("old\n");
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("rejects apply_patch rename and copy metadata explicitly", async () => {
+    const workspace = await makeTempDir("apply-patch-rename-boundary-");
+    try {
+      await fs.writeFile(path.join(workspace, "old.txt"), "old\n", "utf8");
+      const registry = new InMemoryToolRegistry(createCodingTools());
+
+      await expect(
+        registry.execute(
+          {
+            id: "call-patch-rename",
+            name: "apply_patch",
+            arguments: {
+              patch: [
+                "diff --git a/old.txt b/new.txt",
+                "rename from old.txt",
+                "rename to new.txt",
+                "--- a/old.txt",
+                "+++ b/new.txt",
+                "@@ -1 +1 @@",
+                "-old",
+                "+new",
+              ].join("\n"),
+            },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
+        ),
+      ).rejects.toThrow("apply_patch does not support renaming or copying files.");
+      expect(await fs.readFile(path.join(workspace, "old.txt"), "utf8")).toBe("old\n");
+      await expect(fs.stat(path.join(workspace, "new.txt"))).rejects.toThrow();
+    } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
   it("applies patches after ranged reads when the full file hash is fresh", async () => {
     const workspace = await makeTempDir("apply-patch-ranged-read-");
     try {
@@ -4828,6 +4891,89 @@ describe("application tools", () => {
       ) as { sessionCount: number };
       expect(list.sessionCount).toBe(0);
     } finally {
+      await removeTempDir(workspace);
+    }
+  });
+
+  it("keeps started command sessions explicit after the starting turn is interrupted", async () => {
+    const workspace = await makeTempDir("command-session-post-start-abort-");
+    let sessionId: string | undefined;
+    try {
+      const registry = new InMemoryToolRegistry(createCommandTools());
+      const controller = new AbortController();
+      const context = {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        workspace,
+        sandboxMode: "danger-full-access" as const,
+        signal: controller.signal,
+      };
+      const start = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-start-post-abort",
+              name: "start_command_session",
+              arguments: {
+                shell: "sh",
+                command: nodeCommand("setInterval(() => undefined, 1000);"),
+              },
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionId: string; status: string };
+      sessionId = start.sessionId;
+      expect(start.status).toBe("running");
+
+      controller.abort();
+
+      const listed = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-list-after-post-abort",
+              name: "list_command_sessions",
+              arguments: {},
+            },
+            context,
+          )
+        ).content,
+      ) as { sessionCount: number; sessions: Array<{ sessionId: string; status: string }> };
+      expect(listed.sessionCount).toBe(1);
+      expect(listed.sessions[0]).toMatchObject({
+        sessionId,
+        status: "running",
+      });
+
+      const stopped = JSON.parse(
+        (
+          await registry.execute(
+            {
+              id: "session-stop-after-post-abort",
+              name: "stop_command_session",
+              arguments: { session_id: sessionId },
+            },
+            context,
+          )
+        ).content,
+      ) as { status: string };
+      expect(["exited", "failed"]).toContain(stopped.status);
+    } finally {
+      if (sessionId) {
+        const registry = new InMemoryToolRegistry(createCommandTools());
+        await registry.execute(
+          {
+            id: "session-cleanup-post-abort",
+            name: "stop_command_session",
+            arguments: { session_id: sessionId },
+          },
+          { threadId: "thread-1", turnId: "turn-1", workspace, sandboxMode: "danger-full-access" as const },
+        ).catch((error: unknown) => {
+          if (error instanceof Error && error.message.includes("Command session not found")) return;
+          throw error;
+        });
+      }
       await removeTempDir(workspace);
     }
   });
