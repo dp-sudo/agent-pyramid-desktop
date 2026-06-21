@@ -18,7 +18,7 @@
   },
   "include": ["src/renderer", "src/shared", "src/vite-env.d.ts"],
   "exclude": [
-    "src/shared/skills/index.ts",
+    "src/shared/skills/node.ts",
     "src/shared/skills/registry.ts"
   ]
 }
